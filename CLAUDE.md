@@ -39,6 +39,10 @@ is. To change that, pass the routing on the call —
 reviewer: "opus" } } } } })`. Keep any project-specific routing in this block so
 it's applied on every run.
 
+**Project routing:** the recorder runs on `haiku` at every tier — pass
+`config: { models: { trivial: { recorder: "haiku" }, medium: { recorder: "haiku" }, complex: { recorder: "haiku" } } }`
+on every run.
+
 A single-task run edits the working tree directly by default — no commit, no
 branch. Pass `isolate: true` on the call to run it in a separate worktree instead
 and leave your tree untouched.
