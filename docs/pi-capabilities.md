@@ -353,3 +353,24 @@ cost, contextWindow, maxTokens, thinkingLevelMap, compat`. `baseUrl` есть.
 
 Граница local/prepaid — best-effort по baseUrl, переопределяема; per-token
 надёжен всегда (определяется по цене, не по хосту).
+
+## Live-проверено (DeepSeek, 2026-09-11)
+
+Первый живой вызов против настоящего провайдера (deepseek-v4-flash через
+`streamSimple` из `@earendil-works/pi-ai/api/openai-completions`). Подтвердило:
+
+- `Usage.cost` **заполняется провайдером**, не нули: за 24 in + 5 out —
+  `cost.total = 0.00000476`. Леджер считает реальные деньги.
+- Форма usage точно как в `.d.ts`: `{input, output, cacheRead, cacheWrite,
+  reasoning, totalTokens, cost{input,output,cacheRead,cacheWrite,total}}`.
+- **usage в сообщении per-response, НЕ накопительный** — эмпирически
+  подтвердило вывод по коду (in-memory-storage-state.js:67 складывает через
+  addUsage). Фикс леджера (per-response, коммит 90bdf67) был верным.
+- Прогон реального usage через `usageAmounts()` и `deriveCapabilities()`:
+  costMode `per-token`, cacheControllable `false` (openai-completions),
+  breakEvenReads `always` (cacheWrite=0) — код согласуется с реальностью.
+
+**Обнажило главное:** прогнать харнесс целиком нельзя — нет склейки
+Role→идущий ход. Нужен `createAgentHarness(toHarnessOptions(role, {session,
+models, model}), context)` + драйвер. Плюс `.env` грузится из cwd (Bun) —
+раннер должен явно решать, откуда креды, а не полагаться на «где запустили».
