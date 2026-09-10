@@ -143,6 +143,54 @@ module-locality from the touched-file set to decide what can parallelize.
   request construction) — build it there or as a sibling. Limits: don't mix
   env-based and injected-fetch proxying; `fetch` injection does not affect
   WebSocket transports.
+- **Tool sandboxing** — the runner roots tools at targetDir but the bash tool is
+  a starting cwd, NOT a jail: an agent can `cd` out, read/write outside, reach the
+  network. Real isolation (container/seccomp/egress-deny) is out-of-process work;
+  `activeToolNames` (which tools a role enables) is the only current gate. Needed
+  before unsupervised runs on an untrusted task.
+- **Prompts as files** — roles reference prompts by name from files, not only
+  inline strings. Both prompts already exist (Role.systemPrompt verbatim; the task
+  prompt via runRole) — the gap is storage. Resolve at the boundary (name → file →
+  verbatim string → Role) keeping Role.systemPrompt a resolved string (protects the
+  verbatim/cacheable property). Search path: built-in prompts (shipped) < project
+  prompts (.ad-coder/prompts/ in targetDir), project overrides by name. System
+  prompt = raw file read (byte-preserving, no templating — it is the cache prefix);
+  task prompt = templatable via pi's loadPromptTemplates. Fail loud on an
+  unresolvable name. Fits "small prompts + built-in and custom roles". Small.
+- **`ad-coder init` — adopt an existing project** (built by another harness, e.g.
+  Claude Code). DISCOVER and DECLARE, never overwrite. Two tiers: (A) mechanical —
+  adopt existing gates from the project's own configs (package.json scripts,
+  eslint/prettier/ruff/tsconfig/go.mod/CI), matrix discovers providers, existing
+  docs indexed onto the taxonomy (never rewritten), ad-coder adds its namespace
+  alongside. (B) cold read — the auditor proposes orientation + contracts the code
+  implies, as human-confirmed candidates. NOT a new mechanism: gates + auditor +
+  matrix + taxonomy in discovery mode on a target tree. Depends on: gates (done),
+  matrix (done), auditor.
+- **Session persistence** — a policy on the runner's existing seam
+  (`session = params.session ?? MemorySessionRepo`). Swap to JsonlSessionRepo
+  under <targetDir>/.ad-coder/sessions/ for durable, inspectable, forkable
+  sessions; session identity = runId (= ledger key), so session + ledger +
+  checkpoint = one addressable unit. Durable reload from disk IS possible (unlike
+  LDO's in-process resume cache). The session is where compaction's effect lives.
+  Small extension of the runner seam.
+- **Multi-user + pluggable backlog** — multi-user is the SAME conflict-avoidance
+  as project memory (per-file records) + worktree isolation, under more writers;
+  the ledger gains an actor/user dimension. Backlog becomes a pluggable
+  BacklogStore seam (like the ledger sink): file-backed (default, offline, solo)
+  and issues-backed (opt-in, multi-user, via `gh` — dodges the merge conflict a
+  shared BACKLOG.md has with many writers). The auditor emits candidates to
+  whichever is configured; also answers "where do dev notes go". Depends on:
+  memory.
+- **Self-hosting** — move ad-coder's own development onto ad-coder (CLI-only, no
+  TUI). Three rungs: (1) touches its own code (runner done + a live provider turn
+  on a scratch change); (2) does a feature supervised (a hand-written pipeline.ts
+  wiring plan→code→review roles via runRole; needs the orchestration layer +
+  reviewer verdict protocol); (3) self-hosts unsupervised (own gates + review as
+  guard). MVP is close post-runner — the missing engine is orchestration above
+  runRole (sequence + code⇄review loop) + a reviewer verdict protocol. Bootstrap
+  caveat: a bug in the runner/orchestration corrupts its own development, so early
+  self-hosting stays partial (narrow modules via ad-coder, risky core via LDO or
+  human) and supervised; faux tests + human remain ground truth for the core.
 
 ## Open backlog (mechanical)
 
