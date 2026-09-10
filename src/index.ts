@@ -1,5 +1,10 @@
 export { defineRole, resolveRoleModel, toHarnessOptions } from "./role";
 export type { Role, RoleRunDeps } from "./role";
+export { ContextBudgetError } from "./context/budget";
+export type { ContextBudget } from "./context/budget";
+export { ContextCompactor, SUMMARIZATION_PROMPT } from "./context/compactor";
+export type { Summarizer } from "./context/compactor";
+export { assertTurnFitsBudget } from "./context/preflight";
 export { FileLedgerSink, Ledger, LEDGER_BASE_DIR, MemoryLedgerSink } from "./ledger/ledger";
 export type { LedgerOptions, LedgerSink } from "./ledger/ledger";
 export type { LedgerRecord, UsageAmounts, UsageDelta } from "./ledger/types";

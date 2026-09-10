@@ -1,6 +1,8 @@
 import type { AgentHarnessOptions, Session } from "@earendil-works/pi-agent-core";
 import type { Api, CacheRetention, Model, Models } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
+import type { ContextBudget } from "./context/budget";
+import { validateContextBudget } from "./context/budget";
 
 const CACHE_RETENTIONS: readonly CacheRetention[] = ["none", "short", "long"];
 
@@ -19,6 +21,8 @@ export interface Role {
   /** The capability allow-list. An empty array is a valid deny-all. */
   activeToolNames: string[];
   cacheRetention: CacheRetention;
+  /** ad-coder's own context ceiling, validated against the model's window. */
+  contextBudget: ContextBudget;
 }
 
 export interface RoleRunDeps {
@@ -27,8 +31,13 @@ export interface RoleRunDeps {
   model: Model<Api>;
 }
 
-/** Validate a preset at its boundary, so a malformed role cannot reach the harness. */
-export function defineRole(input: Role): Role {
+/**
+ * Validate a preset at its boundary, so a malformed role cannot reach the
+ * harness. The `model` is supplied by the caller (not resolved from a catalog)
+ * so a local or custom OpenAI-compatible endpoint absent from the builtin
+ * catalog still validates against its real `contextWindow`.
+ */
+export function defineRole(input: Role, model: Model<Api>): Role {
   if (typeof input.name !== "string" || input.name.trim() === "") {
     throw new Error("defineRole: name must be a non-empty string");
   }
@@ -61,6 +70,7 @@ export function defineRole(input: Role): Role {
       `defineRole(${input.name}): cacheRetention must be one of ${CACHE_RETENTIONS.join(", ")}`,
     );
   }
+  validateContextBudget(input.name, input.contextBudget, model);
   return input;
 }
 

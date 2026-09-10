@@ -1,0 +1,123 @@
+import type { AgentMessage, Hooks } from "@earendil-works/pi-agent-core";
+import { estimateContextTokens, estimateTokens } from "@earendil-works/pi-agent-core";
+import type { ContextBudget } from "./budget";
+
+const HOOK_ID = "ad-coder/context-compactor";
+
+/**
+ * The seam that turns an evicted conversation head into a single summary
+ * string. Injected exactly like the Ledger's sink: the compactor never calls a
+ * provider itself, so tests hand it a fake and nothing touches the network.
+ */
+export type Summarizer = (messages: AgentMessage[]) => Promise<string>;
+
+/**
+ * ad-coder's own summarization system prompt. Deliberately NOT Pi's
+ * `SUMMARIZATION_SYSTEM_PROMPT` (a hardcoded upstream constant) and never
+ * inlined at a call site: the strategy stays owned here.
+ */
+export const SUMMARIZATION_PROMPT =
+  "You are compacting a coding agent's conversation to fit its context budget. " +
+  "Summarize the older messages below into a compact briefing that preserves " +
+  "everything a later turn needs to continue without re-reading them: the task " +
+  "and its acceptance criteria, decisions made and why, file paths and symbols " +
+  "touched, open questions, and any error or constraint still in play. Write it " +
+  "as durable notes, not a transcript. Do not invent facts and do not include " +
+  "content that is not present in the messages.";
+
+/**
+ * Split `messages` into an evictable head and the recent tail to keep. The tail
+ * is the longest message SUFFIX whose summed `estimateTokens` does not exceed
+ * `keepRecentTokens`. For a non-empty input the tail is never empty: the final
+ * message is always kept, even when it alone exceeds `keepRecentTokens`, so the
+ * pre-flight's "irreducible tail" is a real floor.
+ */
+export function selectRecentTail(
+  messages: AgentMessage[],
+  keepRecentTokens: number,
+): { head: AgentMessage[]; tail: AgentMessage[] } {
+  if (messages.length === 0) {
+    return { head: [], tail: [] };
+  }
+  let tailStart = messages.length;
+  let running = 0;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    running += estimateTokens(messages[i] as AgentMessage);
+    if (running > keepRecentTokens && i < messages.length - 1) {
+      break;
+    }
+    tailStart = i;
+  }
+  return { head: messages.slice(0, tailStart), tail: messages.slice(tailStart) };
+}
+
+/**
+ * A `transform_context` handler that keeps a turn inside the role's budget by
+ * summarizing the evicted head through the injected `Summarizer` and rebuilding
+ * `[summary, ...recent tail]`. It does NOT throw on a summarizer failure: the
+ * harness aggregate catches and discards a handler throw, so a failure is
+ * counted and warned once (numbers only) and the messages pass through
+ * untransformed instead.
+ */
+export class ContextCompactor {
+  private readonly budget: ContextBudget;
+  private readonly summarizer: Summarizer;
+  private failures = 0;
+
+  constructor(deps: { budget: ContextBudget; summarizer: Summarizer }) {
+    this.budget = deps.budget;
+    this.summarizer = deps.summarizer;
+  }
+
+  /** Summarizer failures so far. Non-zero means turns went out uncompacted. */
+  get compactionFailures(): number {
+    return this.failures;
+  }
+
+  /** Register the transform_context handler; returns the unsubscribe handle. */
+  attach(hooks: Hooks): () => void {
+    return hooks.on(
+      "transform_context",
+      (event) => this.transform(event.messages),
+      { id: HOOK_ID },
+    );
+  }
+
+  private async transform(
+    messages: AgentMessage[],
+  ): Promise<{ messages: AgentMessage[] } | undefined> {
+    const threshold = this.budget.maxTokens - this.budget.reserveTokens;
+    const measured = estimateContextTokens(messages).tokens;
+    if (measured <= threshold) {
+      return undefined;
+    }
+    const { head, tail } = selectRecentTail(messages, this.budget.keepRecentTokens);
+    if (head.length === 0) {
+      return undefined;
+    }
+    let summary: string;
+    try {
+      summary = await this.summarizer(head);
+    } catch (error) {
+      this.failures += 1;
+      if (this.failures === 1) {
+        // Numbers only. The summarizer sees message bodies and its throw may
+        // carry them, so the error itself is deliberately not emitted here. A
+        // dropped compaction leaves the turn over budget; the pre-flight guards
+        // the irreducible case.
+        void error;
+        process.stderr.write(
+          `ad-coder: context compaction failed, turn passed through uncompacted ` +
+            `(measured ${measured} tokens, threshold ${threshold})\n`,
+        );
+      }
+      return undefined;
+    }
+    const summaryUserMessage: AgentMessage = {
+      role: "user",
+      content: summary,
+      timestamp: Date.now(),
+    };
+    return { messages: [summaryUserMessage, ...tail] };
+  }
+}

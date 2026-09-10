@@ -1,6 +1,15 @@
 import { expect, test } from "bun:test";
-import { diffUsage, isWorkflowModule, Ledger, UsageDeltaTracker } from "ad-coder";
-import type { WorkflowModule } from "ad-coder";
+import {
+  assertTurnFitsBudget,
+  ContextBudgetError,
+  ContextCompactor,
+  diffUsage,
+  isWorkflowModule,
+  Ledger,
+  SUMMARIZATION_PROMPT,
+  UsageDeltaTracker,
+} from "ad-coder";
+import type { ContextBudget, Summarizer, WorkflowModule } from "ad-coder";
 
 // The README documents `from "ad-coder"` as the public surface, which only
 // works while package.json's `exports` self-reference resolves. A type-only
@@ -17,6 +26,15 @@ test("the package is importable by its published name", () => {
   expect(typeof diffUsage).toBe("function");
   expect(typeof UsageDeltaTracker).toBe("function");
   expect(typeof Ledger).toBe("function");
+  expect(typeof ContextCompactor).toBe("function");
+  expect(typeof ContextBudgetError).toBe("function");
+  expect(typeof assertTurnFitsBudget).toBe("function");
+  expect(typeof SUMMARIZATION_PROMPT).toBe("string");
+  // Type-only imports are erased; reference them so the imports are not unused.
+  const _budget: ContextBudget | undefined = undefined;
+  const _summarizer: Summarizer | undefined = undefined;
+  expect(_budget).toBeUndefined();
+  expect(_summarizer).toBeUndefined();
 });
 
 test("the published name resolves the same module as the relative path", async () => {

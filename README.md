@@ -7,7 +7,23 @@ is a plain object the CLI loads and runs.
 
 It builds on `pi-agent-core` rather than `pi-coding-agent`, and it disables Pi's
 own compaction (whose summarization prompt is a hardcoded constant) so the
-context strategy stays in ad-coder.
+context strategy stays in ad-coder. That strategy is now explicit and owned:
+
+- Every `Role` carries a **`ContextBudget`** (`maxTokens`, `reserveTokens`,
+  `keepRecentTokens`). `defineRole(role, model)` takes the target `Model` and
+  validates the budget against that model's real `contextWindow` — the model is
+  supplied by the caller, not looked up in a catalog, so a local or custom
+  OpenAI-compatible endpoint (LM Studio, vLLM, self-hosted qwen) validates too.
+- A **`ContextCompactor`** registers as a `transform_context` hook. When a turn
+  is over budget it summarizes the evicted older head through an injected
+  `Summarizer` seam, using ad-coder's own exported `SUMMARIZATION_PROMPT` (never
+  Pi's), and rebuilds `[summary, ...recent tail]`. A summarizer failure is
+  counted (`compactionFailures`) and warned once, never thrown — the harness
+  aggregate would swallow a throw.
+- **`assertTurnFitsBudget(role, messages, model)`** is a pre-flight (not a
+  hook): it throws a typed `ContextBudgetError` when even the irreducible recent
+  tail plus the reserve cannot fit under the ceiling — the one case compaction
+  can never rescue.
 
 ## Requirements
 
