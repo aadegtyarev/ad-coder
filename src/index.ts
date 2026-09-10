@@ -5,6 +5,15 @@ export type { ContextBudget } from "./context/budget";
 export { ContextCompactor, SUMMARIZATION_PROMPT } from "./context/compactor";
 export type { Summarizer } from "./context/compactor";
 export { assertTurnFitsBudget } from "./context/preflight";
+export { GateRunner } from "./gates/runner";
+export type {
+  CommandExecutor,
+  ExecResult,
+  GateReport,
+  GateResult,
+  QualityGate,
+  QualityGateKind,
+} from "./gates/types";
 export { FileLedgerSink, Ledger, LEDGER_BASE_DIR, MemoryLedgerSink } from "./ledger/ledger";
 export type { LedgerOptions, LedgerSink } from "./ledger/ledger";
 export type { LedgerRecord, UsageAmounts, UsageDelta } from "./ledger/types";

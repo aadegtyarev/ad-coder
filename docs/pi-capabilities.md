@@ -321,3 +321,35 @@ if (compat.cacheControlFormat !== "anthropic" || cacheRetention === "none") { ..
   «не влезет», а про «сколько ты за это платишь». Pre-flight-отказ Phase 1
   всё равно нужен — он ловит роль с бюджетом больше окна и роль, чей промт
   не оставил места под ответ.
+
+## Управление кэшем: точный предикат (поправка к матрице)
+
+Проверено пробой каталога 0.85.1. Мой ранний бриф говорил «cacheControllable =
+cacheControlFormat === 'anthropic'» — это **неверно, ложный негатив на нативном
+Anthropic**.
+
+- `claude-fable-5`: `api: "anthropic-messages"`, `compat.cacheControlFormat`
+  **отсутствует**, но `cacheRetention` исполняется через `getCacheControl`
+  (anthropic-messages.js:29). Значит нативный Anthropic управляем.
+- `openrouter/anthropic/claude-3-haiku`: тоже `api: "anthropic-messages"`.
+- Путь `cacheControlFormat === 'anthropic'` (openai-completions.js:808) —
+  для openai-completions-моделей, эмулирующих маркеры. Отдельный случай.
+- `deepseek-v4-flash`: `api: "openai-completions"`, формат отсутствует →
+  cacheRetention инертен.
+
+**Правильный предикат:**
+`cacheControllable = model.api === "anthropic-messages" || model.compat?.cacheControlFormat === "anthropic"`
+
+## Model несёт baseUrl → local детектируется
+
+Топ-ключи Model 0.85.1: `id, name, api, provider, baseUrl, reasoning, input,
+cost, contextWindow, maxTokens, thinkingLevelMap, compat`. `baseUrl` есть.
+Значит costMode из трёх классов выводится чистой функцией над Model:
+
+- цена ненулевая → `per-token`
+- цена вся ноль + baseUrl хост loopback/private (127.0.0.1, localhost, ::1,
+  10.x, 192.168.x, 172.16–31.x) → `local`
+- цена вся ноль иначе → `prepaid`
+
+Граница local/prepaid — best-effort по baseUrl, переопределяема; per-token
+надёжен всегда (определяется по цене, не по хосту).

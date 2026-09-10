@@ -117,8 +117,53 @@ One JSONL record per turn under `.ad-coder/ledger/<runId>.jsonl`:
 file accumulates per run. Delete or archive it on whatever schedule your
 environment needs.
 
+## Quality gates
+
+Gates over prompts: a deterministic, mechanical check run BEFORE an LLM review
+round costs no tokens, so anything a machine can decide (format-clean, lint,
+typecheck, a file-size ceiling) should never be spent on a model turn. The model
+reviews what a gate cannot.
+
+A gate is DATA. Commands are config, not hardcoded, so the module is language-
+and provider-agnostic:
+
+```ts
+import { GateRunner } from "ad-coder";
+import type { QualityGate, CommandExecutor } from "ad-coder";
+
+const gates: QualityGate[] = [
+  { name: "format", kind: "format", autofix: ["prettier", "--write"], command: ["prettier", "--check"] },
+  { name: "types", kind: "typecheck", command: ["tsc", "--noEmit"] },
+  { name: "size", kind: "size", maxLinesPerFile: 500 },
+];
+
+const runner = new GateRunner({ executor });
+const report = await runner.run(gates, ["src/a.ts", "src/b.ts"]);
+// report.passed is the AND of all results; report.results names each verdict.
+```
+
+- The command runner is an **injected `CommandExecutor` seam**
+  (`(argv, cwd) => Promise<{exitCode, stdout, stderr}>`), mirroring the ledger's
+  sink. `GateRunner` never spawns a process itself, so the whole path is testable
+  with a fake and nothing shells out. No real spawn executor ships in this
+  module, and gates are not yet wired into ad-coder's own build.
+- When a gate declares `autofix`, that argv runs FIRST (files mutated into shape)
+  and then the `command` argv decides pass/fail by its exit code.
+- The `size` gate runs **in-process** — no external tool. It reads each file only
+  to count lines and fails one exceeding `maxLinesPerFile`, naming the file and
+  its exact count.
+- Every result's `output` is bounded (a fixed char cap plus a truncation marker),
+  so a verbose or hostile tool cannot flood the report or a caller's next-turn
+  context.
+
 ## Security notes
 
+- **The gate runner only ever builds argv arrays, never a shell string**, and
+  never interpolates file contents into a command. A `QualityGate`'s
+  `command`/`autofix` are caller-declared argv; supplied file paths are appended
+  as discrete trailing argv elements and handed straight to the injected
+  executor (spawn-style, no shell). File contents are read only in-process by the
+  size gate to count lines, never to build a command.
 - **A workflow module runs in this process**, with the full environment,
   including any provider API keys. The path argument to `ad-coder run` is
   trusted input. The CLI refuses URL specifiers, symlinks, non-regular files,
