@@ -60,6 +60,12 @@ test("costMode: local via loopback baseUrl with all-zero cost", () => {
   expect(caps.costMode).toBe("local");
 });
 
+test("costMode: local via IPv6 loopback in bracket form", () => {
+  // URL.hostname returns "[::1]" bracketed; the bare "::1" in LOOPBACK_HOSTS
+  // never matches it, so a local IPv6 endpoint must be de-bracketed first.
+  expect(deriveCapabilities(model({ baseUrl: "http://[::1]:11434/v1" })).costMode).toBe("local");
+});
+
 test("costMode: local via private 172.16-31 range", () => {
   expect(deriveCapabilities(model({ baseUrl: "http://172.20.0.5:8000/v1" })).costMode).toBe("local");
   // Outside 16-31 is NOT private and stays prepaid.

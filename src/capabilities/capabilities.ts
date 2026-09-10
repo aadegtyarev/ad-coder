@@ -150,6 +150,11 @@ function isLocalHost(baseUrl: string): boolean {
   } catch {
     return false;
   }
+  // `URL.hostname` returns IPv6 hosts in bracketed form (`[::1]`), the only
+  // syntactically valid way to express one in a URL, so strip the brackets
+  // before the loopback lookup — otherwise a local IPv6 endpoint like
+  // `http://[::1]:11434/v1` (Ollama/LM Studio bind here) misclassifies as prepaid.
+  if (host.startsWith("[") && host.endsWith("]")) host = host.slice(1, -1);
   if (LOOPBACK_HOSTS.has(host)) return true;
   if (host.endsWith(".local")) return true;
   if (host.startsWith("10.")) return true;
