@@ -1,0 +1,4 @@
+# LDO local state
+tags
+.claude/ldo-runs.json
+.claude/ldo-args/
