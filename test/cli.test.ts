@@ -52,6 +52,33 @@ test("a module without the workflow shape exits 2 with a clear message", () => {
   }
 });
 
+test("without --target-dir ctx.runRole is absent; with it the workflow sees a runner", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-cli-"));
+  try {
+    const probe = path.join(dir, "probe.workflow.ts");
+    fs.writeFileSync(
+      probe,
+      "export default { name: 'probe', async run(ctx) { return { hasRunRole: typeof ctx.runRole?.runRole === 'function' }; } };\n",
+      { mode: 0o600 },
+    );
+
+    const target = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-target-"));
+    try {
+      const without = runCli(["run", probe]);
+      expect(without.code).toBe(0);
+      expect((JSON.parse(without.stdout) as { hasRunRole: boolean }).hasRunRole).toBe(false);
+
+      const withTarget = runCli(["run", probe, "--target-dir", target]);
+      expect(withTarget.code).toBe(0);
+      expect((JSON.parse(withTarget.stdout) as { hasRunRole: boolean }).hasRunRole).toBe(true);
+    } finally {
+      fs.rmSync(target, { recursive: true, force: true });
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("a workflow that throws exits 1 with only the error message", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-cli-"));
   try {

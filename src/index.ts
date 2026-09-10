@@ -30,5 +30,11 @@ export { FileLedgerSink, Ledger, LEDGER_BASE_DIR, MemoryLedgerSink } from "./led
 export type { LedgerOptions, LedgerSink } from "./ledger/ledger";
 export type { LedgerRecord, UsageAmounts, UsageDelta } from "./ledger/types";
 export { diffUsage, usageAmounts, UsageDeltaTracker } from "./ledger/usage";
+export { RunnerError, resolveTargetDir } from "./runner/errors";
+export type { RunnerErrorCode } from "./runner/errors";
+export { runRole } from "./runner/runner";
+export type { RunRoleParams, RunRoleResult } from "./runner/runner";
+export { createRoleRunner } from "./runner/role-runner";
+export type { RoleRunner, RoleRunnerConfig, RunRoleOptions } from "./runner/role-runner";
 export { isWorkflowModule } from "./workflow";
 export type { WorkflowContext, WorkflowModule } from "./workflow";

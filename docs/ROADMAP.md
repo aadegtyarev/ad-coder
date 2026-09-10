@@ -66,22 +66,24 @@ module-locality from the touched-file set to decide what can parallelize.
 
 ## After that (designed, ordered)
 
-- **End-to-end runner — the missing glue, TOP priority.** ad-coder has the
-  building blocks (Role→AgentHarnessOptions, Ledger.attach, Compactor.attach) but
-  nothing that takes a Role and DRIVES a turn: no `createAgentHarness(options,
-  context)` wiring, no Session/Models/Context construction, no driver. So the
-  harness cannot be run live end to end — only the pi-ai layer below and the pure
-  functions above are testable. Live-verified 2026-09-11 that the foundation is
-  sound (real DeepSeek call: Usage.cost populated, usage per-response, matrix +
-  ledger agree with reality) — the gap is purely the glue. Contract to settle in
-  planOnly: (1) the runner takes a TARGET working directory distinct from the
-  harness's own cwd — the agent's bash/edit/read tools and the ledger operate in
-  the target (a clean test folder or a real project), NOT "wherever ad-coder was
-  launched"; harness-dir ≠ target-dir from day one. (2) Credentials come from an
-  explicit source (the harness's env), never picked up from the target project's
-  .env. (3) WorkflowContext gains a way to run a role (run(ctx) currently gets
-  only {runId, ledger}). (4) Testable with pi-ai's fauxProvider — zero network in
-  the suite; the live path is opt-in with a real key.
+- **End-to-end runner** — DONE. `src/runner/`: `runRole(params)` resolves a
+  REQUIRED `targetDir` (harness-dir ≠ target-dir), builds `NodeExecutionEnv`-
+  rooted `[bash, read, write, edit]` tools + a `FileLedgerSink` under
+  `<targetDir>/.ad-coder/ledger/<runId>.jsonl` (the sink seam, not the cwd-
+  confined `filePath`), projects the Role via `toHarnessOptions`, optionally
+  attaches the compactor, and drives one `AgentHarness.create` →
+  `lane('main').prompt` turn to a settled `OperationResultRecord`. Contracts
+  settled: (1) target-dir separation via `resolveTargetDir` (realpath'd,
+  symlinked-ledger-component refused); (2) credentials only from caller-
+  configured `models`/`model` — never `process.env`/`<targetDir>/.env`, with a
+  named cwd-inside-targetDir warning in the CLI; (3) `WorkflowContext.runRole?:
+  RoleRunner` (additive, optional; `isWorkflowModule` untouched). `createRoleRunner`
+  binds targetDir+models for workflows. CLI gains an optional `--target-dir`
+  that wires `ctx.runRole` from `builtinModels()` (the CLI's own env). Proven by
+  `test/runner.test.ts` with pi-ai's fauxProvider — zero network, no key. The
+  bash tool is NOT confined to targetDir (it is a starting cwd, not a sandbox);
+  real out-of-process sandboxing (seccomp/container/egress deny) remains a
+  follow-up, with `activeToolNames` the current gate.
 - **Wire ad-coder's own gates** — the gates module exists but ad-coder still runs
   only typecheck+test on itself. Add a size gate + (when a formatter/linter is
   chosen) format/lint gates over the repo. Dogfooding the gates-over-prompts

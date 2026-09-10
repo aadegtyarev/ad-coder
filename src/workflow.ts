@@ -1,8 +1,15 @@
 import type { Ledger } from "./ledger/ledger";
+import type { RoleRunner } from "./runner/role-runner";
 
 export interface WorkflowContext {
   runId: string;
   ledger: Ledger;
+  /**
+   * Present only when the CLI was given a `--target-dir`. A workflow that needs
+   * to drive a role uses this; one that only reads `runId`/`ledger` never sees
+   * it. Optional so existing workflows and `isWorkflowModule` are untouched.
+   */
+  runRole?: RoleRunner;
 }
 
 export interface WorkflowModule {

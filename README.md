@@ -86,6 +86,64 @@ under `moduleResolution: "bundler"`.
 The CLI writes `JSON.stringify` of whatever `run` returns to stdout, and exits
 `2` on a usage or validation error, `1` on a failing workflow.
 
+## Running a role
+
+`ctx.ledger.attach(hooks)` records turns, but building and driving the harness
+is `runRole` / `createRoleRunner`. `runRole` takes a `Role`, a **required**
+`targetDir` (the agent's working directory — its `bash`/`read`/`write`/`edit`
+tools start there and the ledger lands at `<targetDir>/.ad-coder/ledger/<runId>.jsonl`),
+the caller-configured `models` + `model`, and a prompt, then drives one turn to
+a settled result:
+
+```ts
+import { runRole } from "ad-coder";
+
+const { runId, ledgerPath, result } = await runRole({
+  role,          // a defineRole preset
+  targetDir,     // REQUIRED — an existing directory; tools + ledger operate here
+  models, model, // the ONLY source of provider credentials
+  prompt: "implement the change",
+});
+```
+
+A workflow reaches the same path through `ctx.runRole` — a `RoleRunner` bound to
+one `targetDir` and one credential source, present only when the CLI was run
+with `--target-dir <dir>`:
+
+```sh
+bun run src/cli.ts run examples/hello.workflow.ts --target-dir /path/to/project
+```
+
+```ts
+async run(ctx) {
+  if (ctx.runRole === undefined) throw new Error("run with --target-dir");
+  const { result } = await ctx.runRole.runRole(role, model, "do the work");
+  return { status: result.status }; // NOT result wholesale — see below
+}
+```
+
+**Credential boundary.** Provider auth comes only from the `models`/`model` you
+pass (the CLI resolves them from its OWN environment via `builtinModels()`). The
+runner never reads `process.env` and never reads `<targetDir>/.env`. That
+boundary also assumes the process cwd differs from `targetDir`: Bun auto-loads a
+`.env` from the process cwd into `process.env` at startup, so launching ad-coder
+with its cwd inside `targetDir` would fold the target's `.env` into the
+environment — the CLI warns when it detects this.
+
+**`RunRoleResult.result` carries request detail.** It is the full
+`OperationResultRecord` (settled-message metadata, request detail). A workflow
+that returns it wholesale writes that content to stdout, bypassing the CLI's
+own discipline of keeping provider content off stdout. Return `runId`,
+`ledgerPath`, `status`, or a narrowed projection instead.
+
+**`targetDir` is a starting directory, not a sandbox.** `NodeExecutionEnv({ cwd })`
+sets only the shell's initial working directory; the `bash` tool can `cd /`,
+read any file the harness user can read, and reach the network. `targetDir`
+content is untrusted. The real gate is the Role's `activeToolNames` — do not
+grant `bash` to a role that ingests untrusted input without an out-of-process
+sandbox. The live path is opt-in and makes a real provider call; the test suite
+proves it with pi-ai's faux provider (zero network, no key).
+
 ## The ledger
 
 One JSONL record per turn under `.ad-coder/ledger/<runId>.jsonl`:
@@ -227,3 +285,13 @@ const report = await runner.run(gates, ["src/a.ts", "src/b.ts"]);
   process can reach instance-role credentials over the metadata endpoint. That
   is inert while no tools are registered and becomes real blast radius the
   moment a role activates an exec or fetch tool.
+- **`runRole`'s `targetDir` is a starting directory, not a boundary.** The
+  execution tools begin there but are not confined to it: `bash` grants full
+  filesystem and network access as the harness user, and `targetDir` content is
+  untrusted. Credentials come only from the caller-configured `models`/`model`
+  (never `<targetDir>/.env`), and that boundary depends on the process cwd being
+  distinct from `targetDir` — the CLI warns when it is not. The runner refuses a
+  symlinked `.ad-coder`/`.ad-coder/ledger` component so a pre-planted symlink
+  under an untrusted `targetDir` cannot redirect the ledger write. The effective
+  gate is the Role's `activeToolNames`: never grant `bash` to a role that
+  ingests untrusted input without an out-of-process sandbox.
