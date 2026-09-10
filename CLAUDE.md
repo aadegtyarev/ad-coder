@@ -67,5 +67,6 @@ files, comment sprawl, duplicated logic) no single diff reveals — then clear
 the list. Offer; don't run either unasked.
 
 <!-- ldo:features -->
+- Initial scaffold: `ad-coder run <script.ts>` loads a workflow module, `Role` presets validate harness options, and a `Ledger` records per-turn token and cost deltas as JSONL under `.ad-coder/ledger/`.
 <!-- /ldo:features -->
 <!-- END ldo -->

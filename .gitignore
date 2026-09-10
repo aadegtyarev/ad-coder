@@ -2,3 +2,7 @@
 tags
 .claude/ldo-runs.json
 .claude/ldo-args/
+
+# Dependencies and local run state
+node_modules/
+.ad-coder/
