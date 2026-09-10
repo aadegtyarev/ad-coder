@@ -6,3 +6,7 @@ tags
 # Dependencies and local run state
 node_modules/
 .ad-coder/
+
+# Provider credentials (Bun auto-loads .env)
+.env
+.env.local

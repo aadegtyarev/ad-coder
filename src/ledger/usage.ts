@@ -1,5 +1,31 @@
+/**
+ * Which pi hook events report CUMULATIVE usage and which report PER-RESPONSE
+ * usage. Documented here once, because getting it backwards silently
+ * under-reports or double-counts every turn. Evidence is line-specific to the
+ * pinned @earendil-works 0.85.1; a version bump makes it checkable.
+ *
+ * `after_response` is PER-RESPONSE. The harness folds each persisted row into
+ * the session totals by ADDITION -- `addUsage(this.stats.usage, row.usage)` at
+ * `pi-agent-core/dist/harness/session/in-memory-storage-state.js:67` -- and
+ * that row is `usage: committed.usage`
+ * (`harness/runtime/drive/response.js:246`, where `committed = response` at
+ * `:124`), the very settled message that
+ * `harness/execution/assistant.js:46-50` hands the hook. Addition-based totals
+ * are only correct for per-response rows; a session-cumulative row would make
+ * totals grow quadratically. So `diffUsage`/`UsageDeltaTracker` are the WRONG
+ * tool on this event.
+ *
+ * `message_update` IS cumulative within one streaming response: pi-ai assigns
+ * absolute values into a single mutable `output.usage`
+ * (`pi-ai/dist/api/anthropic-messages.js:409-417` and `:568-578`), and
+ * `harness/execution/assistant.js:38` re-emits it as `{ ...event.partial }` --
+ * a SHALLOW copy, so every update shares that same usage object. That is the
+ * event `diffUsage`/`UsageDeltaTracker` exist for, and the reason the tracker
+ * snapshots a reading before retaining it as a baseline.
+ */
+
 import type { Usage } from "@earendil-works/pi-ai";
-import type { UsageDelta } from "./types";
+import type { UsageAmounts, UsageDelta } from "./types";
 
 /**
  * Derive one turn's usage from two cumulative readings.
@@ -46,6 +72,35 @@ export function diffUsage(prev: Usage | undefined, next: Usage): UsageDelta {
 }
 
 /**
+ * Copy a provider reading into the ledger's own numeric shape.
+ *
+ * Field by field through an explicit allow-list, never a spread of the input
+ * and never structuredClone: a field pi-ai adds in a later version would
+ * otherwise land in the ledger file unreviewed, and a ledger line is meant to
+ * be safe to keep and to share. The returned object -- `cost` included -- is
+ * fresh, so a caller that later mutates the provider's `Usage` cannot
+ * retroactively rewrite a record a sink has already retained or written.
+ */
+export function usageAmounts(usage: Usage): UsageAmounts {
+  return {
+    input: usage.input,
+    output: usage.output,
+    cacheRead: usage.cacheRead,
+    cacheWrite: usage.cacheWrite,
+    ...(usage.cacheWrite1h !== undefined && { cacheWrite1h: usage.cacheWrite1h }),
+    ...(usage.reasoning !== undefined && { reasoning: usage.reasoning }),
+    totalTokens: usage.totalTokens,
+    cost: {
+      input: usage.cost.input,
+      output: usage.cost.output,
+      cacheRead: usage.cost.cacheRead,
+      cacheWrite: usage.cost.cacheWrite,
+      total: usage.cost.total,
+    },
+  };
+}
+
+/**
  * A field only some providers report: absent on both readings means the key is
  * omitted from the delta entirely rather than emitted as 0, so "not reported"
  * stays distinguishable from "reported as zero".
@@ -64,7 +119,8 @@ function subsetField(
 
 /**
  * Holds the last cumulative reading per stream so each turn yields its own
- * increment. Key by lane and run, never by role: two roles sharing a lane
+ * increment. For a cumulative source only -- the file block above says which
+ * event that is. Key by lane and run, never by role: two roles sharing a lane
  * share one cumulative counter, and keying by role would restate the whole
  * running total as each role's first delta.
  */

@@ -1,8 +1,13 @@
 import { expect, test } from "bun:test";
 import type { Usage } from "@earendil-works/pi-ai";
-import { diffUsage, UsageDeltaTracker } from "../src/ledger/usage";
+import { diffUsage, usageAmounts, UsageDeltaTracker } from "../src/ledger/usage";
 
 /**
+ * Covers `diffUsage`/`UsageDeltaTracker` as the tool for a genuinely
+ * CUMULATIVE source -- the `message_update` event, whose usage accumulates
+ * within one streaming response -- and explicitly NOT the `after_response`
+ * path, which is per-response and is covered in test/ledger.test.ts.
+ *
  * Synthetic cumulative readings only -- this suite makes no provider call and
  * reads no credentials.
  */
@@ -168,4 +173,30 @@ test("a mutated caller object cannot rewrite a stored baseline", () => {
   mutable.input = 9999;
 
   expect(tracker.delta("run-1:main", turn2).input).toBe(150);
+});
+
+test("usageAmounts copies a reading and keeps unreported fields unreported", () => {
+  const plain = usageAmounts(turn1);
+  expect(plain).toEqual({
+    input: 100,
+    output: 20,
+    cacheRead: 10,
+    cacheWrite: 5,
+    totalTokens: 135,
+    cost: { input: 0.004, output: 0.005, cacheRead: 0.0005, cacheWrite: 0.0005, total: 0.01 },
+  });
+  expect("cacheWrite1h" in plain).toBe(false);
+  expect("reasoning" in plain).toBe(false);
+
+  const reported = reading({ ...turn1, cacheWrite1h: 3, reasoning: 7 });
+  const copied = usageAmounts(reported);
+  expect(copied.cacheWrite1h).toBe(3);
+  expect(copied.reasoning).toBe(7);
+
+  const mutable = reading({ ...turn1, cost: { ...turn1.cost } });
+  const snapshotted = usageAmounts(mutable);
+  mutable.cost.total = 99;
+  mutable.input = 99;
+  expect(snapshotted.cost.total).toBeCloseTo(0.01, 10);
+  expect(snapshotted.input).toBe(100);
 });

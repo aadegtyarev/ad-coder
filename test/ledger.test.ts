@@ -11,7 +11,7 @@ import type {
 import type { Usage } from "@earendil-works/pi-ai";
 import { FileLedgerSink, Ledger, LEDGER_BASE_DIR, MemoryLedgerSink } from "../src/ledger/ledger";
 import type { LedgerSink } from "../src/ledger/ledger";
-import type { LedgerRecord } from "../src/ledger/types";
+import type { LedgerRecord, UsageAmounts } from "../src/ledger/types";
 
 const scratchDirs: string[] = [];
 
@@ -146,7 +146,7 @@ test("attach registers exactly one after_response handler and returns its unsubs
   expect(registered).toHaveLength(0);
 });
 
-test("two settled messages yield two records whose deltas are pairwise differences", async () => {
+test("two settled messages yield two records carrying each response's own numbers", async () => {
   const sink = new MemoryLedgerSink();
   const { hooks, registered } = fakeHooks();
   const ledger = new Ledger({ runId: "run1", role: "planner", step: "plan", sink });
@@ -159,9 +159,9 @@ test("two settled messages yield two records whose deltas are pairwise differenc
 
   const records = sink.records();
   expect(records).toHaveLength(2);
-  expect(records[0]?.delta.input).toBe(100);
-  expect(records[1]?.delta.input).toBe(150);
-  expect(records[1]?.delta.cost.total).toBeCloseTo(0.015, 10);
+  expect(records[0]?.usage.input).toBe(100);
+  expect(records[1]?.usage.input).toBe(250);
+  expect(records[1]?.usage.cost.total).toBeCloseTo(0.025, 10);
   expect(records[0]?.role).toBe("planner");
   expect(records[0]?.step).toBe("plan");
   expect(records[0]?.runId).toBe("run-1");
@@ -214,8 +214,8 @@ test("the file sink writes one 0600 line per turn and no header data", async () 
   const lines = fs.readFileSync(filePath, "utf8").trimEnd().split("\n");
   expect(lines).toHaveLength(2);
   const parsed = lines.map((line) => JSON.parse(line) as LedgerRecord);
-  expect(parsed[0]?.delta.input).toBe(100);
-  expect(parsed[1]?.delta.input).toBe(150);
+  expect(parsed[0]?.usage.input).toBe(100);
+  expect(parsed[1]?.usage.input).toBe(250);
   expect(fs.readFileSync(filePath, "utf8")).not.toMatch(/header|authorization/i);
   expect(fs.statSync(filePath).mode & 0o777).toBe(0o600);
   expect(fs.statSync(dir).mode & 0o777).toBe(0o700);
@@ -305,7 +305,7 @@ test("a failing sink drops the record loudly instead of throwing into the harnes
   expect(warnings[0]).toMatch(/ledger write failed/);
 });
 
-test("forgetStream resets a finished stream's baseline", async () => {
+test("a sequence of per-response readings sums to what the harness would total", async () => {
   const sink = new MemoryLedgerSink();
   const { hooks, registered } = fakeHooks();
   const ledger = new Ledger({ runId: "run1", role: "r", step: "s", sink });
@@ -313,11 +313,22 @@ test("forgetStream resets a finished stream's baseline", async () => {
   const handler = registered[0]?.handler;
   if (handler === undefined) throw new Error("handler was not registered");
 
-  await handler(event(usage(100, 110, 0.01), 200), FAKE_CONTEXT);
-  ledger.forgetStream("run-1", "main");
-  await handler(event(usage(250, 270, 0.025), 200), FAKE_CONTEXT);
+  const readings = [usage(100, 110, 0.01), usage(250, 270, 0.025), usage(400, 430, 0.04)];
+  for (const reading of readings) await handler(event(reading, 200), FAKE_CONTEXT);
 
-  expect(sink.records()[1]?.delta.input).toBe(250);
+  const records = sink.records();
+  expect(records).toHaveLength(3);
+  for (const [index, reading] of readings.entries()) {
+    expect(records[index]?.usage).toEqual(reading);
+    // A retained record must not alias the provider object: mutating the
+    // reading afterwards would otherwise rewrite an already-written line.
+    expect(records[index]?.usage).not.toBe(reading);
+  }
+
+  const recorded = records.map((r) => r.usage).reduce((total, next) => addUsage(total, next));
+  expect(recorded).toEqual(readings.reduce((total, next) => addUsage(total, next)));
+  expect(recorded.input).toBe(750);
+  expect(recorded.cost.total).toBeCloseTo(0.075, 10);
 });
 
 function record(): LedgerRecord {
@@ -330,13 +341,44 @@ function record(): LedgerRecord {
     provider: "anthropic",
     model: "claude-sonnet-4-5",
     stopReason: "stop",
-    delta: {
+    usage: {
       input: 1,
       output: 1,
       cacheRead: 0,
       cacheWrite: 0,
       totalTokens: 2,
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+  };
+}
+
+/**
+ * Mirrors pi-agent-core's own `addUsage`
+ * (dist/harness/utils/usage.js), which the harness applies to each persisted
+ * row to build the session totals. Mirrored rather than imported because the
+ * package's export map has no `./harness/utils/usage` subpath, so a deep
+ * import fails resolution. A provider-optional field absent on both sides
+ * stays absent, so "not reported" never becomes "reported as 0".
+ */
+function addUsage(a: UsageAmounts, b: UsageAmounts): UsageAmounts {
+  const optional = (key: "cacheWrite1h" | "reasoning"): { [k: string]: number } | undefined => {
+    if (a[key] === undefined && b[key] === undefined) return undefined;
+    return { [key]: (a[key] ?? 0) + (b[key] ?? 0) };
+  };
+  return {
+    input: a.input + b.input,
+    output: a.output + b.output,
+    cacheRead: a.cacheRead + b.cacheRead,
+    cacheWrite: a.cacheWrite + b.cacheWrite,
+    ...optional("cacheWrite1h"),
+    ...optional("reasoning"),
+    totalTokens: a.totalTokens + b.totalTokens,
+    cost: {
+      input: a.cost.input + b.cost.input,
+      output: a.cost.output + b.cost.output,
+      cacheRead: a.cost.cacheRead + b.cost.cacheRead,
+      cacheWrite: a.cost.cacheWrite + b.cost.cacheWrite,
+      total: a.cost.total + b.cost.total,
     },
   };
 }

@@ -68,5 +68,6 @@ the list. Offer; don't run either unasked.
 
 <!-- ldo:features -->
 - Initial scaffold: `ad-coder run <script.ts>` loads a workflow module, `Role` presets validate harness options, and a `Ledger` records per-turn token and cost deltas as JSONL under `.ad-coder/ledger/`.
+- Ledger records each response's own usage instead of a difference between turns (after_response usage is per-response in pi-agent-core 0.85.1); the JSONL field is now `usage`, not `delta`, and `diffUsage`/`UsageDeltaTracker` remain exported for cumulative sources.
 <!-- /ldo:features -->
 <!-- END ldo -->

@@ -3,7 +3,7 @@ import * as path from "node:path";
 import type { HookInvocation, Hooks, SettledAssistantMessage } from "@earendil-works/pi-agent-core";
 import type { Usage } from "@earendil-works/pi-ai";
 import type { LedgerRecord } from "./types";
-import { UsageDeltaTracker } from "./usage";
+import { usageAmounts } from "./usage";
 
 /** Ledger files live here and nowhere else; an explicit filePath is confined to it. */
 export const LEDGER_BASE_DIR = ".ad-coder/ledger";
@@ -111,7 +111,6 @@ export class Ledger {
   readonly filePath: string | undefined;
 
   private readonly sink: LedgerSink;
-  private readonly tracker = new UsageDeltaTracker();
   private drops = 0;
 
   constructor(options: LedgerOptions) {
@@ -151,30 +150,25 @@ export class Ledger {
     return hooks.on("after_response", (event) => this.record(event), { id: HOOK_ID });
   }
 
-  /** Drop a finished stream's delta baseline. */
-  forgetStream(runId: string, lane: string): void {
-    this.tracker.forget(streamKey(runId, lane));
-  }
-
   close(): void {
     this.sink.close?.();
   }
 
   /**
-   * The one seam for the cumulative-versus-per-response question: whether
-   * after_response usage accumulates over a stream is not verifiable without a
-   * live provider call, so the semantics flip here and nowhere else.
+   * The one seam for the cumulative-versus-per-response question. This reading
+   * is already PER-RESPONSE and must not be diffed: pi-agent-core 0.85.1 ADDS
+   * each row's usage into the session totals
+   * (`harness/session/in-memory-storage-state.js:67`) and the row is this same
+   * settled message's usage (`harness/runtime/drive/response.js:246`,
+   * `harness/execution/assistant.js:50`). See ./usage's file block for the
+   * full argument and for the event that is cumulative.
    */
-  cumulativeUsageFrom(message: SettledAssistantMessage): Usage {
+  perResponseUsageFrom(message: SettledAssistantMessage): Usage {
     return message.usage;
   }
 
   private record(event: HookInvocation<"after_response">): undefined {
     try {
-      const delta = this.tracker.delta(
-        streamKey(event.runId, event.lane),
-        this.cumulativeUsageFrom(event.message),
-      );
       const record: LedgerRecord = {
         ts: Date.now(),
         runId: event.runId,
@@ -185,15 +179,15 @@ export class Ledger {
         model: event.message.model,
         stopReason: event.message.stopReason,
         ...(event.status !== undefined && { status: event.status }),
-        delta,
+        usage: usageAmounts(this.perResponseUsageFrom(event.message)),
       };
       this.sink.write(record);
     } catch (error) {
       // The harness catches and discards whatever an after_response handler
       // throws, so a failed write would otherwise vanish and the run would
-      // report success over an incomplete ledger. The baseline stays advanced:
-      // the dropped turn's tokens are lost rather than folded into the next
-      // delta, and droppedRecords is what says so.
+      // report success over an incomplete ledger. A dropped record simply
+      // loses that turn's numbers -- nothing carries them forward -- and
+      // droppedRecords is what says so.
       this.drops += 1;
       if (this.drops === 1) {
         process.stderr.write(
@@ -203,10 +197,6 @@ export class Ledger {
     }
     return undefined;
   }
-}
-
-function streamKey(runId: string, lane: string): string {
-  return `${runId}:${lane}`;
 }
 
 function errorMessage(error: unknown): string {

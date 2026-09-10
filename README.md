@@ -75,17 +75,21 @@ The CLI writes `JSON.stringify` of whatever `run` returns to stdout, and exits
 One JSONL record per turn under `.ad-coder/ledger/<runId>.jsonl`:
 
 ```json
-{"ts":1757000000000,"runId":"...","lane":"main","role":"planner","step":"plan","provider":"anthropic","model":"claude-sonnet-4-5","stopReason":"stop","status":200,"delta":{"input":150,"output":40,"cacheRead":20,"cacheWrite":4,"totalTokens":214,"cost":{"input":0.006,"output":0.0085,"cacheRead":0.0003,"cacheWrite":0.0002,"total":0.015}}}
+{"ts":1757000000000,"runId":"...","lane":"main","role":"planner","step":"plan","provider":"anthropic","model":"claude-sonnet-4-5","stopReason":"stop","status":200,"usage":{"input":150,"output":40,"cacheRead":20,"cacheWrite":4,"totalTokens":214,"cost":{"input":0.006,"output":0.0085,"cacheRead":0.0003,"cacheWrite":0.0002,"total":0.015}}}
 ```
 
 - Records carry identifiers and numbers only -- never a prompt, a message body
   or a response header map.
-- Cost is always a subtraction of the provider's own reported `Usage.cost`,
+- Cost is the provider's own reported `Usage.cost`, copied field by field and
   never recomputed from tokens times a rate, so the ledger cannot drift from
   provider billing.
 - `cacheWrite1h` is a subset of `cacheWrite` and `reasoning` is a subset of
   `output`; adding either to its parent double-counts.
-- A cumulative counter that goes backwards yields clamped zeros plus
+- Each line carries that response's own numbers, not a difference against the
+  previous line, so the lines of a file sum to the session total the same way
+  pi-agent-core builds it. `diffUsage` and `UsageDeltaTracker` stay exported
+  for a genuinely cumulative source such as the `message_update` event, where a
+  reading that goes backwards yields clamped zeros plus
   `"anomaly":"non_monotonic"` rather than a negative cost.
 - The directory is forced to mode `0700` and each file to `0600`; a symlink or
   a hard-linked path at the record location is refused rather than written to.

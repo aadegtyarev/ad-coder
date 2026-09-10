@@ -123,8 +123,15 @@ interface Usage {
 в Pi даёт накопительный итог по сессии, без разреза по ролям.
 
 Осторожно с двойным счётом: `usage` в событии `message_update` **накопительный**,
-а не за ход. Дельту считает потребитель. `cacheWrite1h ⊂ cacheWrite` и
-`reasoning ⊂ output` — при суммировании это подмножества, не слагаемые.
+а не за ход — pi-ai пишет абсолютные значения в один и тот же мутабельный
+`output.usage` (`pi-ai/dist/api/anthropic-messages.js:409-417`, `:568-578`), а
+`harness/execution/assistant.js:38` реэмитит его поверхностной копией
+`{ ...event.partial }`, так что объект `usage` у всех апдейтов один. Дельту
+считает потребитель. Два события противопоставлены: `message_update` —
+накопительный внутри одного ответа, `after_response` — уже за один ответ
+(разбор ниже). Один и тот же `diffUsage` подходит первому и неверен для
+второго. `cacheWrite1h ⊂ cacheWrite` и `reasoning ⊂ output` — при суммировании
+это подмножества, не слагаемые.
 
 ## Контекст: бюджет уже параметризован
 
@@ -163,7 +170,7 @@ interface CompactionSettings { enabled: boolean; reserveTokens: number; keepRece
 
 - Phase 0 работает через `pi-agent-core`; `pi-coding-agent` в зависимостях не нужен.
 - `Role` — пресет над `AgentHarnessOptions`, свой агентный цикл не пишем.
-- `Ledger` — атрибуция `Usage` по роли и шагу, с дельтами; арифметику денег не трогаем.
+- `Ledger` — атрибуция `Usage` по роли и шагу; арифметику денег не трогаем.
 - Управление кэшем per-role достижимо без патчей апстрима. Произвольные
   брейкпоинты — только через `before_payload`, и в план это не берём.
 - Слой плагинов = обёртка над `HookRegistry`, а не своя шина событий.
@@ -241,12 +248,18 @@ deleted with the coding-agent ModelManager migration». Пример
 исправлен. Нужна атрибуция стоимости ретраев — придётся протягивать номер
 попытки хуком `before_request`; в Phase 0 не берём.
 
-**Не проверяемо без живого вызова:** кумулятивен ли `usage` в `after_response`.
-Предупреждение выше про кумулятивность относится к `message_update` — это другое
-событие. В `.d.ts` семантика не зафиксирована. Решение: дельта-арифметика
-остаётся чистой и тестируется синтетикой, а семантика прячется за один именованный
-метод (`cumulativeUsageFrom`), переключаемый одной строкой после первого живого
-прогона.
+**Проверено по установленному 0.85.1: `usage` в `after_response` — за один
+ответ, не накопительный.** Хук получает тот самый settled-месседж
+(`harness/execution/assistant.js:46-50` передаёт результат
+`stream.result()` в `afterResponse`), он же становится `committed`
+(`harness/runtime/drive/response.js:124`) и его `usage` идёт в persist-строку
+(`response.js:246`). А сессионные итоги складываются **сложением** этих строк:
+`addUsage(this.stats.usage, row.usage)`
+(`harness/session/in-memory-storage-state.js:67`). Сложение корректно только
+для per-response строк — при накопительных итог рос бы квадратично. Значит
+вычитать дельты на этом событии нельзя: это занижало бы каждый ход, кроме
+первого. Семантика по-прежнему заперта в одном именованном методе, теперь он
+называется `perResponseUsageFrom`.
 
 **Прочее, что стоит помнить** (из плана, проверено установкой):
 `moduleResolution` обязан быть `"bundler"` — `.d.ts` Pi реэкспортируют с явными
@@ -254,3 +267,57 @@ deleted with the coding-agent ModelManager migration». Пример
 v20.20.2 против `engines.node >=22.19.0` у `pi-agent-core` и `pi-telemetry` —
 всё гонять через bun, node-скрипты в `package.json` не добавлять. Пины на
 `0.85.1` точные, без каретки: Pi до 1.0 и движется быстро.
+
+## DeepSeek как провайдер: что работает, а что нет
+
+Проверено пробой по каталогу pi-ai 0.85.1 (`getBuiltinModels("deepseek")`).
+
+Провайдер `deepseek`, три модели, все с окном **1 000 000** токенов, api
+`openai-completions`:
+
+| id | ctx | maxTokens | reasoning |
+|---|---|---|---|
+| `deepseek-v4-flash` | 1M | — | — |
+| `deepseek-v4-flash-vision-exp` | 1M | — | — |
+| `deepseek-v4-pro` | 1M | 384 000 | да |
+
+Ключ читается из **`DEEPSEEK_API_KEY`** (`pi-ai/dist/env-api-keys.js:80`).
+
+`compat` у `deepseek-v4-pro`: `supportsStore: false`,
+`supportsDeveloperRole: false`, `maxTokensField: "max_tokens"`,
+`requiresReasoningContentOnAssistantMessages: true`,
+`thinkingFormat: "deepseek"`.
+
+**Статистика и леджер работают полностью.** Цены есть в каталоге:
+`{ input: 0.435, output: 0.87, cacheRead: 0.003625, cacheWrite: 0 }` — значит
+`Usage.cost` заполняется, так что леджеру есть что копировать. Чтение кэша
+провайдер тоже репортит: адаптер явно разбирает `prompt_cache_hit_tokens`
+(`pi-ai/dist/api/openai-completions.js:1180`, комментарий на :1184 называет
+DeepSeek прямо) и кладёт его в `usage.cacheRead`. Запись кэша стоит **0** —
+агрессивное кэширование не имеет штрафа за write.
+
+**А вот `Role.cacheRetention` на DeepSeek не делает ничего.**
+`openai-completions.js:808` отсекает путь маркеров:
+
+```js
+if (compat.cacheControlFormat !== "anthropic" || cacheRetention === "none") { ... }
+```
+
+У моделей DeepSeek `cacheControlFormat` не выставлен, поэтому явные
+`cache_control`-маркеры не отправляются вообще. Кэш при этом работает —
+у DeepSeek он автоматический префиксный, — но управлять им из ad-coder нельзя.
+
+Следствия, которые надо держать в голове:
+
+- Ручка `cacheRetention` кусается только у провайдеров с
+  `cacheControlFormat: "anthropic"`. Это не делает её бесполезной — это делает
+  её **провайдер-зависимой**, и ad-coder должен уметь сказать, применима ли она
+  к выбранной модели, а не молча её игнорировать. Кандидат в Phase 2:
+  `defineRole` предупреждает, когда роль задаёт `cacheRetention`, а модель
+  формат не поддерживает.
+- Проверять фичи управления кэшем вживую придётся на Anthropic-совместимом
+  провайдере. На DeepSeek проверяется только учёт: `cacheRead`, стоимость, дельты.
+- Окно 1M меняет характер работы с бюджетом: давление контекста тут не про
+  «не влезет», а про «сколько ты за это платишь». Pre-flight-отказ Phase 1
+  всё равно нужен — он ловит роль с бюджетом больше окна и роль, чей промт
+  не оставил места под ответ.
