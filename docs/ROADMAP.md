@@ -124,6 +124,23 @@ module-locality from the touched-file set to decide what can parallelize.
   carries the `lane` dimension for per-lane cost attribution. Combines with
   profiles (different model per lane). Bounded by the module-parallelism
   principle: only file-disjoint work parallelizes cleanly.
+- **Proxy / split-tunnel** — proxy traffic to remote model APIs while keeping
+  local/LAN model servers direct. pi-ai supports this first-class:
+  `ProviderRequestOptions.fetch` (per-request custom fetch) and `.env`
+  (provider-scoped, takes precedence over process.env "for proxy variables",
+  per its docstring); Bun honors HTTPS_PROXY/NO_PROXY natively (Node/undici does
+  not without a ProxyAgent). KEY DESIGN: the proxy-bypass decision is the same
+  `isLocalHost(baseUrl)` predicate already in capabilities.ts — NOT a NO_PROXY
+  string (which can't do CIDR and is weakest exactly on the 10./192.168. LAN
+  ranges isLocalHost already handles structurally). Note it is isLocalHost, NOT
+  costMode==='local' (the latter also requires zero cost; a paid vLLM on the LAN
+  must still bypass). So: EXTRACT isLocalHost into a shared exported predicate
+  used by both costMode classification and proxy routing. ProxyConfig { url,
+  bypass?: (model)=>boolean } with bypass defaulting to isLocalHost(baseUrl); the
+  runner injects fetch/env per model. Composes with the runner (which owns
+  request construction) — build it there or as a sibling. Limits: don't mix
+  env-based and injected-fetch proxying; `fetch` injection does not affect
+  WebSocket transports.
 
 ## Open backlog (mechanical)
 
