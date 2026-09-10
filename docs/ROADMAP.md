@@ -57,19 +57,36 @@ module-locality from the touched-file set to decide what can parallelize.
   cacheRetention is inert on its model. The empirical declared-vs-observed layer
   from the first live response is deferred.
 
-## Next (planned / in flight)
-
-### Quality gates — `src/gates/`
-A QualityGate declared as config { name, kind: format|lint|typecheck|size,
-command (argv), autofix? }. A runner that executes gates on produced files —
-autofix-first (deterministic, free), then check, fail-loud with structured
-results fed back as the next turn's input. Size gate is in-process
-(maxLinesPerFile). Language/provider-agnostic via config (gofmt vs prettier vs
-tsc). Deterministic gates run BEFORE spending an LLM review round — free tokens
-before expensive ones. ad-coder itself currently has only typecheck+test and
-needs this (dogfooding).
+- **Quality gates** — DONE (`b94b8e9`). `src/gates/`: a QualityGate declared as
+  config { name, kind: format|lint|typecheck|size, command, autofix?,
+  maxLinesPerFile? }; a GateRunner with an injected CommandExecutor seam
+  (testable with a fake, no shelling out), autofix-first-then-check, in-process
+  size gate, bounded fail-loud GateReport, argv-only (no shell string). Not yet
+  wired into ad-coder's own build — a deliberate follow-up.
 
 ## After that (designed, ordered)
+
+- **Wire ad-coder's own gates** — the gates module exists but ad-coder still runs
+  only typecheck+test on itself. Add a size gate + (when a formatter/linter is
+  chosen) format/lint gates over the repo. Dogfooding the gates-over-prompts
+  principle. Small.
+- **Doc taxonomy** — organize docs by enforcement role, not genre: contract
+  (addressable by trigger, injected into the role that touches its area) /
+  decision record (immutable) / work item (backlog) / orientation (README) /
+  executable process (a gate/test, never prose). Most "docs" should be a
+  contract-with-a-trigger, an immutable decision, or — if enforceable — a gate,
+  not freeform prose. Trust perimeters are contracts. ad-coder ships this as an
+  opinionated default so users don't reinvent docs/ chaos.
+- **Auditor role + refactor executor** — recognizing decomposition needs vs doing
+  them safely, two tools. Auditor: a cold-read role triggered by a drift signal
+  (size band, churn, drift-log-reaches-8) that surfaces decomposition candidates
+  WITH EVIDENCE into the backlog, never acts. The size gate is the crude floor;
+  the auditor is the judgment layer. Refactor executor: test-pinned —
+  characterization tests first, refactor under green in small behavior-preserving
+  steps, "did a test have to change?" is a visible justified event (extends the
+  revert-and-restore proof), and LSP/AST moves (rename/extract, safe by
+  construction) preferred over LLM regeneration. Large decompositions reshape the
+  shared barrel/multiple modules, so they are NOT parallel-safe.
 
 - **Profiles** — on top of the matrix. A profile is intent → matrix → model:
   `{ tier, maxOutput, cacheRetention }` per role, named intent (`cheap`/`max`)
