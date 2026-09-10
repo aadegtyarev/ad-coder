@@ -117,6 +117,51 @@ One JSONL record per turn under `.ad-coder/ledger/<runId>.jsonl`:
 file accumulates per run. Delete or archive it on whatever schedule your
 environment needs.
 
+## The capability matrix
+
+`deriveCapabilities(model)` turns a pi-ai `Model` into a small descriptor you
+can decide against, as a pure function over a hand-buildable literal -- no
+network, no keys:
+
+```ts
+import { deriveCapabilities, cacheEfficiency, breakEvenReads, reconcileRoleWithModel } from "ad-coder";
+
+const caps = deriveCapabilities(model);
+// { costMode, cacheControllable, contextWindow, cacheReadUnitCost, cacheWriteUnitCost, outInRatio }
+```
+
+- **`costMode` is three-way.** `per-token` when any cost field is nonzero (this
+  is the reliable one -- it reads price, not host). Otherwise `local` when the
+  baseUrl host is loopback/private (`localhost`, `127.0.0.1`, `::1`, `0.0.0.0`,
+  `10.*`, `192.168.*`, `172.16-31.*`, `*.local`) or the provider looks local
+  (`/lmstudio|vllm|local/i`); else `prepaid` (a plan whose catalog cost is all
+  zero, so the ledger reads $0 against a real quota spend). The local/prepaid
+  split is a best-effort, overridable heuristic; a baseUrl that will not parse
+  is treated as non-local.
+- **`cacheControllable`** is whether the model actually honors
+  `Role.cacheRetention`: `model.api === "anthropic-messages" ||
+  model.compat.cacheControlFormat === "anthropic"`. The predicate is
+  api-OR-format on purpose -- the format alone is a false negative on native
+  Anthropic, which honors cacheRetention with no `cacheControlFormat` field set.
+
+Two metrics, computed from what the ledger already records:
+
+- **`cacheEfficiency(usage) = cacheRead / (cacheRead + input)`** -- the fraction
+  of read tokens served from cache; a drop flags a broken prefix. Both-zero
+  yields 0.
+- **`breakEvenReads(model)`** -- how many times a cached prefix must be re-read
+  before the cache write pays for itself, from unit prices. Returns the numeric
+  threshold, or `"always"` when writes are free (`cacheWrite === 0`), or
+  `"degenerate"` when `input <= cacheRead`.
+
+`reconcileRoleWithModel(role, model)` returns a `ReconcileWarning[]` (it never
+throws): one `inert-cache-retention` warning when a role sets a non-`none`
+`cacheRetention` on a model that cannot honor it, so the setting fails loud
+instead of being silently ignored.
+
+The empirical declared-vs-observed layer -- reconciling this static matrix
+against what the first live response actually reports -- is a planned follow-up.
+
 ## Quality gates
 
 Gates over prompts: a deterministic, mechanical check run BEFORE an LLM review

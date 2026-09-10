@@ -43,22 +43,21 @@ module-locality from the touched-file set to decide what can parallelize.
   ContextCompactor via transform_context with ad-coder's own prompt,
   assertTurnFitsBudget pre-flight (a function, not a hook — a hook throw cannot
   refuse a turn). Pi compaction stays disabled.
+- **Capability matrix** — DONE. `src/capabilities/capabilities.ts`:
+  `deriveCapabilities(model)` yields a ModelCapabilities descriptor — cost mode
+  (per-token when any cost field is nonzero; else local when the baseUrl host is
+  loopback/private or the provider matches /lmstudio|vllm|local/i; else
+  prepaid), `cacheControllable`, context window, cache read/write unit costs,
+  out/in ratio. The corrected controllability predicate is `model.api ===
+  "anthropic-messages" || model.compat.cacheControlFormat === "anthropic"` — NOT
+  the format alone, which is a false negative on native Anthropic. Two pure
+  metrics: `cacheEfficiency = cacheRead / (cacheRead + input)`; `breakEvenReads`
+  (fable-5 = 1.4, `"always"` when cacheWrite is 0, `"degenerate"` when input <=
+  cacheRead). `reconcileRoleWithModel` WARNS (never throws) when a role's
+  cacheRetention is inert on its model. The empirical declared-vs-observed layer
+  from the first live response is deferred.
 
 ## Next (planned / in flight)
-
-Two independent modules, safe to build in parallel per the principle above:
-
-### Capability matrix — `src/capabilities/`
-Derive a ModelCapabilities descriptor from a pi-ai Model: cost mode
-(per-token / prepaid / local, from whether cost fields are zero), whether
-`cacheRetention` actually does anything on this model
-(`cacheControlFormat === "anthropic"`), context window, cache read/write unit
-costs, out/in ratio. Two pure metrics: `cacheEfficiency = cacheRead /
-(cacheRead + input)`; `breakEvenReads = cacheWrite / (input - cacheRead)`. A
-role/model reconciliation that WARNS when a role's cacheRetention is inert on
-its model (the matrix must refuse/warn, never stay silent). Later empirical
-layer reconciles declared-vs-observed from the first live response (noted, out
-of scope for the first cut).
 
 ### Quality gates — `src/gates/`
 A QualityGate declared as config { name, kind: format|lint|typecheck|size,

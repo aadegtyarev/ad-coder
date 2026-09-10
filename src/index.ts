@@ -1,3 +1,15 @@
+export {
+  breakEvenReads,
+  cacheEfficiency,
+  deriveCapabilities,
+  reconcileRoleWithModel,
+} from "./capabilities/capabilities";
+export type {
+  CostMode,
+  ModelCapabilities,
+  ReconcileCode,
+  ReconcileWarning,
+} from "./capabilities/capabilities";
 export { defineRole, resolveRoleModel, toHarnessOptions } from "./role";
 export type { Role, RoleRunDeps } from "./role";
 export { ContextBudgetError } from "./context/budget";
