@@ -15,9 +15,13 @@ a project's `.ad-coder/prompts/<name>.md` overrides the shipped built-in, read
 verbatim. A ledger attributes real token cost — and which tools each response
 requested — to each role, step and run.
 The pipeline sequences roles with structured tool-call handoffs (the reviewer
-submits a verdict; the planner a complexity and security surface). Built on Bun +
-TypeScript, proven with no network (a faux provider) and demonstrated live on
-DeepSeek — a full feature for a fraction of a cent.
+submits a verdict; the planner a complexity and security surface). For chat-style
+work there is a multi-turn substrate — `startConversation(config)` builds one
+harness once and re-drives it turn after turn, keeping history on the durable
+session branch with a per-turn ledger row and the compactor for long chats;
+`runRole` stays the single-turn primitive. Built on Bun + TypeScript, proven with
+no network (a faux provider) and demonstrated live on DeepSeek — a full feature
+for a fraction of a cent.
 
 > Status: the core harness works end to end. The conversational orchestrator, a
 > TUI, model/provider profiles, and more are on the [roadmap](docs/ROADMAP.md).

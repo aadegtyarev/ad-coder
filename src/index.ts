@@ -38,6 +38,14 @@ export { runRole } from "./runner/runner";
 export type { RunRoleParams, RunRoleResult } from "./runner/runner";
 export { createRoleRunner } from "./runner/role-runner";
 export type { RoleRunner, RoleRunnerConfig, RunRoleOptions } from "./runner/role-runner";
+export { startConversation } from "./conversation/conversation";
+export type {
+  ConversationConfig,
+  ConversationSession,
+  ConversationStepOptions,
+  ConversationToolCall,
+  ConversationTurnResult,
+} from "./conversation/conversation";
 export { isWorkflowModule } from "./workflow";
 export type { WorkflowContext, WorkflowModule } from "./workflow";
 export { runPipeline } from "./orchestration/pipeline";

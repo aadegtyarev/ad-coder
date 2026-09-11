@@ -53,6 +53,18 @@ network (pi-ai's fauxProvider) and demonstrated live on DeepSeek.
   **required, separate `targetDir`** (harness dir ≠ target dir; credentials only
   from the harness environment, never the target's). Custom tools are injectable
   via `tools?` (`defineTool` / `Tool`).
+- **Conversation** — `startConversation(config)` (`src/conversation/`): the
+  multi-turn substrate the conversational orchestrator will sit on. It builds ONE
+  harness over ONE session, acquires the lane and attaches the compactor ONCE,
+  and returns a `ConversationSession` whose `step()` re-drives that same
+  `lane.prompt` seam turn after turn — history is retained on the durable Session
+  branch tip, never replayed. Each turn gets a fresh per-turn `Ledger` sharing
+  the one sink and attaches/unsubscribes its ledger + `tool_end` listeners inside
+  a `finally` (so N turns emit exactly N ledger rows, never duplicated), narrows
+  the settled record to `{status, assistantText, toolCalls, droppedRecords}`, and
+  never closes the shared sink until `close()`. `runRole` stays the single-turn
+  primitive; this reuses its seams (`runner.ts`/`pipeline.ts` untouched). The
+  compactor is the payoff for long chats.
 - **Orchestration** — `runPipeline(config)`: an optional planner → an optional
   Security phase → a coder ⇄ reviewer loop to `maxRounds`. The reviewer submits a
   structured verdict and the planner a structured complexity + security surface

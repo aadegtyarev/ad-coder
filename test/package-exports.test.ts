@@ -29,6 +29,7 @@ import {
   resolveTargetDir,
   runPipeline,
   runRole,
+  startConversation,
   RunnerError,
   SUBMIT_PLAN_TOOL_NAME,
   SUBMIT_VERDICT_TOOL_NAME,
@@ -40,6 +41,11 @@ import type {
   ApiKind,
   Complexity,
   ContextBudget,
+  ConversationConfig,
+  ConversationSession,
+  ConversationStepOptions,
+  ConversationToolCall,
+  ConversationTurnResult,
   CredentialSource,
   DefaultProfileModels,
   GateReport,
@@ -102,6 +108,7 @@ test("the package is importable by its published name", () => {
   expect(typeof SUMMARIZATION_PROMPT).toBe("string");
   expect(typeof GateRunner).toBe("function");
   expect(typeof runRole).toBe("function");
+  expect(typeof startConversation).toBe("function");
   expect(typeof createRoleRunner).toBe("function");
   expect(typeof defineTool).toBe("function");
   expect(typeof RunnerError).toBe("function");
@@ -134,6 +141,16 @@ test("the package is importable by its published name", () => {
   const _report: GateReport | undefined = undefined;
   const _params: RunRoleParams | undefined = undefined;
   const _result: RunRoleResult | undefined = undefined;
+  const _convConfig: ConversationConfig | undefined = undefined;
+  const _convSession: ConversationSession | undefined = undefined;
+  const _convStepOpts: ConversationStepOptions | undefined = undefined;
+  const _convToolCall: ConversationToolCall | undefined = undefined;
+  const _convTurnResult: ConversationTurnResult | undefined = undefined;
+  expect(_convConfig).toBeUndefined();
+  expect(_convSession).toBeUndefined();
+  expect(_convStepOpts).toBeUndefined();
+  expect(_convToolCall).toBeUndefined();
+  expect(_convTurnResult).toBeUndefined();
   const _opts: RunRoleOptions | undefined = undefined;
   const _runner: RoleRunner | undefined = undefined;
   const _capture: VerdictCapture | undefined = undefined;
