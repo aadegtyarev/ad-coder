@@ -10,8 +10,8 @@ import type {
 } from "@earendil-works/pi-agent-core";
 import type { Usage } from "@earendil-works/pi-ai";
 import { fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
-import { FileLedgerSink, Ledger, LEDGER_BASE_DIR, MemoryLedgerSink } from "../src/ledger/ledger";
 import type { LedgerSink } from "../src/ledger/ledger";
+import { FileLedgerSink, LEDGER_BASE_DIR, Ledger, MemoryLedgerSink } from "../src/ledger/ledger";
 import type { LedgerRecord, UsageAmounts } from "../src/ledger/types";
 
 const scratchDirs: string[] = [];
@@ -22,7 +22,10 @@ afterAll(() => {
 
 /** A fresh subdirectory of the ledger base, so permission tests cannot collide. */
 function scratchDir(label: string): string {
-  const dir = path.resolve(LEDGER_BASE_DIR, `test-${label}-${Math.random().toString(36).slice(2, 10)}`);
+  const dir = path.resolve(
+    LEDGER_BASE_DIR,
+    `test-${label}-${Math.random().toString(36).slice(2, 10)}`,
+  );
   scratchDirs.push(dir);
   return dir;
 }
@@ -114,9 +117,9 @@ test("runId is rejected unless it is safe as a file name", () => {
 });
 
 test("an explicit filePath outside the ledger base directory is rejected", () => {
-  expect(() => new Ledger({ runId: "run1", role: "r", step: "s", filePath: "/tmp/evil.jsonl" })).toThrow(
-    /must resolve inside/,
-  );
+  expect(
+    () => new Ledger({ runId: "run1", role: "r", step: "s", filePath: "/tmp/evil.jsonl" }),
+  ).toThrow(/must resolve inside/);
   expect(
     () =>
       new Ledger({
@@ -187,7 +190,9 @@ test("a response's tool calls are recorded as name-to-count, arguments excluded"
   if (handler === undefined) throw new Error("handler was not registered");
 
   await handler(
-    event(usage(100, 110, 0.01), 200, [fauxToolCall("bash", { command: "rm -rf /secret-payload" })]),
+    event(usage(100, 110, 0.01), 200, [
+      fauxToolCall("bash", { command: "rm -rf /secret-payload" }),
+    ]),
     FAKE_CONTEXT,
   );
 

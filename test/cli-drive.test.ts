@@ -11,9 +11,15 @@ import {
   fauxToolCall,
 } from "@earendil-works/pi-ai";
 import type { FauxProviderHandle, FauxResponseStep } from "@earendil-works/pi-ai/providers/faux";
+import {
+  assertTransitionOffered,
+  DriveError,
+  driveWorkflow,
+  silentNoopWarning,
+} from "../src/cli/drive";
 import { MemoryLedgerSink } from "../src/ledger/ledger";
-import { createWorkflowSession } from "../src/orchestration/session";
 import { runPipeline } from "../src/orchestration/pipeline";
+import { createWorkflowSession } from "../src/orchestration/session";
 import type {
   AvailableTransition,
   PipelineConfig,
@@ -21,14 +27,8 @@ import type {
   Verdict,
 } from "../src/orchestration/types";
 import { SUBMIT_VERDICT_TOOL_NAME } from "../src/orchestration/verdict";
-import { defineRole } from "../src/role";
 import type { Role } from "../src/role";
-import {
-  assertTransitionOffered,
-  DriveError,
-  driveWorkflow,
-  silentNoopWarning,
-} from "../src/cli/drive";
+import { defineRole } from "../src/role";
 
 const CONTEXT_WINDOW = 200_000;
 const BUDGET = { maxTokens: 100_000, reserveTokens: 10_000, keepRecentTokens: 20_000 } as const;
@@ -43,7 +43,10 @@ interface Fixture {
 
 /** A fresh faux provider + models + temp targetDir; one queue serves every role. */
 function fixture(): Fixture {
-  const faux = fauxProvider({ provider: "faux", models: [{ id: "faux-1", contextWindow: CONTEXT_WINDOW }] });
+  const faux = fauxProvider({
+    provider: "faux",
+    models: [{ id: "faux-1", contextWindow: CONTEXT_WINDOW }],
+  });
   const models = createModels();
   models.setProvider(faux.provider);
   const model = faux.getModel() as Model<Api>;
@@ -96,7 +99,11 @@ class Capture extends Writable {
 }
 
 /** Build a PipelineConfig over the fixture with a shared readable ledger sink. */
-function config(fx: Fixture, roles: PipelineConfig["roles"], ledgerSink: MemoryLedgerSink): PipelineConfig {
+function config(
+  fx: Fixture,
+  roles: PipelineConfig["roles"],
+  ledgerSink: MemoryLedgerSink,
+): PipelineConfig {
   return {
     targetDir: fx.targetDir,
     models: fx.models,
@@ -244,7 +251,12 @@ test("a transition not offered by the step is rejected at the driver boundary", 
     { kind: "advance", isDefault: true, toPhase: "review", toRound: 1 },
     { kind: "stop", isDefault: false, toPhase: "done", toRound: 1 },
   ];
-  const forged: AvailableTransition = { kind: "rework", isDefault: false, toPhase: "code", toRound: 2 };
+  const forged: AvailableTransition = {
+    kind: "rework",
+    isDefault: false,
+    toPhase: "code",
+    toRound: 2,
+  };
 
   let caught: unknown;
   try {
@@ -269,7 +281,12 @@ test("driveWorkflow rejects a driver that returns a forged transition", async ()
   // A scripted input naming a kind the code step never offers ("review" is not a
   // transition kind) re-prompts rather than being accepted; feed EOF after so the
   // read cannot be satisfied. Instead assert the boundary directly via the guard.
-  const forged: AvailableTransition = { kind: "advance", isDefault: true, toPhase: "done", toRound: 9 };
+  const forged: AvailableTransition = {
+    kind: "advance",
+    isDefault: true,
+    toPhase: "done",
+    toRound: 9,
+  };
   const offered = (await session.step(session.initialState())).transitions;
   expect(() => assertTransitionOffered(forged, offered)).toThrow(DriveError);
 });

@@ -1,14 +1,13 @@
-import {
-  BACKGROUND_CONTEXT,
-  MemorySessionRepo,
-} from "@earendil-works/pi-agent-core";
 import type { Context, Session } from "@earendil-works/pi-agent-core";
+import { BACKGROUND_CONTEXT, MemorySessionRepo } from "@earendil-works/pi-agent-core";
 import type { Api, Model, TextContent } from "@earendil-works/pi-ai";
 import { resolveProfile } from "../profiles/resolve";
 import type { ProfileRole } from "../profiles/types";
 import { parseProfile } from "../profiles/validate";
 import { createRoleRunner } from "../runner/role-runner";
 import type { Tool } from "../runner/tool";
+import type { PlanCapture } from "./plan";
+import { buildSubmitPlanTool, formatPlannerInstruction } from "./plan";
 import type {
   AvailableTransition,
   Complexity,
@@ -21,10 +20,8 @@ import type {
   WorkflowState,
 } from "./types";
 import { OrchestrationError } from "./types";
-import { buildSubmitVerdictTool, formatReviewerInstruction } from "./verdict";
 import type { VerdictCapture } from "./verdict";
-import { buildSubmitPlanTool, formatPlannerInstruction } from "./plan";
-import type { PlanCapture } from "./plan";
+import { buildSubmitVerdictTool, formatReviewerInstruction } from "./verdict";
 
 /**
  * A stepped workflow session bound to one `PipelineConfig`.
@@ -108,8 +105,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     // the fallback for every later role when no complexity is ever submitted.
     // routing.defaultComplexity wins (validated, authoritative in the routing
     // path); a routing-less caller may still name one via defaults.
-    preComplexity:
-      routing?.defaultComplexity ?? config.defaults?.defaultComplexity ?? "medium",
+    preComplexity: routing?.defaultComplexity ?? config.defaults?.defaultComplexity ?? "medium",
   };
 
   // The ONE place a role's model is chosen. Routing absent -> the spec's own
@@ -273,7 +269,10 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     // every round (that would double-count them).
     const context =
       round === 1
-        ? composeCoderPrompt(config.task, appendSecurityNotes(state.planSummary, state.securityNotes))
+        ? composeCoderPrompt(
+            config.task,
+            appendSecurityNotes(state.planSummary, state.securityNotes),
+          )
         : composeCoderPrompt(config.task, formatIssues(previousVerdict?.issues ?? []));
     const model = pickModel("coder", config.roles.coder, state.effective);
     const text = await runTurn(config.roles.coder, model, context, `code:${round}`, runId);
@@ -317,11 +316,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       throw capture.error;
     }
     if (capture.verdict === undefined) {
-      throw new OrchestrationError(
-        "missing_verdict",
-        runId,
-        "reviewer did not submit a verdict",
-      );
+      throw new OrchestrationError("missing_verdict", runId, "reviewer did not submit a verdict");
     }
     const verdict = capture.verdict;
     const nextState: WorkflowState = {
@@ -392,10 +387,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
  * review -> true; an exhausted-rounds or early stop -> false), reproducing the
  * old `runPipeline` return exactly.
  */
-export function applyTransition(
-  state: WorkflowState,
-  chosen: AvailableTransition,
-): WorkflowState {
+export function applyTransition(state: WorkflowState, chosen: AvailableTransition): WorkflowState {
   if (chosen.toPhase === "done") {
     const lastVerdict = state.verdicts[state.verdicts.length - 1];
     return {
@@ -524,10 +516,7 @@ function formatIssues(issues: VerdictIssue[]): string {
  * thinking and tool-call blocks). Returns `''` when no assistant text exists.
  */
 async function extractFinalText(session: Session, context: Context): Promise<string> {
-  const entries = await session.findEntries(
-    { type: "message", order: "desc", limit: 20 },
-    context,
-  );
+  const entries = await session.findEntries({ type: "message", order: "desc", limit: 20 }, context);
   for (const entry of entries) {
     if (entry.type !== "message") {
       continue;

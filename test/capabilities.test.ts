@@ -1,12 +1,12 @@
 import { expect, test } from "bun:test";
 import type { Api, Model, Usage } from "@earendil-works/pi-ai";
-import type { Role } from "../src/role";
 import {
   breakEvenReads,
   cacheEfficiency,
   deriveCapabilities,
   reconcileRoleWithModel,
 } from "../src/capabilities/capabilities";
+import type { Role } from "../src/role";
 
 /** A base Model literal; each case spread-overrides only the fields it exercises. */
 function model(overrides: Partial<Model<Api>> = {}): Model<Api> {
@@ -51,7 +51,9 @@ function role(overrides: Partial<Role> = {}): Role {
 }
 
 test("costMode: per-token when any cost field is nonzero", () => {
-  const caps = deriveCapabilities(model({ cost: { input: 10, output: 30, cacheRead: 1, cacheWrite: 12.5 } }));
+  const caps = deriveCapabilities(
+    model({ cost: { input: 10, output: 30, cacheRead: 1, cacheWrite: 12.5 } }),
+  );
   expect(caps.costMode).toBe("per-token");
 });
 
@@ -67,18 +69,26 @@ test("costMode: local via IPv6 loopback in bracket form", () => {
 });
 
 test("costMode: local via private 172.16-31 range", () => {
-  expect(deriveCapabilities(model({ baseUrl: "http://172.20.0.5:8000/v1" })).costMode).toBe("local");
+  expect(deriveCapabilities(model({ baseUrl: "http://172.20.0.5:8000/v1" })).costMode).toBe(
+    "local",
+  );
   // Outside 16-31 is NOT private and stays prepaid.
-  expect(deriveCapabilities(model({ baseUrl: "http://172.40.0.5:8000/v1" })).costMode).toBe("prepaid");
+  expect(deriveCapabilities(model({ baseUrl: "http://172.40.0.5:8000/v1" })).costMode).toBe(
+    "prepaid",
+  );
 });
 
 test("costMode: local via provider name match", () => {
-  const caps = deriveCapabilities(model({ provider: "lmstudio", baseUrl: "https://api.acme.example/v1" }));
+  const caps = deriveCapabilities(
+    model({ provider: "lmstudio", baseUrl: "https://api.acme.example/v1" }),
+  );
   expect(caps.costMode).toBe("local");
 });
 
 test("costMode: prepaid when all-zero cost and a non-local public baseUrl", () => {
-  const caps = deriveCapabilities(model({ baseUrl: "https://dashscope.aliyuncs.com/v1", provider: "qwen" }));
+  const caps = deriveCapabilities(
+    model({ baseUrl: "https://dashscope.aliyuncs.com/v1", provider: "qwen" }),
+  );
   expect(caps.costMode).toBe("prepaid");
 });
 
@@ -105,7 +115,9 @@ test("cacheControllable: false for openai-completions with no format (deepseek-l
 });
 
 test("descriptor: outInRatio and unit costs", () => {
-  const caps = deriveCapabilities(model({ cost: { input: 10, output: 30, cacheRead: 1, cacheWrite: 12.5 } }));
+  const caps = deriveCapabilities(
+    model({ cost: { input: 10, output: 30, cacheRead: 1, cacheWrite: 12.5 } }),
+  );
   expect(caps.outInRatio).toBe(3);
   expect(caps.cacheReadUnitCost).toBe(1);
   expect(caps.cacheWriteUnitCost).toBe(12.5);
@@ -122,16 +134,22 @@ test("cacheEfficiency: both-zero guard returns 0", () => {
 });
 
 test("breakEvenReads: fable-5 case is ~1.4", () => {
-  const result = breakEvenReads(model({ cost: { input: 10, output: 30, cacheRead: 1, cacheWrite: 12.5 } }));
+  const result = breakEvenReads(
+    model({ cost: { input: 10, output: 30, cacheRead: 1, cacheWrite: 12.5 } }),
+  );
   expect(result).toBeCloseTo(1.4, 1);
 });
 
 test("breakEvenReads: 'always' when cacheWrite is 0", () => {
-  expect(breakEvenReads(model({ cost: { input: 10, output: 30, cacheRead: 1, cacheWrite: 0 } }))).toBe("always");
+  expect(
+    breakEvenReads(model({ cost: { input: 10, output: 30, cacheRead: 1, cacheWrite: 0 } })),
+  ).toBe("always");
 });
 
 test("breakEvenReads: 'degenerate' when input <= cacheRead", () => {
-  expect(breakEvenReads(model({ cost: { input: 1, output: 30, cacheRead: 1, cacheWrite: 5 } }))).toBe("degenerate");
+  expect(
+    breakEvenReads(model({ cost: { input: 1, output: 30, cacheRead: 1, cacheWrite: 5 } })),
+  ).toBe("degenerate");
 });
 
 test("reconcileRoleWithModel: warns for cacheRetention on a non-controllable model", () => {

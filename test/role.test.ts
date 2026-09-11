@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import type { Session } from "@earendil-works/pi-agent-core";
-import { defineRole, resolveRoleModel, toHarnessOptions } from "../src/role";
 import type { Role } from "../src/role";
+import { defineRole, resolveRoleModel, toHarnessOptions } from "../src/role";
 
 const valid: Role = {
   name: "planner",
@@ -41,16 +41,28 @@ test("defineRole rejects a malformed or over-window context budget", () => {
   const withBudget = (budget: Role["contextBudget"]) => ({ ...valid, contextBudget: budget });
 
   expect(() =>
-    defineRole(withBudget({ maxTokens: 1.5, reserveTokens: 20_000, keepRecentTokens: 50_000 }), model),
+    defineRole(
+      withBudget({ maxTokens: 1.5, reserveTokens: 20_000, keepRecentTokens: 50_000 }),
+      model,
+    ),
   ).toThrow(/maxTokens must be a positive integer/);
   expect(() =>
-    defineRole(withBudget({ maxTokens: 0, reserveTokens: 20_000, keepRecentTokens: 50_000 }), model),
+    defineRole(
+      withBudget({ maxTokens: 0, reserveTokens: 20_000, keepRecentTokens: 50_000 }),
+      model,
+    ),
   ).toThrow(/maxTokens must be a positive integer/);
   expect(() =>
-    defineRole(withBudget({ maxTokens: 200_000, reserveTokens: -1, keepRecentTokens: 50_000 }), model),
+    defineRole(
+      withBudget({ maxTokens: 200_000, reserveTokens: -1, keepRecentTokens: 50_000 }),
+      model,
+    ),
   ).toThrow(/reserveTokens must be a positive integer/);
   expect(() =>
-    defineRole(withBudget({ maxTokens: 200_000, reserveTokens: 20_000, keepRecentTokens: 0 }), model),
+    defineRole(
+      withBudget({ maxTokens: 200_000, reserveTokens: 20_000, keepRecentTokens: 0 }),
+      model,
+    ),
   ).toThrow(/keepRecentTokens must be a positive integer/);
 
   // maxTokens over the model's window: the message names BOTH numbers.
@@ -115,6 +127,10 @@ test("toHarnessOptions copies the allow-list rather than aliasing the role's arr
 });
 
 test("resolveRoleModel throws for a model that is not in the built-in catalog", () => {
-  expect(() => resolveRoleModel({ ...valid, modelId: "no-such-model" })).toThrow(/no built-in model/);
-  expect(() => resolveRoleModel({ ...valid, provider: "no-such-provider" })).toThrow(/no built-in model/);
+  expect(() => resolveRoleModel({ ...valid, modelId: "no-such-model" })).toThrow(
+    /no built-in model/,
+  );
+  expect(() => resolveRoleModel({ ...valid, provider: "no-such-provider" })).toThrow(
+    /no built-in model/,
+  );
 });

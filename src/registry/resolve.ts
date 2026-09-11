@@ -1,15 +1,17 @@
-import {
-  createModels,
-  createProvider,
-  envApiKeyAuth,
-} from "@earendil-works/pi-ai";
-import type { Api, Model, Models } from "@earendil-works/pi-ai";
-import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
+import type { Api, Model } from "@earendil-works/pi-ai";
+import { createModels, createProvider, envApiKeyAuth } from "@earendil-works/pi-ai";
 import { anthropicMessagesApi } from "@earendil-works/pi-ai/api/anthropic-messages.lazy";
+import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
 import { RegistryError } from "./errors";
+import type {
+  ApiKind,
+  ModelConfig,
+  ProviderConfig,
+  RegistryConfig,
+  ResolvedRegistry,
+} from "./types";
 import { parseRegistryConfig } from "./validate";
-import type { ApiKind, ModelConfig, ProviderConfig, RegistryConfig, ResolvedRegistry } from "./types";
 
 /**
  * How the resolver reads credentials from the harness environment. Injectable so
@@ -49,7 +51,10 @@ type ProviderStreams = ReturnType<typeof openAICompletionsApi>;
  * codex -- acceptable because codex is the only shipped oauth preset and its
  * baseUrl is fixed, but noted so a future second oauth provider adds a binding.
  */
-export function resolveRegistry(config: RegistryConfig, options?: ResolveOptions): ResolvedRegistry {
+export function resolveRegistry(
+  config: RegistryConfig,
+  options?: ResolveOptions,
+): ResolvedRegistry {
   // ALWAYS re-validate: never trust a hand-built config, even one that skipped
   // parseRegistryConfig on the way in (security review: re-validate at the sink).
   const validated = parseRegistryConfig(config);
@@ -163,7 +168,9 @@ function toPiModel(model: ModelConfig, provider: ProviderConfig): Model<Api> {
  * `openai-codex-responses` (which has no non-oauth stream factory) is rejected
  * with `unsupported_api`.
  */
-function buildApi(provider: ProviderConfig): ProviderStreams | Partial<Record<Api, ProviderStreams>> {
+function buildApi(
+  provider: ProviderConfig,
+): ProviderStreams | Partial<Record<Api, ProviderStreams>> {
   const kinds = new Set<ApiKind>([provider.api]);
   for (const model of provider.models) {
     if (model.api !== undefined) {

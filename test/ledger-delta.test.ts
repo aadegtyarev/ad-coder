@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { Usage } from "@earendil-works/pi-ai";
-import { diffUsage, usageAmounts, UsageDeltaTracker } from "../src/ledger/usage";
+import { diffUsage, UsageDeltaTracker, usageAmounts } from "../src/ledger/usage";
 
 /**
  * Covers `diffUsage`/`UsageDeltaTracker` as the tool for a genuinely

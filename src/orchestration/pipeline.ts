@@ -1,10 +1,5 @@
+import { applyTransition, autoDriver, createWorkflowSession, toPipelineResult } from "./session";
 import type { PipelineConfig, PipelineResult } from "./types";
-import {
-  applyTransition,
-  autoDriver,
-  createWorkflowSession,
-  toPipelineResult,
-} from "./session";
 
 /**
  * Compose the EXISTING single-turn `runRole` into a plan -> [security] ->

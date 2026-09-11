@@ -1,8 +1,8 @@
 import { Type } from "@earendil-works/pi-ai";
-import { defineTool } from "../runner/tool";
 import type { Tool } from "../runner/tool";
-import { OrchestrationError } from "./types";
+import { defineTool } from "../runner/tool";
 import type { IssueSeverity, Verdict, VerdictIssue, VerdictStatus } from "./types";
+import { OrchestrationError } from "./types";
 
 /** The tool name the reviewer calls to submit its verdict. */
 export const SUBMIT_VERDICT_TOOL_NAME = "submit_verdict";

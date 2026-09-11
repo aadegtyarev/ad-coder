@@ -1,10 +1,5 @@
 import * as fs from "node:fs";
-import type {
-  CommandExecutor,
-  GateReport,
-  GateResult,
-  QualityGate,
-} from "./types";
+import type { CommandExecutor, GateReport, GateResult, QualityGate } from "./types";
 
 /**
  * Default ceiling on a single gate's captured output, in characters. External
@@ -90,10 +85,7 @@ export class GateRunner {
    * hand the executor a discrete argv array — the files are appended as separate
    * trailing elements, never joined.
    */
-  private async runExternalGate(
-    gate: QualityGate,
-    files: string[],
-  ): Promise<GateResult> {
+  private async runExternalGate(gate: QualityGate, files: string[]): Promise<GateResult> {
     if (gate.command === undefined) {
       return {
         name: gate.name,

@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
 import type { AgentMessage, Hooks } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
+import { selectRecentTail } from "../src/context/compactor";
+import type { ContextBudget, Summarizer } from "../src/index";
 import {
   assertTurnFitsBudget,
   ContextBudgetError,
@@ -8,8 +10,6 @@ import {
   defineRole,
   SUMMARIZATION_PROMPT,
 } from "../src/index";
-import type { ContextBudget, Role, Summarizer } from "../src/index";
-import { selectRecentTail } from "../src/context/compactor";
 
 // ~4 chars per token in the estimator, so char counts map to rough token sizes.
 function userMessage(text: string): AgentMessage {
@@ -141,9 +141,7 @@ test("assertTurnFitsBudget returns void when the irreducible tail plus reserve f
     },
     localModel,
   );
-  expect(() =>
-    assertTurnFitsBudget(role, [small("a"), small("b")], localModel),
-  ).not.toThrow();
+  expect(() => assertTurnFitsBudget(role, [small("a"), small("b")], localModel)).not.toThrow();
 });
 
 test("assertTurnFitsBudget throws a typed ContextBudgetError on an impossible turn", () => {

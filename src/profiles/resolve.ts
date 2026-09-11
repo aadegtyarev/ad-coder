@@ -1,7 +1,8 @@
-import { ProfileError } from "./errors";
+import type { Api, Model } from "@earendil-works/pi-ai";
+import type { Complexity } from "../orchestration/types";
 import { RegistryError } from "../registry/errors";
 import type { ResolvedRegistry } from "../registry/types";
-import type { Complexity } from "../orchestration/types";
+import { ProfileError } from "./errors";
 import type { Profile, ProfileRole, ResolvedSelection, SpawnOverride } from "./types";
 
 /**
@@ -36,7 +37,7 @@ export function resolveProfile(
   const selection: SpawnOverride =
     override !== undefined ? override : selectFromEntry(profile, role, complexity);
 
-  let model;
+  let model: Model<Api>;
   try {
     model = registry.getModel(selection.model);
   } catch (err) {
@@ -67,7 +68,11 @@ function selectFromEntry(
   const entry = profile.entries.find((e) => e.role === role && e.complexity === complexity);
   if (entry === undefined) {
     const key = `${role}:${complexity}`;
-    throw new ProfileError("missing_mapping", key, `profile has no entry for (role, complexity) "${key}"`);
+    throw new ProfileError(
+      "missing_mapping",
+      key,
+      `profile has no entry for (role, complexity) "${key}"`,
+    );
   }
   return {
     model: entry.model,

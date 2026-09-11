@@ -1,8 +1,8 @@
 import { Type } from "@earendil-works/pi-ai";
-import { defineTool } from "../runner/tool";
 import type { Tool } from "../runner/tool";
-import { OrchestrationError } from "./types";
+import { defineTool } from "../runner/tool";
 import type { Complexity, Plan, SecuritySurface } from "./types";
+import { OrchestrationError } from "./types";
 
 /** The tool name the planner calls to submit its structured plan. */
 export const SUBMIT_PLAN_TOOL_NAME = "submit_plan";

@@ -50,9 +50,7 @@ export function parseRegistryConfig(value: unknown): RegistryConfig {
   const validated: ProviderConfig[] = [];
 
   for (const rawProvider of providers) {
-    validated.push(
-      parseProvider(rawProvider, bad, seenProviderIds, seenModelNames),
-    );
+    validated.push(parseProvider(rawProvider, bad, seenProviderIds, seenModelNames));
   }
 
   return { providers: validated };
@@ -82,7 +80,11 @@ function parseProvider(
   seenProviderIds.add(providerId);
 
   if (record.displayName !== undefined && typeof record.displayName !== "string") {
-    bad("invalid_config", `${providerId}.displayName`, "provider.displayName must be a string when present");
+    bad(
+      "invalid_config",
+      `${providerId}.displayName`,
+      "provider.displayName must be a string when present",
+    );
   }
 
   const api = record.api;
@@ -100,7 +102,11 @@ function parseProvider(
 
   const models = record.models;
   if (!Array.isArray(models) || models.length === 0) {
-    bad("invalid_config", `${providerId}.models`, `provider "${providerId}" must declare a non-empty models array`);
+    bad(
+      "invalid_config",
+      `${providerId}.models`,
+      `provider "${providerId}" must declare a non-empty models array`,
+    );
   }
   const validatedModels: ModelConfig[] = [];
   for (const rawModel of models as unknown[]) {
@@ -161,7 +167,11 @@ function parseModel(
   }
   const modelName = name as string;
   if (seenModelNames.has(modelName)) {
-    bad("duplicate_model", modelName, `model name "${modelName}" is declared more than once across providers`);
+    bad(
+      "duplicate_model",
+      modelName,
+      `model name "${modelName}" is declared more than once across providers`,
+    );
   }
   seenModelNames.add(modelName);
 
@@ -173,7 +183,11 @@ function parseModel(
   assertPositiveNumber(record.maxTokens, `${modelName}.maxTokens`, bad);
 
   if (record.reasoning !== undefined && typeof record.reasoning !== "boolean") {
-    bad("invalid_config", `${modelName}.reasoning`, "model.reasoning must be a boolean when present");
+    bad(
+      "invalid_config",
+      `${modelName}.reasoning`,
+      "model.reasoning must be a boolean when present",
+    );
   }
 
   const cost = parseCost(record.cost, modelName, bad);
@@ -181,7 +195,11 @@ function parseModel(
   let api: ApiKind | undefined;
   if (record.api !== undefined) {
     if (typeof record.api !== "string" || !API_KINDS.includes(record.api as ApiKind)) {
-      bad("unsupported_api", modelName, `model "${modelName}" api override must be one of ${API_KINDS.join(", ")}`);
+      bad(
+        "unsupported_api",
+        modelName,
+        `model "${modelName}" api override must be one of ${API_KINDS.join(", ")}`,
+      );
     }
     api = record.api as ApiKind;
   }
@@ -215,7 +233,11 @@ function parseCost(value: unknown, modelName: string, bad: Bad): ModelConfig["co
   for (const field of ["input", "output", "cacheRead", "cacheWrite"] as const) {
     const num = record[field];
     if (typeof num !== "number" || !Number.isFinite(num)) {
-      bad("invalid_config", `${modelName}.cost.${field}`, `model.cost.${field} must be a finite number`);
+      bad(
+        "invalid_config",
+        `${modelName}.cost.${field}`,
+        `model.cost.${field} must be a finite number`,
+      );
     }
   }
   return {

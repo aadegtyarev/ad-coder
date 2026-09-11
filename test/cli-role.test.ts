@@ -6,8 +6,8 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import { createModels, fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 import { runRoleStandalone } from "../src/cli";
 import { MemoryLedgerSink } from "../src/ledger/ledger";
-import { defineRole } from "../src/role";
 import type { Role } from "../src/role";
+import { defineRole } from "../src/role";
 
 const CONTEXT_WINDOW = 200_000;
 const BUDGET = { maxTokens: 100_000, reserveTokens: 10_000, keepRecentTokens: 20_000 } as const;
@@ -24,7 +24,10 @@ afterAll(() => {
 
 /** A faux-backed reviewer: no network, no key, one queued assistant message. */
 function fixture() {
-  const faux = fauxProvider({ provider: "faux", models: [{ id: "faux-1", contextWindow: CONTEXT_WINDOW }] });
+  const faux = fauxProvider({
+    provider: "faux",
+    models: [{ id: "faux-1", contextWindow: CONTEXT_WINDOW }],
+  });
   const models = createModels();
   models.setProvider(faux.provider);
   const model = faux.getModel() as Model<Api>;

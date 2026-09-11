@@ -2,19 +2,19 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
-import { BACKGROUND_CONTEXT, MemorySessionRepo } from "@earendil-works/pi-agent-core";
 import type { Context, Session } from "@earendil-works/pi-agent-core";
+import { BACKGROUND_CONTEXT, MemorySessionRepo } from "@earendil-works/pi-agent-core";
 import type { Api, Model, Models, TextContent } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
+import { driveWorkflow, silentNoopWarning } from "./cli/drive";
+import type { ResolvableProvider } from "./cli/resolve-config";
+import { resolvePipelineConfig } from "./cli/resolve-config";
 import { Ledger, MemoryLedgerSink } from "./ledger/ledger";
+import { createWorkflowSession } from "./orchestration/session";
+import type { Complexity, PipelineConfig, RoleSpec } from "./orchestration/types";
+import type { Role } from "./role";
 import { resolveTargetDir } from "./runner/errors";
 import { createRoleRunner } from "./runner/role-runner";
-import type { Role } from "./role";
-import type { Complexity, PipelineConfig, RoleSpec } from "./orchestration/types";
-import { resolvePipelineConfig } from "./cli/resolve-config";
-import type { ResolvableProvider } from "./cli/resolve-config";
-import { driveWorkflow, silentNoopWarning } from "./cli/drive";
-import { createWorkflowSession } from "./orchestration/session";
 import type { WorkflowContext } from "./workflow";
 import { isWorkflowModule } from "./workflow";
 

@@ -1,6 +1,6 @@
-import { ProfileError } from "./errors";
-import type { Complexity } from "../orchestration/types";
 import type { CacheRetention } from "@earendil-works/pi-ai";
+import type { Complexity } from "../orchestration/types";
+import { ProfileError } from "./errors";
 import type { Profile, ProfileEntry, ProfileRole } from "./types";
 
 const PROFILE_ROLES: readonly ProfileRole[] = [
@@ -92,8 +92,16 @@ function parseEntry(value: unknown, bad: Bad, seenKeys: Set<string>): ProfileEnt
   }
 
   if (record.maxOutput !== undefined) {
-    if (typeof record.maxOutput !== "number" || !Number.isFinite(record.maxOutput) || record.maxOutput <= 0) {
-      bad("invalid_config", `${key}.maxOutput`, "entry.maxOutput must be a positive finite number when present");
+    if (
+      typeof record.maxOutput !== "number" ||
+      !Number.isFinite(record.maxOutput) ||
+      record.maxOutput <= 0
+    ) {
+      bad(
+        "invalid_config",
+        `${key}.maxOutput`,
+        "entry.maxOutput must be a positive finite number when present",
+      );
     }
   }
 

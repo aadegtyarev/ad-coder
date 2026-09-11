@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
+import type { ModelConfig, ProviderConfig, RegistryConfig } from "ad-coder";
 import {
   anthropicCompatiblePreset,
   deepseekPreset,
@@ -9,7 +10,6 @@ import {
   RegistryError,
   resolveRegistry,
 } from "ad-coder";
-import type { ModelConfig, ProviderConfig, RegistryConfig } from "ad-coder";
 
 // A minimal, always-valid model so tests vary one field at a time.
 function model(overrides: Partial<ModelConfig> = {}): ModelConfig {
@@ -138,7 +138,13 @@ test("rejects an unknown credential kind", () => {
 
 test("rejects a non-numeric cost field", () => {
   const cfg = {
-    providers: [provider({ models: [model({ cost: { input: "free", output: 1, cacheRead: 0, cacheWrite: 0 } as never })] })],
+    providers: [
+      provider({
+        models: [
+          model({ cost: { input: "free", output: 1, cacheRead: 0, cacheWrite: 0 } as never }),
+        ],
+      }),
+    ],
   };
   try {
     parseRegistryConfig(cfg);
@@ -199,8 +205,18 @@ test("each of the five presets produces a validator-accepted config", () => {
   const presets: ProviderConfig[] = [
     deepseekPreset(),
     openrouterPreset(),
-    openaiCompatiblePreset({ id: "lmstudio", baseUrl: "https://api.openai.com/v1", envVar: "OPENAI_API_KEY", models: [model()] }),
-    anthropicCompatiblePreset({ id: "native-anthropic", baseUrl: "https://api.anthropic.com", envVar: "ANTHROPIC_API_KEY", models: [model({ name: "m2" })] }),
+    openaiCompatiblePreset({
+      id: "lmstudio",
+      baseUrl: "https://api.openai.com/v1",
+      envVar: "OPENAI_API_KEY",
+      models: [model()],
+    }),
+    anthropicCompatiblePreset({
+      id: "native-anthropic",
+      baseUrl: "https://api.anthropic.com",
+      envVar: "ANTHROPIC_API_KEY",
+      models: [model({ name: "m2" })],
+    }),
     openaiCodexPreset(),
   ];
   for (const p of presets) {
@@ -224,7 +240,12 @@ test("preset baseUrl/api/credential match the shipped pi-ai factories", () => {
 test("the custom presets are rejected by the validator when baseUrl is empty or non-https", () => {
   const bad = openaiCompatiblePreset({ id: "x", baseUrl: "", envVar: "X_KEY", models: [model()] });
   expect(() => parseRegistryConfig({ providers: [bad] })).toThrow(RegistryError);
-  const insecure = anthropicCompatiblePreset({ id: "y", baseUrl: "http://y.example.com", envVar: "Y_KEY", models: [model()] });
+  const insecure = anthropicCompatiblePreset({
+    id: "y",
+    baseUrl: "http://y.example.com",
+    envVar: "Y_KEY",
+    models: [model()],
+  });
   expect(() => parseRegistryConfig({ providers: [insecure] })).toThrow(RegistryError);
 });
 
@@ -234,7 +255,9 @@ test("resolveRegistry builds Models and resolves lookup by stable name", () => {
   const cfg = config({
     providers: [
       provider({
-        models: [model({ name: "chat", modelId: "deepseek-chat", contextWindow: 64000, maxTokens: 8192 })],
+        models: [
+          model({ name: "chat", modelId: "deepseek-chat", contextWindow: 64000, maxTokens: 8192 }),
+        ],
       }),
     ],
   });
@@ -282,7 +305,9 @@ test("credentials resolve through the injected accessor, not process.env", async
   const cfg = config({
     providers: [provider({ credential: { kind: "env-var", envVar: "REGISTRY_DECOY_KEY" } })],
   });
-  const resolved = resolveRegistry(cfg, { env: fakeEnv({ REGISTRY_DECOY_KEY: "fake-injected-value" }) });
+  const resolved = resolveRegistry(cfg, {
+    env: fakeEnv({ REGISTRY_DECOY_KEY: "fake-injected-value" }),
+  });
 
   // getAuth routes through the pi AuthContext.env, which this module wires to
   // the injected accessor. The transmitted key must be the injected value.
@@ -319,8 +344,12 @@ test("the codex/oauth provider resolves via the delegated factory, no api-key au
 
 test("resolveRegistry re-validates a hand-built config", () => {
   // A config that never went through parseRegistryConfig, with a bad baseUrl.
-  const cfg = { providers: [provider({ baseUrl: "http://insecure.example.com" })] } as RegistryConfig;
-  expect(() => resolveRegistry(cfg, { env: fakeEnv({ P1_KEY: "fake-key" }) })).toThrow(RegistryError);
+  const cfg = {
+    providers: [provider({ baseUrl: "http://insecure.example.com" })],
+  } as RegistryConfig;
+  expect(() => resolveRegistry(cfg, { env: fakeEnv({ P1_KEY: "fake-key" }) })).toThrow(
+    RegistryError,
+  );
 });
 
 afterEach(() => {

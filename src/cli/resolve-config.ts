@@ -1,17 +1,17 @@
+import type { ContextBudget } from "../context/budget";
 import { MemoryLedgerSink } from "../ledger/ledger";
-import { deepseekPreset, openrouterPreset, openaiCodexPreset } from "../registry/presets";
-import { resolveRegistry } from "../registry/resolve";
-import type { ProviderConfig, RegistryConfig, ResolvedRegistry } from "../registry/types";
+import { SUBMIT_PLAN_TOOL_NAME } from "../orchestration/plan";
+import type { Complexity, PipelineConfig, RoleSpec } from "../orchestration/types";
+import { SUBMIT_VERDICT_TOOL_NAME } from "../orchestration/verdict";
 import { buildDefaultProfile } from "../profiles/default-profile";
 import { resolveProfile } from "../profiles/resolve";
 import type { Profile, ProfileRole } from "../profiles/types";
-import type { Complexity, PipelineConfig, RoleSpec } from "../orchestration/types";
-import { defineRole } from "../role";
-import type { Role } from "../role";
-import type { ContextBudget } from "../context/budget";
 import { resolvePrompt } from "../prompts/prompts";
-import { SUBMIT_PLAN_TOOL_NAME } from "../orchestration/plan";
-import { SUBMIT_VERDICT_TOOL_NAME } from "../orchestration/verdict";
+import { deepseekPreset, openaiCodexPreset, openrouterPreset } from "../registry/presets";
+import { resolveRegistry } from "../registry/resolve";
+import type { ProviderConfig, RegistryConfig, ResolvedRegistry } from "../registry/types";
+import type { Role } from "../role";
+import { defineRole } from "../role";
 
 /**
  * The three shipped providers this resolver can select from the environment.
@@ -82,7 +82,10 @@ const PROVIDER_BY_ENV: ReadonlyArray<{ envVar: string; provider: ResolvableProvi
 ];
 
 /** The preset builder and its default model NAME for each resolvable provider. */
-const PROVIDER_PRESETS: Record<ResolvableProvider, { preset: () => ProviderConfig; defaultModel: string }> = {
+const PROVIDER_PRESETS: Record<
+  ResolvableProvider,
+  { preset: () => ProviderConfig; defaultModel: string }
+> = {
   deepseek: { preset: deepseekPreset, defaultModel: "deepseek-chat" },
   openrouter: { preset: openrouterPreset, defaultModel: "openrouter-auto" },
   "openai-codex": { preset: openaiCodexPreset, defaultModel: "codex-gpt-5.5" },
@@ -111,7 +114,9 @@ function selectProvider(
     warn(
       `ad-coder: warning: multiple provider keys present (${present
         .map((p) => p.envVar)
-        .join(", ")}); selecting "${present[0]?.provider}" by precedence -- pass --provider to choose\n`,
+        .join(
+          ", ",
+        )}); selecting "${present[0]?.provider}" by precedence -- pass --provider to choose\n`,
     );
   }
   return present[0]?.provider ?? "openai-codex";
@@ -170,9 +175,7 @@ export function resolvePipelineConfig(options: ResolvePipelineConfigOptions): Pi
   );
   const budget = deriveBudget(minWindow, options.budgetPercents);
 
-  warn(
-    `ad-coder: provider "${provider}" | strong "${strong}" mid "${mid}" cheap "${cheap}"\n`,
-  );
+  warn(`ad-coder: provider "${provider}" | strong "${strong}" mid "${mid}" cheap "${cheap}"\n`);
 
   const buildRole = (name: ProfileRole, tools: string[]): RoleSpec => {
     // The role's live model is whatever the default profile routes it to at

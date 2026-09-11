@@ -3,8 +3,8 @@ import type { Api, Model, Models } from "@earendil-works/pi-ai";
 import type { Summarizer } from "../context/compactor";
 import type { LedgerSink } from "../ledger/ledger";
 import type { Role } from "../role";
-import { runRole } from "./runner";
 import type { RunRoleResult } from "./runner";
+import { runRole } from "./runner";
 import type { Tool } from "./tool";
 
 /** Per-call overrides a bound RoleRunner accepts; the bound fields are not repeated. */

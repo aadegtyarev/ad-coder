@@ -71,7 +71,9 @@ export function defineRole(input: Role, model: Model<Api>): Role {
         throw new Error(`defineRole(${input.name}): activeToolNames contains an empty entry`);
       }
       if (seen.has(toolName)) {
-        throw new Error(`defineRole(${input.name}): activeToolNames contains duplicate "${toolName}"`);
+        throw new Error(
+          `defineRole(${input.name}): activeToolNames contains duplicate "${toolName}"`,
+        );
       }
       seen.add(toolName);
     }

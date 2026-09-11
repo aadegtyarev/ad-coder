@@ -1,4 +1,12 @@
 import * as path from "node:path";
+import type {
+  AgentHarnessOptions,
+  AgentHarnessTool,
+  AgentLane,
+  Context,
+  ExecutionToolContext,
+  Session,
+} from "@earendil-works/pi-agent-core";
 import {
   AgentHarness,
   BACKGROUND_CONTEXT,
@@ -9,20 +17,12 @@ import {
   getOrThrow,
   MemorySessionRepo,
 } from "@earendil-works/pi-agent-core";
-import type {
-  AgentHarnessOptions,
-  AgentHarnessTool,
-  AgentLane,
-  Context,
-  ExecutionToolContext,
-  Session,
-} from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/harness/env/nodejs";
 import type { Api, Model, Models, TextContent } from "@earendil-works/pi-ai";
 import type { Summarizer } from "../context/compactor";
 import { ContextCompactor } from "../context/compactor";
-import { FileLedgerSink, Ledger, LEDGER_BASE_DIR } from "../ledger/ledger";
 import type { LedgerSink } from "../ledger/ledger";
+import { FileLedgerSink, LEDGER_BASE_DIR, Ledger } from "../ledger/ledger";
 import type { Role } from "../role";
 import { toHarnessOptions } from "../role";
 import {
@@ -173,9 +173,10 @@ export async function startConversation(config: ConversationConfig): Promise<Con
   // compound handlers the same way a per-turn ledger attach would compound
   // rows. Attach ONCE here, never in step.
   if (config.summarizer !== undefined) {
-    new ContextCompactor({ budget: config.role.contextBudget, summarizer: config.summarizer }).attach(
-      harness.hooks,
-    );
+    new ContextCompactor({
+      budget: config.role.contextBudget,
+      summarizer: config.summarizer,
+    }).attach(harness.hooks);
   }
 
   const lane: AgentLane = await harness.lane(config.laneName ?? "main", context);

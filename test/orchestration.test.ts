@@ -9,25 +9,30 @@ import {
   fauxProvider,
   fauxToolCall,
 } from "@earendil-works/pi-ai";
-import type { FauxProviderHandle, FauxResponseFactory, FauxResponseStep } from "@earendil-works/pi-ai/providers/faux";
+import type {
+  FauxProviderHandle,
+  FauxResponseFactory,
+  FauxResponseStep,
+} from "@earendil-works/pi-ai/providers/faux";
 import { MemoryLedgerSink } from "../src/ledger/ledger";
-import { OrchestrationError } from "../src/orchestration/types";
-import type { PipelineRouting, RoleSpec, Verdict } from "../src/orchestration/types";
 import { runPipeline } from "../src/orchestration/pipeline";
-import {
-  applyTransition,
-  autoDriver,
-  createWorkflowSession,
-} from "../src/orchestration/session";
-import type { AvailableTransition, WorkflowState } from "../src/orchestration/types";
-import { parseVerdict, SUBMIT_VERDICT_TOOL_NAME } from "../src/orchestration/verdict";
 import { parsePlan, SUBMIT_PLAN_TOOL_NAME } from "../src/orchestration/plan";
-import type { Plan } from "../src/orchestration/types";
+import { applyTransition, autoDriver, createWorkflowSession } from "../src/orchestration/session";
+import type {
+  AvailableTransition,
+  PipelineRouting,
+  Plan,
+  RoleSpec,
+  Verdict,
+  WorkflowState,
+} from "../src/orchestration/types";
+import { OrchestrationError } from "../src/orchestration/types";
+import { parseVerdict, SUBMIT_VERDICT_TOOL_NAME } from "../src/orchestration/verdict";
 import { buildDefaultProfile } from "../src/profiles/default-profile";
 import type { Profile } from "../src/profiles/types";
 import type { ResolvedRegistry } from "../src/registry/types";
-import { defineRole } from "../src/role";
 import type { Role } from "../src/role";
+import { defineRole } from "../src/role";
 
 const CONTEXT_WINDOW = 200_000;
 const BUDGET = { maxTokens: 100_000, reserveTokens: 10_000, keepRecentTokens: 20_000 } as const;
@@ -42,7 +47,10 @@ interface Fixture {
 
 /** A fresh faux provider + models + temp targetDir; one queue serves every role. */
 function fixture(): Fixture {
-  const faux = fauxProvider({ provider: "faux", models: [{ id: "faux-1", contextWindow: CONTEXT_WINDOW }] });
+  const faux = fauxProvider({
+    provider: "faux",
+    models: [{ id: "faux-1", contextWindow: CONTEXT_WINDOW }],
+  });
   const models = createModels();
   models.setProvider(faux.provider);
   const model = faux.getModel() as Model<Api>;
@@ -72,7 +80,13 @@ function fixture(): Fixture {
 
 /** A reviewer role that can call submit_verdict (only this role needs the tool). */
 function reviewerRole(fx: Fixture): RoleSpec {
-  return fx.role("reviewer", "You review.", ["bash", "read", "write", "edit", SUBMIT_VERDICT_TOOL_NAME]);
+  return fx.role("reviewer", "You review.", [
+    "bash",
+    "read",
+    "write",
+    "edit",
+    SUBMIT_VERDICT_TOOL_NAME,
+  ]);
 }
 
 /** A planner role that can call submit_plan (only this role needs the tool). */
@@ -206,10 +220,12 @@ test("one round approve returns approved:true rounds:1", async () => {
 test("two rounds: reviewer round-1 issue is threaded into the coder round-2 prompt", async () => {
   const fx = fixture();
   const coderPrompts: string[] = [];
-  const coderStep = (label: string): FauxResponseFactory => (context) => {
-    coderPrompts.push(lastUserText(context));
-    return fauxAssistantMessage(`coded ${label}`);
-  };
+  const coderStep =
+    (label: string): FauxResponseFactory =>
+    (context) => {
+      coderPrompts.push(lastUserText(context));
+      return fauxAssistantMessage(`coded ${label}`);
+    };
   const coder = fx.role("coder", "You code.");
   const reviewer = reviewerRole(fx);
   const changes: Verdict = {
@@ -248,10 +264,7 @@ test("maxRounds exhausted returns approved:false without throwing", async () => 
     issues: [{ severity: "blocker", what: "still broken" }],
     summary: "no",
   };
-  fx.faux.setResponses([
-    fauxAssistantMessage("coded once"),
-    ...reviewerTurn(changes),
-  ]);
+  fx.faux.setResponses([fauxAssistantMessage("coded once"), ...reviewerTurn(changes)]);
 
   const result = await runPipeline({
     targetDir: fx.targetDir,
@@ -468,10 +481,12 @@ test("elevated surface + security role runs the phase and threads its text to th
   const security = securityRole(fx);
   const reviewer = reviewerRole(fx);
   const coderPrompts: string[] = [];
-  const coderStep = (label: string): FauxResponseFactory => (context) => {
-    coderPrompts.push(lastUserText(context));
-    return fauxAssistantMessage(`coded ${label}`);
-  };
+  const coderStep =
+    (label: string): FauxResponseFactory =>
+    (context) => {
+      coderPrompts.push(lastUserText(context));
+      return fauxAssistantMessage(`coded ${label}`);
+    };
   const coder = fx.role("coder", "You code.");
   const verdict: Verdict = { status: "approved", issues: [], summary: "ok" };
   fx.faux.setResponses([
@@ -664,9 +679,21 @@ function defaultRouteProfile(): Profile {
 test("routing (a): planner complexity 'complex' routes the coder to the strong model", async () => {
   const fx = routingFixture();
   const log: Record<string, string> = {};
-  const planner = fx.role("planner", "mid", ["bash", "read", "write", "edit", SUBMIT_PLAN_TOOL_NAME]);
+  const planner = fx.role("planner", "mid", [
+    "bash",
+    "read",
+    "write",
+    "edit",
+    SUBMIT_PLAN_TOOL_NAME,
+  ]);
   const coder = fx.role("coder", "mid");
-  const reviewer = fx.role("reviewer", "mid", ["bash", "read", "write", "edit", SUBMIT_VERDICT_TOOL_NAME]);
+  const reviewer = fx.role("reviewer", "mid", [
+    "bash",
+    "read",
+    "write",
+    "edit",
+    SUBMIT_VERDICT_TOOL_NAME,
+  ]);
   const verdict: Verdict = { status: "approved", issues: [], summary: "ok" };
   fx.faux.setResponses([
     ...plannerTurnRec(log, { complexity: "complex", securitySurface: "low", summary: "plan" }),
@@ -694,9 +721,21 @@ test("routing (a): planner complexity 'complex' routes the coder to the strong m
 test("routing (b): planner complexity 'trivial' routes the coder to the cheap model", async () => {
   const fx = routingFixture();
   const log: Record<string, string> = {};
-  const planner = fx.role("planner", "mid", ["bash", "read", "write", "edit", SUBMIT_PLAN_TOOL_NAME]);
+  const planner = fx.role("planner", "mid", [
+    "bash",
+    "read",
+    "write",
+    "edit",
+    SUBMIT_PLAN_TOOL_NAME,
+  ]);
   const coder = fx.role("coder", "mid");
-  const reviewer = fx.role("reviewer", "mid", ["bash", "read", "write", "edit", SUBMIT_VERDICT_TOOL_NAME]);
+  const reviewer = fx.role("reviewer", "mid", [
+    "bash",
+    "read",
+    "write",
+    "edit",
+    SUBMIT_VERDICT_TOOL_NAME,
+  ]);
   const verdict: Verdict = { status: "approved", issues: [], summary: "ok" };
   fx.faux.setResponses([
     ...plannerTurnRec(log, { complexity: "trivial", securitySurface: "none", summary: "plan" }),
@@ -722,9 +761,21 @@ test("routing (b): planner complexity 'trivial' routes the coder to the cheap mo
 test("routing (c): a coder override wins over the (coder, complexity) cell", async () => {
   const fx = routingFixture();
   const log: Record<string, string> = {};
-  const planner = fx.role("planner", "mid", ["bash", "read", "write", "edit", SUBMIT_PLAN_TOOL_NAME]);
+  const planner = fx.role("planner", "mid", [
+    "bash",
+    "read",
+    "write",
+    "edit",
+    SUBMIT_PLAN_TOOL_NAME,
+  ]);
   const coder = fx.role("coder", "mid");
-  const reviewer = fx.role("reviewer", "mid", ["bash", "read", "write", "edit", SUBMIT_VERDICT_TOOL_NAME]);
+  const reviewer = fx.role("reviewer", "mid", [
+    "bash",
+    "read",
+    "write",
+    "edit",
+    SUBMIT_VERDICT_TOOL_NAME,
+  ]);
   const verdict: Verdict = { status: "approved", issues: [], summary: "ok" };
   fx.faux.setResponses([
     // trivial would route the coder to 'cheap'; the override must beat it.
@@ -763,14 +814,27 @@ test("routing (d): the pre-complexity planner routes on defaultComplexity, not t
       e.role === "planner"
         ? {
             ...e,
-            model: e.complexity === "trivial" ? "cheap" : e.complexity === "medium" ? "mid" : "strong",
+            model:
+              e.complexity === "trivial" ? "cheap" : e.complexity === "medium" ? "mid" : "strong",
           }
         : e,
     ),
   };
-  const planner = fx.role("planner", "mid", ["bash", "read", "write", "edit", SUBMIT_PLAN_TOOL_NAME]);
+  const planner = fx.role("planner", "mid", [
+    "bash",
+    "read",
+    "write",
+    "edit",
+    SUBMIT_PLAN_TOOL_NAME,
+  ]);
   const coder = fx.role("coder", "mid");
-  const reviewer = fx.role("reviewer", "mid", ["bash", "read", "write", "edit", SUBMIT_VERDICT_TOOL_NAME]);
+  const reviewer = fx.role("reviewer", "mid", [
+    "bash",
+    "read",
+    "write",
+    "edit",
+    SUBMIT_VERDICT_TOOL_NAME,
+  ]);
   const verdict: Verdict = { status: "approved", issues: [], summary: "ok" };
   fx.faux.setResponses([
     // Planner SUBMITS 'complex' (planner row -> strong), but it is resolved
@@ -879,7 +943,11 @@ test("stepped: auto-driver yields the same verdict/rounds/ledger as runPipeline"
     models: a.models,
     task: "implement Q",
     maxRounds: 3,
-    roles: { planner: a.role("planner", "You plan."), coder: a.role("coder", "You code."), reviewer: reviewerRole(a) },
+    roles: {
+      planner: a.role("planner", "You plan."),
+      coder: a.role("coder", "You code."),
+      reviewer: reviewerRole(a),
+    },
     ledgerSink: aSink,
   });
 
@@ -892,7 +960,11 @@ test("stepped: auto-driver yields the same verdict/rounds/ledger as runPipeline"
     models: b.models,
     task: "implement Q",
     maxRounds: 3,
-    roles: { planner: b.role("planner", "You plan."), coder: b.role("coder", "You code."), reviewer: reviewerRole(b) },
+    roles: {
+      planner: b.role("planner", "You plan."),
+      coder: b.role("coder", "You code."),
+      reviewer: reviewerRole(b),
+    },
     ledgerSink: bSink,
   });
   const settled = await drive(session, (transitions) => autoDriver(transitions));
@@ -956,7 +1028,11 @@ test("stepped: a stop-after-plan driver ends with no code or review records", as
     models: fx.models,
     task: "implement S",
     maxRounds: 3,
-    roles: { planner: plannerRole(fx), coder: fx.role("coder", "You code."), reviewer: reviewerRole(fx) },
+    roles: {
+      planner: plannerRole(fx),
+      coder: fx.role("coder", "You code."),
+      reviewer: reviewerRole(fx),
+    },
     ledgerSink: sink,
   });
 

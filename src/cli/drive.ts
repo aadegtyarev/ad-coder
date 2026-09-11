@@ -1,15 +1,8 @@
 import * as readline from "node:readline";
-import { MemoryLedgerSink } from "../ledger/ledger";
-import {
-  applyTransition,
-  autoDriver,
-  toPipelineResult,
-} from "../orchestration/session";
+import type { MemoryLedgerSink } from "../ledger/ledger";
 import type { WorkflowSession } from "../orchestration/session";
-import type {
-  AvailableTransition,
-  PipelineResult,
-} from "../orchestration/types";
+import { applyTransition, autoDriver, toPipelineResult } from "../orchestration/session";
+import type { AvailableTransition, PipelineResult } from "../orchestration/types";
 
 /**
  * Why a driver's chosen transition was rejected at the drive boundary.
@@ -112,10 +105,7 @@ export function assertTransitionOffered(
   transitions: readonly AvailableTransition[],
 ): void {
   const offered = transitions.some(
-    (t) =>
-      t.kind === chosen.kind &&
-      t.toPhase === chosen.toPhase &&
-      t.toRound === chosen.toRound,
+    (t) => t.kind === chosen.kind && t.toPhase === chosen.toPhase && t.toRound === chosen.toRound,
   );
   if (!offered) {
     throw new DriveError(
@@ -189,8 +179,7 @@ async function readChoice(
   transitions: AvailableTransition[],
   output: NodeJS.WritableStream,
 ): Promise<AvailableTransition> {
-  const takeDefault = (): AvailableTransition | undefined =>
-    transitions.find((t) => t.isDefault);
+  const takeDefault = (): AvailableTransition | undefined => transitions.find((t) => t.isDefault);
   for (;;) {
     output.write("transitions:\n");
     transitions.forEach((t, i) => {

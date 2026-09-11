@@ -2,11 +2,11 @@ import { expect, test } from "bun:test";
 import type { Api, Model, Models } from "@earendil-works/pi-ai";
 import { RegistryError } from "../registry/errors";
 import type { ResolvedRegistry } from "../registry/types";
-import { ProfileError } from "./errors";
-import { parseProfile } from "./validate";
-import { resolveProfile } from "./resolve";
 import { buildDefaultProfile } from "./default-profile";
+import { ProfileError } from "./errors";
+import { resolveProfile } from "./resolve";
 import type { Profile } from "./types";
+import { parseProfile } from "./validate";
 
 /**
  * A network-free, key-free `ResolvedRegistry` stub. `getModel` returns a marker
@@ -32,7 +32,13 @@ function stubRegistry(known: readonly string[]): ResolvedRegistry {
 const wellFormed: Profile = {
   entries: [
     { role: "coder", complexity: "complex", model: "big" },
-    { role: "coder", complexity: "trivial", model: "small", maxOutput: 1024, cacheRetention: "short" },
+    {
+      role: "coder",
+      complexity: "trivial",
+      model: "small",
+      maxOutput: 1024,
+      cacheRetention: "short",
+    },
     { role: "reviewer", complexity: "medium", model: "mid" },
   ],
 };
@@ -126,7 +132,9 @@ test("parseProfile rejects a missing model field with a names-only detail", () =
 });
 
 test("parseProfile rejects a non-positive maxOutput", () => {
-  const bad: unknown = { entries: [{ role: "coder", complexity: "complex", model: "a", maxOutput: 0 }] };
+  const bad: unknown = {
+    entries: [{ role: "coder", complexity: "complex", model: "a", maxOutput: 0 }],
+  };
   try {
     parseProfile(bad);
     throw new Error("expected throw");

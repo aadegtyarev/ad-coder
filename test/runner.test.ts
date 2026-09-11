@@ -2,22 +2,30 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { Model } from "@earendil-works/pi-ai";
-import type { Api } from "@earendil-works/pi-ai";
-import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, Type } from "@earendil-works/pi-ai";
+import type { Api, Model } from "@earendil-works/pi-ai";
+import {
+  createModels,
+  fauxAssistantMessage,
+  fauxProvider,
+  fauxToolCall,
+  Type,
+} from "@earendil-works/pi-ai";
+import type { Summarizer } from "../src/context/compactor";
 import { LEDGER_BASE_DIR } from "../src/ledger/ledger";
-import { defineRole } from "../src/role";
 import type { Role } from "../src/role";
+import { defineRole } from "../src/role";
 import { RunnerError, resolveTargetDir } from "../src/runner/errors";
 import { runRole } from "../src/runner/runner";
 import { defineTool } from "../src/runner/tool";
-import type { Summarizer } from "../src/context/compactor";
 
 const CONTEXT_WINDOW = 200_000;
 
 /** A faux provider + models pair and the role validated against its window. */
 function harnessFixture() {
-  const faux = fauxProvider({ provider: "faux", models: [{ id: "faux-1", contextWindow: CONTEXT_WINDOW }] });
+  const faux = fauxProvider({
+    provider: "faux",
+    models: [{ id: "faux-1", contextWindow: CONTEXT_WINDOW }],
+  });
   const models = createModels();
   models.setProvider(faux.provider);
   const model = faux.getModel() as Model<Api>;
@@ -56,7 +64,10 @@ function recordingTool(name: string, calls: string[]) {
 
 /** Like harnessFixture but with a caller-chosen activeToolNames allow-list. */
 function fixtureWithActiveTools(activeToolNames: string[]) {
-  const faux = fauxProvider({ provider: "faux", models: [{ id: "faux-1", contextWindow: CONTEXT_WINDOW }] });
+  const faux = fauxProvider({
+    provider: "faux",
+    models: [{ id: "faux-1", contextWindow: CONTEXT_WINDOW }],
+  });
   const models = createModels();
   models.setProvider(faux.provider);
   const model = faux.getModel() as Model<Api>;

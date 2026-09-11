@@ -76,11 +76,9 @@ export class ContextCompactor {
 
   /** Register the transform_context handler; returns the unsubscribe handle. */
   attach(hooks: Hooks): () => void {
-    return hooks.on(
-      "transform_context",
-      (event) => this.transform(event.messages),
-      { id: HOOK_ID },
-    );
+    return hooks.on("transform_context", (event) => this.transform(event.messages), {
+      id: HOOK_ID,
+    });
   }
 
   private async transform(

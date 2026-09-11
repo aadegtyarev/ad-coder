@@ -1,22 +1,36 @@
-export {
-  breakEvenReads,
-  cacheEfficiency,
-  deriveCapabilities,
-  reconcileRoleWithModel,
-} from "./capabilities/capabilities";
 export type {
   CostMode,
   ModelCapabilities,
   ReconcileCode,
   ReconcileWarning,
 } from "./capabilities/capabilities";
-export { defineRole, resolveRoleModel, toHarnessOptions } from "./role";
-export type { Role, RoleRunDeps } from "./role";
-export { ContextBudgetError } from "./context/budget";
+export {
+  breakEvenReads,
+  cacheEfficiency,
+  deriveCapabilities,
+  reconcileRoleWithModel,
+} from "./capabilities/capabilities";
+export type { DriveErrorCode, DriveWorkflowParams } from "./cli/drive";
+export { DriveError, driveWorkflow, silentNoopWarning } from "./cli/drive";
+export type {
+  BudgetPercents,
+  ResolvableProvider,
+  ResolvePipelineConfigOptions,
+} from "./cli/resolve-config";
+export { resolvePipelineConfig } from "./cli/resolve-config";
 export type { ContextBudget } from "./context/budget";
-export { ContextCompactor, SUMMARIZATION_PROMPT } from "./context/compactor";
+export { ContextBudgetError } from "./context/budget";
 export type { Summarizer } from "./context/compactor";
+export { ContextCompactor, SUMMARIZATION_PROMPT } from "./context/compactor";
 export { assertTurnFitsBudget } from "./context/preflight";
+export type {
+  ConversationConfig,
+  ConversationSession,
+  ConversationStepOptions,
+  ConversationToolCall,
+  ConversationTurnResult,
+} from "./conversation/conversation";
+export { startConversation } from "./conversation/conversation";
 export { GateRunner } from "./gates/runner";
 export type {
   CommandExecutor,
@@ -26,31 +40,14 @@ export type {
   QualityGate,
   QualityGateKind,
 } from "./gates/types";
-export { FileLedgerSink, Ledger, LEDGER_BASE_DIR, MemoryLedgerSink } from "./ledger/ledger";
 export type { LedgerOptions, LedgerSink } from "./ledger/ledger";
+export { FileLedgerSink, LEDGER_BASE_DIR, Ledger, MemoryLedgerSink } from "./ledger/ledger";
 export type { LedgerRecord, UsageAmounts, UsageDelta } from "./ledger/types";
-export { diffUsage, toolCallCounts, usageAmounts, UsageDeltaTracker } from "./ledger/usage";
-export { RunnerError, resolveTargetDir } from "./runner/errors";
-export type { RunnerErrorCode } from "./runner/errors";
-export { defineTool } from "./runner/tool";
-export type { Tool } from "./runner/tool";
-export { runRole } from "./runner/runner";
-export type { RunRoleParams, RunRoleResult } from "./runner/runner";
-export { createRoleRunner } from "./runner/role-runner";
-export type { RoleRunner, RoleRunnerConfig, RunRoleOptions } from "./runner/role-runner";
-export { startConversation } from "./conversation/conversation";
-export type {
-  ConversationConfig,
-  ConversationSession,
-  ConversationStepOptions,
-  ConversationToolCall,
-  ConversationTurnResult,
-} from "./conversation/conversation";
-export { isWorkflowModule } from "./workflow";
-export type { WorkflowContext, WorkflowModule } from "./workflow";
+export { diffUsage, toolCallCounts, UsageDeltaTracker, usageAmounts } from "./ledger/usage";
 export { runPipeline } from "./orchestration/pipeline";
+export type { PlanCapture } from "./orchestration/plan";
+export { buildSubmitPlanTool, SUBMIT_PLAN_TOOL_NAME } from "./orchestration/plan";
 export { applyTransition, autoDriver, createWorkflowSession } from "./orchestration/session";
-export { OrchestrationError } from "./orchestration/types";
 export type {
   AvailableTransition,
   Complexity,
@@ -73,20 +70,36 @@ export type {
   WorkflowPhase,
   WorkflowState,
 } from "./orchestration/types";
-export { buildSubmitVerdictTool, SUBMIT_VERDICT_TOOL_NAME } from "./orchestration/verdict";
+export { OrchestrationError } from "./orchestration/types";
 export type { VerdictCapture } from "./orchestration/verdict";
-export { buildSubmitPlanTool, SUBMIT_PLAN_TOOL_NAME } from "./orchestration/plan";
-export type { PlanCapture } from "./orchestration/plan";
-export { parseRegistryConfig } from "./registry/validate";
-export { resolveRegistry } from "./registry/resolve";
-export {
-  deepseekPreset,
-  openrouterPreset,
-  openaiCompatiblePreset,
-  anthropicCompatiblePreset,
-  openaiCodexPreset,
-} from "./registry/presets";
+export { buildSubmitVerdictTool, SUBMIT_VERDICT_TOOL_NAME } from "./orchestration/verdict";
+export type { DefaultProfileModels } from "./profiles/default-profile";
+export { buildDefaultProfile } from "./profiles/default-profile";
+export type { ProfileErrorCode } from "./profiles/errors";
+export { ProfileError } from "./profiles/errors";
+export { resolveProfile } from "./profiles/resolve";
+export type {
+  Profile,
+  ProfileEntry,
+  ProfileRole,
+  ResolvedSelection,
+  SpawnOverride,
+} from "./profiles/types";
+export { parseProfile } from "./profiles/validate";
+export type { PromptErrorCode } from "./prompts/errors";
+export { PromptError } from "./prompts/errors";
+export type { ResolvePromptOptions } from "./prompts/prompts";
+export { resolvePrompt } from "./prompts/prompts";
+export type { RegistryErrorCode } from "./registry/errors";
 export { RegistryError } from "./registry/errors";
+export {
+  anthropicCompatiblePreset,
+  deepseekPreset,
+  openaiCodexPreset,
+  openaiCompatiblePreset,
+  openrouterPreset,
+} from "./registry/presets";
+export { resolveRegistry } from "./registry/resolve";
 export type {
   ApiKind,
   CredentialSource,
@@ -95,29 +108,16 @@ export type {
   RegistryConfig,
   ResolvedRegistry,
 } from "./registry/types";
-export type { RegistryErrorCode } from "./registry/errors";
-export { parseProfile } from "./profiles/validate";
-export { resolveProfile } from "./profiles/resolve";
-export { buildDefaultProfile } from "./profiles/default-profile";
-export { ProfileError } from "./profiles/errors";
-export type { ProfileErrorCode } from "./profiles/errors";
-export type { DefaultProfileModels } from "./profiles/default-profile";
-export type {
-  Profile,
-  ProfileEntry,
-  ProfileRole,
-  ResolvedSelection,
-  SpawnOverride,
-} from "./profiles/types";
-export { resolvePrompt } from "./prompts/prompts";
-export type { ResolvePromptOptions } from "./prompts/prompts";
-export { PromptError } from "./prompts/errors";
-export type { PromptErrorCode } from "./prompts/errors";
-export { resolvePipelineConfig } from "./cli/resolve-config";
-export type {
-  BudgetPercents,
-  ResolvableProvider,
-  ResolvePipelineConfigOptions,
-} from "./cli/resolve-config";
-export { driveWorkflow, DriveError, silentNoopWarning } from "./cli/drive";
-export type { DriveErrorCode, DriveWorkflowParams } from "./cli/drive";
+export { parseRegistryConfig } from "./registry/validate";
+export type { Role, RoleRunDeps } from "./role";
+export { defineRole, resolveRoleModel, toHarnessOptions } from "./role";
+export type { RunnerErrorCode } from "./runner/errors";
+export { RunnerError, resolveTargetDir } from "./runner/errors";
+export type { RoleRunner, RoleRunnerConfig, RunRoleOptions } from "./runner/role-runner";
+export { createRoleRunner } from "./runner/role-runner";
+export type { RunRoleParams, RunRoleResult } from "./runner/runner";
+export { runRole } from "./runner/runner";
+export type { Tool } from "./runner/tool";
+export { defineTool } from "./runner/tool";
+export type { WorkflowContext, WorkflowModule } from "./workflow";
+export { isWorkflowModule } from "./workflow";

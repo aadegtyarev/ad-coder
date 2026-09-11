@@ -19,7 +19,10 @@ function tempFileWithLines(label: string, lineCount: number): string {
   );
   // `lineCount` lines each newline-terminated, so countLines() sees exactly
   // `lineCount` logical lines.
-  fs.writeFileSync(file, Array.from({ length: lineCount }, (_, i) => `line ${i}`).join("\n") + "\n");
+  fs.writeFileSync(
+    file,
+    `${Array.from({ length: lineCount }, (_, i) => `line ${i}`).join("\n")}\n`,
+  );
   scratchFiles.push(file);
   return file;
 }

@@ -2,6 +2,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { BACKGROUND_CONTEXT, MemorySessionRepo } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import {
   createModels,
@@ -10,19 +11,21 @@ import {
   fauxToolCall,
   Type,
 } from "@earendil-works/pi-ai";
-import { BACKGROUND_CONTEXT, MemorySessionRepo } from "@earendil-works/pi-agent-core";
 import type { Summarizer } from "../src/context/compactor";
-import { MemoryLedgerSink } from "../src/ledger/ledger";
-import { defineRole } from "../src/role";
-import type { Role } from "../src/role";
-import { defineTool } from "../src/runner/tool";
 import { startConversation } from "../src/conversation/conversation";
+import { MemoryLedgerSink } from "../src/ledger/ledger";
+import type { Role } from "../src/role";
+import { defineRole } from "../src/role";
+import { defineTool } from "../src/runner/tool";
 
 const CONTEXT_WINDOW = 200_000;
 
 /** A faux provider + models pair and the role validated against its window. */
 function harnessFixture(activeToolNames = ["bash", "read", "write", "edit"]) {
-  const faux = fauxProvider({ provider: "faux", models: [{ id: "faux-1", contextWindow: CONTEXT_WINDOW }] });
+  const faux = fauxProvider({
+    provider: "faux",
+    models: [{ id: "faux-1", contextWindow: CONTEXT_WINDOW }],
+  });
   const models = createModels();
   models.setProvider(faux.provider);
   const model = faux.getModel() as Model<Api>;
@@ -96,7 +99,13 @@ test("exactly one ledger row per turn (per-turn attach/unsubscribe, no duplicati
   const sink = new MemoryLedgerSink();
   faux.setResponses([fauxAssistantMessage("one"), fauxAssistantMessage("two")]);
 
-  const conversation = await startConversation({ role, targetDir, models, model, ledgerSink: sink });
+  const conversation = await startConversation({
+    role,
+    targetDir,
+    models,
+    model,
+    ledgerSink: sink,
+  });
   try {
     await conversation.step("turn one");
     await conversation.step("turn two");
@@ -112,7 +121,13 @@ test("exactly one ledger row per turn (per-turn attach/unsubscribe, no duplicati
 
 test("a tool invoked in a turn appears in that turn's result.toolCalls", async () => {
   const calls: string[] = [];
-  const { faux, models, model, role } = harnessFixture(["bash", "read", "write", "edit", "record_note"]);
+  const { faux, models, model, role } = harnessFixture([
+    "bash",
+    "read",
+    "write",
+    "edit",
+    "record_note",
+  ]);
   faux.setResponses([
     fauxAssistantMessage(fauxToolCall("record_note", { note: "from-model" })),
     fauxAssistantMessage("done"),

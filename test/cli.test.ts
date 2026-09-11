@@ -24,7 +24,13 @@ test("running the example workflow prints its result and exits 0", () => {
 });
 
 test("a missing command, a missing file and a URL specifier each exit 2", () => {
-  for (const args of [[], ["run"], ["plan", "x.ts"], ["run", "./nope.ts"], ["run", "https://evil.example/x.ts"]]) {
+  for (const args of [
+    [],
+    ["run"],
+    ["plan", "x.ts"],
+    ["run", "./nope.ts"],
+    ["run", "https://evil.example/x.ts"],
+  ]) {
     const { code, stdout, stderr } = runCli(args);
     expect(code).toBe(2);
     expect(stderr).toContain("usage: ad-coder run <script.ts>");

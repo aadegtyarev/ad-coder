@@ -76,4 +76,6 @@ This file is for ORIENTATION and non-enforced conventions. A rule that guides th
 build and that a coder could violate belongs in `docs/contracts/` (the reviewer reads
 it and blocks on a violation), not here. Current contracts: `config.md` (everything
 configurable), `architecture.md` (headless core + thin fronts, every capability
-reachable programmatically — the harness is friendly to humans AND machines).
+reachable programmatically — the harness is friendly to humans AND machines),
+`quality.md` (every change passes `bun run check` — Biome format + lint — with the
+Reviewer blocking on a non-clean run).

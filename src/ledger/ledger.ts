@@ -68,7 +68,10 @@ export class FileLedgerSink implements LedgerSink {
     const fd = fs.openSync(
       this.filePath,
       // O_NOFOLLOW refuses a symlink at the final path component.
-      fs.constants.O_WRONLY | fs.constants.O_APPEND | fs.constants.O_CREAT | fs.constants.O_NOFOLLOW,
+      fs.constants.O_WRONLY |
+        fs.constants.O_APPEND |
+        fs.constants.O_CREAT |
+        fs.constants.O_NOFOLLOW,
       0o600,
     );
     try {
