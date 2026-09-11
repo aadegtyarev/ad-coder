@@ -93,3 +93,7 @@ export type {
   ResolvedSelection,
   SpawnOverride,
 } from "./profiles/types";
+export { resolvePrompt } from "./prompts/prompts";
+export type { ResolvePromptOptions } from "./prompts/prompts";
+export { PromptError } from "./prompts/errors";
+export type { PromptErrorCode } from "./prompts/errors";

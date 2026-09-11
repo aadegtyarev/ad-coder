@@ -9,7 +9,8 @@
  * Credentials come from the process environment (never from the target project).
  * If no targetDir is given a fresh temp directory is created and printed.
  */
-import { defineRole, resolveRoleModel, runPipeline, MemoryLedgerSink } from "ad-coder";
+import { defineRole, resolvePrompt, resolveRoleModel, runPipeline, MemoryLedgerSink } from "ad-coder";
+import { PromptError } from "ad-coder";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -23,12 +24,28 @@ const promptsDir = path.join(import.meta.dir, "..", "prompts");
 const read = (f: string) => fs.readFileSync(path.join(promptsDir, f), "utf8");
 const budget = { maxTokens: 120_000, reserveTokens: 8_000, keepRecentTokens: 24_000 };
 
+// The boundary usage: reference a system prompt BY NAME so a project can ship
+// its own <targetDir>/.ad-coder/prompts/<name>.md to override the built-in. The
+// inline read() path is kept as a fallback -- if resolvePrompt cannot find the
+// name (e.g. a trimmed-down install) the example still runs from the sibling
+// prompts/ dir it was invoked from.
+function systemPrompt(name: string, promptFile: string): string {
+  try {
+    return resolvePrompt(name, { projectDir: targetDir });
+  } catch (err) {
+    if (err instanceof PromptError && err.code === "not_found") {
+      return read(promptFile);
+    }
+    throw err;
+  }
+}
+
 function role(name: string, promptFile: string, tools: string[]) {
   const input = {
     name,
     provider: "deepseek",
     modelId: "deepseek-v4-flash",
-    systemPrompt: read(promptFile),
+    systemPrompt: systemPrompt(name, promptFile),
     activeToolNames: tools,
     cacheRetention: "short" as const,
     contextBudget: budget,

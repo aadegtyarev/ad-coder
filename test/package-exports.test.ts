@@ -21,8 +21,10 @@ import {
   parseProfile,
   parseRegistryConfig,
   ProfileError,
+  PromptError,
   RegistryError,
   resolveProfile,
+  resolvePrompt,
   resolveRegistry,
   resolveTargetDir,
   runPipeline,
@@ -53,7 +55,9 @@ import type {
   ProfileEntry,
   ProfileErrorCode,
   ProfileRole,
+  PromptErrorCode,
   ProviderConfig,
+  ResolvePromptOptions,
   QualityGate,
   RegistryConfig,
   RegistryErrorCode,
@@ -120,6 +124,8 @@ test("the package is importable by its published name", () => {
   expect(typeof anthropicCompatiblePreset).toBe("function");
   expect(typeof openaiCodexPreset).toBe("function");
   expect(typeof RegistryError).toBe("function");
+  expect(typeof resolvePrompt).toBe("function");
+  expect(typeof PromptError).toBe("function");
   // Type-only imports are erased; reference them so the imports are not unused.
   const _budget: ContextBudget | undefined = undefined;
   const _summarizer: Summarizer | undefined = undefined;
@@ -160,6 +166,10 @@ test("the package is importable by its published name", () => {
   const _resolvedSelection: ResolvedSelection | undefined = undefined;
   const _profileErrCode: ProfileErrorCode | undefined = undefined;
   const _defaultProfileModels: DefaultProfileModels | undefined = undefined;
+  const _resolvePromptOptions: ResolvePromptOptions | undefined = undefined;
+  const _promptErrCode: PromptErrorCode | undefined = undefined;
+  expect(_resolvePromptOptions).toBeUndefined();
+  expect(_promptErrCode).toBeUndefined();
   expect(_profile).toBeUndefined();
   expect(_profileEntry).toBeUndefined();
   expect(_profileRole).toBeUndefined();

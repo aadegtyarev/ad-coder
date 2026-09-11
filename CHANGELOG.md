@@ -16,6 +16,16 @@ network (pi-ai's fauxProvider) and demonstrated live on DeepSeek.
   model)`): a verbatim system prompt, a per-role tool allow-list
   (`activeToolNames`), a `cacheRetention` policy, and a `ContextBudget`. Pi's own
   compaction is disabled so the context strategy stays in ad-coder.
+- **Prompts as files** — `resolvePrompt(name, opts?)` resolves a SYSTEM prompt
+  by bare name to a verbatim UTF-8 string, so a role can reference `"coder"`
+  instead of embedding an inline `fs.readFileSync`. A project prompt at
+  `<projectDir>/.ad-coder/prompts/<name>.md` overrides the built-in shipped at
+  `prompts/<name>.md`; the file is returned unchanged (no trim, no normalize, no
+  templating — it is the cacheable verbatim cache prefix). The name is validated
+  against `/^[A-Za-z0-9_-]+$/` BEFORE any path is built (no dots, slashes or
+  `..`), and failures are a typed `PromptError` (`invalid_name`/`not_found`)
+  carrying only the name and the absolute paths tried — never file contents.
+  Task/user-prompt templating is a follow-on.
 - **Default-open tool allow-list** — `activeToolNames` is now OPTIONAL: an absent
   field means "every registered tool" (the harness default), a present `[]` is
   still a deny-all, and a present non-empty array is the exact set. Existing
