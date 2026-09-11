@@ -18,8 +18,13 @@ formatters, and it is the through-line of every decision below.
 
 ## Module parallelism principle
 
-Verified from the code: modules are disjoint (one type-only cross-import,
-`preflight → role`), and the only shared seam is the barrel (`src/index.ts`,
+Verified from the code (re-audited as the project grew): there are two kinds of
+module. LEAF modules (ledger, context, capabilities, gates, role) stay disjoint —
+they import no sibling, or only `role` type-only. COMPOSER modules (runner,
+orchestration) deliberately import several leaves BECAUSE composing them is their
+job (runner = role+context+ledger; orchestration = runner+ledger+role). That is
+correct, not drift: a composer should depend on what it composes. The shared seam
+is still the barrel (`src/index.ts`, 53 lines,
 append-only export lines) + docs + `package.json`/`bun.lock` when deps change.
 So: **a module is the unit of parallelism; the integration seam is thin and
 serial.** Fan out on the leaves (write+test the module — the expensive 90%),
