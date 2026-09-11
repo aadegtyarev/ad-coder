@@ -94,6 +94,26 @@ The `ad-coder run <script.ts> --target-dir <dir>` CLI loads and runs a workflow
 module against a target directory; `examples/pipeline.ts` shows the library
 `runPipeline` API the CLI is a thin front for.
 
+Run any built-in role standalone with `ad-coder role <name> "<task>"
+--target-dir <dir>`, where `<name>` is `planner`, `coder`, `reviewer` or
+`security`:
+
+```sh
+DEEPSEEK_API_KEY=... ad-coder role coder "Add a --json flag to the CLI" \
+  --target-dir ./my-project
+```
+
+The provider is resolved from the environment by env-var PRESENCE — precedence
+`DEEPSEEK_API_KEY` → `OPENROUTER_API_KEY` → OpenAI-Codex OAuth — and the selected
+provider and model are echoed to stderr (names only, never the key) before the
+turn runs. Pass `--provider <deepseek|openrouter|openai-codex>` to choose
+explicitly, `--strong-model`/`--mid-model`/`--cheap-model` to override the tier
+models, and `--max-rounds`/`--default-complexity` to set the routing defaults.
+The role runs with real `read`/`write`/`edit`/`bash` tool access rooted at
+`--target-dir`; that directory is **not** a sandbox (a bash turn can `cd` out of
+it and read any file the invoking user can), exactly as the `run` command
+documents. The interactive `ad-coder drive` stepped loop is a follow-on.
+
 Per-role model selection is optionally complexity-driven: pass a `routing`
 ({ profile, registry, defaultComplexity?, overrides? }) to `runPipeline` and each
 role's model is chosen from the planner-rated complexity. Routing is optional —

@@ -111,6 +111,27 @@ network (pi-ai's fauxProvider) and demonstrated live on DeepSeek.
   additive — absent, model selection is byte-for-byte the prior behavior (each
   `RoleSpec.model` over `config.models`).
 - **Built-in role prompts** — `prompts/{planner,coder,reviewer,security}.md`.
+- **Env-driven config resolution** — `resolvePipelineConfig(options)` builds a
+  runnable `PipelineConfig` from the environment: it selects a provider by
+  env-var PRESENCE (precedence `DEEPSEEK_API_KEY` → `OPENROUTER_API_KEY` →
+  OpenAI-Codex OAuth, overridable with `provider`), builds the matching shipped
+  preset's registry through the injected `env` accessor (a keyless env-var
+  provider throws `RegistryError('missing_credential', <VAR-NAME>)` naming only
+  the variable), routes strong/mid/cheap model NAMES through the default
+  profile, and derives the context budget as a PERCENT of the smallest chosen
+  model's window (never a hardcoded value) so one budget validates for every
+  role. The selected provider and tier model names are echoed to stderr (names
+  only, never a key) before the turn runs.
+- **`ad-coder role <name> "<task>" --target-dir <dir>` subcommand** — runs a
+  single built-in role (`planner`/`coder`/`reviewer`/`security`) standalone
+  against a target directory, resolving the provider and models from the
+  environment. Prints the role's final assistant text and the per-run cost;
+  `--provider`, `--strong-model`/`--mid-model`/`--cheap-model`, `--max-rounds`
+  and `--default-complexity` are validated at the argument boundary (bad input
+  exits 2 with the usage string). The role runs with real read/write/edit/bash
+  tool access rooted at the target directory — the target directory is NOT a
+  sandbox (same posture as `run`). The interactive `ad-coder drive` stepped loop
+  (and its `--auto` mode) is a separate follow-on and is not built here.
 - **Packaging** — MIT license, CI (typecheck + tests on Bun), and one-command
   install/update from GitHub.
 

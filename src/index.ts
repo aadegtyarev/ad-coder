@@ -113,3 +113,9 @@ export { resolvePrompt } from "./prompts/prompts";
 export type { ResolvePromptOptions } from "./prompts/prompts";
 export { PromptError } from "./prompts/errors";
 export type { PromptErrorCode } from "./prompts/errors";
+export { resolvePipelineConfig } from "./cli/resolve-config";
+export type {
+  BudgetPercents,
+  ResolvableProvider,
+  ResolvePipelineConfigOptions,
+} from "./cli/resolve-config";

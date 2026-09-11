@@ -26,6 +26,7 @@ import {
   ProfileError,
   PromptError,
   RegistryError,
+  resolvePipelineConfig,
   resolveProfile,
   resolvePrompt,
   resolveRegistry,
@@ -43,6 +44,7 @@ import {
 import type {
   ApiKind,
   AvailableTransition,
+  BudgetPercents,
   Complexity,
   Driver,
   ContextBudget,
@@ -68,6 +70,8 @@ import type {
   ProfileRole,
   PromptErrorCode,
   ProviderConfig,
+  ResolvableProvider,
+  ResolvePipelineConfigOptions,
   ResolvePromptOptions,
   QualityGate,
   RegistryConfig,
@@ -145,7 +149,14 @@ test("the package is importable by its published name", () => {
   expect(typeof openaiCodexPreset).toBe("function");
   expect(typeof RegistryError).toBe("function");
   expect(typeof resolvePrompt).toBe("function");
+  expect(typeof resolvePipelineConfig).toBe("function");
   expect(typeof PromptError).toBe("function");
+  const _budgetPercents: BudgetPercents | undefined = undefined;
+  const _resolvableProvider: ResolvableProvider | undefined = undefined;
+  const _resolveConfigOpts: ResolvePipelineConfigOptions | undefined = undefined;
+  expect(_budgetPercents).toBeUndefined();
+  expect(_resolvableProvider).toBeUndefined();
+  expect(_resolveConfigOpts).toBeUndefined();
   // Type-only imports are erased; reference them so the imports are not unused.
   const _budget: ContextBudget | undefined = undefined;
   const _summarizer: Summarizer | undefined = undefined;
