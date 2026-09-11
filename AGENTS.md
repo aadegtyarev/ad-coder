@@ -93,3 +93,47 @@ configurable), `architecture.md` (headless core + thin fronts, every capability
 reachable programmatically — the harness is friendly to humans AND machines),
 `quality.md` (every change passes `bun run check` — Biome format + lint — with the
 Reviewer blocking on a non-clean run).
+
+
+
+
+
+## Step closeout
+
+After every material implementation step, persist the handoff state before
+stopping: update `docs/BACKLOG.md` with completion and the next priority, and
+update `docs/CHECKPOINT.md` with the verified result. Do not leave this project
+knowledge only in the chat transcript.
+
+
+
+
+
+
+
+
+
+
+<!-- BEGIN ldo-codex -->
+## LDO orchestration
+
+For a non-trivial implementation request, let LDO plan first and decide whether review is needed. First tell the user that LDO is starting, then run:
+
+```sh
+node .codex/ldo/scripts/ldo-run.mjs --runtime codex "<the user request>"
+```
+
+LDO saves every plan locally. In `review-plan=auto` (default), it pauses for discussion only when Planner rates the task `complex` or `elevated`; use `--review-plan always` or `never` to override. When paused, show the plan and wait for explicit approval; then run `node .codex/ldo/scripts/ldo-run.mjs --runtime codex --continue-plan latest`. If a pipeline later crashes, run `node .codex/ldo/scripts/ldo-run.mjs --runtime codex --resume-run latest` to continue from its first incomplete phase. If the user changes scope, create a new plan-only artifact instead. Use `--research` when current external facts are required and `--no-record` for fast, disposable iterations. Do not add `--isolate` in a normal `workspace-write` Codex session: Git worktree creation writes shared `.git/refs`, which that sandbox may forbid. Use `--isolate` only when the host explicitly permits Git metadata writes (for example, an externally sandboxed bypass session). Run independent tasks sequentially in the normal Codex path.
+Planner runs once on Sol; there is no automatic refinement pass. Trivial Reviewers use a compact verification prompt. These policies are Codex-only.
+
+LDO pipelines normally take several minutes. Start one long-lived watcher or wait
+for completion instead of polling repeatedly. Use waits measured in minutes and
+send a progress update only when the pipeline produces a material result or needs
+operator input; do not spend tokens on unchanged status checks.
+
+After every completed pipeline, always print a concise operator report in normal prose; raw pipeline JSON is not the report. Include the task outcome and verdict, changed files, tests, unresolved issues, token totals and per-stage usage, `runCheckpoint` path, and Recorder's `backlog.destination`, `backlog.file`, and `backlog.count`. The Recorder must update `docs/BACKLOG.md` when unresolved items exist. Never silently finish without the operator report or without confirming the terminal checkpoint and backlog outcome. A deliberate `--no-record` run or a trivial run may report that backlog recording was skipped.
+
+If the prompt begins with `You are LDO's` or says `You are an LDO subagent`, you are already a pipeline worker: do not invoke LDO again. Perform only the assigned role and return the requested JSON.
+
+For a one-file mechanical edit, a direct factual answer, or a request explicitly asking not to orchestrate, work normally without LDO.
+<!-- END ldo-codex -->
