@@ -183,7 +183,7 @@ module-locality from the touched-file set to decide what can parallelize.
   construction) preferred over LLM regeneration. Large decompositions reshape the
   shared barrel/multiple modules, so they are NOT parallel-safe.
 
-- **Profiles + complexity-aware model routing** — on top of the matrix. A profile
+- **Profiles + complexity-aware model routing** — DONE (src/profiles/ + runPipeline routing). On top of the matrix. A profile
   is intent → matrix → model: `{ tier, maxOutput, cacheRetention }` per role,
   named intent (`cheap`/`max`) not a hard id, so it ports across providers. But a
   profile should be a FUNCTION OF COMPLEXITY, not a flat per-role table — route
