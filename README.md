@@ -183,10 +183,11 @@ proves it with pi-ai's faux provider (zero network, no key).
 ## Running a pipeline
 
 `runRole` drives one turn; `runPipeline` composes turns into a plan → code⇄review
-loop. It runs an optional planner once, then alternates a coder and a reviewer
-until the reviewer approves or `maxRounds` is hit. Every role-run shares one
-`targetDir` but gets its own fresh session, and each run carries a distinct
-ledger `step` (`plan`, `code:1`, `review:1`, `code:2`, …):
+loop. It runs an optional planner once, then a conditional Security phase, then
+alternates a coder and a reviewer until the reviewer approves or `maxRounds` is
+hit. Every role-run shares one `targetDir` but gets its own fresh session, and
+each run carries a distinct ledger `step` (`plan`, `security`, `code:1`,
+`review:1`, `code:2`, …):
 
 ```ts
 import { runPipeline } from "ad-coder";
@@ -198,6 +199,7 @@ const result = await runPipeline({
   maxRounds: 3,     // REQUIRED cap (>= 1); the loop never spins past it
   roles: {
     planner,        // optional { role, model } — run once if present
+    security,       // optional { role, model } — runs only on an elevated surface
     coder,          // { role, model }
     reviewer,       // { role, model }
   },
@@ -224,17 +226,30 @@ hard `OrchestrationError` (never a silent pass); a well-formed
 `changes_requested` is a legitimate non-approval whose issues become the coder's
 next prompt.
 
-**The plan complexity is an optional `submit_plan` tool call.** When a planner is
+**The plan is an optional `submit_plan` tool call.** When a planner is
 present it is handed a fresh `submit_plan` tool (same `runRole` `tools` seam);
-calling it with `{ complexity: "trivial" | "medium" | "complex", summary }`
-surfaces the tier on `result.complexity`. This is a **soft** signal: unlike the
-verdict, a planner that never calls the tool is NOT an error — `result.complexity`
-is simply `undefined` and the run proceeds on the free-text plan. Only a
-**malformed** submission (a bad complexity value or non-string summary, caught by
-the hand-written `parsePlan`) is a hard `OrchestrationError` (`malformed_plan`).
-The complexity is exposed for a later complexity-aware routing feature; this
-release does not yet use it to pick models. The planner role must list
-`submit_plan` in its `activeToolNames` for the tool to be reachable.
+calling it with `{ complexity: "trivial" | "medium" | "complex", securitySurface:
+"none" | "low" | "elevated", summary }` surfaces the tier on `result.complexity`
+and the surface on `result.securitySurface`. This is a **soft** signal: unlike
+the verdict, a planner that never calls the tool is NOT an error — both are simply
+`undefined` and the run proceeds on the free-text plan. Only a **malformed**
+submission (a bad complexity value, a bad securitySurface value, or a non-string
+summary, caught by the hand-written `parsePlan`) is a hard `OrchestrationError`
+(`malformed_plan`) — the surface is never coerced or defaulted. The complexity is
+exposed for a later complexity-aware routing feature; this release does not yet
+use it to pick models. The planner role must list `submit_plan` in its
+`activeToolNames` for the tool to be reachable.
+
+**The Security phase is conditional.** When the planner flags an `elevated`
+`securitySurface` AND a `security` role is configured, `runPipeline` runs that
+role once (ledger `step: 'security'`) with the task, the plan summary, and a
+fixed OWASP threat-model instruction, and threads its final text — concrete
+risk+mitigation requirements — into the coder's first prompt and every reviewer
+prompt as **hard requirements** (data only, never interpolated into a shell, SQL,
+or path sink). The security role reads the plan and tree only (`bash`/`read`, no
+`write`/`edit`/submit tool). When the surface is `elevated` but no security role
+is configured, the phase is skipped (a quiet stderr note) and the run proceeds;
+`result.securitySurface` still reports the submitted value either way.
 
 ## The ledger
 

@@ -51,6 +51,7 @@ export type {
   Plan,
   RoleSpec,
   RoundRecord,
+  SecuritySurface,
   Verdict,
   VerdictIssue,
   VerdictStatus,

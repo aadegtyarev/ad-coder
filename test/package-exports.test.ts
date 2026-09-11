@@ -35,6 +35,7 @@ import type {
   RoleRunner,
   RoleSpec,
   RoundRecord,
+  SecuritySurface,
   RunRoleOptions,
   RunRoleParams,
   RunRoleResult,
@@ -91,6 +92,7 @@ test("the package is importable by its published name", () => {
   const _capture: VerdictCapture | undefined = undefined;
   const _planCapture: PlanCapture | undefined = undefined;
   const _complexity: Complexity | undefined = undefined;
+  const _securitySurface: SecuritySurface | undefined = undefined;
   const _plan: Plan | undefined = undefined;
   const _verdict: Verdict | undefined = undefined;
   const _issue: VerdictIssue | undefined = undefined;
@@ -113,6 +115,7 @@ test("the package is importable by its published name", () => {
   expect(_capture).toBeUndefined();
   expect(_planCapture).toBeUndefined();
   expect(_complexity).toBeUndefined();
+  expect(_securitySurface).toBeUndefined();
   expect(_plan).toBeUndefined();
   expect(_verdict).toBeUndefined();
   expect(_issue).toBeUndefined();

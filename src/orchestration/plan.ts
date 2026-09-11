@@ -2,12 +2,14 @@ import { Type } from "@earendil-works/pi-ai";
 import { defineTool } from "../runner/tool";
 import type { Tool } from "../runner/tool";
 import { OrchestrationError } from "./types";
-import type { Complexity, Plan } from "./types";
+import type { Complexity, Plan, SecuritySurface } from "./types";
 
 /** The tool name the planner calls to submit its structured plan. */
 export const SUBMIT_PLAN_TOOL_NAME = "submit_plan";
 
 const COMPLEXITIES: readonly Complexity[] = ["trivial", "medium", "complex"];
+
+const SECURITY_SURFACES: readonly SecuritySurface[] = ["none", "low", "elevated"];
 
 /**
  * A per-planner-turn holder the `submit_plan` tool writes into and the pipeline
@@ -28,7 +30,8 @@ export interface PlanCapture {
  * The plan arrives as `submit_plan` tool-call args: its shape is NOT trusted.
  * This is a pure, self-contained, hand-written validator (no `eval`, no schema
  * library): `value` must be an object; `complexity` one of the three allowed
- * literals; `summary` a string. Any deviation throws
+ * literals; `securitySurface` one of the three allowed literals; `summary` a
+ * string. Any deviation throws
  * `OrchestrationError('malformed_plan')` -- never a silent coercion, never a
  * default. `summary` is checked for type only and is NOT interpolated into any
  * shell/SQL/path/prompt sink in this unit (the coder still receives the
@@ -52,11 +55,23 @@ export function parsePlan(value: unknown, detail: string): Plan {
     return bad(`plan.complexity must be one of ${COMPLEXITIES.join(", ")}`);
   }
 
+  const securitySurface = record.securitySurface;
+  if (
+    typeof securitySurface !== "string" ||
+    !SECURITY_SURFACES.includes(securitySurface as SecuritySurface)
+  ) {
+    return bad(`plan.securitySurface must be one of ${SECURITY_SURFACES.join(", ")}`);
+  }
+
   if (typeof record.summary !== "string") {
     return bad("plan.summary must be a string");
   }
 
-  return { complexity: complexity as Complexity, summary: record.summary };
+  return {
+    complexity: complexity as Complexity,
+    securitySurface: securitySurface as SecuritySurface,
+    summary: record.summary,
+  };
 }
 
 /**
@@ -82,6 +97,7 @@ export function buildSubmitPlanTool(capture: PlanCapture, detail: string): Tool 
     label: "submit plan",
     parameters: Type.Object({
       complexity: Type.String(),
+      securitySurface: Type.String(),
       summary: Type.String(),
     }),
     async execute(_toolCallId, params) {
@@ -114,9 +130,10 @@ export function buildSubmitPlanTool(capture: PlanCapture, detail: string): Tool 
  */
 export function formatPlannerInstruction(): string {
   return [
-    `When your plan is ready, record its complexity by calling the ${SUBMIT_PLAN_TOOL_NAME} tool.`,
+    `When your plan is ready, record it by calling the ${SUBMIT_PLAN_TOOL_NAME} tool.`,
     "Call it with this shape:",
-    '{ "complexity": "trivial" | "medium" | "complex", "summary": "<short summary>" }',
+    '{ "complexity": "trivial" | "medium" | "complex", "securitySurface": "none" | "low" | "elevated", "summary": "<short summary>" }',
     'Choose "trivial" for a one-liner, "medium" for a routine multi-file change, "complex" for a cross-cutting or high-risk one.',
+    'Choose "none" when the task touches no attack surface, "low" for incidental exposure, "elevated" when it touches auth, secrets, user input, crypto, or an external boundary.',
   ].join("\n");
 }

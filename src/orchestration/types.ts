@@ -57,17 +57,32 @@ export interface Verdict {
 export type Complexity = "trivial" | "medium" | "complex";
 
 /**
+ * How much attack surface the planner judges the task to touch.
+ *
+ * A fixed set BECAUSE it is untrusted model-produced input: `parsePlan` in
+ * `plan.ts` checks membership against these literals rather than trusting the
+ * emitted string, exactly as `Complexity` gates the tier. `elevated` is the
+ * only value that ARMS the conditional Security phase in `runPipeline` (and only
+ * when a `security` role is configured); `none`/`low` are informational. A
+ * silent coercion to a wrong value here would let a benign surface read as a
+ * dangerous one or the reverse, so the validator MUST throw, never default.
+ */
+export type SecuritySurface = "none" | "low" | "elevated";
+
+/**
  * The structured plan a planner submits via the `submit_plan` tool call and the
  * pipeline strictly re-validates. Structured-and-schema-checked is stronger than
- * parsing the free-text plan: `complexity` must be one of three literals and
- * `summary` a string. UNLIKE the verdict, the plan is SOFT -- an absent
- * `submit_plan` call leaves `PipelineResult.complexity` undefined and the run
- * proceeds on the free-text plan; only a MALFORMED submission is a hard failure.
- * The tool's TypeBox `parameters` schema is deliberately permissive at the
- * `complexity` leaf so `parsePlan` in `plan.ts` stays the authoritative gate.
+ * parsing the free-text plan: `complexity` must be one of three literals,
+ * `securitySurface` one of three literals, and `summary` a string. UNLIKE the
+ * verdict, the plan is SOFT -- an absent `submit_plan` call leaves
+ * `PipelineResult.complexity` undefined and the run proceeds on the free-text
+ * plan; only a MALFORMED submission is a hard failure. The tool's TypeBox
+ * `parameters` schema is deliberately permissive at the enum leaves so
+ * `parsePlan` in `plan.ts` stays the authoritative gate.
  */
 export interface Plan {
   complexity: Complexity;
+  securitySurface: SecuritySurface;
   summary: string;
 }
 
@@ -101,6 +116,13 @@ export interface PipelineConfig {
     planner?: RoleSpec;
     coder: RoleSpec;
     reviewer: RoleSpec;
+    /**
+     * OPTIONAL threat-modelling role. The conditional Security phase runs only
+     * when the planner's `securitySurface` is `elevated` AND this role is
+     * present; absent, an elevated surface is skipped (a quiet stderr note) and
+     * the run proceeds. It reads the plan/tree only -- no write/edit/submit.
+     */
+    security?: RoleSpec;
   };
   ledgerSink?: LedgerSink;
 }
@@ -139,6 +161,15 @@ export interface PipelineResult {
    * complexity-aware routing follow-on; nothing in this unit reads it.
    */
   complexity?: Complexity;
+  /**
+   * The planner's structured security surface, when it called `submit_plan`.
+   * `undefined` means there was no planner, or the planner ran but never called
+   * `submit_plan` -- a SOFT signal, absence is not an error (a MALFORMED call,
+   * by contrast, is a thrown `malformed_plan`). `elevated` is what arms the
+   * conditional Security phase; this field reports the submitted value back to
+   * the caller regardless of whether that phase ran.
+   */
+  securitySurface?: SecuritySurface;
 }
 
 /**

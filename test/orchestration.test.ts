@@ -72,6 +72,24 @@ function plannerRole(fx: Fixture): RoleSpec {
 }
 
 /**
+ * A security role: read/bash only, no write/edit and no submit tool (this first
+ * cut threads its final text, it never writes). Mirrors the role the pipeline's
+ * conditional Security phase drives.
+ */
+function securityRole(fx: Fixture): RoleSpec {
+  return fx.role("security", "You threat-model.", ["bash", "read"]);
+}
+
+/**
+ * A scripted security turn: a single text threat-model message. It MUST end on a
+ * text message (no trailing tool call) or extractFinalText yields '' and nothing
+ * threads to the coder/reviewer.
+ */
+function securityTurn(text: string): FauxResponseStep[] {
+  return [fauxAssistantMessage(text)];
+}
+
+/**
  * A scripted planner turn: call submit_plan with the plan args, then a text
  * summary. Two faux responses, because the harness re-prompts after the tool
  * call until a no-tool message settles the turn. The arg type admits a plain
@@ -329,14 +347,20 @@ test("a malformed submission throws OrchestrationError malformed_verdict", async
   expect((caught as OrchestrationError).code).toBe("malformed_verdict");
 });
 
-test("parsePlan accepts a well-formed plan and rejects bad complexity / non-string summary / non-object", () => {
-  const plan = parsePlan({ complexity: "medium", summary: "s" }, "run-id");
+test("parsePlan accepts a well-formed plan and rejects bad complexity / bad securitySurface / non-string summary / non-object", () => {
+  const plan = parsePlan(
+    { complexity: "medium", securitySurface: "elevated", summary: "s" },
+    "run-id",
+  );
   expect(plan.complexity).toBe("medium");
+  expect(plan.securitySurface).toBe("elevated");
   expect(plan.summary).toBe("s");
 
   const cases: unknown[] = [
-    { complexity: "huge", summary: "s" },
-    { complexity: "medium", summary: 5 },
+    { complexity: "huge", securitySurface: "none", summary: "s" },
+    { complexity: "medium", securitySurface: "extreme", summary: "s" },
+    { complexity: "medium", summary: "s" },
+    { complexity: "medium", securitySurface: "none", summary: 5 },
     ["not", "an", "object"],
     null,
     "string",
@@ -353,14 +377,14 @@ test("parsePlan accepts a well-formed plan and rejects bad complexity / non-stri
   }
 });
 
-test("a planner calling submit_plan surfaces result.complexity", async () => {
+test("a planner calling submit_plan surfaces result.complexity and result.securitySurface", async () => {
   const fx = fixture();
   const planner = plannerRole(fx);
   const coder = fx.role("coder", "You code.");
   const reviewer = reviewerRole(fx);
   const verdict: Verdict = { status: "approved", issues: [], summary: "ok" };
   fx.faux.setResponses([
-    ...plannerTurn({ complexity: "medium", summary: "plan summary" }),
+    ...plannerTurn({ complexity: "medium", securitySurface: "low", summary: "plan summary" }),
     fauxAssistantMessage("coded"),
     ...reviewerTurn(verdict),
   ]);
@@ -375,6 +399,7 @@ test("a planner calling submit_plan surfaces result.complexity", async () => {
 
   expect(result.approved).toBe(true);
   expect(result.complexity).toBe("medium");
+  expect(result.securitySurface).toBe("low");
 });
 
 test("a planner emitting only text leaves result.complexity undefined and the run approves", async () => {
@@ -406,9 +431,9 @@ test("a malformed submit_plan throws OrchestrationError malformed_plan", async (
   const planner = plannerRole(fx);
   const coder = fx.role("coder", "You code.");
   const reviewer = reviewerRole(fx);
-  // complexity "huge" passes the permissive schema but fails parsePlan.
+  // securitySurface "extreme" passes the permissive schema but fails parsePlan.
   fx.faux.setResponses([
-    ...plannerTurn({ complexity: "huge", summary: "s" }),
+    ...plannerTurn({ complexity: "medium", securitySurface: "extreme", summary: "s" }),
   ]);
 
   let caught: unknown;
@@ -425,4 +450,98 @@ test("a malformed submit_plan throws OrchestrationError malformed_plan", async (
   }
   expect(caught).toBeInstanceOf(OrchestrationError);
   expect((caught as OrchestrationError).code).toBe("malformed_plan");
+});
+
+test("elevated surface + security role runs the phase and threads its text to the coder round-1 prompt", async () => {
+  const fx = fixture();
+  const sink = new MemoryLedgerSink();
+  const planner = plannerRole(fx);
+  const security = securityRole(fx);
+  const reviewer = reviewerRole(fx);
+  const coderPrompts: string[] = [];
+  const coderStep = (label: string): FauxResponseFactory => (context) => {
+    coderPrompts.push(lastUserText(context));
+    return fauxAssistantMessage(`coded ${label}`);
+  };
+  const coder = fx.role("coder", "You code.");
+  const verdict: Verdict = { status: "approved", issues: [], summary: "ok" };
+  fx.faux.setResponses([
+    ...plannerTurn({ complexity: "complex", securitySurface: "elevated", summary: "plan summary" }),
+    ...securityTurn("Injection: sanitize the id path segment before fs.readFile"),
+    coderStep("round1"),
+    ...reviewerTurn(verdict),
+  ]);
+
+  const result = await runPipeline({
+    targetDir: fx.targetDir,
+    models: fx.models,
+    task: "implement S",
+    maxRounds: 3,
+    roles: { planner, security, coder, reviewer },
+    ledgerSink: sink,
+  });
+
+  expect(result.approved).toBe(true);
+  expect(result.securitySurface).toBe("elevated");
+  const seen = sink.records().map((r) => `${r.role}/${r.step}`);
+  expect(seen).toContain("security/security");
+  expect(coderPrompts).toHaveLength(1);
+  expect(coderPrompts[0]).toContain("sanitize the id path segment");
+});
+
+test("elevated surface + no security role skips the phase and the run approves", async () => {
+  const fx = fixture();
+  const sink = new MemoryLedgerSink();
+  const planner = plannerRole(fx);
+  const coder = fx.role("coder", "You code.");
+  const reviewer = reviewerRole(fx);
+  const verdict: Verdict = { status: "approved", issues: [], summary: "ok" };
+  fx.faux.setResponses([
+    ...plannerTurn({ complexity: "complex", securitySurface: "elevated", summary: "plan summary" }),
+    fauxAssistantMessage("coded"),
+    ...reviewerTurn(verdict),
+  ]);
+
+  const result = await runPipeline({
+    targetDir: fx.targetDir,
+    models: fx.models,
+    task: "implement T",
+    maxRounds: 3,
+    roles: { planner, coder, reviewer },
+    ledgerSink: sink,
+  });
+
+  expect(result.approved).toBe(true);
+  expect(result.securitySurface).toBe("elevated");
+  const steps = sink.records().map((r) => r.step);
+  expect(steps).not.toContain("security");
+});
+
+test("a non-elevated surface does not run the security phase even when a security role is configured", async () => {
+  const fx = fixture();
+  const sink = new MemoryLedgerSink();
+  const planner = plannerRole(fx);
+  const security = securityRole(fx);
+  const coder = fx.role("coder", "You code.");
+  const reviewer = reviewerRole(fx);
+  const verdict: Verdict = { status: "approved", issues: [], summary: "ok" };
+  fx.faux.setResponses([
+    ...plannerTurn({ complexity: "medium", securitySurface: "low", summary: "plan summary" }),
+    fauxAssistantMessage("coded"),
+    ...reviewerTurn(verdict),
+  ]);
+
+  const result = await runPipeline({
+    targetDir: fx.targetDir,
+    models: fx.models,
+    task: "implement N",
+    maxRounds: 3,
+    roles: { planner, security, coder, reviewer },
+    ledgerSink: sink,
+  });
+
+  expect(result.approved).toBe(true);
+  expect(result.securitySurface).toBe("low");
+  const steps = sink.records().map((r) => r.step);
+  expect(steps).not.toContain("security");
 });

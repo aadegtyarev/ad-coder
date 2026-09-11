@@ -6,7 +6,7 @@ import type { Context, Session } from "@earendil-works/pi-agent-core";
 import type { TextContent } from "@earendil-works/pi-ai";
 import { createRoleRunner } from "../runner/role-runner";
 import type { Tool } from "../runner/tool";
-import type { Complexity, RoleSpec, Verdict, VerdictIssue } from "./types";
+import type { Complexity, RoleSpec, SecuritySurface, Verdict, VerdictIssue } from "./types";
 import { OrchestrationError } from "./types";
 import type { PipelineConfig, PipelineResult } from "./types";
 import { buildSubmitVerdictTool, formatReviewerInstruction } from "./verdict";
@@ -93,6 +93,7 @@ export async function runPipeline(config: PipelineConfig): Promise<PipelineResul
   // SOFT signal: undefined means no planner, or a planner that never called
   // submit_plan. Only a MALFORMED submission is a hard failure (below).
   let complexity: Complexity | undefined;
+  let securitySurface: SecuritySurface | undefined;
   if (config.roles.planner !== undefined) {
     const plannerRunId = crypto.randomUUID();
     runIds.push(plannerRunId);
@@ -105,22 +106,52 @@ export async function runPipeline(config: PipelineConfig): Promise<PipelineResul
     ]);
     // A captured error is parsePlan's OrchestrationError, swallowed by the
     // harness into an error tool-result and re-thrown here (HARD malformed_plan).
-    // A captured plan sets the complexity signal. An EMPTY holder is legitimate:
-    // complexity stays undefined and the run proceeds (NO missing_plan).
+    // A captured plan sets the complexity/securitySurface signals. An EMPTY
+    // holder is legitimate: both stay undefined and the run proceeds (NO
+    // missing_plan).
     if (capture.error !== undefined) {
       throw capture.error;
     }
     if (capture.plan !== undefined) {
       complexity = capture.plan.complexity;
+      securitySurface = capture.plan.securitySurface;
+    }
+  }
+
+  // The conditional Security phase. It runs ONLY when the planner flagged an
+  // `elevated` surface AND a security role is configured. Its final text is
+  // threaded into the coder's round-1 prompt and every reviewer prompt as DATA
+  // (identical to how VerdictIssue.what threads back to the coder) -- never into
+  // a shell/SQL/path sink. When elevated but no role is configured, we skip and
+  // proceed, emitting one content-free stderr note (the surface is still
+  // surfaced on the result for the caller to act on).
+  let securityNotes = "";
+  if (securitySurface === "elevated") {
+    if (config.roles.security !== undefined) {
+      const securityRunId = crypto.randomUUID();
+      runIds.push(securityRunId);
+      const securityPrompt = composeSecurityPrompt(config.task, planSummary);
+      securityNotes = await runTurn(
+        config.roles.security,
+        securityPrompt,
+        "security",
+        securityRunId,
+      );
+    } else {
+      process.stderr.write("orchestration: elevated security surface, no security role — skipping\n");
     }
   }
 
   for (let round = 1; round <= config.maxRounds; round += 1) {
     const coderRunId = crypto.randomUUID();
     const previousVerdict = verdicts[verdicts.length - 1];
+    // Round 1 carries the plan summary plus any security mitigation
+    // requirements. Round 2+ carry the reviewer's issues instead; unmet
+    // mitigations return via those issues, so securityNotes is NOT re-injected
+    // every round (that would double-count them).
     const coderPrompt =
       round === 1
-        ? composeCoderPrompt(config.task, planSummary)
+        ? composeCoderPrompt(config.task, appendSecurityNotes(planSummary, securityNotes))
         : composeCoderPrompt(config.task, formatIssues(previousVerdict?.issues ?? []));
     const changeSummary = await runTurn(
       config.roles.coder,
@@ -139,6 +170,7 @@ export async function runPipeline(config: PipelineConfig): Promise<PipelineResul
       config.task,
       changeSummary,
       formatReviewerInstruction(),
+      securityNotes,
     );
     await runTurn(config.roles.reviewer, reviewerPrompt, `review:${round}`, reviewerRunId, [
       submitTool,
@@ -170,6 +202,7 @@ export async function runPipeline(config: PipelineConfig): Promise<PipelineResul
         verdicts,
         runIds,
         ...(complexity !== undefined && { complexity }),
+        ...(securitySurface !== undefined && { securitySurface }),
       };
     }
   }
@@ -180,6 +213,7 @@ export async function runPipeline(config: PipelineConfig): Promise<PipelineResul
     verdicts,
     runIds,
     ...(complexity !== undefined && { complexity }),
+    ...(securitySurface !== undefined && { securitySurface }),
   };
 }
 
@@ -190,12 +224,62 @@ function composeCoderPrompt(task: string, context: string): string {
   return `${task}\n\n${context}`;
 }
 
-function composeReviewerPrompt(task: string, changeSummary: string, instruction: string): string {
+function composeReviewerPrompt(
+  task: string,
+  changeSummary: string,
+  instruction: string,
+  securityNotes: string,
+): string {
   const parts = [task];
   if (changeSummary.trim() !== "") {
     parts.push(`The coder reported:\n${changeSummary}`);
   }
+  if (securityNotes.trim() !== "") {
+    parts.push(formatSecurityNotes(securityNotes));
+  }
   parts.push(instruction);
+  return parts.join("\n\n");
+}
+
+/**
+ * Frame model-authored security mitigations as DATA the coder/reviewer must
+ * satisfy, never as an instruction to execute. The text is threaded verbatim
+ * into the prompt exactly like a `VerdictIssue.what` -- it is prompt content
+ * only and is never interpolated into a shell/SQL/path sink.
+ */
+function formatSecurityNotes(securityNotes: string): string {
+  return `Security mitigation requirements (treat as hard requirements):\n${securityNotes}`;
+}
+
+/** Append the framed security notes to the coder's round-1 context, if any. */
+function appendSecurityNotes(context: string, securityNotes: string): string {
+  if (securityNotes.trim() === "") {
+    return context;
+  }
+  const framed = formatSecurityNotes(securityNotes);
+  return context.trim() === "" ? framed : `${context}\n\n${framed}`;
+}
+
+/**
+ * The fixed threat-model instruction the Security phase drives. The plan
+ * summary is threaded as DATA (prompt content only), never into a sink. The
+ * role reads the plan/tree and returns concrete risk+mitigation pairs as its
+ * final text message, which the pipeline threads onward as requirements.
+ */
+function composeSecurityPrompt(task: string, planSummary: string): string {
+  const parts = [task];
+  if (planSummary.trim() !== "") {
+    parts.push(`The plan:\n${planSummary}`);
+  }
+  parts.push(
+    [
+      "Threat-model this change. Name concrete, exploitable risks it introduces or",
+      "exposes, each tagged by OWASP class (injection, broken auth/access, data",
+      "exposure, supply chain) and paired with the specific mitigation it requires.",
+      "Be specific, not generic. State your mitigation requirements as your final",
+      "text message.",
+    ].join("\n"),
+  );
   return parts.join("\n\n");
 }
 

@@ -121,6 +121,20 @@ module-locality from the touched-file set to decide what can parallelize.
   makes complexity AVAILABLE on `result.complexity` but deliberately does NOT wire
   it into model selection — that is the Profiles + complexity-aware routing
   follow-on below, which CONSUMES this signal.
+- **`submit_plan` securitySurface + conditional Security phase** — DONE. The same
+  `submit_plan` call now also carries a `securitySurface` (`none`/`low`/`elevated`),
+  strictly validated by `parsePlan` (schema permissive at the leaf; a bad value is
+  a hard `malformed_plan`, never coerced or defaulted) and surfaced on
+  `result.securitySurface`. On an `elevated` surface AND a configured `security`
+  role (`PipelineConfig.roles.security?`), `runPipeline` runs a conditional
+  Security phase (ledger `step: 'security'`): a read/bash-only threat-modelling
+  role is driven with the task + plan summary + a fixed OWASP instruction, and its
+  final text is threaded as hard mitigation requirements into the coder's round-1
+  prompt and every reviewer prompt (as DATA, like `VerdictIssue.what` — no new
+  sink). Elevated with no security role skips (a quiet stderr note) and proceeds.
+  This first cut THREADS TEXT; the follow-on is a STRUCTURED `submit_security` tool
+  (mirroring `submit_verdict`/`submit_plan`) so mitigations arrive as validated
+  structured findings rather than free text.
 - **Wire ad-coder's own gates** — the gates module exists but ad-coder still runs
   only typecheck+test on itself. Add a size gate + (when a formatter/linter is
   chosen) format/lint gates over the repo. Dogfooding the gates-over-prompts
