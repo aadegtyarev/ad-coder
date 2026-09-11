@@ -135,6 +135,32 @@ module-locality from the touched-file set to decide what can parallelize.
   This first cut THREADS TEXT; the follow-on is a STRUCTURED `submit_security` tool
   (mirroring `submit_verdict`/`submit_plan`) so mitigations arrive as validated
   structured findings rather than free text.
+- **Research surface + conditional Research phase** — the THIRD field the planner
+  rates via `submit_plan`, beside `complexity` and `securitySurface`, following the
+  same pattern as the Security phase above. WHO decides research is needed: the
+  PLANNER rates it (fine — it reads the code and is the only one who can judge
+  whether a feature reaches into an UNKNOWN CONTOUR), the ORCHESTRATOR/caller keeps
+  a COARSE override (force it — LDO's `research: true` — or forbid). NOT
+  orchestrator-only: the orchestrator triages before any code is read and is blind
+  to per-feature contour familiarity. TWO MOMENTS: (1) BEFORE CODING — the plan is
+  sound but implementation needs external facts, so a conditional Research phase
+  runs (ledger `step: 'research'`, a researcher role with WEB tools) and its
+  findings thread into the coder round-1 + reviewer prompts as DATA (like
+  securityNotes, no new sink). Concrete case: about to add a REST API — research
+  what's already available for the stack in use (e.g. Hono/Fastify + OpenAPI
+  codegen) instead of hand-rolling on raw `http`; prior-art-before-building applied
+  PER FEATURE. (2) BEFORE PLANNING / RE-PLANNING — the contour is unknown enough
+  that the planner cannot ground a plan, so it marks research `required` with
+  questions rather than emit a weak plan; the orchestrator runs the researcher and
+  RE-PLANS with the findings. ECONOMICS = the "strong model upfront" argument: a
+  wrong plan in unknown territory burns several wasted full Coder+Reviewer rounds;
+  research is cheap insurance. BUILD is almost free — precisely the securitySurface
+  pattern already shipped (planner-rated field → conditional phase → findings as
+  data), and the researcher is the SAME role bootstrap uses (research at project
+  start; this = research per feature inside an existing project). Soft/hard mirror
+  submit_plan: an absent flag is not an error (only malformed is hard); `required`
+  with no configured researcher role skips quietly. Depends on: the researcher role
+  with web tools (tools-seam DONE; web tools + network-default-open both decided).
 - **Wire ad-coder's own gates** — the gates module exists but ad-coder still runs
   only typecheck+test on itself. Add a size gate + (when a formatter/linter is
   chosen) format/lint gates over the repo. Dogfooding the gates-over-prompts
