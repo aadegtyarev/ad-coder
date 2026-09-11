@@ -1,4 +1,6 @@
 import type { ContextBudget } from "../context/budget";
+import type { CompactionMode } from "../context/compactor";
+import { createSummarizer } from "../context/compactor";
 import { MemoryLedgerSink } from "../ledger/ledger";
 import { SUBMIT_PLAN_TOOL_NAME } from "../orchestration/plan";
 import type { Complexity, PipelineConfig, RoleSpec } from "../orchestration/types";
@@ -69,6 +71,9 @@ export interface ResolvePipelineConfigOptions {
   strongModel?: string;
   midModel?: string;
   cheapModel?: string;
+  compactionMode?: CompactionMode;
+  summarizerModel?: string;
+  allowCrossProviderSummarization?: boolean;
   maxRounds?: number;
   defaultComplexity?: Complexity;
   budgetPercents?: BudgetPercents;
@@ -158,9 +163,18 @@ export function resolvePipelineConfig(options: ResolvePipelineConfigOptions): Pi
   const strong = options.strongModel ?? defaultModel;
   const mid = options.midModel ?? defaultModel;
   const cheap = options.cheapModel ?? defaultModel;
+  const compactionMode = options.compactionMode ?? "auto";
+  if (compactionMode === "cache-aware") {
+    throw new Error('context compaction mode "cache-aware" is not supported yet');
+  }
+  if (compactionMode !== "auto" && compactionMode !== "disabled-then-halt") {
+    throw new Error(`unknown context compaction mode "${String(compactionMode)}"`);
+  }
 
   const registryConfig: RegistryConfig = { providers: [preset()] };
   const registry: ResolvedRegistry = resolveRegistry(registryConfig, { env });
+  const summarizerModelName = options.summarizerModel ?? cheap;
+  const summarizerModel = registry.getModel(summarizerModelName);
 
   const profile: Profile = buildDefaultProfile({ strong, mid, cheap });
   const defaultComplexity = options.defaultComplexity ?? DEFAULT_COMPLEXITY;
@@ -210,6 +224,17 @@ export function resolvePipelineConfig(options: ResolvePipelineConfigOptions): Pi
     maxRounds,
     roles,
     ledgerSink: new MemoryLedgerSink(),
+    compaction:
+      compactionMode === "disabled-then-halt"
+        ? { mode: compactionMode }
+        : {
+            mode: compactionMode,
+            summarizerModel,
+            summarizer: createSummarizer(registry.models, summarizerModel),
+            ...(options.allowCrossProviderSummarization === true && {
+              allowCrossProviderSummarization: true,
+            }),
+          },
     routing: { profile, registry, defaultComplexity },
     defaults: { maxRounds, defaultComplexity },
   };

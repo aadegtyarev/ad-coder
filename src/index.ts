@@ -20,9 +20,15 @@ export type {
 export { resolvePipelineConfig } from "./cli/resolve-config";
 export type { ContextBudget } from "./context/budget";
 export { ContextBudgetError } from "./context/budget";
-export type { Summarizer } from "./context/compactor";
-export { ContextCompactor, SUMMARIZATION_PROMPT } from "./context/compactor";
-export { assertTurnFitsBudget } from "./context/preflight";
+export type { CompactionMode, CompactionPolicy, Summarizer } from "./context/compactor";
+export {
+  COMPACTION_SAFETY_PROMPT,
+  ContextCompactor,
+  createSummarizer,
+  resolveCompactionPolicy,
+  SUMMARIZATION_PROMPT,
+} from "./context/compactor";
+export { assertContextFitsBudget, assertTurnFitsBudget } from "./context/preflight";
 export type {
   ConversationConfig,
   ConversationSession,

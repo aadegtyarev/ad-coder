@@ -11,7 +11,9 @@ import {
   fauxToolCall,
   Type,
 } from "@earendil-works/pi-ai";
+import { ContextBudgetError } from "../src/context/budget";
 import type { Summarizer } from "../src/context/compactor";
+import { SUMMARIZATION_PROMPT } from "../src/context/compactor";
 import { startConversation } from "../src/conversation/conversation";
 import { MemoryLedgerSink } from "../src/ledger/ledger";
 import type { Role } from "../src/role";
@@ -170,6 +172,73 @@ test("the ContextCompactor is attached once and does not run under budget across
     // fires, so the count does not scale with turns.
     expect(summarizerCalls).toBe(0);
   } finally {
+    await conversation.close();
+  }
+});
+
+test("auto compaction consumes a distinct provider summary before the normal response", async () => {
+  const { faux, models, model } = harnessFixture();
+  const role = defineRole(
+    {
+      name: "coder",
+      provider: model.provider,
+      modelId: model.id,
+      systemPrompt: "You code.",
+      activeToolNames: [],
+      cacheRetention: "none",
+      contextBudget: { maxTokens: 1100, reserveTokens: 100, keepRecentTokens: 250 },
+    },
+    model,
+  );
+  const calls: Array<"summary" | "role"> = [];
+  faux.setResponses(
+    Array.from({ length: 12 }, () => (request: { systemPrompt?: string }) => {
+      const kind = request.systemPrompt === SUMMARIZATION_PROMPT ? "summary" : "role";
+      calls.push(kind);
+      return fauxAssistantMessage(kind === "summary" ? "safe historical briefing" : "reply");
+    }),
+  );
+  const conversation = await startConversation({ role, targetDir, models, model });
+  try {
+    for (let i = 0; i < 6; i++) await conversation.step(`${i}:${"x".repeat(900)}`);
+    const summaryAt = calls.indexOf("summary");
+    expect(summaryAt).toBeGreaterThan(0);
+    expect(calls[summaryAt + 1]).toBe("role");
+    expect(calls.filter((kind) => kind === "role")).toHaveLength(6);
+  } finally {
+    await conversation.close();
+  }
+});
+
+test("disabled conversation halts an oversized later turn without summarizing and remains closable", async () => {
+  const { faux, models, model } = harnessFixture();
+  const role = defineRole(
+    {
+      name: "coder",
+      provider: model.provider,
+      modelId: model.id,
+      systemPrompt: "You code.",
+      activeToolNames: [],
+      cacheRetention: "none",
+      contextBudget: { maxTokens: 1000, reserveTokens: 100, keepRecentTokens: 200 },
+    },
+    model,
+  );
+  faux.setResponses(Array.from({ length: 8 }, (_, i) => fauxAssistantMessage(`reply ${i}`)));
+  const conversation = await startConversation({
+    role,
+    targetDir,
+    models,
+    model,
+    compaction: { mode: "disabled-then-halt" },
+  });
+  try {
+    await conversation.step("x".repeat(900));
+    await conversation.step("x".repeat(900));
+    await expect(conversation.step("x".repeat(1800))).rejects.toBeInstanceOf(ContextBudgetError);
+    expect(faux.state.callCount).toBe(2);
+  } finally {
+    await conversation.close();
     await conversation.close();
   }
 });

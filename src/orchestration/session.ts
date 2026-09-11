@@ -93,8 +93,16 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       : undefined;
   const runner =
     routing !== undefined
-      ? createRoleRunner({ targetDir, models: routing.registry.models })
-      : createRoleRunner({ targetDir, models: config.models });
+      ? createRoleRunner({
+          targetDir,
+          models: routing.registry.models,
+          ...(config.compaction !== undefined && { compaction: config.compaction }),
+        })
+      : createRoleRunner({
+          targetDir,
+          models: config.models,
+          ...(config.compaction !== undefined && { compaction: config.compaction }),
+        });
 
   const defaults: ResolvedDefaults = {
     onChangesRequested: config.defaults?.onChangesRequested ?? "advance",

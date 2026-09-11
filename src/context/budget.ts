@@ -65,9 +65,10 @@ export class ContextBudgetError extends Error {
     reserveTokens: number;
     keepRecentTokens: number;
     measuredTokens: number;
+    reason?: string;
   }) {
     super(
-      `assertTurnFitsBudget(${fields.role}): measured ${fields.measuredTokens} tokens against maxTokens ${fields.maxTokens} (reserveTokens ${fields.reserveTokens}, keepRecentTokens ${fields.keepRecentTokens}); the irreducible recent tail plus reserve does not fit`,
+      `context budget (${fields.role}): measured ${fields.measuredTokens} tokens against maxTokens ${fields.maxTokens} (reserveTokens ${fields.reserveTokens}, keepRecentTokens ${fields.keepRecentTokens}); ${fields.reason ?? "the irreducible recent tail plus reserve does not fit"}`,
     );
     this.role = fields.role;
     this.maxTokens = fields.maxTokens;

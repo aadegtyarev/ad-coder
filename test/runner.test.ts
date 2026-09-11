@@ -10,6 +10,7 @@ import {
   fauxToolCall,
   Type,
 } from "@earendil-works/pi-ai";
+import { ContextBudgetError } from "../src/context/budget";
 import type { Summarizer } from "../src/context/compactor";
 import { LEDGER_BASE_DIR } from "../src/ledger/ledger";
 import type { Role } from "../src/role";
@@ -147,6 +148,35 @@ test("runRole does not invoke the summarizer when the turn fits the budget", asy
 
   const result = await runRole({ role, targetDir, models, model, prompt: "small", summarizer });
   expect(result.result.status).toBe("completed");
+});
+
+test("disabled compaction rejects an oversized turn before calling the provider", async () => {
+  const { faux, models, model } = harnessFixture();
+  const role = defineRole(
+    {
+      name: "coder",
+      provider: model.provider,
+      modelId: model.id,
+      systemPrompt: "You code.",
+      activeToolNames: [],
+      cacheRetention: "none",
+      contextBudget: { maxTokens: 1000, reserveTokens: 100, keepRecentTokens: 200 },
+    },
+    model,
+  );
+  faux.setResponses([fauxAssistantMessage("must remain queued")]);
+  await expect(
+    runRole({
+      role,
+      targetDir,
+      models,
+      model,
+      prompt: "x".repeat(5000),
+      compaction: { mode: "disabled-then-halt" },
+    }),
+  ).rejects.toBeInstanceOf(ContextBudgetError);
+  expect(faux.state.callCount).toBe(0);
+  expect(faux.getPendingResponseCount()).toBe(1);
 });
 
 test("resolveTargetDir throws a typed RunnerError for missing, nonexistent and non-directory paths", () => {

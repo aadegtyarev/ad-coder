@@ -9,6 +9,7 @@ import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { driveWorkflow, silentNoopWarning } from "./cli/drive";
 import type { ResolvableProvider } from "./cli/resolve-config";
 import { resolvePipelineConfig } from "./cli/resolve-config";
+import type { CompactionPolicy } from "./context/compactor";
 import { Ledger, MemoryLedgerSink } from "./ledger/ledger";
 import { createWorkflowSession } from "./orchestration/session";
 import type { Complexity, PipelineConfig, RoleSpec } from "./orchestration/types";
@@ -193,15 +194,15 @@ export async function runRoleStandalone(params: {
   targetDir: string;
   task: string;
   ledgerSink: MemoryLedgerSink;
+  compaction?: CompactionPolicy;
 }): Promise<{ text: string; cost: number }> {
   const repo = new MemorySessionRepo();
   const session = await repo.create({}, BACKGROUND_CONTEXT);
-  await createRoleRunner({ targetDir: params.targetDir, models: params.models }).runRole(
-    params.role,
-    params.model,
-    params.task,
-    { session, ledgerSink: params.ledgerSink },
-  );
+  await createRoleRunner({
+    targetDir: params.targetDir,
+    models: params.models,
+    ...(params.compaction !== undefined && { compaction: params.compaction }),
+  }).runRole(params.role, params.model, params.task, { session, ledgerSink: params.ledgerSink });
   // runRole closes the session facade it was handed; reopen a fresh readable
   // facade from the same repo to scan the settled transcript.
   const readable = await repo.open(session.metadata, BACKGROUND_CONTEXT);
@@ -302,6 +303,7 @@ async function roleCommand(
     targetDir: absTargetDir,
     task,
     ledgerSink,
+    ...(config.compaction !== undefined && { compaction: config.compaction }),
   });
 
   // The extracted assistant text IS this subcommand's result value, so it is

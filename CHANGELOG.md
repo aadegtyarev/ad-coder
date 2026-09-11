@@ -12,6 +12,14 @@ network (pi-ai's fauxProvider) and demonstrated live on DeepSeek.
 
 ### Added
 
+- **Activated context compaction** — `auto` now builds a one-shot, no-tool
+  summarizer from the resolved cheap-tier model and is propagated through role,
+  pipeline, CLI, conversation, and orchestrator paths. `disabled-then-halt`
+  rejects a full over-budget branch before provider execution; `cache-aware`
+  fails loudly pending implementation. Summaries retain untrusted-history
+  provenance, cross-provider disclosure requires explicit opt-in, and repeated
+  summarizer failures are circuit-broken.
+
 - **Role** — a validated preset over the harness options (`defineRole(role,
   model)`): a verbatim system prompt, a per-role tool allow-list
   (`activeToolNames`), a `cacheRetention` policy, and a `ContextBudget`. Pi's own

@@ -37,3 +37,24 @@ export function assertTurnFitsBudget(
     });
   }
 }
+
+/** Refuse a disabled-compaction turn when the complete context cannot fit. */
+export function assertContextFitsBudget(
+  role: Role,
+  messages: AgentMessage[],
+  model: Model<Api>,
+): void {
+  const { maxTokens, reserveTokens, keepRecentTokens } = role.contextBudget;
+  const ceiling = Math.min(maxTokens, model.contextWindow);
+  const measured = estimateContextTokens(messages).tokens;
+  if (measured + reserveTokens > ceiling) {
+    throw new ContextBudgetError({
+      role: role.name,
+      maxTokens,
+      reserveTokens,
+      keepRecentTokens,
+      measuredTokens: measured,
+      reason: "the complete context plus reserve does not fit while compaction is disabled",
+    });
+  }
+}

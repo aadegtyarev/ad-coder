@@ -19,8 +19,13 @@ import {
 } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/harness/env/nodejs";
 import type { Api, Model, Models } from "@earendil-works/pi-ai";
-import type { Summarizer } from "../context/compactor";
-import { ContextCompactor } from "../context/compactor";
+import type { CompactionPolicy, Summarizer } from "../context/compactor";
+import {
+  COMPACTION_SAFETY_PROMPT,
+  ContextCompactor,
+  resolveCompactionPolicy,
+} from "../context/compactor";
+import { assertContextFitsBudget, assertTurnFitsBudget } from "../context/preflight";
 import type { LedgerSink } from "../ledger/ledger";
 import { FileLedgerSink, LEDGER_BASE_DIR, Ledger } from "../ledger/ledger";
 import type { Role } from "../role";
@@ -60,8 +65,10 @@ export interface RunRoleParams {
   laneName?: string;
   /** Reuse an existing session; a fresh in-memory session is created otherwise. */
   session?: Session;
-  /** When supplied, a ContextCompactor is attached under the role's budget. Absent = no compaction. */
+  /** Legacy summarizer injection seam; absent policy still defaults to auto compaction. */
   summarizer?: Summarizer;
+  /** Context policy. Absent defaults to efficient auto compaction. */
+  compaction?: CompactionPolicy;
   /** Replaces the default file sink under targetDir; nothing touches disk when supplied. */
   ledgerSink?: LedgerSink;
   /** Defaults to BACKGROUND_CONTEXT. */
@@ -140,6 +147,11 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
 
   const session = params.session ?? (await new MemorySessionRepo().create({}, context));
 
+  const explicitPolicy =
+    params.compaction ??
+    (params.summarizer === undefined ? undefined : { mode: "auto", summarizer: params.summarizer });
+  const compaction = resolveCompactionPolicy(explicitPolicy, params.models, params.model);
+
   const base = toHarnessOptions(params.role, {
     session,
     models: params.models,
@@ -147,6 +159,9 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
   });
   const options: AgentHarnessOptions<ExecutionToolContext> = {
     ...base,
+    ...(compaction.mode === "auto" && {
+      systemPrompt: `${base.systemPrompt}\n\n${COMPACTION_SAFETY_PROMPT}`,
+    }),
     tools,
     toolContext,
   };
@@ -169,8 +184,11 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
   });
 
   const compactor =
-    params.summarizer !== undefined
-      ? new ContextCompactor({ budget: params.role.contextBudget, summarizer: params.summarizer })
+    compaction.mode === "auto"
+      ? new ContextCompactor({
+          budget: params.role.contextBudget,
+          summarizer: compaction.summarizer as Summarizer,
+        })
       : undefined;
 
   const { harness } = await AgentHarness.create<ExecutionToolContext>(options, context);
@@ -179,6 +197,22 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
 
   try {
     const lane = await harness.lane(params.laneName ?? "main", context);
+    const entries = await lane.findEntries({ type: "message", order: "oldestFirst" }, context);
+    const pending = {
+      role: "user" as const,
+      content: params.prompt,
+      timestamp: Date.now(),
+    };
+    const messages = [
+      ...entries.flatMap((entry) => (entry.type === "message" ? [entry.message] : [])),
+      pending,
+    ];
+    if (compaction.mode === "auto") {
+      compactor?.assertHealthy(params.role.name);
+      assertTurnFitsBudget(params.role, messages, params.model);
+    } else {
+      assertContextFitsBudget(params.role, messages, params.model);
+    }
     const result = getOrThrow(await lane.prompt(params.prompt, undefined, context));
     if ("status" in result && result.status === "suspended") {
       // lane.prompt returns OperationResultRecord | SuspendedRun. A single-turn

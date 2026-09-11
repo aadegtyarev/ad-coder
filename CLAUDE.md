@@ -67,6 +67,7 @@ files, comment sprawl, duplicated logic) no single diff reveals — then clear
 the list. Offer; don't run either unasked.
 
 <!-- ldo:features -->
+- 2026-09-11: Context compaction is active end to end: auto/cheap-tier by default, disabled-then-halt without summarizer calls, fail-loud cache-aware deferral, provenance-safe summaries, and explicit cross-provider opt-in.
 - Initial scaffold: `ad-coder run <script.ts>` loads a workflow module, `Role` presets validate harness options, and a `Ledger` records per-turn token and cost deltas as JSONL under `.ad-coder/ledger/`.
 - Ledger records each response's own usage instead of a difference between turns (after_response usage is per-response in pi-agent-core 0.85.1); the JSONL field is now `usage`, not `delta`, and `diffUsage`/`UsageDeltaTracker` remain exported for cumulative sources.
 - 2026-09-11: Quality-gates module (`src/gates/`) exported from `ad-coder`: data-declared `QualityGate` config, injected `CommandExecutor` seam, `GateRunner` running autofix-first-then-check with bounded output plus an in-process size gate, and a fail-loud `GateReport`. Not yet wired into the build.

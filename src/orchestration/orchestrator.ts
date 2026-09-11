@@ -510,5 +510,6 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
     model: orchestratorModel,
     tools,
     ledgerSink: sink,
+    ...(seed.compaction !== undefined && { compaction: seed.compaction }),
   });
 }

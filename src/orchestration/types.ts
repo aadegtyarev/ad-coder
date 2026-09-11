@@ -1,4 +1,5 @@
 import type { Api, Model, Models } from "@earendil-works/pi-ai";
+import type { CompactionPolicy } from "../context/compactor";
 import type { LedgerSink } from "../ledger/ledger";
 import type { Profile, ProfileRole, SpawnOverride } from "../profiles/types";
 import type { ResolvedRegistry } from "../registry/types";
@@ -197,6 +198,8 @@ export interface PipelineConfig {
     security?: RoleSpec;
   };
   ledgerSink?: LedgerSink;
+  /** Resolved context policy; absent callers receive the core's auto default. */
+  compaction?: CompactionPolicy;
   /**
    * OPTIONAL complexity-aware model routing. When present, each turn's model is
    * chosen by `resolveProfile` and the runner binds to `routing.registry.models`
