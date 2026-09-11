@@ -29,7 +29,7 @@ export type {
 export { FileLedgerSink, Ledger, LEDGER_BASE_DIR, MemoryLedgerSink } from "./ledger/ledger";
 export type { LedgerOptions, LedgerSink } from "./ledger/ledger";
 export type { LedgerRecord, UsageAmounts, UsageDelta } from "./ledger/types";
-export { diffUsage, usageAmounts, UsageDeltaTracker } from "./ledger/usage";
+export { diffUsage, toolCallCounts, usageAmounts, UsageDeltaTracker } from "./ledger/usage";
 export { RunnerError, resolveTargetDir } from "./runner/errors";
 export type { RunnerErrorCode } from "./runner/errors";
 export { defineTool } from "./runner/tool";

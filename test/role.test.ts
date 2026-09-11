@@ -83,6 +83,17 @@ test("toHarnessOptions passes the system prompt through verbatim and disables co
   expect(opts.models).toBe(models);
 });
 
+test("an absent allow-list omits activeToolNames so the harness grants every tool", () => {
+  const { activeToolNames: _omit, ...withoutTools } = valid;
+  const defaultOpen = defineRole(withoutTools, model);
+  const { model: runModel, models } = resolveRoleModel(defaultOpen);
+  const opts = toHarnessOptions(defaultOpen, { session: {} as Session, models, model: runModel });
+
+  // Absence is default-open: the key must be gone entirely so the harness
+  // default `activeToolNames ?? tools.map((t) => t.name)` grants all tools.
+  expect("activeToolNames" in opts).toBe(false);
+});
+
 test("an empty allow-list is emitted as an empty array, never omitted", () => {
   const denyAll = defineRole({ ...valid, activeToolNames: [] }, model);
   const { model: runModel, models } = resolveRoleModel(denyAll);

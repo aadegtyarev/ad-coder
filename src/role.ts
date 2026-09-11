@@ -18,8 +18,14 @@ export interface Role {
   modelId: string;
   /** Passed to the harness verbatim. Never a function, never concatenated. */
   systemPrompt: string;
-  /** The capability allow-list. An empty array is a valid deny-all. */
-  activeToolNames: string[];
+  /**
+   * The capability allow-list. Default-open: ABSENT means "every registered
+   * tool" (the harness reads `activeToolNames ?? tools.map((t) => t.name)`), a
+   * present empty array is a valid deny-all, and a present non-empty array is
+   * the exact set. Only absence is new behaviour -- every existing role sets
+   * this explicitly, so making it optional changes nothing that is in use.
+   */
+  activeToolNames?: string[];
   cacheRetention: CacheRetention;
   /** ad-coder's own context ceiling, validated against the model's window. */
   contextBudget: ContextBudget;
@@ -50,20 +56,25 @@ export function defineRole(input: Role, model: Model<Api>): Role {
   if (typeof input.systemPrompt !== "string" || input.systemPrompt === "") {
     throw new Error(`defineRole(${input.name}): systemPrompt must be a non-empty string`);
   }
-  if (!Array.isArray(input.activeToolNames)) {
-    throw new Error(
-      `defineRole(${input.name}): activeToolNames must be an array (use [] to allow no tools)`,
-    );
-  }
-  const seen = new Set<string>();
-  for (const toolName of input.activeToolNames) {
-    if (typeof toolName !== "string" || toolName.trim() === "") {
-      throw new Error(`defineRole(${input.name}): activeToolNames contains an empty entry`);
+  // Guard on PRESENCE, not truthiness: an absent field is default-open and
+  // valid, but a field that IS present must be a real array -- a string, 0 or
+  // any other non-array is still a malformed allow-list and throws.
+  if (input.activeToolNames !== undefined) {
+    if (!Array.isArray(input.activeToolNames)) {
+      throw new Error(
+        `defineRole(${input.name}): activeToolNames must be an array (use [] to allow no tools)`,
+      );
     }
-    if (seen.has(toolName)) {
-      throw new Error(`defineRole(${input.name}): activeToolNames contains duplicate "${toolName}"`);
+    const seen = new Set<string>();
+    for (const toolName of input.activeToolNames) {
+      if (typeof toolName !== "string" || toolName.trim() === "") {
+        throw new Error(`defineRole(${input.name}): activeToolNames contains an empty entry`);
+      }
+      if (seen.has(toolName)) {
+        throw new Error(`defineRole(${input.name}): activeToolNames contains duplicate "${toolName}"`);
+      }
+      seen.add(toolName);
     }
-    seen.add(toolName);
   }
   if (!CACHE_RETENTIONS.includes(input.cacheRetention)) {
     throw new Error(
@@ -81,11 +92,15 @@ export function toHarnessOptions(role: Role, deps: RoleRunDeps): AgentHarnessOpt
     models: deps.models,
     model: deps.model,
     systemPrompt: role.systemPrompt,
-    // Emitted unconditionally, including for []. The harness reads
-    // `options.activeToolNames ?? tools.map((t) => t.name)`, so an absent field
-    // grants every registered tool -- a conditional spread would silently turn
-    // a deny-all role into full tool access.
-    activeToolNames: [...role.activeToolNames],
+    // Branch on `!== undefined`, NEVER on `.length` or truthiness. The harness
+    // reads `options.activeToolNames ?? tools.map((t) => t.name)`, so an absent
+    // key grants every registered tool. A present value -- INCLUDING a `[]`
+    // deny-all -- must survive verbatim; a `.length` test would emit no key for
+    // `[]` and silently turn deny-all into full tool access. Absence omits the
+    // key entirely so a default-open role inherits the harness's grant-all.
+    ...(role.activeToolNames !== undefined && {
+      activeToolNames: [...role.activeToolNames],
+    }),
     streamOptions: { cacheRetention: role.cacheRetention },
     // Pi's compaction prompt is a hardcoded constant, so the context strategy
     // stays in ad-coder. All three fields are required even when disabled.

@@ -8,7 +8,10 @@ run the same work on an expensive model where it pays off and a cheap one where
 it doesn't.
 
 Roles are presets over the harness (model + verbatim prompt + tool allow-list +
-context budget). A ledger attributes real token cost to each role, step and run.
+context budget). The allow-list is default-open: omit it and a role gets every
+registered tool, set `[]` to deny all, or name an exact set. A ledger attributes
+real token cost — and which tools each response requested — to each role, step
+and run.
 The pipeline sequences roles with structured tool-call handoffs (the reviewer
 submits a verdict; the planner a complexity and security surface). Built on Bun +
 TypeScript, proven with no network (a faux provider) and demonstrated live on

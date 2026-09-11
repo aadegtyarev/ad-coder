@@ -3,7 +3,7 @@ import * as path from "node:path";
 import type { HookInvocation, Hooks, SettledAssistantMessage } from "@earendil-works/pi-agent-core";
 import type { Usage } from "@earendil-works/pi-ai";
 import type { LedgerRecord } from "./types";
-import { usageAmounts } from "./usage";
+import { toolCallCounts, usageAmounts } from "./usage";
 
 /** Ledger files live here and nowhere else; an explicit filePath is confined to it. */
 export const LEDGER_BASE_DIR = ".ad-coder/ledger";
@@ -169,6 +169,11 @@ export class Ledger {
 
   private record(event: HookInvocation<"after_response">): undefined {
     try {
+      // Same settled message that supplies usage -- the tool-call counts share
+      // its per-response granularity. Omitted via the house conditional-spread
+      // idiom when the response requested no tools, so a text-only turn carries
+      // no empty `toolCalls: {}`.
+      const counts = toolCallCounts(event.message);
       const record: LedgerRecord = {
         ts: Date.now(),
         runId: event.runId,
@@ -180,6 +185,7 @@ export class Ledger {
         stopReason: event.message.stopReason,
         ...(event.status !== undefined && { status: event.status }),
         usage: usageAmounts(this.perResponseUsageFrom(event.message)),
+        ...(Object.keys(counts).length > 0 && { toolCalls: counts }),
       };
       this.sink.write(record);
     } catch (error) {

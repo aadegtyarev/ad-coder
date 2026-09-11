@@ -9,6 +9,7 @@ import type {
   SettledAssistantMessage,
 } from "@earendil-works/pi-agent-core";
 import type { Usage } from "@earendil-works/pi-ai";
+import { fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { FileLedgerSink, Ledger, LEDGER_BASE_DIR, MemoryLedgerSink } from "../src/ledger/ledger";
 import type { LedgerSink } from "../src/ledger/ledger";
 import type { LedgerRecord, UsageAmounts } from "../src/ledger/types";
@@ -37,10 +38,13 @@ function usage(input: number, total: number, cost: number): Usage {
   };
 }
 
-function settled(u: Usage): SettledAssistantMessage {
+function settled(
+  u: Usage,
+  content: SettledAssistantMessage["content"] = [],
+): SettledAssistantMessage {
   return {
     role: "assistant",
-    content: [],
+    content,
     api: "anthropic-messages",
     provider: "anthropic",
     model: "claude-sonnet-4-5",
@@ -50,11 +54,15 @@ function settled(u: Usage): SettledAssistantMessage {
   };
 }
 
-function event(u: Usage, status?: number): HookInvocation<"after_response"> {
+function event(
+  u: Usage,
+  status?: number,
+  content?: SettledAssistantMessage["content"],
+): HookInvocation<"after_response"> {
   return {
     runId: "run-1",
     lane: "main",
-    message: settled(u),
+    message: settled(u, content),
     // A real event may carry a headers map; the ledger must never copy it out.
     headers: { "x-request-id": "abc", authorization: "Bearer secret" },
     ...(status !== undefined && { status }),
@@ -169,6 +177,83 @@ test("two settled messages yield two records carrying each response's own number
   expect(records[0]?.status).toBe(200);
   expect(records[0]?.provider).toBe("anthropic");
   expect(records[0]?.stopReason).toBe("stop");
+});
+
+test("a response's tool calls are recorded as name-to-count, arguments excluded", async () => {
+  const sink = new MemoryLedgerSink();
+  const { hooks, registered } = fakeHooks();
+  new Ledger({ runId: "run1", role: "coder", step: "code", sink }).attach(hooks);
+  const handler = registered[0]?.handler;
+  if (handler === undefined) throw new Error("handler was not registered");
+
+  await handler(
+    event(usage(100, 110, 0.01), 200, [fauxToolCall("bash", { command: "rm -rf /secret-payload" })]),
+    FAKE_CONTEXT,
+  );
+
+  expect(sink.records()[0]?.toolCalls).toEqual({ bash: 1 });
+  // Names and counts only: an argument value must never reach the ledger.
+  expect(JSON.stringify(sink.records()[0])).not.toContain("secret-payload");
+});
+
+test("a text-only response omits the toolCalls key rather than writing an empty map", async () => {
+  const sink = new MemoryLedgerSink();
+  const { hooks, registered } = fakeHooks();
+  new Ledger({ runId: "run1", role: "r", step: "s", sink }).attach(hooks);
+  const handler = registered[0]?.handler;
+  if (handler === undefined) throw new Error("handler was not registered");
+
+  await handler(event(usage(100, 110, 0.01), 200), FAKE_CONTEXT);
+
+  expect("toolCalls" in (sink.records()[0] as LedgerRecord)).toBe(false);
+});
+
+test("repeated calls to the same tool in one response sum into that tool's count", async () => {
+  const sink = new MemoryLedgerSink();
+  const { hooks, registered } = fakeHooks();
+  new Ledger({ runId: "run1", role: "r", step: "s", sink }).attach(hooks);
+  const handler = registered[0]?.handler;
+  if (handler === undefined) throw new Error("handler was not registered");
+
+  await handler(
+    event(usage(100, 110, 0.01), 200, [
+      fauxToolCall("bash", { command: "ls" }),
+      fauxToolCall("bash", { command: "pwd" }),
+    ]),
+    FAKE_CONTEXT,
+  );
+
+  expect(sink.records()[0]?.toolCalls).toEqual({ bash: 2 });
+});
+
+test("tool names colliding with Object.prototype members are counted, not corrupted", async () => {
+  const sink = new MemoryLedgerSink();
+  const { hooks, registered } = fakeHooks();
+  new Ledger({ runId: "run1", role: "r", step: "s", sink }).attach(hooks);
+  const handler = registered[0]?.handler;
+  if (handler === undefined) throw new Error("handler was not registered");
+
+  // Names that shadow inherited members (`hasOwnProperty`, `toString`) or hit the
+  // `__proto__` bracket-assignment special case must each yield a real integer
+  // count, never a concatenated function string or a dropped entry.
+  await handler(
+    event(usage(100, 110, 0.01), 200, [
+      fauxToolCall("hasOwnProperty", {}),
+      fauxToolCall("hasOwnProperty", {}),
+      fauxToolCall("toString", {}),
+      fauxToolCall("__proto__", {}),
+    ]),
+    FAKE_CONTEXT,
+  );
+
+  // Built via fromEntries so `__proto__` is an OWN key on the expected side too;
+  // a `{ __proto__: 1 }` literal would set the prototype instead and never match.
+  const expected = Object.fromEntries([
+    ["hasOwnProperty", 2],
+    ["toString", 1],
+    ["__proto__", 1],
+  ]);
+  expect(sink.records()[0]?.toolCalls).toEqual(expected);
 });
 
 test("no record key can hold prompt, message body or header data", async () => {

@@ -16,10 +16,20 @@ network (pi-ai's fauxProvider) and demonstrated live on DeepSeek.
   model)`): a verbatim system prompt, a per-role tool allow-list
   (`activeToolNames`), a `cacheRetention` policy, and a `ContextBudget`. Pi's own
   compaction is disabled so the context strategy stays in ad-coder.
+- **Default-open tool allow-list** — `activeToolNames` is now OPTIONAL: an absent
+  field means "every registered tool" (the harness default), a present `[]` is
+  still a deny-all, and a present non-empty array is the exact set. Existing
+  roles set the field explicitly, so only the previously-invalid absent case
+  changes meaning.
 - **Ledger** — attributes provider token usage and cost to role / step / run as
   JSONL. `usage` is per-response (not cumulative); cost comes from
   `Usage.cost` and is never recomputed. Records carry identifiers and numbers
   only — never prompts, responses, or headers.
+- **Ledger tool-call observability** — each record now carries an optional
+  `toolCalls` map (tool name → count) of the tools the model REQUESTED in that
+  response, omitted when it requested none. Per-response granularity, names and
+  counts only (never arguments or output); execution outcome (`isError`) is a
+  documented follow-on via the `after_tool` hook.
 - **Context management** — `ContextBudget` on every role validated against a
   caller-supplied `Model` (local / custom endpoints safe); a `ContextCompactor`
   (`transform_context` hook) with ad-coder's own summarization prompt; and an

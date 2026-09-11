@@ -31,6 +31,7 @@ import {
   SUBMIT_PLAN_TOOL_NAME,
   SUBMIT_VERDICT_TOOL_NAME,
   SUMMARIZATION_PROMPT,
+  toolCallCounts,
   UsageDeltaTracker,
 } from "ad-coder";
 import type {
@@ -88,6 +89,7 @@ test("the package is importable by its published name", () => {
   };
   expect(isWorkflowModule(workflow)).toBe(true);
   expect(typeof diffUsage).toBe("function");
+  expect(typeof toolCallCounts).toBe("function");
   expect(typeof UsageDeltaTracker).toBe("function");
   expect(typeof Ledger).toBe("function");
   expect(typeof ContextCompactor).toBe("function");

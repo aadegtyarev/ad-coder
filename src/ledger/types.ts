@@ -51,4 +51,16 @@ export interface LedgerRecord {
   status?: number;
   /** That one response's own numbers, not a difference against anything. */
   usage: UsageAmounts;
+  /**
+   * Tool names the model REQUESTED in this one response, mapped to how many
+   * times each was called. Per-response, matching the usage granularity above,
+   * and omitted entirely when the response made no tool calls.
+   *
+   * This is a REQUEST signal, not an outcome: it does not record whether a call
+   * executed, succeeded, or returned `isError` -- that needs the separate
+   * `after_tool` hook and is a documented FOLLOW-ON, not this field. It carries
+   * tool NAMES and COUNTS only -- never call arguments, never tool output --
+   * so it preserves the safe-to-share invariant above.
+   */
+  toolCalls?: Record<string, number>;
 }

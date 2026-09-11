@@ -24,6 +24,7 @@
  * snapshots a reading before retaining it as a baseline.
  */
 
+import type { SettledAssistantMessage } from "@earendil-works/pi-agent-core";
 import type { Usage } from "@earendil-works/pi-ai";
 import type { UsageAmounts, UsageDelta } from "./types";
 
@@ -98,6 +99,36 @@ export function usageAmounts(usage: Usage): UsageAmounts {
       total: usage.cost.total,
     },
   };
+}
+
+/**
+ * Count the tool calls a settled response REQUESTED, by tool name.
+ *
+ * Derived from the SAME per-response settled message that supplies usage, so it
+ * shares that granularity exactly: it is what the model asked to call in this
+ * one response, NOT whether any call executed or succeeded -- execution outcome
+ * (`isError`) lives on the separate `after_tool` hook and is a documented
+ * FOLLOW-ON. The map is built by iterating `message.content` for
+ * `type === "toolCall"` blocks and counting their `name`; `block.arguments` is
+ * never read, so only names and counts -- both safe to share -- ever leave this
+ * function. A response with no tool calls yields `{}`, which the caller uses to
+ * decide the ledger field is omitted rather than written as an empty object.
+ *
+ * A tool name is attacker-influenced data, so the tally is kept in a `Map`, not
+ * a plain object: an object keyed by `hasOwnProperty`/`toString`/etc. would read
+ * back the inherited prototype function instead of a number and concatenate
+ * garbage, and a `__proto__` key would reassign the prototype instead of
+ * creating an entry, silently dropping the call from the count. `Object.fromEntries`
+ * materialises every name -- `__proto__` included -- as an own property.
+ */
+export function toolCallCounts(message: SettledAssistantMessage): Record<string, number> {
+  const counts = new Map<string, number>();
+  for (const block of message.content) {
+    if (block.type === "toolCall") {
+      counts.set(block.name, (counts.get(block.name) ?? 0) + 1);
+    }
+  }
+  return Object.fromEntries(counts);
 }
 
 /**
