@@ -112,7 +112,17 @@ models, and `--max-rounds`/`--default-complexity` to set the routing defaults.
 The role runs with real `read`/`write`/`edit`/`bash` tool access rooted at
 `--target-dir`; that directory is **not** a sandbox (a bash turn can `cd` out of
 it and read any file the invoking user can), exactly as the `run` command
-documents. The interactive `ad-coder drive` stepped loop is a follow-on.
+documents.
+
+`ad-coder drive "<task>" --target-dir <dir>` drives the same pipeline one phase
+at a time: it prints each turn's output and cost and, at every step, asks which
+of the offered transitions to take (`advance`/`rework`/`stop`, empty for the
+default). Pass `--auto` for the autonomous/machine path — the auto-driver walks
+the graph exactly as `runPipeline` does, reading no input. The drive loop lives
+in a library module (`driveWorkflow`) driven through injected input/output/error
+streams, so it is scriptable with no TTY. Both `role` and `drive` now emit a
+clear stderr warning when a turn produces empty text at zero cost (the provider
+may need authentication, e.g. `codex login`) instead of two blank-looking lines.
 
 Per-role model selection is optionally complexity-driven: pass a `routing`
 ({ profile, registry, defaultComplexity?, overrides? }) to `runPipeline` and each

@@ -13,12 +13,18 @@ import type { Role } from "./role";
 import type { Complexity, PipelineConfig, RoleSpec } from "./orchestration/types";
 import { resolvePipelineConfig } from "./cli/resolve-config";
 import type { ResolvableProvider } from "./cli/resolve-config";
+import { driveWorkflow, silentNoopWarning } from "./cli/drive";
+import { createWorkflowSession } from "./orchestration/session";
 import type { WorkflowContext } from "./workflow";
 import { isWorkflowModule } from "./workflow";
 
 const USAGE = [
   "usage: ad-coder run <script.ts> [--target-dir <dir>]",
   "       ad-coder role <planner|coder|reviewer|security> <task> --target-dir <dir>",
+  "         [--provider <deepseek|openrouter|openai-codex>]",
+  "         [--strong-model <name>] [--mid-model <name>] [--cheap-model <name>]",
+  "         [--max-rounds <n>] [--default-complexity <trivial|medium|complex>]",
+  '       ad-coder drive "<task>" --target-dir <dir> [--auto]',
   "         [--provider <deepseek|openrouter|openai-codex>]",
   "         [--strong-model <name>] [--mid-model <name>] [--cheap-model <name>]",
   "         [--max-rounds <n>] [--default-complexity <trivial|medium|complex>]",
@@ -81,16 +87,28 @@ const VALUE_FLAGS = [
 ] as const;
 type ValueFlag = (typeof VALUE_FLAGS)[number];
 
-/** Split positionals from the value flags; keep the flag parsing thin. */
+/** The boolean flags a subcommand understands; present == true, they take no value. */
+const BOOLEAN_FLAGS = ["--auto"] as const;
+type BooleanFlag = (typeof BOOLEAN_FLAGS)[number];
+
+/** Split positionals from the value/boolean flags; keep the flag parsing thin. */
 function parseArgs(argv: string[]): {
   command: string | undefined;
   positionals: string[];
   flags: Partial<Record<ValueFlag, string>>;
+  booleans: Record<BooleanFlag, boolean>;
 } {
   const positionals: string[] = [];
   const flags: Partial<Record<ValueFlag, string>> = {};
+  const booleans: Record<BooleanFlag, boolean> = { "--auto": false };
   outer: for (let i = 0; i < argv.length; i++) {
     const arg = argv[i] as string;
+    for (const flag of BOOLEAN_FLAGS) {
+      if (arg === flag) {
+        booleans[flag] = true;
+        continue outer;
+      }
+    }
     for (const flag of VALUE_FLAGS) {
       if (arg === flag) {
         const value = argv[i + 1];
@@ -106,7 +124,7 @@ function parseArgs(argv: string[]): {
     }
     positionals.push(arg);
   }
-  return { command: positionals[0], positionals, flags };
+  return { command: positionals[0], positionals, flags, booleans };
 }
 
 /**
@@ -290,6 +308,65 @@ async function roleCommand(
   // the one thing that reaches stdout (never the raw OperationResultRecord).
   process.stdout.write(`${text}\n`);
   process.stdout.write(`cost: $${cost.toFixed(8)}\n`);
+  // A silent no-op turn (empty text AND zero cost) is otherwise two blank-looking
+  // lines; surface it as a clear stderr signal (provider auth / empty response).
+  const warning = silentNoopWarning(text, cost);
+  if (warning !== undefined) {
+    process.stderr.write(warning);
+  }
+}
+
+/**
+ * Drive the stepped workflow engine one phase at a time against a target
+ * directory, resolved from the environment. A THIN front: it validates args,
+ * resolves the config, sets a readable ledger sink the drive loop sums cost
+ * from, creates the session, and hands the real stdin/stdout/stderr streams to
+ * `driveWorkflow` (the loop itself lives in the library, per the thin-front
+ * contract). `--auto` swaps the human read for the auto-driver.
+ */
+async function driveCommand(
+  positionals: string[],
+  flags: Partial<Record<ValueFlag, string>>,
+  auto: boolean,
+): Promise<void> {
+  const task = positionals[1];
+  if (task === undefined) fail("missing <task>");
+  const targetDirArg = flags["--target-dir"];
+  if (targetDirArg === undefined) fail("--target-dir is required for the drive command");
+
+  const provider = parseProviderFlag(flags["--provider"]);
+  const maxRounds = parseMaxRoundsFlag(flags["--max-rounds"]);
+  const defaultComplexity = parseComplexityFlag(flags["--default-complexity"]);
+
+  const absTargetDir = resolveTargetDir(targetDirArg);
+  warnCwdInsideTarget(absTargetDir);
+
+  const config = resolvePipelineConfig({
+    task,
+    targetDir: absTargetDir,
+    env: (n: string) => process.env[n],
+    ...(provider !== undefined && { provider }),
+    ...(flags["--strong-model"] !== undefined && { strongModel: flags["--strong-model"] }),
+    ...(flags["--mid-model"] !== undefined && { midModel: flags["--mid-model"] }),
+    ...(flags["--cheap-model"] !== undefined && { cheapModel: flags["--cheap-model"] }),
+    ...(maxRounds !== undefined && { maxRounds }),
+    ...(defaultComplexity !== undefined && { defaultComplexity }),
+  });
+
+  // resolvePipelineConfig assigns its own internal LedgerSink (typed as the
+  // non-readable interface); replace it with a readable instance the drive loop
+  // sums per-step and total cost from, and drive against that same instance.
+  const ledgerSink = new MemoryLedgerSink();
+  config.ledgerSink = ledgerSink;
+  const session = createWorkflowSession(config);
+  await driveWorkflow({
+    session,
+    ledgerSink,
+    auto,
+    input: process.stdin,
+    output: process.stdout,
+    error: process.stderr,
+  });
 }
 
 /** Load and run a workflow module against an optional target directory. */
@@ -329,13 +406,17 @@ async function runCommand(
 }
 
 async function main(argv: string[]): Promise<void> {
-  const { command, positionals, flags } = parseArgs(argv);
+  const { command, positionals, flags, booleans } = parseArgs(argv);
   if (command === "run") {
     await runCommand(positionals, flags);
     return;
   }
   if (command === "role") {
     await roleCommand(positionals, flags);
+    return;
+  }
+  if (command === "drive") {
+    await driveCommand(positionals, flags, booleans["--auto"]);
     return;
   }
   fail(command === undefined ? "missing command" : `unknown command: ${command}`);

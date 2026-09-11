@@ -14,6 +14,8 @@ import {
   deepseekPreset,
   defineTool,
   diffUsage,
+  DriveError,
+  driveWorkflow,
   GateRunner,
   isWorkflowModule,
   Ledger,
@@ -33,6 +35,7 @@ import {
   resolveTargetDir,
   runPipeline,
   runRole,
+  silentNoopWarning,
   startConversation,
   RunnerError,
   SUBMIT_PLAN_TOOL_NAME,
@@ -47,6 +50,8 @@ import type {
   BudgetPercents,
   Complexity,
   Driver,
+  DriveErrorCode,
+  DriveWorkflowParams,
   ContextBudget,
   ConversationConfig,
   ConversationSession,
@@ -151,6 +156,9 @@ test("the package is importable by its published name", () => {
   expect(typeof resolvePrompt).toBe("function");
   expect(typeof resolvePipelineConfig).toBe("function");
   expect(typeof PromptError).toBe("function");
+  expect(typeof DriveError).toBe("function");
+  expect(typeof driveWorkflow).toBe("function");
+  expect(typeof silentNoopWarning).toBe("function");
   const _budgetPercents: BudgetPercents | undefined = undefined;
   const _resolvableProvider: ResolvableProvider | undefined = undefined;
   const _resolveConfigOpts: ResolvePipelineConfigOptions | undefined = undefined;
@@ -199,6 +207,10 @@ test("the package is importable by its published name", () => {
   const _workflowPhase: WorkflowPhase | undefined = undefined;
   const _workflowDefaults: WorkflowDefaults | undefined = undefined;
   const _driver: Driver | undefined = undefined;
+  const _driveErrorCode: DriveErrorCode | undefined = undefined;
+  const _driveParams: DriveWorkflowParams | undefined = undefined;
+  expect(_driveErrorCode).toBeUndefined();
+  expect(_driveParams).toBeUndefined();
   expect(_workflowState).toBeUndefined();
   expect(_stepResult).toBeUndefined();
   expect(_availableTransition).toBeUndefined();

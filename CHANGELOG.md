@@ -130,8 +130,19 @@ network (pi-ai's fauxProvider) and demonstrated live on DeepSeek.
   and `--default-complexity` are validated at the argument boundary (bad input
   exits 2 with the usage string). The role runs with real read/write/edit/bash
   tool access rooted at the target directory — the target directory is NOT a
-  sandbox (same posture as `run`). The interactive `ad-coder drive` stepped loop
-  (and its `--auto` mode) is a separate follow-on and is not built here.
+  sandbox (same posture as `run`).
+- **`ad-coder drive "<task>" --target-dir <dir> [--auto]` subcommand** — drives
+  the stepped workflow engine one phase at a time: it prints each turn's output
+  and per-step cost and, at every step, reads which offered transition to take
+  (`advance`/`rework`/`stop`). `--auto` swaps the human read for the auto-driver
+  so the path reproduces `runPipeline` for scripting/CI. The drive loop lives in
+  a library module (`driveWorkflow`, exported) driven through injected
+  input/output/error streams, so it needs no TTY; a chosen transition is
+  validated against the ones the step actually offered and rejected with a typed
+  `DriveError('transition_not_offered')` otherwise. The same change adds a
+  silent-no-op signal to both `role` and `drive`: a turn with empty assistant
+  text and zero cost now writes a clear stderr warning (the provider may need
+  authentication, e.g. `codex login`) instead of two blank-looking lines.
 - **Packaging** — MIT license, CI (typecheck + tests on Bun), and one-command
   install/update from GitHub.
 

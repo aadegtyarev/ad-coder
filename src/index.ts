@@ -119,3 +119,5 @@ export type {
   ResolvableProvider,
   ResolvePipelineConfigOptions,
 } from "./cli/resolve-config";
+export { driveWorkflow, DriveError, silentNoopWarning } from "./cli/drive";
+export type { DriveErrorCode, DriveWorkflowParams } from "./cli/drive";
