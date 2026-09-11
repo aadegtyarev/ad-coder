@@ -122,11 +122,25 @@ module-locality from the touched-file set to decide what can parallelize.
   construction) preferred over LLM regeneration. Large decompositions reshape the
   shared barrel/multiple modules, so they are NOT parallel-safe.
 
-- **Profiles** — on top of the matrix. A profile is intent → matrix → model:
-  `{ tier, maxOutput, cacheRetention }` per role, named intent (`cheap`/`max`)
-  not a hard id, so it ports across providers. Ledger's per-lane attribution
-  lets one workflow run under two profiles and compare two JSONL files. Profiles
-  come AFTER the matrix because they make decisions the matrix must justify.
+- **Profiles + complexity-aware model routing** — on top of the matrix. A profile
+  is intent → matrix → model: `{ tier, maxOutput, cacheRetention }` per role,
+  named intent (`cheap`/`max`) not a hard id, so it ports across providers. But a
+  profile should be a FUNCTION OF COMPLEXITY, not a flat per-role table — route
+  cheap models to simple features and strong models to complex ones, like LDO
+  (a weak Coder on a complex feature buys extra review rounds, and a round is a
+  full Coder+Reviewer pass, so the strong model is cheaper spent upfront where the
+  work is). PREREQUISITE: the planner must emit STRUCTURED complexity
+  (trivial/medium/complex), which it currently does not — it only produces text.
+  Mirror the verdict: a `submit_plan` / `rate_complexity` tool carrying the
+  complexity, now UNBLOCKED by the runner tools seam (done). Then the pipeline
+  reads complexity and picks coder/reviewer models per `(complexity × role)`.
+  ad-coder EDGE: the ledger already measures per-role/round cost, so routing can
+  later be LEARNED from observation ("cheap coder averaged 2.3 rounds on medium
+  features, strong 1.1 — which is cheaper end to end?") rather than only declared —
+  static table to start, ledger data to refine. Ledger's per-lane attribution
+  also lets one workflow run under two profiles and compare two JSONL files.
+  Profiles come AFTER the matrix because they make decisions the matrix must
+  justify.
 - **Project memory** — committed, machine-portable (laptop↔desktop via git).
   Decided: autonomy default `push` (agent commits+pushes), commits on the
   working branch (one `git pull` brings code+memory atomically). Non-negotiable
