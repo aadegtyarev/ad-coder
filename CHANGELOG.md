@@ -43,9 +43,5 @@ network (pi-ai's fauxProvider) and demonstrated live on DeepSeek.
 - **Packaging** — MIT license, CI (typecheck + tests on Bun), and one-command
   install/update from GitHub.
 
-### Notes
-
-- Not yet built (see `docs/ROADMAP.md`): the conversational orchestrator, a TUI,
-  model/provider profiles and complexity-aware routing, subagents/fork, pipeline
-  resumption, an optional filesystem sandbox + credential wallet, and `ad-coder
-  init` for adopting an existing project.
+What's planned next lives in [`docs/ROADMAP.md`](docs/ROADMAP.md), not here — a
+changelog records what changed, not what's still to do.
