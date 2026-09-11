@@ -14,6 +14,9 @@ github.com/aadegtyarev/ad-coder (main, MIT). Aiming at self-hosting.
   and a PR; the operator merges. (Two commits — `958254a` drive-cost-fix,
   `c09e4ef` quality-layer — landed on main directly before this rule; left there
   by operator decision.)
+- **Close each material step durably.** Before handing off, update both
+  `docs/BACKLOG.md` (completed item and next priority) and this checkpoint with
+  the verified result; do not leave project state only in chat.
 - **Isolation.** Dev runs go in worktrees (`isolate: true`) or feature branches.
   LDO's `resumePlan` is mutually exclusive with `isolate` (bug #35 in
   aadegtyarev/ldo-ai) — so: reuse a reviewed plan → run on a feature BRANCH
@@ -64,11 +67,17 @@ github.com/aadegtyarev/ad-coder (main, MIT). Aiming at self-hosting.
    model default; wire into resolve-config + session + runner + conversation.
    Blocker #1 is closed: resolved pipeline, runner, CLI, conversation, and
    orchestrator paths now preserve this policy.
-2. **CLI --help implementation** — refactor cli.ts USAGE → registry + --help/-h
-   (satisfies contract #1). No longer blocked (OpenAI dropped).
-3. **Minimal console (step 5.5)** — thin REPL over `startOrchestrator`,
+2. **CLI --help implementation** — COMPLETE (2026-09-11): one command registry
+   now drives dispatch, validation, root help, and per-command `--help`/`-h`;
+   verified with focused CLI tests, `bun run check`, and `bun test`.
+3. **Minimal console (step 5.5)** — next priority: thin REPL over `startOrchestrator`,
    formatted output — the dogfood bridge so the operator codes in ad-coder.
 4. **TUI (step 6)** on pi-tui — operator writes it in ad-coder itself.
+
+## Latest delivery
+- Squash-merged PR #6 as `f110b26` (`feat(context): activate configurable
+  compaction`). Verified before merge with `bun test` (197 pass), `bun run
+  check`, and GitHub CI; no harness restart was performed.
 
 ## Design requirements captured (land via orchestrator PR's ROADMAP)
 - Composable isolation + plan-reuse (no LDO-#35 disease).

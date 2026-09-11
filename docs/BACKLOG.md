@@ -1,5 +1,21 @@
 # Backlog
 
+## Active sequence (confirmed 2026-09-11)
+
+This ordering overrides the chronological notes below when choosing the next
+product task:
+
+1. ~~Activate the existing context summarizer/compaction path~~ — delivered in
+   squash-merged PR #6 (`f110b26`); `bun test`, `bun run check`, and CI passed.
+2. ~~Implement per-command `--help` / `-h`, derived from the command registry~~
+   — delivered 2026-09-11; focused CLI tests, `bun run check`, and `bun test`
+   passed.
+3. Build the minimal human console (5.5).
+4. Build the TUI.
+
+Breakpoint control and composable isolation remain designed requirements in
+`docs/ROADMAP.md`; they are not ahead of this sequence.
+
 ## 2026-09-10
 
 - [low] UsageDeltaTracker (src/ledger/usage.ts): Map growth unbounded when stream IDs are unique per run — either add explicit `forget(key)` call on stream end, or cap with LRU eviction and document the cap. Alternative: accept that per-run unique keys do not accumulate across runs (directory `.ad-coder/ledger/` is gitignored, cleaned externally).

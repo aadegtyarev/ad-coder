@@ -119,10 +119,11 @@ Shared options for `role` and `drive`:
 `--strong-model`/`--mid-model`/`--cheap-model <name>`,
 `--max-rounds <n>`, `--default-complexity <trivial|medium|complex>`.
 
-**Seeing usage / help.** Running `ad-coder` with no command — or an unknown
-command or flag — prints this usage to stderr and exits non-zero. A proper
-per-command `--help`/`-h` (auto-derived from the command registry) is on the
-way; see [docs/contracts/cli.md](docs/contracts/cli.md).
+**Seeing usage / help.** Run `ad-coder --help` (or `ad-coder -h`) for the
+registry-derived command list, and `ad-coder <command> --help` (or `-h`) for a
+command's arguments and options. Running `ad-coder` with no command — or an
+unknown command or flag — prints the same root usage to stderr and exits
+non-zero.
 
 
 The canonical demo drives a real plan → [security] → code ⇄ review pipeline on a

@@ -15,6 +15,47 @@ function runCli(args: string[]): { code: number; stdout: string; stderr: string 
   };
 }
 
+test("root help succeeds on stdout and failure usage is registry-derived", () => {
+  for (const flag of ["--help", "-h"]) {
+    const { code, stdout, stderr } = runCli([flag]);
+    expect(code).toBe(0);
+    expect(stdout).toContain("usage: ad-coder <command> [options]");
+    expect(stdout).toContain("run     Run a workflow module.");
+    expect(stdout).toContain("role    Run one pipeline role once.");
+    expect(stdout).toContain("drive   Interactively drive the built-in pipeline.");
+    expect(stderr).toBe("");
+  }
+
+  for (const args of [[], ["unknown"], ["run", "example.ts", "--provider", "x"]]) {
+    const { code, stdout, stderr } = runCli(args);
+    expect(code).toBe(2);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("usage: ad-coder <command> [options]");
+  }
+});
+
+test("each command renders its own help before validating required input", () => {
+  const commandHelps: ReadonlyArray<readonly [string, string, string]> = [
+    ["run", "<script.ts>", "--provider"],
+    ["role", "<planner|coder|reviewer|security>", "--auto"],
+    ["drive", "--auto", "<planner|coder|reviewer|security>"],
+  ];
+  for (const [command, expected, absent] of commandHelps) {
+    for (const flag of ["--help", "-h"]) {
+      const { code, stdout, stderr } = runCli([command, flag]);
+      expect(code).toBe(0);
+      expect(stdout).toContain(`usage: ad-coder ${command}`);
+      expect(stdout).toContain(expected);
+      expect(stdout).not.toContain(absent);
+      expect(stderr).toBe("");
+    }
+  }
+  const { code, stdout, stderr } = runCli(["role", "planner", "--help"]);
+  expect(code).toBe(0);
+  expect(stdout).toContain("Role to run.");
+  expect(stderr).toBe("");
+});
+
 test("running the example workflow prints its result and exits 0", () => {
   const { code, stdout } = runCli(["run", "examples/hello.workflow.ts"]);
   expect(code).toBe(0);
@@ -33,7 +74,7 @@ test("a missing command, a missing file and a URL specifier each exit 2", () => 
   ]) {
     const { code, stdout, stderr } = runCli(args);
     expect(code).toBe(2);
-    expect(stderr).toContain("usage: ad-coder run <script.ts>");
+    expect(stderr).toContain("usage: ad-coder <command> [options]");
     expect(stdout).toBe("");
   }
   expect(runCli(["run", "https://evil.example/x.ts"]).stderr).toContain("URL specifier");
