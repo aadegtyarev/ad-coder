@@ -44,6 +44,26 @@ export type { LedgerOptions, LedgerSink } from "./ledger/ledger";
 export { FileLedgerSink, LEDGER_BASE_DIR, Ledger, MemoryLedgerSink } from "./ledger/ledger";
 export type { LedgerRecord, UsageAmounts, UsageDelta } from "./ledger/types";
 export { diffUsage, toolCallCounts, UsageDeltaTracker, usageAmounts } from "./ledger/usage";
+export type {
+  CostReport,
+  Orchestrator,
+  OrchestratorConfig,
+  OrchestratorDeps,
+  OrchestratorErrorCode,
+  RunPipelineResult,
+  StepCost,
+  StepView,
+} from "./orchestration/orchestrator";
+export {
+  buildOrchestratorTools,
+  CHOOSE_TRANSITION_TOOL_NAME,
+  createOrchestrator,
+  OrchestratorError,
+  RUN_PIPELINE_TOOL_NAME,
+  RUN_STEP_TOOL_NAME,
+  SHOW_COST_TOOL_NAME,
+  startOrchestrator,
+} from "./orchestration/orchestrator";
 export { runPipeline } from "./orchestration/pipeline";
 export type { PlanCapture } from "./orchestration/plan";
 export { buildSubmitPlanTool, SUBMIT_PLAN_TOOL_NAME } from "./orchestration/plan";

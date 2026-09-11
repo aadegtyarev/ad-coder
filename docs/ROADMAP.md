@@ -173,6 +173,24 @@ workflows — one substrate, swappable drivers.
   Human-in-the-loop before autonomy: nearer, safer, and mostly composition of
   runRole + a thin stepped driver + a CLI. The orchestrator stops being a blocker
   for a usable MVP.
+- **REQUIREMENT — composable isolation + plan-reuse.** Worktree isolation and
+  plan-reuse MUST be COMPOSABLE, not mutually exclusive: a plan reviewed in one pass
+  must be implementable in an isolated worktree in the next. ad-coder must NOT
+  inherit LDO's resumePlan-XOR-isolate limitation (there, resuming a saved plan and
+  running isolated are alternatives you pick between). Concretely: the reviewed
+  plan artifact and the worktree target are independent inputs to a run, and the
+  stepped engine (which threads an explicit `WorkflowState`) is the substrate that
+  makes this natural — a plan produced by one driver/target is a value another can
+  resume against a different target.
+- **REQUIREMENT — breakpoint control.** A driver must be able to AUTO-ADVANCE
+  through phases and PAUSE before any chosen phase (a breakpoint), then RESUME from
+  any point. The `createOrchestrator` stepping seam already makes this reachable
+  (`stepOnce` runs exactly one role turn and hands control back with the offered
+  transitions; `chooseTransition` commits one); the missing piece is a **run-until-phase
+  driver** — an auto-driver that walks the default edges like `autoDriver` but halts
+  before a named target phase and returns control, so a caller/UI can set a
+  breakpoint without hand-stepping every phase. Named as an explicit follow-on the
+  stepping tools expose.
 
 ## After that (designed, ordered)
 
@@ -456,17 +474,31 @@ workflows — one substrate, swappable drivers.
   ad-coder, risky core via LDO or human) and supervised; faux tests + human remain
   ground truth for the core.
 
-- **Conversational orchestrator** — the top interface layer and the critical path
-  to a usable MVP: a chat that shapes the task, then drives the pipeline
-  (stepped or autonomous). The one genuinely NEW primitive it needs is a multi-turn
-  CONVERSATION LOOP — the runner drives a single turn; the orchestrator holds
-  context across many. Everything else is composition of what exists: an
-  orchestrator ROLE (prompt already at prompts/orchestrator.md) with its own TOOLS
-  (run_pipeline, show_cost/ledger, spawn) via the tools-seam, profile-switchable
-  like any role. After the role + triage land, a CLI dialog already works; the TUI
-  is a skin on top. The orchestrator prompt carries JUDGMENT only; mechanics
+- **Conversational orchestrator** — CORE DELIVERED (2026-09-11, `src/orchestration/orchestrator.ts`).
+  The headless core + thin tool-front cut of the top interface layer: a chat that
+  shapes the task, then drives the pipeline (stepped or autonomous). The one
+  genuinely NEW primitive it needed — a multi-turn CONVERSATION LOOP — landed
+  earlier as `startConversation`; this cut composes it. `createOrchestrator(deps)`
+  is the headless core (the THIRD driver of the stepped engine, reachable WITHOUT
+  the chat front): `runPipeline`/`beginStepping`/`stepOnce`/`chooseTransition`/
+  `showCost`/`isStepping`, with the untrusted model-supplied transition KIND
+  validated against the engine-authored offered set via `assertTransitionOffered`
+  before `applyTransition` (the requirement the stepped-engine review surfaced).
+  `buildOrchestratorTools(core)` is the four `defineTool` tools (run_pipeline,
+  run_step, choose_transition, show_cost) via the tools-seam, profile-switchable
+  like any role; `startOrchestrator(config)` assembles the conversational front over
+  `resolvePipelineConfig` + `resolvePrompt('orchestrator')` + `startConversation`,
+  sharing ONE ledger sink. The orchestrator prompt carries JUDGMENT only; mechanics
   (resume tracking, model routing, git staging) stay in the harness/config — gates
-  over prompts.
+  over prompts. The transition guard (`DriveError`/`DriveErrorCode`/`assertTransitionOffered`)
+  relocated DOWN to `src/orchestration/transition-guard.ts` so the headless core can
+  depend on the guard without the CLI front; both drivers share one implementation,
+  re-exported byte-for-byte from `src/cli/drive.ts`. FOLLOW-ONS (not built here):
+  a `drive`-style CLI subcommand fronting `startOrchestrator`; the spawn/fork tools
+  (spawn_subagent / fork, below); researcher/publisher tools (each brings its own
+  credential/URL/egress surface — flag it when it lands); and the run-until-phase
+  BREAKPOINT driver (below), which the `beginStepping`/`stepOnce`/`chooseTransition`
+  seam already exposes.
 - **Orchestrator triage** — trivial-edit-inline vs run-the-pipeline. A MECHANICAL
   FLOOR (a change touching a contract, a security surface, or a size threshold
   forces the pipeline regardless of how small it looks) + the orchestrator's

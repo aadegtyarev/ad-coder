@@ -10,3 +10,4 @@ node_modules/
 # Provider credentials (Bun auto-loads .env)
 .env
 .env.local
+.worktrees/
