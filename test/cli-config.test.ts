@@ -29,6 +29,54 @@ test("selects deepseek by env presence and builds a valid PipelineConfig", () =>
   expect(config.ledgerSink).toBeDefined();
   expect(config.task).toBe("do a thing");
   expect(config.targetDir).toBe("/tmp/target");
+  expect(config.compaction?.mode).toBe("auto");
+  expect(config.compaction?.summarizerModel?.id).toBe("deepseek-chat");
+  expect(typeof config.compaction?.summarizer).toBe("function");
+});
+
+test("compaction model overrides resolve and disabled mode constructs no summarizer", () => {
+  const auto = resolvePipelineConfig({
+    task: "x",
+    targetDir: "/tmp/target",
+    provider: "deepseek",
+    env: fakeEnv({ DEEPSEEK_API_KEY: "k" }),
+    summarizerModel: "deepseek-chat",
+    warn: silent,
+  });
+  expect(auto.compaction?.summarizerModel?.id).toBe("deepseek-chat");
+
+  const disabled = resolvePipelineConfig({
+    task: "x",
+    targetDir: "/tmp/target",
+    env: fakeEnv({ DEEPSEEK_API_KEY: "k" }),
+    compactionMode: "disabled-then-halt",
+    warn: silent,
+  });
+  expect(disabled.compaction).toEqual({ mode: "disabled-then-halt" });
+});
+
+test("cache-aware fails loudly instead of degrading", () => {
+  expect(() =>
+    resolvePipelineConfig({
+      task: "x",
+      targetDir: "/tmp/target",
+      env: fakeEnv({ DEEPSEEK_API_KEY: "k" }),
+      compactionMode: "cache-aware",
+      warn: silent,
+    }),
+  ).toThrow('"cache-aware" is not supported');
+});
+
+test("an unknown summarizer model uses the registry's names-only error", () => {
+  expect(() =>
+    resolvePipelineConfig({
+      task: "x",
+      targetDir: "/tmp/target",
+      env: fakeEnv({ DEEPSEEK_API_KEY: "k" }),
+      summarizerModel: "missing",
+      warn: silent,
+    }),
+  ).toThrow(RegistryError);
 });
 
 test("selects openrouter when only OPENROUTER_API_KEY is present", () => {

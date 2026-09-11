@@ -51,19 +51,19 @@ github.com/aadegtyarev/ad-coder (main, MIT). Aiming at self-hosting.
 ## Open PRs (await operator merge)
 - **#1** docs/contracts/cli.md — CLI help auto-derived from one command registry.
 - **#2** docs/BACKLOG.md — defer native OpenAI provider preset.
-- **#3** README — usage-at-a-glance synopsis + 2 accuracy fixes (dormant
-  compaction; CLI provider keys are deepseek/openrouter/codex only).
+- **#3** README — usage-at-a-glance synopsis + 2 accuracy fixes (the former
+  compaction status; CLI provider keys are deepseek/openrouter/codex only).
 
 ## QUEUED (after orchestrator merges, off updated main — shared-wiring conflicts)
-1. **Summarizer / activate compaction** — plan READY (`wf_7336a47f-fd3`,
-   planned): `createSummarizer` via pi-ai `Models.completeSimple` (one-shot, no
+1. **Summarizer / activate compaction** — COMPLETE (`wf_7336a47f-fd3`):
+   `createSummarizer` via pi-ai `Models.completeSimple` (one-shot, no
    harness); configurable CompactionMode {auto default | cache-aware | disabled-
    then-halt}; cache-aware = FAIL-LOUD follow-on (needs recon of pi request-
    assembly order first); disabled-halt via NEW `assertContextFitsBudget`
    (existing assertTurnFitsBudget only guards the tail); cheap-tier summarizer
    model default; wire into resolve-config + session + runner + conversation.
-   THIS IS THE #1 READINESS BLOCKER: compaction is fully coded but DORMANT
-   (Summarizer never constructed → every CLI path runs with no compaction).
+   Blocker #1 is closed: resolved pipeline, runner, CLI, conversation, and
+   orchestrator paths now preserve this policy.
 2. **CLI --help implementation** — refactor cli.ts USAGE → registry + --help/-h
    (satisfies contract #1). No longer blocked (OpenAI dropped).
 3. **Minimal console (step 5.5)** — thin REPL over `startOrchestrator`,
@@ -77,7 +77,7 @@ github.com/aadegtyarev/ad-coder (main, MIT). Aiming at self-hosting.
 
 ## Readiness to "start coding" (audited)
 - Tools: only bash/read/write/edit (search/git via bash ok; NO web/LSP/MCP — pi
-  doesn't expose web). Prompts: 6, adequate. Compaction: DORMANT (blocker #1).
+  doesn't expose web). Prompts: 6, adequate. Compaction: ACTIVE (blocker #1 closed).
 - Docs: adopt LDO structure (already mostly true) — no migration.
 
 ## Providers

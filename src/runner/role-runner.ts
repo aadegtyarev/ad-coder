@@ -1,6 +1,6 @@
 import type { Context, Session } from "@earendil-works/pi-agent-core";
 import type { Api, Model, Models } from "@earendil-works/pi-ai";
-import type { Summarizer } from "../context/compactor";
+import type { CompactionPolicy, Summarizer } from "../context/compactor";
 import type { LedgerSink } from "../ledger/ledger";
 import type { Role } from "../role";
 import type { RunRoleResult } from "./runner";
@@ -44,6 +44,7 @@ export interface RoleRunnerConfig {
   targetDir: string;
   models: Models;
   summarizer?: Summarizer;
+  compaction?: CompactionPolicy;
   session?: Session;
 }
 
@@ -66,6 +67,7 @@ export function createRoleRunner(config: RoleRunnerConfig): RoleRunner {
         // exactOptionalPropertyTypes: spread each optional only when present so
         // an explicit `undefined` is never handed to a field typed without it.
         ...(config.summarizer !== undefined && { summarizer: config.summarizer }),
+        ...(config.compaction !== undefined && { compaction: config.compaction }),
         ...(session !== undefined && { session }),
         ...(opts?.runId !== undefined && { runId: opts.runId }),
         ...(opts?.step !== undefined && { step: opts.step }),

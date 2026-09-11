@@ -48,6 +48,11 @@ module-locality from the touched-file set to decide what can parallelize.
   ContextCompactor via transform_context with ad-coder's own prompt,
   assertTurnFitsBudget pre-flight (a function, not a hook — a hook throw cannot
   refuse a turn). Pi compaction stays disabled.
+- **Compaction activation** — DONE. `auto` is the resolved default and uses the
+  cheap-tier model through a one-shot no-tool summarizer; `disabled-then-halt`
+  performs a full-branch refusal without summarization. `cache-aware` remains a
+  fail-loud reserved mode until request assembly is verified. Pi compaction
+  remains disabled because ad-coder owns the policy.
 - **Capability matrix** — DONE. `src/capabilities/capabilities.ts`:
   `deriveCapabilities(model)` yields a ModelCapabilities descriptor — cost mode
   (per-token when any cost field is nonzero; else local when the baseUrl host is
@@ -529,10 +534,10 @@ workflows — one substrate, swappable drivers.
   after an approved verdict or a standalone tool the orchestrator invokes. This
   session bootstrapped the first publish by hand; the Publisher automates it.
 
-- **Configurable compaction (modes + disable + percent-of-window budget)** —
+- **Configurable compaction (modes + disable + percent-of-window budget)** — DONE
   context management is the project's centerpiece, so its strategy is a first-class
   knob, not a hardcode (enforced by docs/contracts/config.md). Modes: (a) `auto` —
-  summarize when the budget is exceeded (today's behavior); (b) `cache-aware` —
+  summarize when the budget is exceeded; (b) `cache-aware` —
   compact in LARGE, INFREQUENT steps so the new `[system + tools + summary]` prefix
   stays stable across many following turns (editing the message-head invalidates
   the whole tail's cache, so the win is amortizing that to once-per-big-step and
@@ -540,7 +545,8 @@ workflows — one substrate, swappable drivers.
   prompt and tool defs are never touched); (c) `disabled -> halt` — never summarize
   silently, STOP and require an explicit manual clear/compact command
   (gates-over-prompts applied to context, for users who want no automatic edits to
-  history). Also express the budget as a PERCENT of the model contextWindow
+  history). Auto and disabled-halt are implemented; cache-aware currently fails
+  loudly pending the planned request-assembly reconnaissance. Also express the budget as a PERCENT of the model contextWindow
   (resolved to absolute tokens against the model) so one budget is portable across
   a 200k and a 32k model, keeping reserveTokens (room for the reply) as its own
   knob. Default to the most efficient mode. Recon first: verify pi's request

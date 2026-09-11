@@ -18,9 +18,11 @@ The pipeline sequences roles with structured tool-call handoffs (the reviewer
 submits a verdict; the planner a complexity and security surface). For chat-style
 work there is a multi-turn substrate — `startConversation(config)` builds one
 harness once and re-drives it turn after turn, keeping history on the durable
-session branch with a per-turn ledger row. A context budget and a compactor
-are in place for long chats, but automatic summarization is not yet wired into
-the CLI paths — it is next on the [roadmap](docs/ROADMAP.md). `runRole` stays
+session branch with a per-turn ledger row. Context compaction is active end to
+end: `auto` summarizes evictable history with the resolved cheap-tier model,
+while `disabled-then-halt` refuses an over-budget turn without sending history
+to a summarizer. `cache-aware` is reserved but fails loudly until its request-
+assembly design is verified. `runRole` stays
 the single-turn primitive. Built on Bun + TypeScript, proven with
 no network (a faux provider) and demonstrated live on DeepSeek — a full feature
 for a fraction of a cent.
@@ -82,6 +84,25 @@ cache-control thesis). Every preset's base URL must be an absolute **https** URL
 
 See [docs/pi-capabilities.md](docs/pi-capabilities.md) for the per-provider
 cache/cost facts.
+
+### Context compaction
+
+`resolvePipelineConfig` accepts `compactionMode`, `summarizerModel`, and
+`allowCrossProviderSummarization`. The default is `auto`, with
+`summarizerModel` defaulting to the cheap profile tier. The summarizer makes one
+no-tool `Models.completeSimple` request through the same caller-supplied
+credential registry; evicted prompts, code, and tool results are therefore sent
+to that model. A different provider is rejected unless
+`allowCrossProviderSummarization: true` is explicit.
+Because this one-shot call bypasses harness hooks, its usage is not currently
+included in the role ledger; the selected destination is nevertheless explicit
+in the resolved policy.
+
+Choose `disabled-then-halt` when history must never be summarized automatically.
+An oversized turn then throws `ContextBudgetError` before the role provider is
+called; there is not yet a public manual recovery command. `cache-aware` is an
+accepted policy name but deliberately throws as unsupported rather than silently
+changing behavior.
 
 ## Run
 

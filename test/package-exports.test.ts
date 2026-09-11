@@ -70,6 +70,7 @@ import type {
 import {
   anthropicCompatiblePreset,
   applyTransition,
+  assertContextFitsBudget,
   assertTurnFitsBudget,
   autoDriver,
   buildDefaultProfile,
@@ -81,6 +82,7 @@ import {
   ContextCompactor,
   createOrchestrator,
   createRoleRunner,
+  createSummarizer,
   createWorkflowSession,
   DriveError,
   deepseekPreset,
@@ -140,6 +142,8 @@ test("the package is importable by its published name", () => {
   expect(typeof ContextCompactor).toBe("function");
   expect(typeof ContextBudgetError).toBe("function");
   expect(typeof assertTurnFitsBudget).toBe("function");
+  expect(typeof assertContextFitsBudget).toBe("function");
+  expect(typeof createSummarizer).toBe("function");
   expect(typeof SUMMARIZATION_PROMPT).toBe("string");
   expect(typeof GateRunner).toBe("function");
   expect(typeof runRole).toBe("function");
