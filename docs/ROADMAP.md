@@ -37,6 +37,16 @@ module-locality from the touched-file set to decide what can parallelize.
 
 ## Status
 
+### Documentation ownership (implemented 2026-09-12)
+
+The repository uses the durable handoff structure: README is orientation and
+navigation; this roadmap owns decisions, delivery status, and forward design;
+`ARCHITECTURE.md` is the concise current-system map; `BACKLOG.md` holds only
+the current priority and unresolved work; `contracts/` holds enforceable rules;
+and `reviews/` holds dated verification and incident evidence. Research remains
+in its focused research notes. There is no checkpoint snapshot: ignored harness
+state and chat history are never canonical project memory.
+
 - **Phase 0** — DONE (`55f32ff`). Role preset over AgentHarnessOptions; Ledger
   of per-turn usage attributed by role/step/run, cost from Usage.cost never
   recomputed, records carry identifiers+numbers only.
@@ -80,6 +90,13 @@ module-locality from the touched-file set to decide what can parallelize.
   Unrestricted host-tool execution is accepted for this MVP; configurable
   session turn-count and cost thresholds are implemented at the shared Models
   boundary. The TUI is the next follow-up.
+- **Historical delivery evidence (2026-09-12)** — The compaction activation
+  delivery was squash-merged as `f110b26` after 197 passing Bun tests, `bun run
+  check`, and GitHub CI; command-registry CLI help was squash-merged as
+  `4ad5b78` after 199 passing Bun tests, `bun run check`, and GitHub CI. A later
+  session-limit delivery recorded a full local Bun 1.3.0 run of 218 tests with
+  zero failures before its subsequent review identified unproven edge-case
+  coverage; see the dated review receipt for the final review status.
 
 ## pi ecosystem: reuse the libraries, do not fork the agent (decided 2026-09-11)
 

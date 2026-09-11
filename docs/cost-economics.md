@@ -159,6 +159,21 @@ workflow под двумя профилями → **сравнить два JSON
 записывать проверенное в `docs/` по ходу, а не «потом». Этот файл — пример;
 `docs/pi-capabilities.md` — второй.
 
+The 2026-09-12 minimal-console planning pass consumed 454,696 input tokens,
+323,840 cached tokens, and 8,889 output tokens (planner: 279,041 / 187,392 /
+5,811; security: 175,655 / 136,448 / 3,078). It was plan-only, so it produced
+no run checkpoint. This is planning-usage evidence, not provider billing.
+
+## Historical live-pipeline observations (2026-09-12)
+
+The retired handoff snapshot recorded two live DeepSeek observations: a single
+`ad-coder role coder` run cost **$0.0035**, and a full `drive --auto` pipeline
+cost **$0.0206**. They are small, workload-specific observations rather than
+price claims or a benchmark, but remain useful evidence that the configured
+DeepSeek paths had completed end-to-end at that time. The broader LDO-versus
+DeepSeek comparison below also records the earlier `add.js` pipeline range of
+$0.0018–0.0043.
+
 ## Измерено на себе: реальная стоимость постройки ad-coder через LDO (2026-09-11)
 
 Прогнали `scripts/ldo-cost.sh` по транскриптам собственных implement-прогонов

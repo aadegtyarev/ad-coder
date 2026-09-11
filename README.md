@@ -230,8 +230,12 @@ autonomous behavior.
 
 ## Documentation
 
+- [Agent and operator instructions](AGENTS.md) — durable working conventions and handoff routing
 - [Architecture](docs/ARCHITECTURE.md) — components and how they connect
-- [Roadmap & design decisions](docs/ROADMAP.md) — what's built, what's next, and why
+- [Roadmap & design decisions](docs/ROADMAP.md) — durable decisions, delivery status, and forward design
+- [Backlog](docs/BACKLOG.md) — current priority and unresolved work
+- [Contracts](docs/contracts/) — enforced project-wide rules
+- [Reviews & incident receipts](docs/reviews/) — dated verification evidence and open findings
 - [Cost economics](docs/cost-economics.md) — the pricing/optimization thesis, measured
 - [pi capabilities](docs/pi-capabilities.md) — verified facts about the pi SDK this rests on
 - [Changelog](CHANGELOG.md)
