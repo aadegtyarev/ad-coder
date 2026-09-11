@@ -19,25 +19,13 @@ import { createRoleRunner } from "./runner/role-runner";
 import type { WorkflowContext } from "./workflow";
 import { isWorkflowModule } from "./workflow";
 
-const USAGE = [
-  "usage: ad-coder run <script.ts> [--target-dir <dir>]",
-  "       ad-coder role <planner|coder|reviewer|security> <task> --target-dir <dir>",
-  "         [--provider <deepseek|openrouter|openai-codex>]",
-  "         [--strong-model <name>] [--mid-model <name>] [--cheap-model <name>]",
-  "         [--max-rounds <n>] [--default-complexity <trivial|medium|complex>]",
-  '       ad-coder drive "<task>" --target-dir <dir> [--auto]',
-  "         [--provider <deepseek|openrouter|openai-codex>]",
-  "         [--strong-model <name>] [--mid-model <name>] [--cheap-model <name>]",
-  "         [--max-rounds <n>] [--default-complexity <trivial|medium|complex>]",
-].join("\n");
-
 const ROLE_NAMES = ["planner", "coder", "reviewer", "security"] as const;
 type RoleName = (typeof ROLE_NAMES)[number];
 const PROVIDERS = ["deepseek", "openrouter", "openai-codex"] as const;
 const COMPLEXITIES = ["trivial", "medium", "complex"] as const;
 
 function fail(message: string): never {
-  process.stderr.write(`ad-coder: ${message}\n${USAGE}\n`);
+  process.stderr.write(`ad-coder: ${message}\n${renderRootHelp()}\n`);
   process.exit(2);
 }
 
@@ -76,56 +64,48 @@ function resolveScriptPath(specifier: string): string {
   return resolved;
 }
 
-/** The value-taking flags both subcommands understand; everything else is a positional. */
-const VALUE_FLAGS = [
-  "--target-dir",
-  "--provider",
-  "--strong-model",
-  "--mid-model",
-  "--cheap-model",
-  "--max-rounds",
-  "--default-complexity",
-] as const;
-type ValueFlag = (typeof VALUE_FLAGS)[number];
-
-/** The boolean flags a subcommand understands; present == true, they take no value. */
-const BOOLEAN_FLAGS = ["--auto"] as const;
-type BooleanFlag = (typeof BOOLEAN_FLAGS)[number];
-
-/** Split positionals from the value/boolean flags; keep the flag parsing thin. */
-function parseArgs(argv: string[]): {
-  command: string | undefined;
+type ParsedArgs = {
   positionals: string[];
-  flags: Partial<Record<ValueFlag, string>>;
-  booleans: Record<BooleanFlag, boolean>;
-} {
+  flags: Record<string, string | undefined>;
+  booleans: Record<string, boolean>;
+};
+
+type CommandDefinition = {
+  name: string;
+  description: string;
+  positionals: readonly { name: string; description: string }[];
+  options: readonly { name: string; value?: string; description: string; required?: boolean }[];
+  run: (args: ParsedArgs) => Promise<void>;
+};
+
+/** Split a command's positionals from its registry-declared options. */
+function parseArgs(argv: string[], command: CommandDefinition): ParsedArgs {
   const positionals: string[] = [];
-  const flags: Partial<Record<ValueFlag, string>> = {};
-  const booleans: Record<BooleanFlag, boolean> = { "--auto": false };
+  const flags: Record<string, string | undefined> = {};
+  const booleans: Record<string, boolean> = {};
   outer: for (let i = 0; i < argv.length; i++) {
     const arg = argv[i] as string;
-    for (const flag of BOOLEAN_FLAGS) {
-      if (arg === flag) {
-        booleans[flag] = true;
+    for (const option of command.options) {
+      if (arg === option.name && option.value === undefined) {
+        booleans[option.name] = true;
         continue outer;
       }
-    }
-    for (const flag of VALUE_FLAGS) {
-      if (arg === flag) {
+      if (arg === option.name && option.value !== undefined) {
         const value = argv[i + 1];
-        if (value === undefined) fail(`${flag} requires a value`);
-        flags[flag] = value;
+        if (value === undefined) fail(`${option.name} requires a value`);
+        flags[option.name] = value;
         i++;
         continue outer;
       }
-      if (arg.startsWith(`${flag}=`)) {
-        flags[flag] = arg.slice(flag.length + 1);
+      if (option.value !== undefined && arg.startsWith(`${option.name}=`)) {
+        flags[option.name] = arg.slice(option.name.length + 1);
         continue outer;
       }
     }
+    if (arg.startsWith("-")) fail(`unknown option: ${arg}`);
     positionals.push(arg);
   }
-  return { command: positionals[0], positionals, flags, booleans };
+  return { positionals, flags, booleans };
 }
 
 /**
@@ -263,7 +243,7 @@ function parseMaxRoundsFlag(value: string | undefined): number | undefined {
 /** Run a single role standalone against a target directory, resolved from the environment. */
 async function roleCommand(
   positionals: string[],
-  flags: Partial<Record<ValueFlag, string>>,
+  flags: Record<string, string | undefined>,
 ): Promise<void> {
   const name = positionals[1];
   if (name === undefined) fail("missing <role>");
@@ -328,7 +308,7 @@ async function roleCommand(
  */
 async function driveCommand(
   positionals: string[],
-  flags: Partial<Record<ValueFlag, string>>,
+  flags: Record<string, string | undefined>,
   auto: boolean,
 ): Promise<void> {
   const task = positionals[1];
@@ -374,7 +354,7 @@ async function driveCommand(
 /** Load and run a workflow module against an optional target directory. */
 async function runCommand(
   positionals: string[],
-  flags: Partial<Record<ValueFlag, string>>,
+  flags: Record<string, string | undefined>,
 ): Promise<void> {
   const scriptArg = positionals[1];
   if (scriptArg === undefined) fail("missing <script.ts>");
@@ -407,21 +387,147 @@ async function runCommand(
   }
 }
 
+const COMMANDS: readonly CommandDefinition[] = [
+  {
+    name: "run",
+    description: "Run a workflow module.",
+    positionals: [{ name: "<script.ts>", description: "Workflow module to load and run." }],
+    options: [
+      {
+        name: "--target-dir",
+        value: "<dir>",
+        description: "Expose a role runner for this project.",
+      },
+    ],
+    run: ({ positionals, flags }) => runCommand(positionals, flags),
+  },
+  {
+    name: "role",
+    description: "Run one pipeline role once.",
+    positionals: [
+      { name: "<planner|coder|reviewer|security>", description: "Role to run." },
+      { name: "<task>", description: "Task for the role." },
+    ],
+    options: [
+      {
+        name: "--target-dir",
+        value: "<dir>",
+        description: "Directory containing the project to operate on.",
+        required: true,
+      },
+      {
+        name: "--provider",
+        value: "<provider>",
+        description: "Provider: deepseek, openrouter, or openai-codex.",
+      },
+      { name: "--strong-model", value: "<name>", description: "Override the strong model." },
+      { name: "--mid-model", value: "<name>", description: "Override the mid-tier model." },
+      { name: "--cheap-model", value: "<name>", description: "Override the cheap model." },
+      {
+        name: "--max-rounds",
+        value: "<n>",
+        description: "Set the maximum number of pipeline rounds.",
+      },
+      {
+        name: "--default-complexity",
+        value: "<complexity>",
+        description: "Set trivial, medium, or complex as the default.",
+      },
+    ],
+    run: ({ positionals, flags }) => roleCommand(positionals, flags),
+  },
+  {
+    name: "drive",
+    description: "Interactively drive the built-in pipeline.",
+    positionals: [{ name: "<task>", description: "Task for the pipeline." }],
+    options: [
+      { name: "--auto", description: "Automatically choose pipeline transitions." },
+      {
+        name: "--target-dir",
+        value: "<dir>",
+        description: "Directory containing the project to operate on.",
+        required: true,
+      },
+      {
+        name: "--provider",
+        value: "<provider>",
+        description: "Provider: deepseek, openrouter, or openai-codex.",
+      },
+      { name: "--strong-model", value: "<name>", description: "Override the strong model." },
+      { name: "--mid-model", value: "<name>", description: "Override the mid-tier model." },
+      { name: "--cheap-model", value: "<name>", description: "Override the cheap model." },
+      {
+        name: "--max-rounds",
+        value: "<n>",
+        description: "Set the maximum number of pipeline rounds.",
+      },
+      {
+        name: "--default-complexity",
+        value: "<complexity>",
+        description: "Set trivial, medium, or complex as the default.",
+      },
+    ],
+    run: ({ positionals, flags, booleans }) =>
+      driveCommand(positionals, flags, booleans["--auto"] === true),
+  },
+];
+
+function renderRootHelp(): string {
+  return [
+    "usage: ad-coder <command> [options]",
+    "",
+    "Commands:",
+    ...COMMANDS.map((command) => `  ${command.name.padEnd(7)} ${command.description}`),
+  ].join("\n");
+}
+
+function renderCommandHelp(command: CommandDefinition): string {
+  const argumentsUsage = command.positionals.map(({ name }) => name).join(" ");
+  const optionsUsage =
+    command.options.filter(({ required }) => !required).length === 0 ? "" : " [options]";
+  const requiredOptions = command.options
+    .filter(({ required }) => required)
+    .map(({ name, value }) => `${name} ${value ?? ""}`.trim())
+    .join(" ");
+  const usage = ["usage: ad-coder", command.name, argumentsUsage, requiredOptions, optionsUsage]
+    .filter(Boolean)
+    .join(" ");
+  const positionals =
+    command.positionals.length === 0
+      ? []
+      : [
+          "",
+          "Arguments:",
+          ...command.positionals.map(
+            ({ name, description }) => `  ${name.padEnd(35)} ${description}`,
+          ),
+        ];
+  const options = [
+    "",
+    "Options:",
+    `${"  --help, -h".padEnd(37)}Show this help.`,
+    ...command.options.map(
+      ({ name, value, description, required }) =>
+        `  ${`${name}${value === undefined ? "" : ` ${value}`}${required ? " (required)" : ""}`.padEnd(35)} ${description}`,
+    ),
+  ];
+  return [usage, ...positionals, ...options].join("\n");
+}
+
 async function main(argv: string[]): Promise<void> {
-  const { command, positionals, flags, booleans } = parseArgs(argv);
-  if (command === "run") {
-    await runCommand(positionals, flags);
+  if (argv.length === 1 && (argv[0] === "--help" || argv[0] === "-h")) {
+    process.stdout.write(`${renderRootHelp()}\n`);
     return;
   }
-  if (command === "role") {
-    await roleCommand(positionals, flags);
+  const commandName = argv[0];
+  const command = COMMANDS.find(({ name }) => name === commandName);
+  if (command === undefined)
+    fail(commandName === undefined ? "missing command" : `unknown command: ${commandName}`);
+  if (argv.slice(1).some((arg) => arg === "--help" || arg === "-h")) {
+    process.stdout.write(`${renderCommandHelp(command)}\n`);
     return;
   }
-  if (command === "drive") {
-    await driveCommand(positionals, flags, booleans["--auto"]);
-    return;
-  }
-  fail(command === undefined ? "missing command" : `unknown command: ${command}`);
+  await command.run(parseArgs(argv, command));
 }
 
 function errorMessage(error: unknown): string {
