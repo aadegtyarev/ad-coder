@@ -69,6 +69,43 @@ module-locality from the touched-file set to decide what can parallelize.
   size gate, bounded fail-loud GateReport, argv-only (no shell string). Not yet
   wired into ad-coder's own build — a deliberate follow-up.
 
+## Workflow execution model (decided 2026-09-11)
+
+The unifying architecture under the orchestrator, stepped mode, and pluggable
+workflows — one substrate, swappable drivers.
+
+- A **role** is the atom. `runRole` already runs any single role STANDALONE — e.g.
+  the reviewer alone on a small diff, with no plan and no coder. Nothing new needed
+  for "run one role by hand".
+- A **workflow** is a named composition of role-steps, packaged as a SELF-CONTAINED
+  MODULE DIRECTORY that bundles its worker prompts + step graph + routing profile
+  (`workflows/pipeline/` is the built-in plan→[security]→code⇄review; users drop
+  their own under `.ad-coder/workflows/<name>/`, enable/disable per config). The
+  registry pattern (providers, profiles) applies — a third registry. This is the
+  [[workflows-module]] refined.
+- A workflow runs in two modes: **autonomous** (`runPipeline` to completion, today)
+  or **stepped** (run ONE step, hand control back). Stepped is the missing
+  substrate — `runPipeline` is all-or-nothing today.
+- **Stepped execution is the substrate; WHO decides the next step is a pluggable
+  DRIVER.** Two drivers: the **human** (manual — "ran the plan, read it, ran the
+  coder, looked, sent it back or on to the reviewer") and the **orchestrator** (an
+  autonomous driver role). The orchestrator is NOT privileged — it is one driver of
+  the same stepped engine, not the only way to run a workflow.
+- **Driver and cross-cutting roles** (orchestrator, researcher, the common preamble)
+  live OUTSIDE any workflow — `prompts/roles/`, `prompts/common/`. Their prompts are
+  a DIFFERENT CATEGORY from a workflow's worker prompts, which live inside the
+  workflow module (`workflows/<name>/prompts/`). Project overrides mirror the tree
+  under `.ad-coder/` via the resolvePrompt search path already built. (This means a
+  future migration of today's flat `prompts/*.md` into the workflow-module layout —
+  do it WITH the workflows-module build, not before; the resolver already supports
+  the paths.)
+- **Path to MVP (reordered):** (1) stepped workflow substrate → (2) human-driven
+  stepped CLI + standalone role runs ("plan, read, code, look, rework/review") →
+  (3) the orchestrator as an autonomous driver on the SAME substrate → (4) TUI.
+  Human-in-the-loop before autonomy: nearer, safer, and mostly composition of
+  runRole + a thin stepped driver + a CLI. The orchestrator stops being a blocker
+  for a usable MVP.
+
 ## After that (designed, ordered)
 
 - **End-to-end runner** — DONE. `src/runner/`: `runRole(params)` resolves a
