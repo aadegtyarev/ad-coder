@@ -1,5 +1,7 @@
 import type { Api, Model, Models } from "@earendil-works/pi-ai";
 import type { LedgerSink } from "../ledger/ledger";
+import type { Profile, ProfileRole, SpawnOverride } from "../profiles/types";
+import type { ResolvedRegistry } from "../registry/types";
 import type { Role } from "../role";
 
 /**
@@ -97,6 +99,42 @@ export interface RoleSpec {
 }
 
 /**
+ * Complexity-aware model routing for a whole pipeline run.
+ *
+ * When a `PipelineConfig` carries `routing`, `runPipeline` resolves each turn's
+ * model through `resolveProfile((role, complexity) + override)` against
+ * `registry` and binds the runner to `registry.models` -- SUPERSEDING (not
+ * removing) each `RoleSpec.model` and the top-level `config.models`. Both stay
+ * required and valid config; routing simply chooses the live model per turn and
+ * the RoleSpec's own `model` is ignored while routing is present. When `routing`
+ * is ABSENT the pipeline is byte-for-byte its prior self: each turn runs on its
+ * `RoleSpec.model` over `config.models`.
+ *
+ * `defaultComplexity` (default `'medium'`) does double duty: it routes the
+ * PRE-complexity roles -- the planner, whose model must be chosen before the
+ * plan reveals a complexity -- AND it is the fallback for every later role when
+ * the planner never submits a complexity (an absent `submit_plan` is a SOFT
+ * signal, not an error). A profile's planner (pre-complexity) row should
+ * therefore be kept complexity-INVARIANT: the planner is always resolved on
+ * `defaultComplexity`, so varying its per-complexity cells has no effect.
+ *
+ * `overrides` pins a specific model per role, winning over that role's
+ * `(role, complexity)` cell (see `resolveProfile`'s override precedence).
+ *
+ * A caller config error surfaces as its own typed error, unwrapped:
+ * `resolveProfile` throws `ProfileError('missing_mapping')` on a gap in the
+ * profile and `ProfileError('unknown_model')` on an unregistered model name.
+ * These are the caller's, so `runPipeline` lets them propagate as-is rather than
+ * re-wrapping them in `OrchestrationError`.
+ */
+export interface PipelineRouting {
+  profile: Profile;
+  registry: ResolvedRegistry;
+  defaultComplexity?: Complexity;
+  overrides?: Partial<Record<ProfileRole, SpawnOverride>>;
+}
+
+/**
  * Everything `runPipeline` needs to drive one plan -> (code<->review) run.
  *
  * `planner` is the ONLY optional role: a run may skip planning, but it always
@@ -125,6 +163,14 @@ export interface PipelineConfig {
     security?: RoleSpec;
   };
   ledgerSink?: LedgerSink;
+  /**
+   * OPTIONAL complexity-aware model routing. When present, each turn's model is
+   * chosen by `resolveProfile` and the runner binds to `routing.registry.models`
+   * -- superseding `RoleSpec.model` + `config.models`. When absent, model
+   * selection is byte-for-byte the prior behavior (each `RoleSpec.model` over
+   * `config.models`). See `PipelineRouting`.
+   */
+  routing?: PipelineRouting;
 }
 
 /**

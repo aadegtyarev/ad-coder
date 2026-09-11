@@ -57,6 +57,15 @@ network (pi-ai's fauxProvider) and demonstrated live on DeepSeek.
   presents one typed surface), and a provider-agnostic `buildDefaultProfile`
   builder. The advisory hints have no sink yet and nothing wires this into
   `runPipeline` — both are a deliberate follow-on.
+- **Complexity-aware routing** — `runPipeline` now CONSUMES the profile/registry
+  layers through an optional `PipelineConfig.routing`
+  (`{ profile, registry, defaultComplexity?, overrides? }`): per-role model
+  selection is driven by the planner-rated complexity — the planner (and any
+  pre-complexity role) routes on `defaultComplexity` (default `'medium'`), and
+  every later role on the planner's submitted tier, else that default; a per-role
+  override wins over the `(role, complexity)` cell. Routing is optional and
+  additive — absent, model selection is byte-for-byte the prior behavior (each
+  `RoleSpec.model` over `config.models`).
 - **Built-in role prompts** — `prompts/{planner,coder,reviewer,security}.md`.
 - **Packaging** — MIT license, CI (typecheck + tests on Bun), and one-command
   install/update from GitHub.

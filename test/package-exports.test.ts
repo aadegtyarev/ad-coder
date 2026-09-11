@@ -47,6 +47,7 @@ import type {
   OrchestrationErrorCode,
   PipelineConfig,
   PipelineResult,
+  PipelineRouting,
   Profile,
   ProfileEntry,
   ProfileErrorCode,
@@ -140,6 +141,8 @@ test("the package is importable by its published name", () => {
   const _round: RoundRecord | undefined = undefined;
   const _pipelineConfig: PipelineConfig | undefined = undefined;
   const _pipelineResult: PipelineResult | undefined = undefined;
+  const _pipelineRouting: PipelineRouting | undefined = undefined;
+  expect(_pipelineRouting).toBeUndefined();
   const _orchCode: OrchestrationErrorCode | undefined = undefined;
   const _apiKind: ApiKind | undefined = undefined;
   const _credSource: CredentialSource | undefined = undefined;

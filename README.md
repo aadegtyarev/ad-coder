@@ -85,6 +85,11 @@ The `ad-coder run <script.ts> --target-dir <dir>` CLI loads and runs a workflow
 module against a target directory; `examples/pipeline.ts` shows the library
 `runPipeline` API the CLI is a thin front for.
 
+Per-role model selection is optionally complexity-driven: pass a `routing`
+({ profile, registry, defaultComplexity?, overrides? }) to `runPipeline` and each
+role's model is chosen from the planner-rated complexity. Routing is optional —
+omit it and each role runs on its configured `RoleSpec.model` exactly as before.
+
 ## Documentation
 
 - [Architecture](docs/ARCHITECTURE.md) — components and how they connect

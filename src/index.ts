@@ -48,6 +48,7 @@ export type {
   OrchestrationErrorCode,
   PipelineConfig,
   PipelineResult,
+  PipelineRouting,
   Plan,
   RoleSpec,
   RoundRecord,

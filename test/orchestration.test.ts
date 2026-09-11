@@ -12,11 +12,14 @@ import {
 import type { FauxProviderHandle, FauxResponseFactory, FauxResponseStep } from "@earendil-works/pi-ai/providers/faux";
 import { MemoryLedgerSink } from "../src/ledger/ledger";
 import { OrchestrationError } from "../src/orchestration/types";
-import type { RoleSpec, Verdict } from "../src/orchestration/types";
+import type { PipelineRouting, RoleSpec, Verdict } from "../src/orchestration/types";
 import { runPipeline } from "../src/orchestration/pipeline";
 import { parseVerdict, SUBMIT_VERDICT_TOOL_NAME } from "../src/orchestration/verdict";
 import { parsePlan, SUBMIT_PLAN_TOOL_NAME } from "../src/orchestration/plan";
 import type { Plan } from "../src/orchestration/types";
+import { buildDefaultProfile } from "../src/profiles/default-profile";
+import type { Profile } from "../src/profiles/types";
+import type { ResolvedRegistry } from "../src/registry/types";
 import { defineRole } from "../src/role";
 import type { Role } from "../src/role";
 
@@ -544,4 +547,282 @@ test("a non-elevated surface does not run the security phase even when a securit
   expect(result.securitySurface).toBe("low");
   const steps = sink.records().map((r) => r.step);
   expect(steps).not.toContain("security");
+});
+
+// -- Complexity-aware routing ------------------------------------------------
+//
+// These cases prove config.routing drives the per-turn model. A three-model
+// faux provider ('cheap'/'mid'/'strong') backs a hand-built ResolvedRegistry;
+// each turn is scripted with a factory that records the streamed model.id, so
+// selection is asserted on the ACTUAL resolved model, not just prompt text.
+
+const ROUTE_MODELS = ["cheap", "mid", "strong"] as const;
+
+interface RoutingFixture {
+  faux: FauxProviderHandle;
+  registry: ResolvedRegistry;
+  targetDir: string;
+  getModel(name: string): Model<Api>;
+  /** A RoleSpec whose own model is `specModel` (used only on the routing-absent path). */
+  role(name: string, specModel: string, activeToolNames?: string[]): RoleSpec;
+}
+
+/** A faux provider with three models + a hand-built ResolvedRegistry over them. */
+function routingFixture(): RoutingFixture {
+  const faux = fauxProvider({
+    provider: "faux",
+    models: ROUTE_MODELS.map((id) => ({ id, contextWindow: CONTEXT_WINDOW })),
+  });
+  const models = createModels();
+  models.setProvider(faux.provider);
+  const targetDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-route-")));
+
+  const getModel = (name: string): Model<Api> => {
+    const m = faux.getModel(name);
+    if (m === undefined) {
+      throw new Error(`routingFixture: no faux model "${name}"`);
+    }
+    return m as Model<Api>;
+  };
+  const registry: ResolvedRegistry = {
+    models,
+    getModel,
+    lookup(name) {
+      return { models, model: getModel(name) };
+    },
+  };
+
+  return {
+    faux,
+    registry,
+    targetDir,
+    getModel,
+    role(name, specModel, activeToolNames = ["bash", "read", "write", "edit"]) {
+      const model = getModel(specModel);
+      const role: Role = defineRole(
+        {
+          name,
+          provider: "faux",
+          modelId: model.id,
+          systemPrompt: `You ${name}.`,
+          activeToolNames,
+          cacheRetention: "none",
+          contextBudget: { ...BUDGET },
+        },
+        model,
+      );
+      return { role, model };
+    },
+  };
+}
+
+/** Records the model.id the turn streamed on, under `key`, then returns `message`. */
+function recordStep(
+  log: Record<string, string>,
+  key: string,
+  message: ReturnType<typeof fauxAssistantMessage>,
+): FauxResponseFactory {
+  return (_context, _options, _state, model) => {
+    log[key] = model.id;
+    return message;
+  };
+}
+
+/** A planner turn that records its model under 'planner', then submits `args`. */
+function plannerTurnRec(
+  log: Record<string, string>,
+  args: Plan | Record<string, unknown>,
+): FauxResponseStep[] {
+  return [
+    recordStep(log, "planner", fauxAssistantMessage(fauxToolCall(SUBMIT_PLAN_TOOL_NAME, args))),
+    fauxAssistantMessage("plan text"),
+  ];
+}
+
+/** A reviewer turn that records its model under 'reviewer', then submits `args`. */
+function reviewerTurnRec(
+  log: Record<string, string>,
+  args: Verdict | Record<string, unknown>,
+): FauxResponseStep[] {
+  return [
+    recordStep(log, "reviewer", fauxAssistantMessage(fauxToolCall(SUBMIT_VERDICT_TOOL_NAME, args))),
+    fauxAssistantMessage("review complete"),
+  ];
+}
+
+/** buildDefaultProfile over the three routing model NAMES. */
+function defaultRouteProfile(): Profile {
+  return buildDefaultProfile({ strong: "strong", mid: "mid", cheap: "cheap" });
+}
+
+test("routing (a): planner complexity 'complex' routes the coder to the strong model", async () => {
+  const fx = routingFixture();
+  const log: Record<string, string> = {};
+  const planner = fx.role("planner", "mid", ["bash", "read", "write", "edit", SUBMIT_PLAN_TOOL_NAME]);
+  const coder = fx.role("coder", "mid");
+  const reviewer = fx.role("reviewer", "mid", ["bash", "read", "write", "edit", SUBMIT_VERDICT_TOOL_NAME]);
+  const verdict: Verdict = { status: "approved", issues: [], summary: "ok" };
+  fx.faux.setResponses([
+    ...plannerTurnRec(log, { complexity: "complex", securitySurface: "low", summary: "plan" }),
+    recordStep(log, "coder", fauxAssistantMessage("coded")),
+    ...reviewerTurnRec(log, verdict),
+  ]);
+
+  const routing: PipelineRouting = { profile: defaultRouteProfile(), registry: fx.registry };
+  const result = await runPipeline({
+    targetDir: fx.targetDir,
+    models: fx.registry.models,
+    task: "implement A",
+    maxRounds: 3,
+    roles: { planner, coder, reviewer },
+    routing,
+  });
+
+  expect(result.approved).toBe(true);
+  expect(result.complexity).toBe("complex");
+  // coder @ complex -> strong; reviewer -> mid at every complexity.
+  expect(log.coder).toBe("strong");
+  expect(log.reviewer).toBe("mid");
+});
+
+test("routing (b): planner complexity 'trivial' routes the coder to the cheap model", async () => {
+  const fx = routingFixture();
+  const log: Record<string, string> = {};
+  const planner = fx.role("planner", "mid", ["bash", "read", "write", "edit", SUBMIT_PLAN_TOOL_NAME]);
+  const coder = fx.role("coder", "mid");
+  const reviewer = fx.role("reviewer", "mid", ["bash", "read", "write", "edit", SUBMIT_VERDICT_TOOL_NAME]);
+  const verdict: Verdict = { status: "approved", issues: [], summary: "ok" };
+  fx.faux.setResponses([
+    ...plannerTurnRec(log, { complexity: "trivial", securitySurface: "none", summary: "plan" }),
+    recordStep(log, "coder", fauxAssistantMessage("coded")),
+    ...reviewerTurnRec(log, verdict),
+  ]);
+
+  const routing: PipelineRouting = { profile: defaultRouteProfile(), registry: fx.registry };
+  const result = await runPipeline({
+    targetDir: fx.targetDir,
+    models: fx.registry.models,
+    task: "implement B",
+    maxRounds: 3,
+    roles: { planner, coder, reviewer },
+    routing,
+  });
+
+  expect(result.approved).toBe(true);
+  expect(result.complexity).toBe("trivial");
+  expect(log.coder).toBe("cheap");
+});
+
+test("routing (c): a coder override wins over the (coder, complexity) cell", async () => {
+  const fx = routingFixture();
+  const log: Record<string, string> = {};
+  const planner = fx.role("planner", "mid", ["bash", "read", "write", "edit", SUBMIT_PLAN_TOOL_NAME]);
+  const coder = fx.role("coder", "mid");
+  const reviewer = fx.role("reviewer", "mid", ["bash", "read", "write", "edit", SUBMIT_VERDICT_TOOL_NAME]);
+  const verdict: Verdict = { status: "approved", issues: [], summary: "ok" };
+  fx.faux.setResponses([
+    // trivial would route the coder to 'cheap'; the override must beat it.
+    ...plannerTurnRec(log, { complexity: "trivial", securitySurface: "none", summary: "plan" }),
+    recordStep(log, "coder", fauxAssistantMessage("coded")),
+    ...reviewerTurnRec(log, verdict),
+  ]);
+
+  const routing: PipelineRouting = {
+    profile: defaultRouteProfile(),
+    registry: fx.registry,
+    overrides: { coder: { model: "strong" } },
+  };
+  const result = await runPipeline({
+    targetDir: fx.targetDir,
+    models: fx.registry.models,
+    task: "implement C",
+    maxRounds: 3,
+    roles: { planner, coder, reviewer },
+    routing,
+  });
+
+  expect(result.approved).toBe(true);
+  // Override 'strong' wins over the trivial cell's 'cheap'.
+  expect(log.coder).toBe("strong");
+});
+
+test("routing (d): the pre-complexity planner routes on defaultComplexity, not the submitted tier", async () => {
+  const fx = routingFixture();
+  const log: Record<string, string> = {};
+  // A profile whose PLANNER row varies per complexity, so the model the planner
+  // runs on reveals which complexity it was resolved at.
+  const base = defaultRouteProfile();
+  const profile: Profile = {
+    entries: base.entries.map((e) =>
+      e.role === "planner"
+        ? {
+            ...e,
+            model: e.complexity === "trivial" ? "cheap" : e.complexity === "medium" ? "mid" : "strong",
+          }
+        : e,
+    ),
+  };
+  const planner = fx.role("planner", "mid", ["bash", "read", "write", "edit", SUBMIT_PLAN_TOOL_NAME]);
+  const coder = fx.role("coder", "mid");
+  const reviewer = fx.role("reviewer", "mid", ["bash", "read", "write", "edit", SUBMIT_VERDICT_TOOL_NAME]);
+  const verdict: Verdict = { status: "approved", issues: [], summary: "ok" };
+  fx.faux.setResponses([
+    // Planner SUBMITS 'complex' (planner row -> strong), but it is resolved
+    // BEFORE the plan, on defaultComplexity 'trivial' (planner row -> cheap).
+    ...plannerTurnRec(log, { complexity: "complex", securitySurface: "none", summary: "plan" }),
+    recordStep(log, "coder", fauxAssistantMessage("coded")),
+    ...reviewerTurnRec(log, verdict),
+  ]);
+
+  const routing: PipelineRouting = {
+    profile,
+    registry: fx.registry,
+    defaultComplexity: "trivial",
+  };
+  const result = await runPipeline({
+    targetDir: fx.targetDir,
+    models: fx.registry.models,
+    task: "implement D",
+    maxRounds: 3,
+    roles: { planner, coder, reviewer },
+    routing,
+  });
+
+  expect(result.approved).toBe(true);
+  // Pre-complexity: planner resolved at defaultComplexity 'trivial' -> cheap,
+  // NOT the submitted 'complex' -> strong.
+  expect(log.planner).toBe("cheap");
+  // The coder, resolved AFTER the plan, uses the submitted 'complex' -> strong.
+  expect(log.coder).toBe("strong");
+});
+
+test("routing (e): with no routing, each turn runs on its own RoleSpec.model", async () => {
+  const fx = routingFixture();
+  const log: Record<string, string> = {};
+  const coder = fx.role("coder", "cheap");
+  const reviewer = fx.role("reviewer", "strong", [
+    "bash",
+    "read",
+    "write",
+    "edit",
+    SUBMIT_VERDICT_TOOL_NAME,
+  ]);
+  const verdict: Verdict = { status: "approved", issues: [], summary: "ok" };
+  fx.faux.setResponses([
+    recordStep(log, "coder", fauxAssistantMessage("coded")),
+    ...reviewerTurnRec(log, verdict),
+  ]);
+
+  const result = await runPipeline({
+    targetDir: fx.targetDir,
+    models: fx.registry.models,
+    task: "implement E",
+    maxRounds: 1,
+    roles: { coder, reviewer },
+  });
+
+  expect(result.approved).toBe(true);
+  // Routing absent: the configured RoleSpec.model is used verbatim.
+  expect(log.coder).toBe("cheap");
+  expect(log.reviewer).toBe("strong");
 });
