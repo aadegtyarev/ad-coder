@@ -92,6 +92,14 @@ workflows — one substrate, swappable drivers.
   autonomous driver role). The orchestrator is NOT privileged — it is one driver of
   the same stepped engine, not the only way to run a workflow.
 
+  REQUIREMENT surfaced by the stepped-engine review: `applyTransition(state, chosen)`
+  is a pure reducer that TRUSTS `chosen` today (its only caller, the auto-driver, is
+  trusted code). When a MODEL drives — the orchestrator picking a transition — that
+  input is UNTRUSTED. So the orchestrator-driver work MUST validate `chosen` against
+  the transitions `step()` actually offered (reference/shape match) and throw on a
+  forged or stale one, the same parse-and-gate discipline as parsePlan/parseVerdict.
+  A model must not be able to silently corrupt the round/phase invariants.
+
 - **The orchestrator is ALWAYS present; auto/manual is a dial on its AUTHORITY, not
   a separate UI.** You can always talk to it — discuss, ask it to run a specific
   step or review something. What the auto/manual switch changes is how much it
@@ -474,6 +482,32 @@ workflows — one substrate, swappable drivers.
   real if the user can SEE it). SESSION LIST — browse, inspect, resume, fork.
   LIVE context/cache panel — usage vs budget, when compaction fired, hit ratio.
   Built on pi-tui. The bar is CONVENIENT, not merely functional.
+
+- **Tool-source seams: MCP and LSP** — ad-coder has ONE tools-seam (a role gets
+  tools via the runner's `tools?`); TOOL SOURCES are pluggable and feed it. Beyond
+  the built-in bash/read/write/edit and custom `defineTool` tools, two source
+  adapters (a client + tool adapters into the `Tool` surface — no new low-level
+  machinery, they ride the existing seam):
+  - **MCP seam** — connect MCP servers and expose their tools to roles. Opens the
+    whole MCP ecosystem: a browser (Playwright MCP) to drive/debug a running web app
+    (click, read console, screenshot — a general "drive the running app"), plus
+    databases, GitHub, etc. RECON: does pi-agent-core support MCP natively? If yes,
+    mostly config (declare servers); else ad-coder implements an MCP client +
+    adapters. Untrusted: an MCP tool RESULT is data, never instructions; a server is
+    a trust decision.
+  - **LSP seam** — per-language code intelligence (typescript-language-server,
+    pyright, gopls...) as role tools: precise go-to-def / find-references / type
+    diagnostics / SAFE rename-extract refactors. Precise navigation beats grep
+    (accuracy + context-economy); safe-by-construction refactors are exactly what
+    the auditor + refactor-executor want (LSP/AST moves over LLM regeneration). LSP
+    is editor-land, likely not in pi -> ad-coder implements an LSP client + adapters.
+  - COMPOSES FREE with what is built: default-open tools (a connected server's tools
+    are auto-available unless narrowed), tool-call observability (the ledger already
+    records toolCalls by name -> you SEE which MCP/LSP tools a role used), and the
+    future sandbox+wallet (servers run under the sandbox; the wallet holds their
+    creds; network-default-open covers a browser, hardened runs opt into limits).
+    Both are also candidate capabilities ad-coder gives its OWN roles, not only
+    tools used to develop ad-coder.
 
 ## Open backlog (mechanical)
 
