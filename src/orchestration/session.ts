@@ -97,11 +97,17 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
           targetDir,
           models: routing.registry.models,
           ...(config.compaction !== undefined && { compaction: config.compaction }),
+          ...(config.sessionLimitController !== undefined && {
+            sessionLimitController: config.sessionLimitController,
+          }),
         })
       : createRoleRunner({
           targetDir,
           models: config.models,
           ...(config.compaction !== undefined && { compaction: config.compaction }),
+          ...(config.sessionLimitController !== undefined && {
+            sessionLimitController: config.sessionLimitController,
+          }),
         });
 
   const defaults: ResolvedDefaults = {

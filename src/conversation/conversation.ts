@@ -37,6 +37,8 @@ import {
   resolveTargetDir,
 } from "../runner/errors";
 import type { Tool } from "../runner/tool";
+import type { SessionLimits } from "../session-limits";
+import { SessionLimitController } from "../session-limits";
 
 /**
  * Everything a multi-turn conversation needs. Mirrors `RunRoleParams` but the
@@ -71,6 +73,10 @@ export interface ConversationConfig {
   context?: Context;
   /** Custom tools that EXTEND the built-in [bash,read,write,edit] set. See `RunRoleParams.tools`. */
   tools?: Tool[];
+  /** Optional resource thresholds. Zero/omitted disables each threshold. */
+  sessionLimits?: SessionLimits;
+  /** Internal sharing seam for nested work; takes precedence over sessionLimits. */
+  sessionLimitController?: SessionLimitController;
 }
 
 /** A tool invocation observed during a single turn: names only, never args or content. */
@@ -152,14 +158,21 @@ export async function startConversation(config: ConversationConfig): Promise<Con
   assertUniqueToolNames(tools);
 
   const session = config.session ?? (await new MemorySessionRepo().create({}, context));
+  const controller =
+    config.sessionLimitController ?? new SessionLimitController(config.sessionLimits);
+  const limitedModels = controller.wrap(config.models);
   const explicitPolicy =
     config.compaction ??
     (config.summarizer === undefined ? undefined : { mode: "auto", summarizer: config.summarizer });
-  const compaction = resolveCompactionPolicy(explicitPolicy, config.models, config.model);
+  const hasOpaqueSummarizer = explicitPolicy?.summarizer !== undefined;
+  if (hasOpaqueSummarizer && (controller.limits.maxTurns > 0 || controller.limits.maxCostUsd > 0)) {
+    throw new TypeError("custom summarizer cannot be used with positive session limits");
+  }
+  const compaction = resolveCompactionPolicy(explicitPolicy, limitedModels, config.model);
 
   const base = toHarnessOptions(config.role, {
     session,
-    models: config.models,
+    models: limitedModels,
     model: config.model,
   });
   const options: AgentHarnessOptions<ExecutionToolContext> = {
@@ -206,6 +219,7 @@ export async function startConversation(config: ConversationConfig): Promise<Con
     userInput: string,
     opts?: ConversationStepOptions,
   ): Promise<ConversationTurnResult> {
+    controller.assertActive();
     const n = ++turnCounter;
     const stepName = opts?.step ?? `turn:${n}`;
 
@@ -235,7 +249,12 @@ export async function startConversation(config: ConversationConfig): Promise<Con
     });
 
     try {
-      const result = getOrThrow(await lane.prompt(userInput, undefined, context));
+      const prompted = await lane.prompt(userInput, undefined, context).catch((error) => {
+        controller.assertNoBoundaryFailure();
+        throw error;
+      });
+      controller.assertNoBoundaryFailure();
+      const result = getOrThrow(prompted);
       if ("status" in result && result.status === "suspended") {
         // lane.prompt returns OperationResultRecord | SuspendedRun. A suspended
         // run is a deferred provider response this loop does not resume; fail

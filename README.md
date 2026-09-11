@@ -191,8 +191,26 @@ removed in both output modes. Provider credentials still come only from the
 CLI process environment. `--target-dir` fixes the starting working directory,
 but it is not a sandbox: the orchestrator and pipeline host tools are
 unrestricted and can access anything the invoking user can. This unrestricted
-execution is an explicit MVP choice. Session turn-count and cost caps are not
-implemented yet and remain the next resource/security follow-up.
+execution is an explicit MVP choice.
+
+Session generation limits are available programmatically as
+`sessionLimits: { maxTurns?, maxCostUsd? }` and in the console as
+`--max-session-turns <n>` and `--max-session-cost-usd <amount>`. Both default to
+`0`, where `0` disables and only a positive value enables a limit. A turn is one
+admitted call through a `Models` generation method, including tool follow-ups,
+harness-visible retries, deferred requests/polls, and built-in compaction.
+Provider-internal HTTP retries below that boundary are not separate turns.
+
+Cost is the unrounded sum of settled assistant messages'
+`usage.cost.total`. A positive threshold blocks the next admission when observed
+cost is already equal to or above it; the admitted request that crosses it may
+overshoot because its cost is not known in advance. Only one cost-unknown call
+may be in flight, so overshoot is bounded to that request. A call that settles
+without valid finite non-negative usage makes accounting terminal and blocks
+later admissions. Consequently this is a pre-request threshold, not an absolute
+spend cap. Custom opaque summarizers are rejected while either limit is enabled.
+`show_cost` reports this authoritative session snapshot separately from the
+existing per-step ledger totals.
 
 Per-role model selection is optionally complexity-driven: pass a `routing`
 ({ profile, registry, defaultComplexity?, overrides? }) to `runPipeline` and each

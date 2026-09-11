@@ -3,6 +3,7 @@ import type { Api, Model, Models } from "@earendil-works/pi-ai";
 import type { CompactionPolicy, Summarizer } from "../context/compactor";
 import type { LedgerSink } from "../ledger/ledger";
 import type { Role } from "../role";
+import type { SessionLimitController } from "../session-limits";
 import type { RunRoleResult } from "./runner";
 import { runRole } from "./runner";
 import type { Tool } from "./tool";
@@ -46,6 +47,7 @@ export interface RoleRunnerConfig {
   summarizer?: Summarizer;
   compaction?: CompactionPolicy;
   session?: Session;
+  sessionLimitController?: SessionLimitController;
 }
 
 /**
@@ -68,6 +70,9 @@ export function createRoleRunner(config: RoleRunnerConfig): RoleRunner {
         // an explicit `undefined` is never handed to a field typed without it.
         ...(config.summarizer !== undefined && { summarizer: config.summarizer }),
         ...(config.compaction !== undefined && { compaction: config.compaction }),
+        ...(config.sessionLimitController !== undefined && {
+          sessionLimitController: config.sessionLimitController,
+        }),
         ...(session !== undefined && { session }),
         ...(opts?.runId !== undefined && { runId: opts.runId }),
         ...(opts?.step !== undefined && { step: opts.step }),

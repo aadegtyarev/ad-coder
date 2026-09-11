@@ -2,7 +2,8 @@
 
 ## 2026-09-12
 
-- [high] `src/orchestration/orchestrator.ts` and console session controls: add configurable session turn-count and session-cost caps; these were explicitly deferred from the minimal console MVP.
+- [done] Configurable session generation-call and provider-reported cost thresholds are enforced at the shared Models boundary and exposed through the console.
+- [next] Build the TUI over the headless conversation/orchestration surfaces.
 
 ## Active sequence (confirmed 2026-09-11)
 
@@ -16,7 +17,8 @@ product task:
    passed.
 3. ~~Build the minimal human console (5.5).~~ — delivered 2026-09-12; 206 tests,
    typecheck, Biome, and diff checks passed.
-4. Add configurable session turn-count and cost caps, then build the TUI.
+4. ~~Add configurable session turn-count and cost thresholds.~~ Delivered 2026-09-12.
+5. Build the TUI.
 
 Breakpoint control and composable isolation remain designed requirements in
 `docs/ROADMAP.md`; they are not ahead of this sequence.

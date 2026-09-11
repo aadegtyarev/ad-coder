@@ -24,6 +24,7 @@ import { SUBMIT_VERDICT_TOOL_NAME } from "../src/orchestration/verdict";
 import type { Role } from "../src/role";
 import { defineRole } from "../src/role";
 import type { Tool } from "../src/runner/tool";
+import { SessionLimitController, SessionLimitError } from "../src/session-limits";
 
 const CONTEXT_WINDOW = 200_000;
 const BUDGET = { maxTokens: 100_000, reserveTokens: 10_000, keepRecentTokens: 20_000 } as const;
@@ -200,6 +201,25 @@ test("showCost perStep sums to totalCost", async () => {
   const summed = report.perStep.reduce((sum, e) => sum + e.cost, 0);
   expect(summed).toBe(report.totalCost);
   expect(run.perStep.reduce((sum, e) => sum + e.cost, 0)).toBe(run.totalCost);
+});
+
+test("headless orchestrator shares limits across pipeline and manual workflow work", async () => {
+  const fx = fixture();
+  const controller = new SessionLimitController({ maxTurns: 4 });
+  const verdict: Verdict = { status: "approved", issues: [], summary: "ok" };
+  approveScenario(fx, verdict);
+  const core = createOrchestrator({
+    buildConfig: fx.buildConfig,
+    ledgerSink: fx.sink,
+    sessionLimitController: controller,
+  });
+
+  await core.runPipeline("first task");
+  expect(controller.snapshot().admittedTurns).toBe(4);
+  core.beginStepping("second task");
+  await expect(core.stepOnce()).rejects.toBeInstanceOf(SessionLimitError);
+  expect(fx.faux.state.callCount).toBe(4);
+  expect(core.showCost().sessionLimits?.admittedTurns).toBe(4);
 });
 
 test("run_step tool begins a run from a task and reports the offered transitions", async () => {

@@ -66,6 +66,8 @@ test("console help is registry-derived and invalid input limits fail before prov
     "--target-dir <dir> (required)",
     "--json",
     "--max-input-bytes <n>",
+    "--max-session-turns <n>",
+    "--max-session-cost-usd <amount>",
     "--provider <provider>",
     "--strong-model <name>",
     "--max-rounds <n>",
@@ -80,9 +82,19 @@ test("console help is registry-derived and invalid input limits fail before prov
     expect(result.code).toBe(2);
     expect(result.stderr).toContain("invalid --max-input-bytes");
   }
+  for (const value of ["-1", "1.5", "", " 1", "1e2", "NaN", "Infinity"]) {
+    const result = runCli(["console", "--target-dir", ".", `--max-session-turns=${value}`]);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("invalid --max-session-turns");
+  }
+  for (const value of ["-1", "", ".5", " 1", "1e2", "NaN", "Infinity"]) {
+    const result = runCli(["console", "--target-dir", ".", `--max-session-cost-usd=${value}`]);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("invalid --max-session-cost-usd");
+  }
   expect(runCli(["console", "--unknown"]).stderr).toContain("unknown option");
   expect(runCli(["console", "extra"]).stderr).toContain("accepts no positional arguments");
-});
+}, 15_000);
 
 test("running the example workflow prints its result and exits 0", () => {
   const { code, stdout } = runCli(["run", "examples/hello.workflow.ts"]);

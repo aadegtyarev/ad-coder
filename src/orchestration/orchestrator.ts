@@ -10,6 +10,8 @@ import type { Role } from "../role";
 import { defineRole } from "../role";
 import type { Tool } from "../runner/tool";
 import { defineTool } from "../runner/tool";
+import type { SessionLimitSnapshot, SessionLimits } from "../session-limits";
+import { SessionLimitController } from "../session-limits";
 import type { WorkflowSession } from "./session";
 import { applyTransition, autoDriver, createWorkflowSession, toPipelineResult } from "./session";
 import { assertTransitionOffered, DriveError } from "./transition-guard";
@@ -107,6 +109,8 @@ export interface CostReport {
   perStep: StepCost[];
   /** Sum of `usage.cost.total` over EVERY ledger record on the shared sink. */
   totalCost: number;
+  /** Authoritative model-boundary accounting, distinct from ledger attribution. */
+  sessionLimits?: Readonly<SessionLimitSnapshot>;
 }
 
 /**
@@ -122,6 +126,7 @@ export interface CostReport {
 export interface OrchestratorDeps {
   buildConfig: (task: string) => PipelineConfig;
   ledgerSink: MemoryLedgerSink;
+  sessionLimitController?: SessionLimitController;
 }
 
 /**
@@ -174,6 +179,9 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
   const buildConfig = (task: string): PipelineConfig => ({
     ...deps.buildConfig(task),
     ledgerSink: sink,
+    ...(deps.sessionLimitController !== undefined && {
+      sessionLimitController: deps.sessionLimitController,
+    }),
   });
 
   /** Sum the sink records appended in [from, to) and log the step's cost. */
@@ -285,7 +293,13 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     for (const record of sink.records()) {
       totalCost += record.usage.cost.total;
     }
-    return { perStep: [...cumulative], totalCost };
+    return {
+      perStep: [...cumulative],
+      totalCost,
+      ...(deps.sessionLimitController !== undefined && {
+        sessionLimits: deps.sessionLimitController.snapshot(),
+      }),
+    };
   };
 
   return { runPipeline, beginStepping, stepOnce, chooseTransition, showCost, isStepping };
@@ -318,8 +332,19 @@ function safeErrorText(error: unknown): string {
 }
 
 /** Render a `StepCost[]` + total as a compact, safe cost summary. */
-function formatCost(perStep: StepCost[], totalCost: number): string {
+function formatCost(
+  perStep: StepCost[],
+  totalCost: number,
+  sessionLimits?: Readonly<SessionLimitSnapshot>,
+): string {
   const lines = perStep.map((e) => `  step ${e.step} ${e.phase}: ${e.cost}`);
+  if (sessionLimits !== undefined) {
+    lines.push(
+      `session limits: turns ${sessionLimits.admittedTurns}/${sessionLimits.maxTurns}, ` +
+        `cost ${sessionLimits.observedCostUsd}/${sessionLimits.maxCostUsd}, ` +
+        `in-flight ${sessionLimits.costInFlight}, terminal ${sessionLimits.terminalReason ?? "none"}`,
+    );
+  }
   return [`total cost: ${totalCost}`, ...lines].join("\n");
 }
 
@@ -434,7 +459,12 @@ export function buildOrchestratorTools(core: Orchestrator): Tool[] {
       try {
         const report = core.showCost();
         return {
-          content: [{ type: "text", text: formatCost(report.perStep, report.totalCost) }],
+          content: [
+            {
+              type: "text",
+              text: formatCost(report.perStep, report.totalCost, report.sessionLimits),
+            },
+          ],
           details: undefined,
         };
       } catch (error) {
@@ -453,7 +483,9 @@ export function buildOrchestratorTools(core: Orchestrator): Tool[] {
  * `resolvePipelineConfig` accepts. `targetDir` is the ONE trust anchor -- it is
  * closed over here and never a tool parameter.
  */
-export type OrchestratorConfig = Omit<ResolvePipelineConfigOptions, "task">;
+export type OrchestratorConfig = Omit<ResolvePipelineConfigOptions, "task"> & {
+  sessionLimits?: SessionLimits;
+};
 
 /**
  * Assemble the conversational orchestrator front over a headless core.
@@ -473,8 +505,13 @@ export type OrchestratorConfig = Omit<ResolvePipelineConfigOptions, "task">;
  */
 export async function startOrchestrator(config: OrchestratorConfig): Promise<ConversationSession> {
   const sink = new MemoryLedgerSinkImpl();
+  const controller = new SessionLimitController(config.sessionLimits);
   const buildConfig = (task: string): PipelineConfig => resolvePipelineConfig({ ...config, task });
-  const core = createOrchestrator({ buildConfig, ledgerSink: sink });
+  const core = createOrchestrator({
+    buildConfig,
+    ledgerSink: sink,
+    sessionLimitController: controller,
+  });
   const tools = buildOrchestratorTools(core);
 
   // A placeholder task only seeds the config that yields the orchestrator's own
@@ -510,6 +547,7 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
     model: orchestratorModel,
     tools,
     ledgerSink: sink,
+    sessionLimitController: controller,
     ...(seed.compaction !== undefined && { compaction: seed.compaction }),
   });
 }

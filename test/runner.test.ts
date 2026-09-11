@@ -18,6 +18,7 @@ import { defineRole } from "../src/role";
 import { RunnerError, resolveTargetDir } from "../src/runner/errors";
 import { runRole } from "../src/runner/runner";
 import { defineTool } from "../src/runner/tool";
+import { SessionLimitController, SessionLimitError } from "../src/session-limits";
 
 const CONTEXT_WINDOW = 200_000;
 
@@ -148,6 +149,28 @@ test("runRole does not invoke the summarizer when the turn fits the budget", asy
 
   const result = await runRole({ role, targetDir, models, model, prompt: "small", summarizer });
   expect(result.result.status).toBe("completed");
+});
+
+test("runRole rethrows a shared controller rejection after a tool follow-up", async () => {
+  const { faux, models, model, role } = harnessFixture();
+  faux.setResponses([
+    fauxAssistantMessage(fauxToolCall("bash", { command: "printf one" })),
+    fauxAssistantMessage("must not dispatch"),
+  ]);
+  const controller = new SessionLimitController({ maxTurns: 1 });
+
+  await expect(
+    runRole({
+      role,
+      targetDir,
+      models,
+      model,
+      prompt: "use the tool",
+      sessionLimitController: controller,
+    }),
+  ).rejects.toBeInstanceOf(SessionLimitError);
+  expect(faux.state.callCount).toBe(1);
+  expect(controller.snapshot().admittedTurns).toBe(1);
 });
 
 test("disabled compaction rejects an oversized turn before calling the provider", async () => {

@@ -1,6 +1,5 @@
 import type { ContextBudget } from "../context/budget";
 import type { CompactionMode } from "../context/compactor";
-import { createSummarizer } from "../context/compactor";
 import { MemoryLedgerSink } from "../ledger/ledger";
 import { SUBMIT_PLAN_TOOL_NAME } from "../orchestration/plan";
 import type { Complexity, PipelineConfig, RoleSpec } from "../orchestration/types";
@@ -230,7 +229,6 @@ export function resolvePipelineConfig(options: ResolvePipelineConfigOptions): Pi
         : {
             mode: compactionMode,
             summarizerModel,
-            summarizer: createSummarizer(registry.models, summarizerModel),
             ...(options.allowCrossProviderSummarization === true && {
               allowCrossProviderSummarization: true,
             }),
