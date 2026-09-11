@@ -1,4 +1,4 @@
-# Checkpoint — 2026-09-11 (session 2)
+# Checkpoint — 2026-09-12 (minimal console)
 
 Resume-from-here snapshot. Canon: `docs/ROADMAP.md`, `docs/ARCHITECTURE.md`,
 `AGENTS.md`, `docs/contracts/`, `.claude/ldo-runs.json`.
@@ -70,25 +70,29 @@ github.com/aadegtyarev/ad-coder (main, MIT). Aiming at self-hosting.
 2. **CLI --help implementation** — COMPLETE (2026-09-11): one command registry
    now drives dispatch, validation, root help, and per-command `--help`/`-h`;
    verified with focused CLI tests, `bun run check`, and `bun test`.
-3. **Minimal console (step 5.5)** — next priority: thin REPL over `startOrchestrator`,
-   formatted output — the dogfood bridge so the operator codes in ad-coder.
-4. **TUI (step 6)** on pi-tui — operator writes it in ad-coder itself.
+3. **Minimal console (step 5.5)** — IMPLEMENTED: thin injected-stream REPL over
+   `startOrchestrator`, persistent turns, formatted/JSONL output, terminal
+   sanitization, and a configurable input-line byte cap.
+4. **Resource follow-up, then TUI (step 6)** — add configurable session
+   turn-count and cost caps before the pi-tui surface.
 
-### Console plan — PAUSED FOR OPERATOR APPROVAL (2026-09-12)
+### Console implementation — operator posture accepted (2026-09-12)
 
 - Saved LDO plan artifact:
-  `.codex/ldo/plans/20260911200106392-build-the-minimal-human-console-step-5-5-73f94a.json`
-  (base `61c6630`; plan-only, no source edits).
-- Proposed surface: additive `ad-coder console --target-dir <dir>` REPL over
+  `.codex/ldo/plans/20260911202241414-build-the-minimal-human-console-step-5-5-f505ea.json`
+  (base `8122258`; implemented from this plan).
+- Delivered surface: additive `ad-coder console --target-dir <dir>` REPL over
   `startOrchestrator`, a reusable injected-stream console driver, human and
   `--json` output, tests, exports, and docs. It must remain a thin front; the
   headless orchestrator retains configuration, credentials, routing and tools.
-- Planner: **medium** complexity. Security review: **elevated**. Before coding,
-  obtain explicit approval for the expanded safety scope: an enforceable
-  dangerous-tool approval/opt-in boundary in the headless core, terminal control
-  sequence sanitization, and configurable input/turn/cost limits. The current
-  target directory is only a starting cwd, not a sandbox; a warning alone is not
-  an adequate mitigation.
+- Planner: **medium** complexity. Security review: **elevated**. The operator
+  explicitly accepted unrestricted host-tool execution for this MVP; no sandbox
+  or per-command approval was added. Terminal control-sequence sanitization and
+  configurable byte-bounded input are implemented. targetDir is only a starting
+  cwd. Turn-count and session-cost limits are the next follow-up, not current
+  functionality. Final verification used temporary Bun 1.3 because it was
+  absent from PATH: `bun test` passed (206 tests), as did `tsc --noEmit`,
+  Biome check, and `git diff --check`.
 - Plan usage: planner 279,041 input / 187,392 cached / 5,811 output tokens;
   security 175,655 input / 136,448 cached / 3,078 output tokens. Total: 454,696
   input / 323,840 cached / 8,889 output tokens. No run checkpoint because this

@@ -23,6 +23,7 @@ test("root help succeeds on stdout and failure usage is registry-derived", () =>
     expect(stdout).toContain("run     Run a workflow module.");
     expect(stdout).toContain("role    Run one pipeline role once.");
     expect(stdout).toContain("drive   Interactively drive the built-in pipeline.");
+    expect(stdout).toContain("console Chat with the persistent orchestrator session.");
     expect(stderr).toBe("");
   }
 
@@ -39,6 +40,7 @@ test("each command renders its own help before validating required input", () =>
     ["run", "<script.ts>", "--provider"],
     ["role", "<planner|coder|reviewer|security>", "--auto"],
     ["drive", "--auto", "<planner|coder|reviewer|security>"],
+    ["console", "--max-input-bytes", "<planner|coder|reviewer|security>"],
   ];
   for (const [command, expected, absent] of commandHelps) {
     for (const flag of ["--help", "-h"]) {
@@ -54,6 +56,32 @@ test("each command renders its own help before validating required input", () =>
   expect(code).toBe(0);
   expect(stdout).toContain("Role to run.");
   expect(stderr).toBe("");
+});
+
+test("console help is registry-derived and invalid input limits fail before provider access", () => {
+  const help = runCli(["console", "--help"]);
+  expect(help.code).toBe(0);
+  expect(help.stdout).toContain("usage: ad-coder console --target-dir <dir> [options]");
+  for (const option of [
+    "--target-dir <dir> (required)",
+    "--json",
+    "--max-input-bytes <n>",
+    "--provider <provider>",
+    "--strong-model <name>",
+    "--max-rounds <n>",
+    "--default-complexity <complexity>",
+  ]) {
+    expect(help.stdout).toContain(option);
+  }
+
+  expect(runCli(["console"]).stderr).toContain("--target-dir is required");
+  for (const value of ["0", "-1", "1.5", "", "nope"]) {
+    const result = runCli(["console", "--target-dir", ".", `--max-input-bytes=${value}`]);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("invalid --max-input-bytes");
+  }
+  expect(runCli(["console", "--unknown"]).stderr).toContain("unknown option");
+  expect(runCli(["console", "extra"]).stderr).toContain("accepts no positional arguments");
 });
 
 test("running the example workflow prints its result and exits 0", () => {

@@ -73,6 +73,12 @@ module-locality from the touched-file set to decide what can parallelize.
   (testable with a fake, no shelling out), autofix-first-then-check, in-process
   size gate, bounded fail-loud GateReport, argv-only (no shell string). Not yet
   wired into ad-coder's own build — a deliberate follow-up.
+- **Minimal human console (step 5.5)** — IMPLEMENTED. `ad-coder console
+  --target-dir <dir>` is a thin formatted/JSONL REPL over `startOrchestrator`,
+  retaining one persistent session, bounding each input line by configurable
+  UTF-8 bytes, sanitizing terminal controls, and closing once on every exit path.
+  Unrestricted host-tool execution is accepted for this MVP; configurable
+  turn-count and session-cost caps are the next follow-up before the TUI.
 
 ## pi ecosystem: reuse the libraries, do not fork the agent (decided 2026-09-11)
 
