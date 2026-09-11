@@ -98,6 +98,20 @@ build on the LIBRARIES, never on the agent product.
   observability instead of only our JSONL, and possibly consuming spans pi-agent-core
   already emits.
 
+- **pi-package / SDK-embed evaluated (spike, 2026-09-11) — NOT for the core.** pi ships
+  an embeddable SDK `createAgentSession(options)` (single agent session: model, tools
+  [default-open, like ours], customTools, injectable session/settings/resource loaders,
+  compaction, extension/skill/prompt-template/theme system). Its `CompactionSettings
+  { enabled, reserveTokens, keepRecentTokens }` is byte-identical to our ContextBudget —
+  design-alignment validation. BUT it does NOT surface a cacheRetention knob, a pluggable
+  compaction STRATEGY (so no cache-aware compaction), or multi-role/sub-agents (single
+  agent, "pi skips sub-agents"). Embedding it for the core loop would surrender exactly
+  the cache-economics control that is ad-coder's centerpiece — "less work" but loses the
+  goal. So the CORE stays direct on pi-agent-core; a pi-SDK-backed runner could later be
+  an OPTIONAL alternative backend, never the default. (Reassuring: our independently-built
+  design matches pi's serious project — same compaction shape, default-open tools,
+  injected seams, extension model.)
+
 Net: standalone harness + our differentiation on pi-agent-core; reuse pi's libraries
 (pi-tui now; chord / pi-telemetry evaluated per-layer); never fork the agent.
 
