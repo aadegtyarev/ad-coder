@@ -74,10 +74,33 @@ github.com/aadegtyarev/ad-coder (main, MIT). Aiming at self-hosting.
    formatted output — the dogfood bridge so the operator codes in ad-coder.
 4. **TUI (step 6)** on pi-tui — operator writes it in ad-coder itself.
 
+### Console plan — PAUSED FOR OPERATOR APPROVAL (2026-09-12)
+
+- Saved LDO plan artifact:
+  `.codex/ldo/plans/20260911200106392-build-the-minimal-human-console-step-5-5-73f94a.json`
+  (base `61c6630`; plan-only, no source edits).
+- Proposed surface: additive `ad-coder console --target-dir <dir>` REPL over
+  `startOrchestrator`, a reusable injected-stream console driver, human and
+  `--json` output, tests, exports, and docs. It must remain a thin front; the
+  headless orchestrator retains configuration, credentials, routing and tools.
+- Planner: **medium** complexity. Security review: **elevated**. Before coding,
+  obtain explicit approval for the expanded safety scope: an enforceable
+  dangerous-tool approval/opt-in boundary in the headless core, terminal control
+  sequence sanitization, and configurable input/turn/cost limits. The current
+  target directory is only a starting cwd, not a sandbox; a warning alone is not
+  an adequate mitigation.
+- Plan usage: planner 279,041 input / 187,392 cached / 5,811 output tokens;
+  security 175,655 input / 136,448 cached / 3,078 output tokens. Total: 454,696
+  input / 323,840 cached / 8,889 output tokens. No run checkpoint because this
+  was plan-only.
+
 ## Latest delivery
 - Squash-merged PR #6 as `f110b26` (`feat(context): activate configurable
   compaction`). Verified before merge with `bun test` (197 pass), `bun run
   check`, and GitHub CI; no harness restart was performed.
+- Squash-merged PR #7 as `4ad5b78` (`feat(cli): derive help from command
+  registry`). Verified with `bun test` (199 pass), `bun run check`, and GitHub
+  CI.
 
 ## Design requirements captured (land via orchestrator PR's ROADMAP)
 - Composable isolation + plan-reuse (no LDO-#35 disease).
