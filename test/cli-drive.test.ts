@@ -273,3 +273,54 @@ test("driveWorkflow rejects a driver that returns a forged transition", async ()
   const offered = (await session.step(session.initialState())).transitions;
   expect(() => assertTransitionOffered(forged, offered)).toThrow(DriveError);
 });
+
+test("per-step cost is attributed by position and reconciles with the total", async () => {
+  // Regression. The drive loop attributed per-step cost by matching
+  // record.runId === result.runId. Those never match -- a record carries the
+  // harness operation runId (event.runId) while result.runId is the ledger's
+  // file-name/step runId (see test/runner.test.ts) -- so every step printed $0
+  // while the total was right. The faux provider always writes cost.total = 0,
+  // so a cost-stamping sink is used to give records a real per-record cost and
+  // drive the WHOLE loop through the real attribution call site: under the old
+  // runId join every "cost:" line was $0 against a positive total; attribution
+  // by record position partitions the total exactly.
+  const PER_RECORD = 0.25;
+  class StampSink extends MemoryLedgerSink {
+    override write(record: Parameters<MemoryLedgerSink["write"]>[0]): void {
+      super.write({
+        ...record,
+        usage: { ...record.usage, cost: { ...record.usage.cost, total: PER_RECORD } },
+      });
+    }
+  }
+
+  const fx = fixture();
+  const coder = fx.role("coder", "You code.");
+  const reviewer = reviewerRole(fx);
+  const approve: Verdict = { status: "approved", issues: [], summary: "ok" };
+  fx.faux.setResponses([fauxAssistantMessage("coded"), ...reviewerTurn(approve)]);
+
+  const ledgerSink = new StampSink();
+  const session = createWorkflowSession(config(fx, { coder, reviewer }, ledgerSink));
+  const output = new Capture();
+  await driveWorkflow({
+    session,
+    ledgerSink,
+    auto: true,
+    input: Readable.from(""),
+    output,
+    error: new Capture(),
+  });
+
+  const text = output.text();
+  const perStep = [...text.matchAll(/^cost: \$([0-9.]+)$/gm)].map((m) => Number(m[1]));
+  const total = Number(text.match(/total cost: \$([0-9.]+)/)?.[1]);
+  const records = ledgerSink.records().length;
+
+  expect(records).toBeGreaterThan(0);
+  expect(total).toBeCloseTo(PER_RECORD * records, 8); // total sums every record
+  expect(perStep.length).toBeGreaterThanOrEqual(2); // one code step + one review step
+  expect(perStep.every((c) => c > 0)).toBe(true); // THE regression: no step is $0
+  const sum = perStep.reduce((a, b) => a + b, 0);
+  expect(sum).toBeCloseTo(total, 8); // per-step attribution partitions the total exactly
+});

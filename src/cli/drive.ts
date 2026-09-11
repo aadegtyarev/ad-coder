@@ -70,13 +70,22 @@ export interface DriveWorkflowParams {
   error: NodeJS.WritableStream;
 }
 
-/** Sum the per-step cost of every ledger record produced by one run. */
-function costForRun(ledgerSink: MemoryLedgerSink, runId: string): number {
+/**
+ * Sum the cost of the ledger records appended in the half-open range
+ * [from, to). Per-step cost is attributed by POSITION, not by a runId join: a
+ * record's `runId` is the harness operation id (`event.runId`), NOT the ledger's
+ * file-name/step runId that `session.step` reports on `result.runId` (see the
+ * Ledger.record note in src/ledger/ledger.ts and test/runner.test.ts) -- so
+ * matching `record.runId === result.runId` never held and reported $0 for every
+ * step while the total was right. The drive loop runs one role turn per step,
+ * awaited to completion with no concurrency, so the records the sink grew by
+ * during that await ARE exactly that step's records.
+ */
+function costForRange(ledgerSink: MemoryLedgerSink, from: number, to: number): number {
   let cost = 0;
-  for (const record of ledgerSink.records()) {
-    if (record.runId === runId) {
-      cost += record.usage.cost.total;
-    }
+  const records = ledgerSink.records();
+  for (let i = from; i < to; i++) {
+    cost += records[i]?.usage.cost.total ?? 0;
   }
   return cost;
 }
@@ -243,6 +252,7 @@ export async function driveWorkflow(params: DriveWorkflowParams): Promise<Pipeli
   let state = session.initialState();
   try {
     while (!state.done) {
+      const costBefore = ledgerSink.records().length;
       const { state: settled, result, transitions } = await session.step(state);
       output.write(`\n[${result.phase}] runId ${result.runId}\n`);
       if (result.text.trim() !== "") {
@@ -256,7 +266,7 @@ export async function driveWorkflow(params: DriveWorkflowParams): Promise<Pipeli
           `plan: complexity ${result.plan.complexity}, security ${result.plan.securitySurface}\n`,
         );
       }
-      const stepCost = costForRun(ledgerSink, result.runId);
+      const stepCost = costForRange(ledgerSink, costBefore, ledgerSink.records().length);
       output.write(`cost: $${stepCost.toFixed(8)}\n`);
       const warning = silentNoopWarning(result.text, stepCost);
       if (warning !== undefined) {
