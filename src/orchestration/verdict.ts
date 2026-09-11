@@ -1,131 +1,140 @@
-import * as fs from "node:fs";
-import * as path from "node:path";
+import { Type } from "@earendil-works/pi-ai";
+import { defineTool } from "../runner/tool";
+import type { Tool } from "../runner/tool";
 import { OrchestrationError } from "./types";
 import type { IssueSeverity, Verdict, VerdictIssue, VerdictStatus } from "./types";
 
-/** Directory, under targetDir, the reviewer writes its verdict artifact into. */
-const VERDICT_BASE_DIR = path.join(".ad-coder", "verdict");
+/** The tool name the reviewer calls to submit its verdict. */
+export const SUBMIT_VERDICT_TOOL_NAME = "submit_verdict";
 
 const VERDICT_STATUSES: readonly VerdictStatus[] = ["approved", "changes_requested"];
 const ISSUE_SEVERITIES: readonly IssueSeverity[] = ["blocker", "major", "minor"];
 
 /**
- * The absolute path a reviewer round's verdict artifact lives at.
- *
- * `runId` is ORCHESTRATION-generated and already `RUN_ID_PATTERN`-safe (the
- * pipeline validates it before the reviewer turn) -- it is NEVER model output,
- * so a role cannot steer this path via traversal. Keying on the reviewer's
- * unique runId (not a fixed filename) also makes a stale verdict from an earlier
- * round unreadable as the current one.
+ * A per-reviewer-round holder the `submit_verdict` tool writes into and the
+ * pipeline reads after the turn. Exactly one of `verdict`/`error` is set once
+ * the tool has fired; both absent means the reviewer never called the tool
+ * (a `missing_verdict`). A FRESH holder per round -- keyed by closure, not a
+ * shared field -- means a stale verdict from an earlier round can never be read
+ * as the current one (mirrors the old per-runId file keying).
  */
-export function verdictArtifactPath(targetDir: string, runId: string): string {
-  return path.join(targetDir, VERDICT_BASE_DIR, `${runId}.json`);
+export interface VerdictCapture {
+  verdict?: Verdict;
+  error?: OrchestrationError;
 }
 
 /**
- * Strictly validate untrusted, model-produced JSON into a `Verdict`.
+ * Strictly validate untrusted, model-produced input into a `Verdict`.
  *
- * The verdict is written by the reviewer and read back by the pipeline: its
- * shape is NOT trusted. This is a pure, self-contained, hand-written validator
- * (no `eval`, no schema library): `value` must be an object; `status` one of
- * the two allowed literals; `issues` an array where every element is an object
- * with a `severity` in the three allowed literals and a string `what`;
- * `summary` a string. Any deviation throws `OrchestrationError('malformed_verdict')`
- * -- never a silent coercion, never a default that could read as a pass.
+ * The verdict arrives as `submit_verdict` tool-call args: its shape is NOT
+ * trusted. This is a pure, self-contained, hand-written validator (no `eval`,
+ * no schema library): `value` must be an object; `status` one of the two
+ * allowed literals; `issues` an array where every element is an object with a
+ * `severity` in the three allowed literals and a string `what`; `summary` a
+ * string. Any deviation throws `OrchestrationError('malformed_verdict')` --
+ * never a silent coercion, never a default that could read as a pass.
+ *
+ * `detail` is a path-safe token (the reviewer runId) carried onto the error's
+ * `detail` field; it is NEVER content and never the verdict body.
  */
-export function parseVerdict(value: unknown, artifactPath: string): Verdict {
+export function parseVerdict(value: unknown, detail: string): Verdict {
   const bad = (message: string): never => {
-    throw new OrchestrationError("malformed_verdict", artifactPath, message);
+    throw new OrchestrationError("malformed_verdict", detail, message);
   };
 
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return bad(`verdict artifact is not a JSON object: ${artifactPath}`);
+    return bad("verdict is not an object");
   }
   const record = value as Record<string, unknown>;
 
   const status = record.status;
   if (typeof status !== "string" || !VERDICT_STATUSES.includes(status as VerdictStatus)) {
-    return bad(`verdict.status must be one of ${VERDICT_STATUSES.join(", ")}: ${artifactPath}`);
+    return bad(`verdict.status must be one of ${VERDICT_STATUSES.join(", ")}`);
   }
 
   const rawIssues = record.issues;
   if (!Array.isArray(rawIssues)) {
-    return bad(`verdict.issues must be an array: ${artifactPath}`);
+    return bad("verdict.issues must be an array");
   }
   const issues: VerdictIssue[] = rawIssues.map((entry, index) => {
     if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
-      return bad(`verdict.issues[${index}] must be an object: ${artifactPath}`);
+      return bad(`verdict.issues[${index}] must be an object`);
     }
     const issue = entry as Record<string, unknown>;
     const severity = issue.severity;
     if (typeof severity !== "string" || !ISSUE_SEVERITIES.includes(severity as IssueSeverity)) {
-      return bad(
-        `verdict.issues[${index}].severity must be one of ${ISSUE_SEVERITIES.join(", ")}: ${artifactPath}`,
-      );
+      return bad(`verdict.issues[${index}].severity must be one of ${ISSUE_SEVERITIES.join(", ")}`);
     }
     if (typeof issue.what !== "string") {
-      return bad(`verdict.issues[${index}].what must be a string: ${artifactPath}`);
+      return bad(`verdict.issues[${index}].what must be a string`);
     }
     return { severity: severity as IssueSeverity, what: issue.what };
   });
 
   if (typeof record.summary !== "string") {
-    return bad(`verdict.summary must be a string: ${artifactPath}`);
+    return bad("verdict.summary must be a string");
   }
 
   return { status: status as VerdictStatus, issues, summary: record.summary };
 }
 
 /**
- * Read and strictly validate the verdict artifact for `runId`.
+ * Build the `submit_verdict` tool for one reviewer round, writing into `capture`.
  *
- * A missing artifact throws `OrchestrationError('missing_verdict')` and a
- * malformed one throws `'malformed_verdict'` (via `parseVerdict`): the pipeline
- * fails LOUD rather than treating either as an approval. `JSON.parse` failure on
- * a present-but-unparseable file is surfaced as `malformed_verdict`.
+ * TWO non-obvious pi-agent-core facts shape this. (1) The harness validates
+ * tool-call args against `parameters` BEFORE `execute` runs, so the schema is
+ * deliberately PERMISSIVE at the enum leaves (`status`/`severity` as
+ * `Type.String`, not a union of literals): a malformed enum value must reach
+ * `parseVerdict` rather than being bounced pre-execute -- which would surface as
+ * `missing_verdict`, never `malformed_verdict`, and collapse the defense-in-depth
+ * to a single gate. (2) The harness CATCHES any throw from `execute` and turns
+ * it into an error tool-result; it does NOT propagate out of `runRole`. So
+ * `execute` must CATCH `parseVerdict`'s `OrchestrationError` and store it in the
+ * holder for the pipeline to re-throw after the turn, rather than throwing.
+ *
+ * `detail` is the reviewer runId, threaded onto any `OrchestrationError.detail`.
  */
-export function readVerdict(targetDir: string, runId: string): Verdict {
-  const artifactPath = verdictArtifactPath(targetDir, runId);
-  let raw: string;
-  try {
-    raw = fs.readFileSync(artifactPath, "utf8");
-  } catch {
-    // readFileSync throws for an absent file (and for a read error); either way
-    // there is no verdict to trust. The error object carries an errno and the
-    // same path -- nothing beyond the typed code below is needed.
-    throw new OrchestrationError(
-      "missing_verdict",
-      artifactPath,
-      `verdict artifact not found: ${artifactPath}`,
-    );
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    // A present file that is not JSON is malformed, not missing. The parse
-    // error's message can echo file content, so it is dropped for the typed
-    // code and path only.
-    throw new OrchestrationError(
-      "malformed_verdict",
-      artifactPath,
-      `verdict artifact is not valid JSON: ${artifactPath}`,
-    );
-  }
-  return parseVerdict(parsed, artifactPath);
+export function buildSubmitVerdictTool(capture: VerdictCapture, detail: string): Tool {
+  return defineTool({
+    name: SUBMIT_VERDICT_TOOL_NAME,
+    description: "Record the review verdict.",
+    label: "submit verdict",
+    parameters: Type.Object({
+      status: Type.String(),
+      issues: Type.Array(Type.Object({ severity: Type.String(), what: Type.String() })),
+      summary: Type.String(),
+    }),
+    async execute(_toolCallId, params) {
+      try {
+        // Last-wins: a reviewer that calls the tool twice overwrites the prior
+        // capture, so the pipeline reads the final submission of the round.
+        // `delete` (not `= undefined`) clears the sibling under
+        // exactOptionalPropertyTypes, where the field is not typed `| undefined`.
+        capture.verdict = parseVerdict(params, detail);
+        delete capture.error;
+        return { content: [{ type: "text", text: "verdict recorded" }], details: undefined };
+      } catch (error) {
+        if (error instanceof OrchestrationError) {
+          capture.error = error;
+          delete capture.verdict;
+          return { content: [{ type: "text", text: error.code }], details: undefined };
+        }
+        throw error;
+      }
+    },
+  });
 }
 
 /**
- * The fixed instruction appended to the reviewer's prompt, naming the EXACT
- * artifact path and the required JSON shape. Exported so the pipeline and the
- * tests agree on it verbatim. The path is built from an orchestration-generated
- * runId, never from model output.
+ * The fixed instruction appended to the reviewer's prompt, telling it to CALL
+ * the `submit_verdict` tool with the required shape. Exported so the pipeline
+ * and the tests agree on it verbatim. No filesystem path is involved: the
+ * verdict travels as tool-call args, not a written file.
  */
-export function formatReviewerInstruction(artifactPath: string): string {
+export function formatReviewerInstruction(): string {
   return [
-    "When your review is complete, write your verdict as a JSON file using the write tool.",
-    `Write it to exactly this path: ${artifactPath}`,
-    "The JSON must have this shape:",
+    `When your review is complete, submit your verdict by calling the ${SUBMIT_VERDICT_TOOL_NAME} tool.`,
+    "Call it with this shape:",
     '{ "status": "approved" | "changes_requested", "issues": [ { "severity": "blocker" | "major" | "minor", "what": "<one issue>" } ], "summary": "<short summary>" }',
     'Use "approved" only when no further changes are required; otherwise "changes_requested" with each required change as an issue.',
   ].join("\n");

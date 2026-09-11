@@ -96,10 +96,19 @@ module-locality from the touched-file set to decide what can parallelize.
   guard (a custom tool colliding with a built-in or another custom tool throws a
   typed `RunnerError` code `tool_name_collision`, never silently shadowed).
   `activeToolNames` still filters the combined set uniformly. Absent `tools`
-  reproduces prior behavior byte-for-byte. This UNBLOCKS the genuine
-  `submit_verdict` tool-call verdict and per-role custom tools (e.g. the
-  conversational orchestrator's run-pipeline / show-ledger tools), but does NOT
-  itself rewire the orchestration verdict — that is the next follow-on.
+  reproduces prior behavior byte-for-byte. This UNBLOCKED the genuine
+  `submit_verdict` tool-call verdict (now DONE — see Self-hosting) and per-role
+  custom tools (e.g. the conversational orchestrator's run-pipeline / show-ledger
+  tools).
+- **`submit_verdict` tool-call verdict** — DONE. The orchestration reviewer now
+  submits its verdict by CALLING a `submit_verdict` tool built per reviewer round
+  (via the `runRole` tools seam) instead of writing a JSON artifact; the
+  filesystem `.ad-coder/verdict/` scheme is retired. `parseVerdict` stays the
+  authoritative strict validator (the tool's schema is permissive at the enum
+  leaves), an absent call is `missing_verdict` and a failed validation is
+  `malformed_verdict` — both hard `OrchestrationError`s. The IMMEDIATE next
+  follow-on on the same pattern is `submit_plan` / `rate_complexity` (a planner
+  emitting STRUCTURED complexity), see Profiles + complexity-aware model routing.
 - **Wire ad-coder's own gates** — the gates module exists but ad-coder still runs
   only typecheck+test on itself. Add a size gate + (when a formatter/linter is
   chosen) format/lint gates over the repo. Dogfooding the gates-over-prompts
@@ -132,7 +141,8 @@ module-locality from the touched-file set to decide what can parallelize.
   work is). PREREQUISITE: the planner must emit STRUCTURED complexity
   (trivial/medium/complex), which it currently does not — it only produces text.
   Mirror the verdict: a `submit_plan` / `rate_complexity` tool carrying the
-  complexity, now UNBLOCKED by the runner tools seam (done). Then the pipeline
+  complexity — the IMMEDIATE next follow-on on the same pattern the
+  `submit_verdict` tool-call verdict (done) established. Then the pipeline
   reads complexity and picks coder/reviewer models per `(complexity × role)`.
   ad-coder EDGE: the ledger already measures per-role/round cost, so routing can
   later be LEARNED from observation ("cheap coder averaged 2.3 rounds on medium
@@ -236,12 +246,11 @@ module-locality from the touched-file set to decide what can parallelize.
   strict reviewer verdict protocol; (3) self-hosts unsupervised (own gates +
   review as guard). The engine the MVP was missing — orchestration above
   `runRole` (sequence + code⇄review loop) + a reviewer verdict protocol — now
-  ships: the reviewer emits its verdict as a schema-validated JSON artifact it
-  WRITES via the existing write tool (the filesystem is the bus). **Follow-up:**
-  the genuine `submit_verdict` tool-call verdict — the reviewer CALLING a verdict
-  tool rather than writing a file — is now UNBLOCKED: `runRole` gained the
-  optional `tools` injection seam, but this orchestration path has not yet been
-  rewired to hand the reviewer a `submit_verdict` tool. Bootstrap caveat: a bug in the runner/orchestration corrupts
+  ships: the reviewer submits its verdict by CALLING a `submit_verdict` tool
+  built per reviewer round (via the `runRole` tools seam) and strictly validated
+  by `parseVerdict` — the filesystem-artifact first-cut is retired. **Next
+  follow-on** on the same pattern: `submit_plan` / `rate_complexity`, a planner
+  emitting structured complexity for complexity-aware model routing. Bootstrap caveat: a bug in the runner/orchestration corrupts
   its own development, so early self-hosting stays partial (narrow modules via
   ad-coder, risky core via LDO or human) and supervised; faux tests + human remain
   ground truth for the core.

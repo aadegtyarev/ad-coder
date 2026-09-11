@@ -31,12 +31,13 @@ export interface VerdictIssue {
 }
 
 /**
- * The structured verdict a reviewer writes as a filesystem artifact and the
- * pipeline strictly schema-validates. Structured-and-schema-checked is strictly
- * stronger than parsing free text: `status` must be one of two literals,
- * `issues` an array of validated `VerdictIssue`, `summary` a string. See
- * `verdict.ts` for the validator and the reason the artifact exists (the runner
- * exposes no tool-injection seam, so the reviewer cannot CALL a verdict tool).
+ * The structured verdict a reviewer submits via the `submit_verdict` tool call
+ * and the pipeline strictly re-validates. Structured-and-schema-checked is
+ * strictly stronger than parsing free text: `status` must be one of two
+ * literals, `issues` an array of validated `VerdictIssue`, `summary` a string.
+ * The tool's TypeBox `parameters` schema is deliberately permissive at the enum
+ * leaves so `parseVerdict` in `verdict.ts` stays the authoritative gate -- see
+ * that module for the validator.
  */
 export interface Verdict {
   status: VerdictStatus;
@@ -107,10 +108,11 @@ export interface PipelineResult {
 }
 
 /**
- * Why an orchestration precondition or a verdict artifact was rejected.
+ * Why an orchestration precondition or a submitted verdict was rejected.
  *
- * - `missing_verdict` / `malformed_verdict`: the reviewer's artifact was absent
- *   or failed strict schema validation -- a hard failure, never a silent pass.
+ * - `missing_verdict` / `malformed_verdict`: the reviewer's `submit_verdict`
+ *   tool submission was absent (no call) or failed strict validation -- a hard
+ *   failure, never a silent pass.
  * - `invalid_max_rounds` / `empty_task`: a caller precondition failed before any
  *   role ran.
  */
@@ -121,16 +123,16 @@ export type OrchestrationErrorCode =
   | "empty_task";
 
 /**
- * Raised when an orchestration precondition fails or an untrusted verdict
- * artifact is missing/malformed. Carries a `code` discriminant and a `detail`
- * string holding ONLY the offending artifact path or number -- never file
- * content, provider messages, or the verdict body. Mirrors `RunnerError`'s
- * house style: numbers and paths, dense WHY in JSDoc, nothing that leaks.
+ * Raised when an orchestration precondition fails or an untrusted submitted
+ * verdict is missing/malformed. Carries a `code` discriminant and a `detail`
+ * string holding ONLY the reviewer runId or a number -- never file content,
+ * provider messages, or the verdict body. Mirrors `RunnerError`'s house style:
+ * numbers and safe tokens, dense WHY in JSDoc, nothing that leaks.
  */
 export class OrchestrationError extends Error {
   override readonly name = "OrchestrationError";
   readonly code: OrchestrationErrorCode;
-  /** The offending artifact path, or a number rendered as a string. Never content. */
+  /** The reviewer runId, or a number rendered as a string. Never content. */
   readonly detail: string;
 
   constructor(code: OrchestrationErrorCode, detail: string, message: string) {

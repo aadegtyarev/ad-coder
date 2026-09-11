@@ -14,7 +14,7 @@ import { MemoryLedgerSink } from "../src/ledger/ledger";
 import { OrchestrationError } from "../src/orchestration/types";
 import type { RoleSpec, Verdict } from "../src/orchestration/types";
 import { runPipeline } from "../src/orchestration/pipeline";
-import { parseVerdict, readVerdict } from "../src/orchestration/verdict";
+import { parseVerdict, SUBMIT_VERDICT_TOOL_NAME } from "../src/orchestration/verdict";
 import { defineRole } from "../src/role";
 import type { Role } from "../src/role";
 
@@ -26,7 +26,7 @@ interface Fixture {
   models: ReturnType<typeof createModels>;
   model: Model<Api>;
   targetDir: string;
-  role(name: string, systemPrompt: string): RoleSpec;
+  role(name: string, systemPrompt: string, activeToolNames?: string[]): RoleSpec;
 }
 
 /** A fresh faux provider + models + temp targetDir; one queue serves every role. */
@@ -41,14 +41,14 @@ function fixture(): Fixture {
     models,
     model,
     targetDir,
-    role(name, systemPrompt) {
+    role(name, systemPrompt, activeToolNames = ["bash", "read", "write", "edit"]) {
       const role: Role = defineRole(
         {
           name,
           provider: "faux",
           modelId: model.id,
           systemPrompt,
-          activeToolNames: ["bash", "read", "write", "edit"],
+          activeToolNames,
           cacheRetention: "none",
           contextBudget: { ...BUDGET },
         },
@@ -57,6 +57,11 @@ function fixture(): Fixture {
       return { role, model };
     },
   };
+}
+
+/** A reviewer role that can call submit_verdict (only this role needs the tool). */
+function reviewerRole(fx: Fixture): RoleSpec {
+  return fx.role("reviewer", "You review.", ["bash", "read", "write", "edit", SUBMIT_VERDICT_TOOL_NAME]);
 }
 
 /** The text of the newest user message the provider was called with. */
@@ -78,39 +83,24 @@ function lastUserText(context: Context): string {
   return "";
 }
 
-/** The verdict artifact path the pipeline named in the reviewer's prompt. */
-function extractVerdictPath(targetDir: string, promptText: string): string {
-  const base = path.join(targetDir, ".ad-coder", "verdict");
-  const escaped = base.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = promptText.match(new RegExp(`${escaped}/[A-Za-z0-9_-]+\\.json`));
-  if (match === null) {
-    throw new Error("reviewer prompt did not name a verdict artifact path");
-  }
-  return match[0];
-}
-
 /**
- * A scripted reviewer turn: write the verdict JSON to the path named in the
- * prompt (mirrors what a real reviewer would do via the write tool), then a
- * text summary. Two faux responses, because the harness re-prompts after the
- * tool call until a no-tool message settles the turn.
+ * A scripted reviewer turn: call submit_verdict with the verdict args (mirrors
+ * what a real reviewer would do), then a text summary. Two faux responses,
+ * because the harness re-prompts after the tool call until a no-tool message
+ * settles the turn. The arg type admits a plain record so malformed payloads
+ * (e.g. an invalid status) can be scripted alongside well-formed verdicts.
  */
-function reviewerTurn(targetDir: string, verdict: Verdict): FauxResponseStep[] {
-  const writeStep: FauxResponseFactory = (context) => {
-    const artifactPath = extractVerdictPath(targetDir, lastUserText(context));
-    return fauxAssistantMessage(
-      fauxToolCall("write", { path: artifactPath, content: JSON.stringify(verdict) }),
-    );
-  };
-  return [writeStep, fauxAssistantMessage("review complete")];
+function reviewerTurn(args: Verdict | Record<string, unknown>): FauxResponseStep[] {
+  return [
+    fauxAssistantMessage(fauxToolCall(SUBMIT_VERDICT_TOOL_NAME, args)),
+    fauxAssistantMessage("review complete"),
+  ];
 }
-
-const ARTIFACT = "/tmp/does-not-exist/.ad-coder/verdict/run.json";
 
 test("parseVerdict accepts a well-formed verdict", () => {
   const verdict = parseVerdict(
     { status: "changes_requested", issues: [{ severity: "major", what: "fix it" }], summary: "s" },
-    ARTIFACT,
+    "run-id",
   );
   expect(verdict.status).toBe("changes_requested");
   expect(verdict.issues[0]?.severity).toBe("major");
@@ -131,7 +121,7 @@ test("parseVerdict rejects a bad status, non-array issues, a missing what, and a
   for (const value of cases) {
     let caught: unknown;
     try {
-      parseVerdict(value, ARTIFACT);
+      parseVerdict(value, "run-id");
     } catch (error) {
       caught = error;
     }
@@ -140,28 +130,16 @@ test("parseVerdict rejects a bad status, non-array issues, a missing what, and a
   }
 });
 
-test("readVerdict throws missing_verdict when the artifact is absent", () => {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-verdict-")));
-  let caught: unknown;
-  try {
-    readVerdict(dir, "absent-run-id");
-  } catch (error) {
-    caught = error;
-  }
-  expect(caught).toBeInstanceOf(OrchestrationError);
-  expect((caught as OrchestrationError).code).toBe("missing_verdict");
-});
-
 test("one round approve returns approved:true rounds:1", async () => {
   const fx = fixture();
   const planner = fx.role("planner", "You plan.");
   const coder = fx.role("coder", "You code.");
-  const reviewer = fx.role("reviewer", "You review.");
+  const reviewer = reviewerRole(fx);
   const verdict: Verdict = { status: "approved", issues: [], summary: "looks good" };
   fx.faux.setResponses([
     fauxAssistantMessage("plan: do X"),
     fauxAssistantMessage("coded X"),
-    ...reviewerTurn(fx.targetDir, verdict),
+    ...reviewerTurn(verdict),
   ]);
 
   const result = await runPipeline({
@@ -186,7 +164,7 @@ test("two rounds: reviewer round-1 issue is threaded into the coder round-2 prom
     return fauxAssistantMessage(`coded ${label}`);
   };
   const coder = fx.role("coder", "You code.");
-  const reviewer = fx.role("reviewer", "You review.");
+  const reviewer = reviewerRole(fx);
   const changes: Verdict = {
     status: "changes_requested",
     issues: [{ severity: "major", what: "add a null check on the input" }],
@@ -195,9 +173,9 @@ test("two rounds: reviewer round-1 issue is threaded into the coder round-2 prom
   const approve: Verdict = { status: "approved", issues: [], summary: "fixed" };
   fx.faux.setResponses([
     coderStep("round1"),
-    ...reviewerTurn(fx.targetDir, changes),
+    ...reviewerTurn(changes),
     coderStep("round2"),
-    ...reviewerTurn(fx.targetDir, approve),
+    ...reviewerTurn(approve),
   ]);
 
   const result = await runPipeline({
@@ -217,7 +195,7 @@ test("two rounds: reviewer round-1 issue is threaded into the coder round-2 prom
 test("maxRounds exhausted returns approved:false without throwing", async () => {
   const fx = fixture();
   const coder = fx.role("coder", "You code.");
-  const reviewer = fx.role("reviewer", "You review.");
+  const reviewer = reviewerRole(fx);
   const changes: Verdict = {
     status: "changes_requested",
     issues: [{ severity: "blocker", what: "still broken" }],
@@ -225,7 +203,7 @@ test("maxRounds exhausted returns approved:false without throwing", async () => 
   };
   fx.faux.setResponses([
     fauxAssistantMessage("coded once"),
-    ...reviewerTurn(fx.targetDir, changes),
+    ...reviewerTurn(changes),
   ]);
 
   const result = await runPipeline({
@@ -246,7 +224,7 @@ test("a shared ledger sink carries distinct role/step records per round", async 
   const sink = new MemoryLedgerSink();
   const planner = fx.role("planner", "You plan.");
   const coder = fx.role("coder", "You code.");
-  const reviewer = fx.role("reviewer", "You review.");
+  const reviewer = reviewerRole(fx);
   const changes: Verdict = {
     status: "changes_requested",
     issues: [{ severity: "minor", what: "tweak" }],
@@ -255,9 +233,9 @@ test("a shared ledger sink carries distinct role/step records per round", async 
   fx.faux.setResponses([
     fauxAssistantMessage("plan"),
     fauxAssistantMessage("code r1"),
-    ...reviewerTurn(fx.targetDir, changes),
+    ...reviewerTurn(changes),
     fauxAssistantMessage("code r2"),
-    ...reviewerTurn(fx.targetDir, changes),
+    ...reviewerTurn(changes),
   ]);
 
   const result = await runPipeline({
@@ -279,14 +257,14 @@ test("a shared ledger sink carries distinct role/step records per round", async 
   expect(seen).toContain("reviewer/review:2");
 });
 
-test("a missing verdict artifact throws OrchestrationError missing_verdict", async () => {
+test("a reviewer that never calls submit_verdict throws OrchestrationError missing_verdict", async () => {
   const fx = fixture();
   const coder = fx.role("coder", "You code.");
-  const reviewer = fx.role("reviewer", "You review.");
-  // Reviewer never writes the artifact -- only a text summary.
+  const reviewer = reviewerRole(fx);
+  // Reviewer emits only text -- no submit_verdict tool call.
   fx.faux.setResponses([
     fauxAssistantMessage("coded"),
-    fauxAssistantMessage("I reviewed but wrote no verdict"),
+    fauxAssistantMessage("I reviewed but submitted no verdict"),
   ]);
 
   let caught: unknown;
@@ -303,4 +281,30 @@ test("a missing verdict artifact throws OrchestrationError missing_verdict", asy
   }
   expect(caught).toBeInstanceOf(OrchestrationError);
   expect((caught as OrchestrationError).code).toBe("missing_verdict");
+});
+
+test("a malformed submission throws OrchestrationError malformed_verdict", async () => {
+  const fx = fixture();
+  const coder = fx.role("coder", "You code.");
+  const reviewer = reviewerRole(fx);
+  // status "yes" passes the permissive schema but fails parseVerdict.
+  fx.faux.setResponses([
+    fauxAssistantMessage("coded"),
+    ...reviewerTurn({ status: "yes", issues: [], summary: "s" }),
+  ]);
+
+  let caught: unknown;
+  try {
+    await runPipeline({
+      targetDir: fx.targetDir,
+      models: fx.models,
+      task: "implement U",
+      maxRounds: 1,
+      roles: { coder, reviewer },
+    });
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught).toBeInstanceOf(OrchestrationError);
+  expect((caught as OrchestrationError).code).toBe("malformed_verdict");
 });

@@ -156,9 +156,16 @@ const submitVerdict = defineTool({
   name: "submit_verdict",
   description: "Record the review verdict.",
   label: "submit verdict",
-  parameters: Type.Object({ status: Type.String() }),
+  // Permissive at the enum leaves ON PURPOSE: the harness validates args against
+  // this schema BEFORE execute, so keeping status/severity as Type.String lets a
+  // malformed value reach the strict parser instead of being bounced pre-execute.
+  parameters: Type.Object({
+    status: Type.String(),
+    issues: Type.Array(Type.Object({ severity: Type.String(), what: Type.String() })),
+    summary: Type.String(),
+  }),
   async execute(_id, params) {
-    return { content: [{ type: "text", text: "ok" }], details: undefined };
+    return { content: [{ type: "text", text: "verdict recorded" }], details: undefined };
   },
 });
 
@@ -203,17 +210,19 @@ if (!result.approved) {
 }
 ```
 
-**The verdict is a filesystem artifact, not (yet) a tool call.** The reviewer
-**writes** a JSON verdict via the existing write tool to
-`<targetDir>/.ad-coder/verdict/<reviewerRunId>.json`; `runPipeline` reads it back
-and strictly schema-validates it (`status` ∈ `{approved, changes_requested}`,
-`issues` an array of `{severity, what}`, `summary` a string). A **missing or
-malformed** verdict is a hard `OrchestrationError` (never a silent pass); a
-well-formed `changes_requested` is a legitimate non-approval whose issues become
-the coder's next prompt. `runRole` now carries the optional `tools` seam that
-*could* hand the reviewer a `submit_verdict` tool, but this pipeline has not been
-rewired to use it — the genuine tool-call verdict is the next follow-on the seam
-unlocks.
+**The verdict is a `submit_verdict` tool call.** Each reviewer round is handed a
+fresh `submit_verdict` tool (via the `runRole` `tools` seam); the reviewer
+**calls** it with the verdict args and nothing touches the filesystem. Because
+`runRole` gates the combined tool set through `activeToolNames`, the reviewer
+role must list `submit_verdict` in its `activeToolNames` for the tool to be
+reachable. The tool's TypeBox schema is deliberately permissive at the enum
+leaves so the hand-written `parseVerdict` stays the authoritative validator
+(`status` ∈ `{approved, changes_requested}`, `issues` an array of
+`{severity, what}`, `summary` a string). A **missing** submission (the reviewer
+never called the tool) or a **malformed** one (it failed strict validation) is a
+hard `OrchestrationError` (never a silent pass); a well-formed
+`changes_requested` is a legitimate non-approval whose issues become the coder's
+next prompt.
 
 ## The ledger
 

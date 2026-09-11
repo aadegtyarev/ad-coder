@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
   assertTurnFitsBudget,
+  buildSubmitVerdictTool,
   ContextBudgetError,
   ContextCompactor,
   createRoleRunner,
@@ -14,6 +15,7 @@ import {
   runPipeline,
   runRole,
   RunnerError,
+  SUBMIT_VERDICT_TOOL_NAME,
   SUMMARIZATION_PROMPT,
   UsageDeltaTracker,
 } from "ad-coder";
@@ -33,6 +35,7 @@ import type {
   RunRoleResult,
   Summarizer,
   Tool,
+  VerdictCapture,
   Verdict,
   VerdictIssue,
   VerdictStatus,
@@ -66,6 +69,8 @@ test("the package is importable by its published name", () => {
   expect(typeof resolveTargetDir).toBe("function");
   expect(typeof runPipeline).toBe("function");
   expect(typeof OrchestrationError).toBe("function");
+  expect(typeof buildSubmitVerdictTool).toBe("function");
+  expect(typeof SUBMIT_VERDICT_TOOL_NAME).toBe("string");
   // Type-only imports are erased; reference them so the imports are not unused.
   const _budget: ContextBudget | undefined = undefined;
   const _summarizer: Summarizer | undefined = undefined;
@@ -76,6 +81,7 @@ test("the package is importable by its published name", () => {
   const _result: RunRoleResult | undefined = undefined;
   const _opts: RunRoleOptions | undefined = undefined;
   const _runner: RoleRunner | undefined = undefined;
+  const _capture: VerdictCapture | undefined = undefined;
   const _verdict: Verdict | undefined = undefined;
   const _issue: VerdictIssue | undefined = undefined;
   const _status: VerdictStatus | undefined = undefined;
@@ -94,6 +100,7 @@ test("the package is importable by its published name", () => {
   expect(_result).toBeUndefined();
   expect(_opts).toBeUndefined();
   expect(_runner).toBeUndefined();
+  expect(_capture).toBeUndefined();
   expect(_verdict).toBeUndefined();
   expect(_issue).toBeUndefined();
   expect(_status).toBeUndefined();

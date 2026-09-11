@@ -53,3 +53,5 @@ export type {
   VerdictIssue,
   VerdictStatus,
 } from "./orchestration/types";
+export { buildSubmitVerdictTool, SUBMIT_VERDICT_TOOL_NAME } from "./orchestration/verdict";
+export type { VerdictCapture } from "./orchestration/verdict";

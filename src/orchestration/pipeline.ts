@@ -5,21 +5,30 @@ import {
 import type { Context, Session } from "@earendil-works/pi-agent-core";
 import type { TextContent } from "@earendil-works/pi-ai";
 import { createRoleRunner } from "../runner/role-runner";
+import type { Tool } from "../runner/tool";
 import type { RoleSpec, Verdict, VerdictIssue } from "./types";
 import { OrchestrationError } from "./types";
 import type { PipelineConfig, PipelineResult } from "./types";
-import { formatReviewerInstruction, readVerdict, verdictArtifactPath } from "./verdict";
+import { buildSubmitVerdictTool, formatReviewerInstruction } from "./verdict";
+import type { VerdictCapture } from "./verdict";
 
 /**
  * Compose the EXISTING single-turn `runRole` into a plan -> (code<->review loop)
  * pipeline.
  *
- * WHY the verdict is a filesystem artifact and not a tool call: `runRole`
- * hardcodes its tool set and exposes no tool-injection seam, and its result
- * carries only a `tipId`, no tool-call payload. So the reviewer cannot CALL a
- * `submit_verdict` tool; instead it WRITES a JSON artifact via the existing
- * write tool, which the pipeline reads and strictly validates. The tool-call
- * form is a deferred follow-up needing an optional `tools` param on `runRole`.
+ * WHY the verdict is a `submit_verdict` TOOL CALL and not a filesystem artifact:
+ * `runRole` now carries an optional `tools` seam, so each reviewer round is
+ * handed a fresh `submit_verdict` tool that captures the verdict from the
+ * model's tool-call args -- no file is written or read. TWO non-obvious harness
+ * facts bridge the tool to the loop. (1) The harness validates tool args against
+ * the TypeBox schema BEFORE execute, so that schema is permissive at the enum
+ * leaves and `parseVerdict` stays the real gate -- a strict schema would bounce
+ * a malformed verdict pre-execute and mis-code it as missing_verdict. (2) The
+ * harness SWALLOWS any throw from execute into an error tool-result, so the tool
+ * stores `parseVerdict`'s `OrchestrationError` in a per-round capture holder
+ * instead of throwing, and the pipeline re-throws it after the turn. Empty
+ * holder -> `missing_verdict`; captured error -> `malformed_verdict`; captured
+ * verdict -> use (last-wins on a repeated call).
  *
  * THE LOOP settles when a reviewer round returns `status: 'approved'` or when
  * `maxRounds` is reached. Exhausting the cap returns `approved: false` -- a
@@ -45,7 +54,13 @@ export async function runPipeline(config: PipelineConfig): Promise<PipelineResul
   const runner = createRoleRunner({ targetDir, models: config.models });
 
   /** Drive one role turn on a fresh session and return its final assistant text. */
-  const runTurn = async (spec: RoleSpec, prompt: string, step: string, runId: string) => {
+  const runTurn = async (
+    spec: RoleSpec,
+    prompt: string,
+    step: string,
+    runId: string,
+    tools?: Tool[],
+  ) => {
     // A fresh session per run: each role has its own systemPrompt, so sharing a
     // session would leak one role's history and prompt into another.
     const repo = new MemorySessionRepo();
@@ -54,8 +69,9 @@ export async function runPipeline(config: PipelineConfig): Promise<PipelineResul
       runId,
       step,
       session,
-      // exactOptionalPropertyTypes: spread the sink only when present.
+      // exactOptionalPropertyTypes: spread each optional only when present.
       ...(config.ledgerSink !== undefined && { ledgerSink: config.ledgerSink }),
+      ...(tools !== undefined && { tools }),
     });
     // runRole closes the session facade it was handed (harness.close ->
     // session.close), but the MemoryStorage behind it survives. Reopen a fresh
@@ -94,14 +110,36 @@ export async function runPipeline(config: PipelineConfig): Promise<PipelineResul
     runIds.push(coderRunId);
 
     const reviewerRunId = crypto.randomUUID();
-    const instruction = formatReviewerInstruction(verdictArtifactPath(targetDir, reviewerRunId));
-    const reviewerPrompt = composeReviewerPrompt(config.task, changeSummary, instruction);
-    await runTurn(config.roles.reviewer, reviewerPrompt, `review:${round}`, reviewerRunId);
+    // Fresh holder + tool PER ROUND: a stale verdict from an earlier round can
+    // never be read as this round's (mirrors the old per-runId file keying).
+    const capture: VerdictCapture = {};
+    const submitTool = buildSubmitVerdictTool(capture, reviewerRunId);
+    const reviewerPrompt = composeReviewerPrompt(
+      config.task,
+      changeSummary,
+      formatReviewerInstruction(),
+    );
+    await runTurn(config.roles.reviewer, reviewerPrompt, `review:${round}`, reviewerRunId, [
+      submitTool,
+    ]);
     runIds.push(reviewerRunId);
 
     // Missing/malformed here throws OrchestrationError -- distinct from a
     // legitimate non-approval, which is a well-formed changes_requested verdict.
-    const verdict = readVerdict(targetDir, reviewerRunId);
+    // A captured error is parseVerdict's OrchestrationError, swallowed by the
+    // harness into an error tool-result and re-thrown here; an empty holder
+    // means the reviewer never called submit_verdict.
+    if (capture.error !== undefined) {
+      throw capture.error;
+    }
+    if (capture.verdict === undefined) {
+      throw new OrchestrationError(
+        "missing_verdict",
+        reviewerRunId,
+        "reviewer did not submit a verdict",
+      );
+    }
+    const verdict = capture.verdict;
     verdicts.push(verdict);
 
     if (verdict.status === "approved") {
