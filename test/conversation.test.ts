@@ -19,6 +19,7 @@ import { MemoryLedgerSink } from "../src/ledger/ledger";
 import type { Role } from "../src/role";
 import { defineRole } from "../src/role";
 import { defineTool } from "../src/runner/tool";
+import { SessionLimitController, SessionLimitError } from "../src/session-limits";
 
 const CONTEXT_WINDOW = 200_000;
 
@@ -154,6 +155,30 @@ test("a tool invoked in a turn appears in that turn's result.toolCalls", async (
   }
 });
 
+test("conversation counts tool follow-ups and rethrows a Models-boundary limit", async () => {
+  const { faux, models, model, role } = harnessFixture();
+  const controller = new SessionLimitController({ maxTurns: 1 });
+  faux.setResponses([
+    fauxAssistantMessage(fauxToolCall("bash", { command: "printf followed-up" })),
+    fauxAssistantMessage("must not dispatch"),
+  ]);
+
+  const conversation = await startConversation({
+    role,
+    targetDir,
+    models,
+    model,
+    sessionLimitController: controller,
+  });
+  try {
+    await expect(conversation.step("use the tool")).rejects.toBeInstanceOf(SessionLimitError);
+    expect(faux.state.callCount).toBe(1);
+    expect(controller.snapshot().admittedTurns).toBe(1);
+  } finally {
+    await conversation.close();
+  }
+});
+
 test("the ContextCompactor is attached once and does not run under budget across turns", async () => {
   const { faux, models, model, role } = harnessFixture();
   let summarizerCalls = 0;
@@ -191,6 +216,7 @@ test("auto compaction consumes a distinct provider summary before the normal res
     model,
   );
   const calls: Array<"summary" | "role"> = [];
+  const controller = new SessionLimitController();
   faux.setResponses(
     Array.from({ length: 12 }, () => (request: { systemPrompt?: string }) => {
       const kind = request.systemPrompt === SUMMARIZATION_PROMPT ? "summary" : "role";
@@ -198,13 +224,21 @@ test("auto compaction consumes a distinct provider summary before the normal res
       return fauxAssistantMessage(kind === "summary" ? "safe historical briefing" : "reply");
     }),
   );
-  const conversation = await startConversation({ role, targetDir, models, model });
+  const conversation = await startConversation({
+    role,
+    targetDir,
+    models,
+    model,
+    sessionLimitController: controller,
+  });
   try {
     for (let i = 0; i < 6; i++) await conversation.step(`${i}:${"x".repeat(900)}`);
     const summaryAt = calls.indexOf("summary");
     expect(summaryAt).toBeGreaterThan(0);
     expect(calls[summaryAt + 1]).toBe("role");
     expect(calls.filter((kind) => kind === "role")).toHaveLength(6);
+    expect(controller.snapshot().admittedTurns).toBe(calls.length);
+    expect(calls.filter((kind) => kind === "summary")).toHaveLength(1);
   } finally {
     await conversation.close();
   }

@@ -33,6 +33,7 @@ import type { Profile } from "../src/profiles/types";
 import type { ResolvedRegistry } from "../src/registry/types";
 import type { Role } from "../src/role";
 import { defineRole } from "../src/role";
+import { SessionLimitController, SessionLimitError } from "../src/session-limits";
 
 const CONTEXT_WINDOW = 200_000;
 const BUDGET = { maxTokens: 100_000, reserveTokens: 10_000, keepRecentTokens: 20_000 } as const;
@@ -1049,4 +1050,30 @@ test("stepped: a stop-after-plan driver ends with no code or review records", as
   expect(settled.done).toBe(true);
   expect(settled.approved).toBe(false);
   expect(settled.verdicts).toHaveLength(0);
+});
+
+test("workflow roles share one controller and stop before the next provider dispatch", async () => {
+  const fx = fixture();
+  const controller = new SessionLimitController({ maxTurns: 2 });
+  fx.faux.setResponses([
+    fauxAssistantMessage("plan text"),
+    fauxAssistantMessage("coded"),
+    fauxAssistantMessage("must not review"),
+  ]);
+  const session = createWorkflowSession({
+    targetDir: fx.targetDir,
+    models: fx.models,
+    task: "implement limits",
+    maxRounds: 1,
+    roles: {
+      planner: plannerRole(fx),
+      coder: fx.role("coder", "You code."),
+      reviewer: reviewerRole(fx),
+    },
+    sessionLimitController: controller,
+  });
+
+  await expect(drive(session, autoDriver)).rejects.toBeInstanceOf(SessionLimitError);
+  expect(fx.faux.state.callCount).toBe(2);
+  expect(controller.snapshot().admittedTurns).toBe(2);
 });

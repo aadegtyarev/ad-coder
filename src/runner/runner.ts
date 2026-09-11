@@ -30,6 +30,7 @@ import type { LedgerSink } from "../ledger/ledger";
 import { FileLedgerSink, LEDGER_BASE_DIR, Ledger } from "../ledger/ledger";
 import type { Role } from "../role";
 import { toHarnessOptions } from "../role";
+import type { SessionLimitController } from "../session-limits";
 import {
   assertLedgerDirWithinTarget,
   assertRunId,
@@ -85,6 +86,8 @@ export interface RunRoleParams {
    * like a built-in.
    */
   tools?: Tool[];
+  /** Shared model-call controller for a larger session. */
+  sessionLimitController?: SessionLimitController;
 }
 
 /**
@@ -147,14 +150,23 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
 
   const session = params.session ?? (await new MemorySessionRepo().create({}, context));
 
+  const controller = params.sessionLimitController;
+  const models = controller?.wrap(params.models) ?? params.models;
   const explicitPolicy =
     params.compaction ??
     (params.summarizer === undefined ? undefined : { mode: "auto", summarizer: params.summarizer });
-  const compaction = resolveCompactionPolicy(explicitPolicy, params.models, params.model);
+  if (
+    explicitPolicy?.summarizer !== undefined &&
+    controller !== undefined &&
+    (controller.limits.maxTurns > 0 || controller.limits.maxCostUsd > 0)
+  ) {
+    throw new TypeError("custom summarizer cannot be used with positive session limits");
+  }
+  const compaction = resolveCompactionPolicy(explicitPolicy, models, params.model);
 
   const base = toHarnessOptions(params.role, {
     session,
-    models: params.models,
+    models,
     model: params.model,
   });
   const options: AgentHarnessOptions<ExecutionToolContext> = {
@@ -213,7 +225,12 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
     } else {
       assertContextFitsBudget(params.role, messages, params.model);
     }
-    const result = getOrThrow(await lane.prompt(params.prompt, undefined, context));
+    const prompted = await lane.prompt(params.prompt, undefined, context).catch((error) => {
+      controller?.assertNoBoundaryFailure();
+      throw error;
+    });
+    controller?.assertNoBoundaryFailure();
+    const result = getOrThrow(prompted);
     if ("status" in result && result.status === "suspended") {
       // lane.prompt returns OperationResultRecord | SuspendedRun. A single-turn
       // faux/live drive settles; a suspended run means a deferred provider

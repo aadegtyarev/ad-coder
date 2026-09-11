@@ -99,6 +99,17 @@ github.com/aadegtyarev/ad-coder (main, MIT). Aiming at self-hosting.
   was plan-only.
 
 ## Latest delivery
+- Session generation-call and provider-reported cost thresholds implemented at
+  the shared Models boundary on 2026-09-12. Programmatic and console limits use
+  zero-disabled defaults; one admitted call may overshoot, concurrent unknown
+  cost is rejected, and missing/invalid settled usage fails closed. Static
+  verification: `node_modules/.bin/tsc --noEmit` and
+  `node_modules/.bin/biome check src test` passed after the configured Biome
+  fix path. The full local suite passed with Bun 1.3.0: 218 tests, 0 failures.
+  Faux-provider coverage now spans resolved error/aborted/invalid usage,
+  conversation and role tool follow-ups, workflow/orchestrator controller
+  sharing, retry rejection after unavailable usage, and built-in compaction
+  accounting.
 - Squash-merged PR #6 as `f110b26` (`feat(context): activate configurable
   compaction`). Verified before merge with `bun test` (197 pass), `bun run
   check`, and GitHub CI; no harness restart was performed.

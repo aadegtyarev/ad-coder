@@ -78,7 +78,8 @@ module-locality from the touched-file set to decide what can parallelize.
   retaining one persistent session, bounding each input line by configurable
   UTF-8 bytes, sanitizing terminal controls, and closing once on every exit path.
   Unrestricted host-tool execution is accepted for this MVP; configurable
-  turn-count and session-cost caps are the next follow-up before the TUI.
+  session turn-count and cost thresholds are implemented at the shared Models
+  boundary. The TUI is the next follow-up.
 
 ## pi ecosystem: reuse the libraries, do not fork the agent (decided 2026-09-11)
 

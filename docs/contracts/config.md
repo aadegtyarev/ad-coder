@@ -2,13 +2,14 @@
 
 Rules the operator declared for ad-coder. A violation is always blocking.
 
-- 2026-09-11: A value a user might reasonably want to change is a configurable
-  setting with an efficient default — never a hardcoded constant. Judgement call:
-  would a reasonable user want to turn this knob? If yes, it is config.
-- 2026-09-11: Ship opinionated, maximally-efficient defaults, but expose the knob
-  anyway. The goal is "good out of the box, everything overridable", never
-  "configure everything yourself".
-- 2026-09-11: The context/compaction strategy is configurable end to end: the mode
-  (auto / cache-aware / disabled-then-halt-for-manual-compaction), the budget as a
-  percent of the model context window, and the reply reserve. Never hardcode a
-  single compaction policy.
+- 2026-09-11: Any behavior a reasonable user may want to change is configurable.
+- 2026-09-11: Defaults are maximally efficient; every setting remains overridable.
+- 2026-09-11: Context mode, window percentage, reply reserve, and summarization percentage are configurable end to end.
+- 2026-09-12: Numeric resource limits default to `0`; `0` disables and only a positive value enables them.
+- 2026-09-12: Context-window enforcement and summarization percentage are the only exceptions to the zero-disabled limit policy.
+
+## Sources
+
+The 2026-09-11 rules implement “good out of the box, everything overridable.”
+The 2026-09-12 rules govern session turn and USD limits in programmatic and
+console surfaces without changing the existing context-window safeguards.

@@ -12,11 +12,17 @@ network (pi-ai's fauxProvider) and demonstrated live on DeepSeek.
 
 ### Added
 
+- **Session generation limits** — headless conversations and orchestrators accept
+  zero-disabled turn and USD thresholds enforced across all Models generation
+  paths, including nested workflow roles and built-in compaction. Console flags
+  expose the same controller and typed exhaustion stops safely without a fake
+  completion record.
+
 - **Minimal human console** — `ad-coder console --target-dir <dir>` keeps one
   `startOrchestrator` session across turns, supports formatted and JSONL output,
   injected streams, `/exit`/EOF cleanup, terminal-control sanitization, and a
   configurable 65,536-byte default input-line limit. Host tools remain
-  unrestricted by explicit MVP decision; turn and session-cost caps are deferred.
+  unrestricted by explicit MVP decision.
 
 - **Activated context compaction** — `auto` now builds a one-shot, no-tool
   summarizer from the resolved cheap-tier model and is propagated through role,

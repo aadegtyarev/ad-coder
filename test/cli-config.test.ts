@@ -31,10 +31,10 @@ test("selects deepseek by env presence and builds a valid PipelineConfig", () =>
   expect(config.targetDir).toBe("/tmp/target");
   expect(config.compaction?.mode).toBe("auto");
   expect(config.compaction?.summarizerModel?.id).toBe("deepseek-chat");
-  expect(typeof config.compaction?.summarizer).toBe("function");
+  expect(config.compaction?.summarizer).toBeUndefined();
 });
 
-test("compaction model overrides resolve and disabled mode constructs no summarizer", () => {
+test("compaction resolution carries its model but defers construction to limited Models", () => {
   const auto = resolvePipelineConfig({
     task: "x",
     targetDir: "/tmp/target",

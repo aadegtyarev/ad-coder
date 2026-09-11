@@ -18,6 +18,7 @@ import type { Complexity, PipelineConfig, RoleSpec } from "./orchestration/types
 import type { Role } from "./role";
 import { resolveTargetDir } from "./runner/errors";
 import { createRoleRunner } from "./runner/role-runner";
+import type { SessionLimits } from "./session-limits";
 import type { WorkflowContext } from "./workflow";
 import { isWorkflowModule } from "./workflow";
 
@@ -251,6 +252,32 @@ function parseMaxInputBytesFlag(value: string | undefined): number | undefined {
   return parsed;
 }
 
+function parseSessionLimits(flags: Record<string, string | undefined>): SessionLimits {
+  const turnsText = flags["--max-session-turns"];
+  const costText = flags["--max-session-cost-usd"];
+  let maxTurns = 0;
+  let maxCostUsd = 0;
+  if (turnsText !== undefined) {
+    if (!/^(0|[1-9]\d*)$/.test(turnsText)) {
+      fail(`invalid --max-session-turns: ${turnsText} (expected a non-negative integer)`);
+    }
+    maxTurns = Number(turnsText);
+    if (!Number.isSafeInteger(maxTurns)) {
+      fail(`invalid --max-session-turns: ${turnsText} (expected a safe integer)`);
+    }
+  }
+  if (costText !== undefined) {
+    if (!/^(0|[1-9]\d*)(\.\d+)?$/.test(costText)) {
+      fail(`invalid --max-session-cost-usd: ${costText} (expected a non-negative amount)`);
+    }
+    maxCostUsd = Number(costText);
+    if (!Number.isFinite(maxCostUsd)) {
+      fail(`invalid --max-session-cost-usd: ${costText} (expected a finite amount)`);
+    }
+  }
+  return { maxTurns, maxCostUsd };
+}
+
 function buildConfigOptions(
   targetDirArg: string,
   flags: Record<string, string | undefined>,
@@ -365,7 +392,11 @@ async function consoleCommand(
   const targetDirArg = flags["--target-dir"];
   if (targetDirArg === undefined) fail("--target-dir is required for the console command");
   const maxInputBytes = parseMaxInputBytesFlag(flags["--max-input-bytes"]);
-  const session = await startOrchestrator(buildConfigOptions(targetDirArg, flags));
+  const sessionLimits = parseSessionLimits(flags);
+  const session = await startOrchestrator({
+    ...buildConfigOptions(targetDirArg, flags),
+    sessionLimits,
+  });
   await runConsole({
     session,
     input: process.stdin,
@@ -485,6 +516,16 @@ const COMMANDS: readonly CommandDefinition[] = [
         name: "--max-input-bytes",
         value: "<n>",
         description: "Set the maximum bytes accepted in one input line.",
+      },
+      {
+        name: "--max-session-turns",
+        value: "<n>",
+        description: "Stop before a model call after this many admitted calls; 0 disables.",
+      },
+      {
+        name: "--max-session-cost-usd",
+        value: "<amount>",
+        description: "Stop model calls at this observed USD threshold; 0 disables.",
       },
     ],
     run: ({ positionals, flags, booleans }) =>

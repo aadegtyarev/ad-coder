@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { Readable, Writable } from "node:stream";
 import { runConsole } from "../src/cli/console";
 import type { ConversationSession, ConversationTurnResult } from "../src/conversation/conversation";
+import { SessionLimitError } from "../src/session-limits";
 
 class Capture extends Writable {
   chunks: string[] = [];
@@ -178,6 +179,24 @@ test("turn and close failures use fixed messages and close once", async () => {
   expect(error.text()).toContain("console turn failed");
   expect(error.text()).toContain("console session close failed");
   expect(error.text()).not.toContain(secret);
+});
+
+test("typed session exhaustion stops input with no fabricated JSON record", async () => {
+  const session = fakeSession({ stepError: new SessionLimitError("turns", 1, 1) });
+  const output = new Capture();
+  const error = new Capture();
+  const result = await runConsole({
+    session,
+    input: Readable.from("first\nsecond\n"),
+    output,
+    error,
+    mode: "json",
+  });
+  expect(result).toEqual({ reason: "session_limit", completedTurns: 0 });
+  expect(session.inputs).toEqual(["first"]);
+  expect(session.closes).toBe(1);
+  expect(output.text()).toBe("");
+  expect(error.text()).toBe("ad-coder: session resource limit reached\n");
 });
 
 test("rejects invalid programmatic byte limits and still closes EOF exactly once", async () => {

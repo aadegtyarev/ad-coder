@@ -55,6 +55,9 @@ import type {
   RunRoleParams,
   RunRoleResult,
   SecuritySurface,
+  SessionLimitReason,
+  SessionLimitSnapshot,
+  SessionLimits,
   SpawnOverride,
   StepCost,
   StepResult,
@@ -118,6 +121,8 @@ import {
   runConsole,
   runPipeline,
   runRole,
+  SessionLimitController,
+  SessionLimitError,
   SHOW_COST_TOOL_NAME,
   SUBMIT_PLAN_TOOL_NAME,
   SUBMIT_VERDICT_TOOL_NAME,
@@ -190,6 +195,8 @@ test("the package is importable by its published name", () => {
   expect(typeof createOrchestrator).toBe("function");
   expect(typeof buildOrchestratorTools).toBe("function");
   expect(typeof startOrchestrator).toBe("function");
+  expect(typeof SessionLimitController).toBe("function");
+  expect(typeof SessionLimitError).toBe("function");
   expect(typeof OrchestratorError).toBe("function");
   expect(typeof RUN_PIPELINE_TOOL_NAME).toBe("string");
   expect(typeof RUN_STEP_TOOL_NAME).toBe("string");
@@ -271,6 +278,9 @@ test("the package is importable by its published name", () => {
   const _stepView: StepView | undefined = undefined;
   const _stepCost: StepCost | undefined = undefined;
   const _costReport: CostReport | undefined = undefined;
+  const _sessionLimits: SessionLimits | undefined = undefined;
+  const _sessionLimitSnapshot: SessionLimitSnapshot | undefined = undefined;
+  const _sessionLimitReason: SessionLimitReason | undefined = undefined;
   expect(_orchestrator).toBeUndefined();
   expect(_orchestratorDeps).toBeUndefined();
   expect(_orchestratorConfig).toBeUndefined();
@@ -279,6 +289,9 @@ test("the package is importable by its published name", () => {
   expect(_stepView).toBeUndefined();
   expect(_stepCost).toBeUndefined();
   expect(_costReport).toBeUndefined();
+  expect(_sessionLimits).toBeUndefined();
+  expect(_sessionLimitSnapshot).toBeUndefined();
+  expect(_sessionLimitReason).toBeUndefined();
   const _apiKind: ApiKind | undefined = undefined;
   const _credSource: CredentialSource | undefined = undefined;
   const _modelConfig: ModelConfig | undefined = undefined;

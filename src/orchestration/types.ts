@@ -4,6 +4,7 @@ import type { LedgerSink } from "../ledger/ledger";
 import type { Profile, ProfileRole, SpawnOverride } from "../profiles/types";
 import type { ResolvedRegistry } from "../registry/types";
 import type { Role } from "../role";
+import type { SessionLimitController } from "../session-limits";
 
 /**
  * The two verdicts a reviewer round can settle on.
@@ -215,6 +216,8 @@ export interface PipelineConfig {
    * pipeline. See `WorkflowDefaults`.
    */
   defaults?: WorkflowDefaults;
+  /** Shared generation-call accounting for every role in this workflow session. */
+  sessionLimitController?: SessionLimitController;
 }
 
 /**

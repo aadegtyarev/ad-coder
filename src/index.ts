@@ -152,5 +152,11 @@ export type { RunRoleParams, RunRoleResult } from "./runner/runner";
 export { runRole } from "./runner/runner";
 export type { Tool } from "./runner/tool";
 export { defineTool } from "./runner/tool";
+export type {
+  SessionLimitReason,
+  SessionLimitSnapshot,
+  SessionLimits,
+} from "./session-limits";
+export { SessionLimitController, SessionLimitError } from "./session-limits";
 export type { WorkflowContext, WorkflowModule } from "./workflow";
 export { isWorkflowModule } from "./workflow";

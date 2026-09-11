@@ -12,6 +12,7 @@ import {
   createSummarizer,
   defineRole,
   resolveCompactionPolicy,
+  SessionLimitController,
   SUMMARIZATION_PROMPT,
 } from "../src/index";
 
@@ -234,6 +235,7 @@ test("createSummarizer makes one owned-prompt request without tools and extracts
   const faux = fauxProvider({ provider: "summary", models: [{ id: "cheap" }] });
   const models = createModels();
   models.setProvider(faux.provider);
+  const controller = new SessionLimitController();
   faux.setResponses([
     (context) => {
       expect(context.systemPrompt).toBe(SUMMARIZATION_PROMPT);
@@ -245,9 +247,10 @@ test("createSummarizer makes one owned-prompt request without tools and extracts
       ]);
     },
   ]);
-  const summarizer = createSummarizer(models, faux.getModel() as Model<Api>);
+  const summarizer = createSummarizer(controller.wrap(models), faux.getModel() as Model<Api>);
   expect(await summarizer([small("source")])).toBe("brief");
   expect(faux.state.callCount).toBe(1);
+  expect(controller.snapshot().admittedTurns).toBe(1);
 });
 
 test("createSummarizer rejects custom messages and empty provider output", async () => {

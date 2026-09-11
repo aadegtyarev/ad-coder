@@ -3,6 +3,7 @@ import type {
   ConversationToolCall,
   ConversationTurnResult,
 } from "../conversation/conversation";
+import { SessionLimitError } from "../session-limits";
 
 export const DEFAULT_CONSOLE_MAX_INPUT_BYTES = 65_536;
 
@@ -13,6 +14,7 @@ export type ConsoleExitReason =
   | "input_too_large"
   | "input_failed"
   | "turn_failed"
+  | "session_limit"
   | "close_failed";
 
 export interface RunConsoleParams {
@@ -32,6 +34,7 @@ export interface ConsoleRunResult {
 const INPUT_TOO_LARGE_MESSAGE = "ad-coder: input line exceeds the configured byte limit\n";
 const INPUT_FAILED_MESSAGE = "ad-coder: console input failed\n";
 const TURN_FAILED_MESSAGE = "ad-coder: console turn failed\n";
+const SESSION_LIMIT_MESSAGE = "ad-coder: session resource limit reached\n";
 const CLOSE_FAILED_MESSAGE = "ad-coder: console session close failed\n";
 
 function isSuccessfulExit(reason: ConsoleExitReason): boolean {
@@ -142,9 +145,14 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
         mode === "json" ? `${JSON.stringify(result)}\n` : renderFormatted(result),
       );
       if (mode === "formatted") params.output.write("ad-coder> ");
-    } catch {
-      params.error.write(TURN_FAILED_MESSAGE);
-      reason = "turn_failed";
+    } catch (error) {
+      if (error instanceof SessionLimitError) {
+        params.error.write(SESSION_LIMIT_MESSAGE);
+        reason = "session_limit";
+      } else {
+        params.error.write(TURN_FAILED_MESSAGE);
+        reason = "turn_failed";
+      }
       stopped = true;
     }
   };
