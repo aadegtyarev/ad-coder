@@ -144,6 +144,47 @@ grant `bash` to a role that ingests untrusted input without an out-of-process
 sandbox. The live path is opt-in and makes a real provider call; the test suite
 proves it with pi-ai's faux provider (zero network, no key).
 
+## Running a pipeline
+
+`runRole` drives one turn; `runPipeline` composes turns into a plan → code⇄review
+loop. It runs an optional planner once, then alternates a coder and a reviewer
+until the reviewer approves or `maxRounds` is hit. Every role-run shares one
+`targetDir` but gets its own fresh session, and each run carries a distinct
+ledger `step` (`plan`, `code:1`, `review:1`, `code:2`, …):
+
+```ts
+import { runPipeline } from "ad-coder";
+
+const result = await runPipeline({
+  targetDir,        // REQUIRED — shared working directory for every role
+  models,           // the ONLY source of provider credentials
+  task: "add retry to the client",
+  maxRounds: 3,     // REQUIRED cap (>= 1); the loop never spins past it
+  roles: {
+    planner,        // optional { role, model } — run once if present
+    coder,          // { role, model }
+    reviewer,       // { role, model }
+  },
+  // ledgerSink,    // optional: one shared sink so the whole run writes one ledger
+});
+
+if (!result.approved) {
+  // Exhausting maxRounds is a legitimate result, NOT an error — inspect
+  // result.verdicts for what the reviewer still wanted.
+}
+```
+
+**The verdict is a filesystem artifact, not a tool call.** `runRole` hardcodes
+its tool set and exposes no tool-injection seam, so the reviewer cannot *call* a
+verdict tool. Instead it **writes** a JSON verdict via the existing write tool to
+`<targetDir>/.ad-coder/verdict/<reviewerRunId>.json`; `runPipeline` reads it back
+and strictly schema-validates it (`status` ∈ `{approved, changes_requested}`,
+`issues` an array of `{severity, what}`, `summary` a string). A **missing or
+malformed** verdict is a hard `OrchestrationError` (never a silent pass); a
+well-formed `changes_requested` is a legitimate non-approval whose issues become
+the coder's next prompt. The genuine `submit_verdict` tool-call form is a deferred
+follow-up (it needs an optional `tools` param on `runRole`).
+
 ## The ledger
 
 One JSONL record per turn under `.ad-coder/ledger/<runId>.jsonl`:

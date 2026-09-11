@@ -38,3 +38,16 @@ export { createRoleRunner } from "./runner/role-runner";
 export type { RoleRunner, RoleRunnerConfig, RunRoleOptions } from "./runner/role-runner";
 export { isWorkflowModule } from "./workflow";
 export type { WorkflowContext, WorkflowModule } from "./workflow";
+export { runPipeline } from "./orchestration/pipeline";
+export { OrchestrationError } from "./orchestration/types";
+export type {
+  IssueSeverity,
+  OrchestrationErrorCode,
+  PipelineConfig,
+  PipelineResult,
+  RoleSpec,
+  RoundRecord,
+  Verdict,
+  VerdictIssue,
+  VerdictStatus,
+} from "./orchestration/types";

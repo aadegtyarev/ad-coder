@@ -183,14 +183,20 @@ module-locality from the touched-file set to decide what can parallelize.
   memory.
 - **Self-hosting** — move ad-coder's own development onto ad-coder (CLI-only, no
   TUI). Three rungs: (1) touches its own code (runner done + a live provider turn
-  on a scratch change); (2) does a feature supervised (a hand-written pipeline.ts
-  wiring plan→code→review roles via runRole; needs the orchestration layer +
-  reviewer verdict protocol); (3) self-hosts unsupervised (own gates + review as
-  guard). MVP is close post-runner — the missing engine is orchestration above
-  runRole (sequence + code⇄review loop) + a reviewer verdict protocol. Bootstrap
-  caveat: a bug in the runner/orchestration corrupts its own development, so early
-  self-hosting stays partial (narrow modules via ad-coder, risky core via LDO or
-  human) and supervised; faux tests + human remain ground truth for the core.
+  on a scratch change); (2) does a feature supervised — **DELIVERED**: `src/orchestration/`
+  (`runPipeline`) wires optional-plan → code⇄review roles via `runRole`, with a
+  strict reviewer verdict protocol; (3) self-hosts unsupervised (own gates +
+  review as guard). The engine the MVP was missing — orchestration above
+  `runRole` (sequence + code⇄review loop) + a reviewer verdict protocol — now
+  ships: the reviewer emits its verdict as a schema-validated JSON artifact it
+  WRITES via the existing write tool (the filesystem is the bus). **Follow-up:**
+  the genuine `submit_verdict` tool-call verdict — the reviewer CALLING a verdict
+  tool rather than writing a file — is deferred because it needs an optional
+  `tools` param on `runRole` (which today hardcodes `[bash,read,write,edit]` with
+  no injection seam). Bootstrap caveat: a bug in the runner/orchestration corrupts
+  its own development, so early self-hosting stays partial (narrow modules via
+  ad-coder, risky core via LDO or human) and supervised; faux tests + human remain
+  ground truth for the core.
 
 ## Open backlog (mechanical)
 
