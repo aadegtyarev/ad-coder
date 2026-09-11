@@ -501,7 +501,16 @@ workflows — one substrate, swappable drivers.
     (accuracy + context-economy); safe-by-construction refactors are exactly what
     the auditor + refactor-executor want (LSP/AST moves over LLM regeneration). LSP
     is editor-land, likely not in pi -> ad-coder implements an LSP client + adapters.
-  - COMPOSES FREE with what is built: default-open tools (a connected server's tools
+  - LAUNCH MODEL (both seams, decided): ad-coder does NOT bundle servers. A server is
+    an external EXECUTABLE the user installs the normal way (npm/pip/go/rustup or a
+    binary); ad-coder is a CLIENT that SPAWNS it as a subprocess and speaks its
+    protocol (LSP: JSON-RPC over stdio; MCP: its transport). The per-language / per-
+    server LAUNCH COMMAND is a setting (config-contract) with an efficient default:
+    auto-discover the common one (LSP: prefer the project's own node_modules/.bin /
+    venv over a global, so the server version matches the language version; then
+    PATH), overridable in config. Enabling a server is a trust decision. They run on
+    the host now, under the sandbox once it lands.
+    COMPOSES FREE with what is built: default-open tools (a connected server's tools
     are auto-available unless narrowed), tool-call observability (the ledger already
     records toolCalls by name -> you SEE which MCP/LSP tools a role used), and the
     future sandbox+wallet (servers run under the sandbox; the wallet holds their
