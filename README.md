@@ -27,8 +27,8 @@ the single-turn primitive. Built on Bun + TypeScript, proven with
 no network (a faux provider) and demonstrated live on DeepSeek — a full feature
 for a fraction of a cent.
 
-> Status: the core harness works end to end. The conversational orchestrator, a
-> TUI, model/provider profiles, and more are on the [roadmap](docs/ROADMAP.md).
+> Status: the core harness and conversational orchestrator work end to end.
+> The TUI and further operator tooling are on the [roadmap](docs/ROADMAP.md).
 
 ## Install
 
@@ -36,12 +36,12 @@ Requires **Bun 1.3+** (everything runs through Bun; the pi packages need
 `node >= 22.19.0`, so do not use an older `node`).
 
 ```sh
-bun install -g github:aadegtyarev/ad-coder      # install
-bun update  -g github:aadegtyarev/ad-coder      # update to the latest
+bun install -g git+ssh://git@github.com/aadegtyarev/ad-coder.git  # install
+bun update  -g ad-coder                                             # update
 ```
 
-The repository is private; installing pulls it over your authenticated git /
-`gh` credentials. For local development instead: `git clone`, then `bun install`.
+The repository is private; the install command uses your SSH-authenticated Git
+access. For local harness development, run `bun link` in this checkout instead.
 
 ## Configure providers
 

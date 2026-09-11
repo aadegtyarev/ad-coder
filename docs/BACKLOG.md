@@ -6,10 +6,11 @@
   surfaces. Breakpoint control and composable isolation remain designed
   requirements in `docs/ROADMAP.md`; they are not ahead of this priority.
 
-## 2026-09-12
-
-
 ## Provider reliability
+
+DeepSeek is the verified dogfood provider: a real one-round CLI pipeline reached
+Planner, Coder, and Reviewer and was approved for $0.01502091. See the
+[live-smoke receipt](reviews/2026-09-12-deepseek-cli-pipeline-smoke.md).
 
 - [high] Diagnose the openai-codex OAuth pipeline's empty zero-cost stage
   responses before treating it as a working provider. Close this only with a
