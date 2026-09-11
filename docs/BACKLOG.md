@@ -1,5 +1,9 @@
 # Backlog
 
+## 2026-09-12
+
+- [high] `src/orchestration/orchestrator.ts` and console session controls: add configurable session turn-count and session-cost caps; these were explicitly deferred from the minimal console MVP.
+
 ## Active sequence (confirmed 2026-09-11)
 
 This ordering overrides the chronological notes below when choosing the next
@@ -10,8 +14,9 @@ product task:
 2. ~~Implement per-command `--help` / `-h`, derived from the command registry~~
    — delivered 2026-09-11; focused CLI tests, `bun run check`, and `bun test`
    passed.
-3. Build the minimal human console (5.5).
-4. Build the TUI.
+3. ~~Build the minimal human console (5.5).~~ — delivered 2026-09-12; 206 tests,
+   typecheck, Biome, and diff checks passed.
+4. Add configurable session turn-count and cost caps, then build the TUI.
 
 Breakpoint control and composable isolation remain designed requirements in
 `docs/ROADMAP.md`; they are not ahead of this sequence.
@@ -35,7 +40,7 @@ Breakpoint control and composable isolation remain designed requirements in
 
 - [done] runner: runRole hardcodes tools [bash,read,write,edit] with NO tool-injection seam (runner.ts:111-116), violating the injected-seam idiom the rest of the codebase follows. Add an optional `tools?` param so callers can supply custom tools. Unlocks: the proper submit_verdict tool-call verdict (replacing the orchestration filesystem-artifact first-cut), custom tools per role, and the conversational orchestrator's own tools (run pipeline / show ledger). DELIVERED: `runRole`/`RunRoleParams` + `RoleRunner`/`RunRoleOptions` carry an optional additive `tools?: Tool[]` extending the built-ins; `defineTool`/`Tool` expose ad-coder's own tool surface; `assertUniqueToolNames` rejects a built-in/custom name collision with a typed `RunnerError` (code `tool_name_collision`); `activeToolNames` filters the combined set uniformly. The orchestration verdict rewire to a `submit_verdict` tool is the (still open) next follow-on this unblocks.
 
-- [medium] src/cli/: New `ad-coder orchestrator "<task>" --target-dir <dir> [--auto]` CLI subcommand fronting `startOrchestrator(config)` from `src/orchestration/orchestrator.ts`. Mirrors the `drive` subcommand (interactive stepped mode + --auto autonomous) but exposes the orchestrator's conversation loop and stepping tools instead of the human-driven engine loop. Enables a user/external agent to invoke the orchestrator as a CLI rather than only programmatically via `startOrchestrator`. Named follow-on from the orchestrator core (2026-09-11).
+- [done] src/cli/: Delivered the orchestrator CLI front as `ad-coder console --target-dir <dir> [--json]`, a persistent REPL over `startOrchestrator` with formatted and machine output. The earlier proposed one-task `orchestrator --auto` shape was superseded by the minimal human-console design (2026-09-12).
 
 - [medium] src/orchestration/orchestrator.ts: Spawn/fork tools for the orchestrator. A SUBAGENT is `runRole` with a fixed role (planner/researcher/coder) or an ad-hoc prompt the orchestrator composes. A FORK is a subagent that inherits the orchestrator's own context and model and returns only a summary (context economy: spin off a detour, keep only its conclusion). Both are per-role custom tools via the tools-seam. Unblocked by: the runner tools-seam (done) and the orchestrator tools wiring (done). Named follow-on from the orchestrator core (2026-09-11).
 

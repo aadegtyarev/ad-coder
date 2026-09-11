@@ -6,11 +6,13 @@ import type { Context, Session } from "@earendil-works/pi-agent-core";
 import { BACKGROUND_CONTEXT, MemorySessionRepo } from "@earendil-works/pi-agent-core";
 import type { Api, Model, Models, TextContent } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
+import { runConsole } from "./cli/console";
 import { driveWorkflow, silentNoopWarning } from "./cli/drive";
-import type { ResolvableProvider } from "./cli/resolve-config";
+import type { ResolvableProvider, ResolvePipelineConfigOptions } from "./cli/resolve-config";
 import { resolvePipelineConfig } from "./cli/resolve-config";
 import type { CompactionPolicy } from "./context/compactor";
 import { Ledger, MemoryLedgerSink } from "./ledger/ledger";
+import { startOrchestrator } from "./orchestration/orchestrator";
 import { createWorkflowSession } from "./orchestration/session";
 import type { Complexity, PipelineConfig, RoleSpec } from "./orchestration/types";
 import type { Role } from "./role";
@@ -240,6 +242,36 @@ function parseMaxRoundsFlag(value: string | undefined): number | undefined {
   return parsed;
 }
 
+function parseMaxInputBytesFlag(value: string | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0 || value.trim() === "") {
+    fail(`invalid --max-input-bytes: ${value} (expected a positive integer)`);
+  }
+  return parsed;
+}
+
+function buildConfigOptions(
+  targetDirArg: string,
+  flags: Record<string, string | undefined>,
+): Omit<ResolvePipelineConfigOptions, "task"> {
+  const provider = parseProviderFlag(flags["--provider"]);
+  const maxRounds = parseMaxRoundsFlag(flags["--max-rounds"]);
+  const defaultComplexity = parseComplexityFlag(flags["--default-complexity"]);
+  const targetDir = resolveTargetDir(targetDirArg);
+  warnCwdInsideTarget(targetDir);
+  return {
+    targetDir,
+    env: (name: string) => process.env[name],
+    ...(provider !== undefined && { provider }),
+    ...(flags["--strong-model"] !== undefined && { strongModel: flags["--strong-model"] }),
+    ...(flags["--mid-model"] !== undefined && { midModel: flags["--mid-model"] }),
+    ...(flags["--cheap-model"] !== undefined && { cheapModel: flags["--cheap-model"] }),
+    ...(maxRounds !== undefined && { maxRounds }),
+    ...(defaultComplexity !== undefined && { defaultComplexity }),
+  };
+}
+
 /** Run a single role standalone against a target directory, resolved from the environment. */
 async function roleCommand(
   positionals: string[],
@@ -255,23 +287,10 @@ async function roleCommand(
   const targetDirArg = flags["--target-dir"];
   if (targetDirArg === undefined) fail("--target-dir is required for the role command");
 
-  const provider = parseProviderFlag(flags["--provider"]);
-  const maxRounds = parseMaxRoundsFlag(flags["--max-rounds"]);
-  const defaultComplexity = parseComplexityFlag(flags["--default-complexity"]);
-
-  const absTargetDir = resolveTargetDir(targetDirArg);
-  warnCwdInsideTarget(absTargetDir);
-
+  const configOptions = buildConfigOptions(targetDirArg, flags);
   const config = resolvePipelineConfig({
+    ...configOptions,
     task,
-    targetDir: absTargetDir,
-    env: (n: string) => process.env[n],
-    ...(provider !== undefined && { provider }),
-    ...(flags["--strong-model"] !== undefined && { strongModel: flags["--strong-model"] }),
-    ...(flags["--mid-model"] !== undefined && { midModel: flags["--mid-model"] }),
-    ...(flags["--cheap-model"] !== undefined && { cheapModel: flags["--cheap-model"] }),
-    ...(maxRounds !== undefined && { maxRounds }),
-    ...(defaultComplexity !== undefined && { defaultComplexity }),
   });
 
   const spec = roleSpecFor(config, name as RoleName);
@@ -280,7 +299,7 @@ async function roleCommand(
     role: spec.role,
     model: spec.model,
     models: config.models,
-    targetDir: absTargetDir,
+    targetDir: configOptions.targetDir,
     task,
     ledgerSink,
     ...(config.compaction !== undefined && { compaction: config.compaction }),
@@ -316,23 +335,9 @@ async function driveCommand(
   const targetDirArg = flags["--target-dir"];
   if (targetDirArg === undefined) fail("--target-dir is required for the drive command");
 
-  const provider = parseProviderFlag(flags["--provider"]);
-  const maxRounds = parseMaxRoundsFlag(flags["--max-rounds"]);
-  const defaultComplexity = parseComplexityFlag(flags["--default-complexity"]);
-
-  const absTargetDir = resolveTargetDir(targetDirArg);
-  warnCwdInsideTarget(absTargetDir);
-
   const config = resolvePipelineConfig({
+    ...buildConfigOptions(targetDirArg, flags),
     task,
-    targetDir: absTargetDir,
-    env: (n: string) => process.env[n],
-    ...(provider !== undefined && { provider }),
-    ...(flags["--strong-model"] !== undefined && { strongModel: flags["--strong-model"] }),
-    ...(flags["--mid-model"] !== undefined && { midModel: flags["--mid-model"] }),
-    ...(flags["--cheap-model"] !== undefined && { cheapModel: flags["--cheap-model"] }),
-    ...(maxRounds !== undefined && { maxRounds }),
-    ...(defaultComplexity !== undefined && { defaultComplexity }),
   });
 
   // resolvePipelineConfig assigns its own internal LedgerSink (typed as the
@@ -348,6 +353,26 @@ async function driveCommand(
     input: process.stdin,
     output: process.stdout,
     error: process.stderr,
+  });
+}
+
+async function consoleCommand(
+  positionals: string[],
+  flags: Record<string, string | undefined>,
+  json: boolean,
+): Promise<void> {
+  if (positionals[1] !== undefined) fail("the console command accepts no positional arguments");
+  const targetDirArg = flags["--target-dir"];
+  if (targetDirArg === undefined) fail("--target-dir is required for the console command");
+  const maxInputBytes = parseMaxInputBytesFlag(flags["--max-input-bytes"]);
+  const session = await startOrchestrator(buildConfigOptions(targetDirArg, flags));
+  await runConsole({
+    session,
+    input: process.stdin,
+    output: process.stdout,
+    error: process.stderr,
+    mode: json ? "json" : "formatted",
+    ...(maxInputBytes !== undefined && { maxInputBytes }),
   });
 }
 
@@ -387,6 +412,33 @@ async function runCommand(
   }
 }
 
+const PIPELINE_OPTIONS: CommandDefinition["options"] = [
+  {
+    name: "--target-dir",
+    value: "<dir>",
+    description: "Directory containing the project to operate on.",
+    required: true,
+  },
+  {
+    name: "--provider",
+    value: "<provider>",
+    description: "Provider: deepseek, openrouter, or openai-codex.",
+  },
+  { name: "--strong-model", value: "<name>", description: "Override the strong model." },
+  { name: "--mid-model", value: "<name>", description: "Override the mid-tier model." },
+  { name: "--cheap-model", value: "<name>", description: "Override the cheap model." },
+  {
+    name: "--max-rounds",
+    value: "<n>",
+    description: "Set the maximum number of pipeline rounds.",
+  },
+  {
+    name: "--default-complexity",
+    value: "<complexity>",
+    description: "Set trivial, medium, or complex as the default.",
+  },
+];
+
 const COMMANDS: readonly CommandDefinition[] = [
   {
     name: "run",
@@ -408,32 +460,7 @@ const COMMANDS: readonly CommandDefinition[] = [
       { name: "<planner|coder|reviewer|security>", description: "Role to run." },
       { name: "<task>", description: "Task for the role." },
     ],
-    options: [
-      {
-        name: "--target-dir",
-        value: "<dir>",
-        description: "Directory containing the project to operate on.",
-        required: true,
-      },
-      {
-        name: "--provider",
-        value: "<provider>",
-        description: "Provider: deepseek, openrouter, or openai-codex.",
-      },
-      { name: "--strong-model", value: "<name>", description: "Override the strong model." },
-      { name: "--mid-model", value: "<name>", description: "Override the mid-tier model." },
-      { name: "--cheap-model", value: "<name>", description: "Override the cheap model." },
-      {
-        name: "--max-rounds",
-        value: "<n>",
-        description: "Set the maximum number of pipeline rounds.",
-      },
-      {
-        name: "--default-complexity",
-        value: "<complexity>",
-        description: "Set trivial, medium, or complex as the default.",
-      },
-    ],
+    options: PIPELINE_OPTIONS,
     run: ({ positionals, flags }) => roleCommand(positionals, flags),
   },
   {
@@ -442,33 +469,26 @@ const COMMANDS: readonly CommandDefinition[] = [
     positionals: [{ name: "<task>", description: "Task for the pipeline." }],
     options: [
       { name: "--auto", description: "Automatically choose pipeline transitions." },
-      {
-        name: "--target-dir",
-        value: "<dir>",
-        description: "Directory containing the project to operate on.",
-        required: true,
-      },
-      {
-        name: "--provider",
-        value: "<provider>",
-        description: "Provider: deepseek, openrouter, or openai-codex.",
-      },
-      { name: "--strong-model", value: "<name>", description: "Override the strong model." },
-      { name: "--mid-model", value: "<name>", description: "Override the mid-tier model." },
-      { name: "--cheap-model", value: "<name>", description: "Override the cheap model." },
-      {
-        name: "--max-rounds",
-        value: "<n>",
-        description: "Set the maximum number of pipeline rounds.",
-      },
-      {
-        name: "--default-complexity",
-        value: "<complexity>",
-        description: "Set trivial, medium, or complex as the default.",
-      },
+      ...PIPELINE_OPTIONS,
     ],
     run: ({ positionals, flags, booleans }) =>
       driveCommand(positionals, flags, booleans["--auto"] === true),
+  },
+  {
+    name: "console",
+    description: "Chat with the persistent orchestrator session.",
+    positionals: [],
+    options: [
+      ...PIPELINE_OPTIONS,
+      { name: "--json", description: "Write one JSON record per completed turn." },
+      {
+        name: "--max-input-bytes",
+        value: "<n>",
+        description: "Set the maximum bytes accepted in one input line.",
+      },
+    ],
+    run: ({ positionals, flags, booleans }) =>
+      consoleCommand(positionals, flags, booleans["--json"] === true),
   },
 ];
 
@@ -484,7 +504,7 @@ function renderRootHelp(): string {
 function renderCommandHelp(command: CommandDefinition): string {
   const argumentsUsage = command.positionals.map(({ name }) => name).join(" ");
   const optionsUsage =
-    command.options.filter(({ required }) => !required).length === 0 ? "" : " [options]";
+    command.options.filter(({ required }) => !required).length === 0 ? "" : "[options]";
   const requiredOptions = command.options
     .filter(({ required }) => required)
     .map(({ name, value }) => `${name} ${value ?? ""}`.trim())

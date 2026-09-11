@@ -10,6 +10,13 @@ export {
   deriveCapabilities,
   reconcileRoleWithModel,
 } from "./capabilities/capabilities";
+export type {
+  ConsoleExitReason,
+  ConsoleOutputMode,
+  ConsoleRunResult,
+  RunConsoleParams,
+} from "./cli/console";
+export { DEFAULT_CONSOLE_MAX_INPUT_BYTES, runConsole } from "./cli/console";
 export type { DriveErrorCode, DriveWorkflowParams } from "./cli/drive";
 export { DriveError, driveWorkflow, silentNoopWarning } from "./cli/drive";
 export type {

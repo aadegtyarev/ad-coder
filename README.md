@@ -112,9 +112,10 @@ changing behavior.
 ad-coder run   <script.ts>                                --target-dir <dir>
 ad-coder role  <planner|coder|reviewer|security> "<task>" --target-dir <dir>
 ad-coder drive "<task>"                                   --target-dir <dir> [--auto]
+ad-coder console                                          --target-dir <dir> [--json]
 ```
 
-Shared options for `role` and `drive`:
+Shared options for `role`, `drive`, and `console`:
 `--provider <deepseek|openrouter|openai-codex>`,
 `--strong-model`/`--mid-model`/`--cheap-model <name>`,
 `--max-rounds <n>`, `--default-complexity <trivial|medium|complex>`.
@@ -171,6 +172,27 @@ in a library module (`driveWorkflow`) driven through injected input/output/error
 streams, so it is scriptable with no TTY. Both `role` and `drive` now emit a
 clear stderr warning when a turn produces empty text at zero cost (the provider
 may need authentication, e.g. `codex login`) instead of two blank-looking lines.
+
+`ad-coder console --target-dir <dir>` is the minimal dogfood console over the
+headless `startOrchestrator` core. Each nonblank line is another turn on the same
+persistent session; enter `/exit` or send EOF to close it. Human mode prints a
+banner, prompt, and compact turn summary. Machine mode prints exactly one JSON
+record per completed turn and no banner or prompt:
+
+```sh
+ad-coder console --target-dir ./my-project
+printf 'show the current cost\n/exit\n' | ad-coder console --json --target-dir ./my-project
+```
+
+Input is limited to 65,536 UTF-8 bytes per line by default; change it with
+`--max-input-bytes <n>`. An oversized line is rejected before it reaches the
+model. Model-derived output has ANSI and other terminal control sequences
+removed in both output modes. Provider credentials still come only from the
+CLI process environment. `--target-dir` fixes the starting working directory,
+but it is not a sandbox: the orchestrator and pipeline host tools are
+unrestricted and can access anything the invoking user can. This unrestricted
+execution is an explicit MVP choice. Session turn-count and cost caps are not
+implemented yet and remain the next resource/security follow-up.
 
 Per-role model selection is optionally complexity-driven: pass a `routing`
 ({ profile, registry, defaultComplexity?, overrides? }) to `runPipeline` and each

@@ -4,6 +4,9 @@ import type {
   AvailableTransition,
   BudgetPercents,
   Complexity,
+  ConsoleExitReason,
+  ConsoleOutputMode,
+  ConsoleRunResult,
   ContextBudget,
   ConversationConfig,
   ConversationSession,
@@ -46,6 +49,7 @@ import type {
   RoleRunner,
   RoleSpec,
   RoundRecord,
+  RunConsoleParams,
   RunPipelineResult,
   RunRoleOptions,
   RunRoleParams,
@@ -84,6 +88,7 @@ import {
   createRoleRunner,
   createSummarizer,
   createWorkflowSession,
+  DEFAULT_CONSOLE_MAX_INPUT_BYTES,
   DriveError,
   deepseekPreset,
   defineTool,
@@ -110,6 +115,7 @@ import {
   resolvePrompt,
   resolveRegistry,
   resolveTargetDir,
+  runConsole,
   runPipeline,
   runRole,
   SHOW_COST_TOOL_NAME,
@@ -178,6 +184,8 @@ test("the package is importable by its published name", () => {
   expect(typeof PromptError).toBe("function");
   expect(typeof DriveError).toBe("function");
   expect(typeof driveWorkflow).toBe("function");
+  expect(typeof runConsole).toBe("function");
+  expect(DEFAULT_CONSOLE_MAX_INPUT_BYTES).toBe(65_536);
   expect(typeof silentNoopWarning).toBe("function");
   expect(typeof createOrchestrator).toBe("function");
   expect(typeof buildOrchestratorTools).toBe("function");
@@ -206,11 +214,19 @@ test("the package is importable by its published name", () => {
   const _convStepOpts: ConversationStepOptions | undefined = undefined;
   const _convToolCall: ConversationToolCall | undefined = undefined;
   const _convTurnResult: ConversationTurnResult | undefined = undefined;
+  const _consoleExitReason: ConsoleExitReason | undefined = undefined;
+  const _consoleOutputMode: ConsoleOutputMode | undefined = undefined;
+  const _consoleRunResult: ConsoleRunResult | undefined = undefined;
+  const _runConsoleParams: RunConsoleParams | undefined = undefined;
   expect(_convConfig).toBeUndefined();
   expect(_convSession).toBeUndefined();
   expect(_convStepOpts).toBeUndefined();
   expect(_convToolCall).toBeUndefined();
   expect(_convTurnResult).toBeUndefined();
+  expect(_consoleExitReason).toBeUndefined();
+  expect(_consoleOutputMode).toBeUndefined();
+  expect(_consoleRunResult).toBeUndefined();
+  expect(_runConsoleParams).toBeUndefined();
   const _opts: RunRoleOptions | undefined = undefined;
   const _runner: RoleRunner | undefined = undefined;
   const _capture: VerdictCapture | undefined = undefined;
