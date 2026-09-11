@@ -71,6 +71,18 @@ network (pi-ai's fauxProvider) and demonstrated live on DeepSeek.
   via tool calls (`submit_verdict`, `submit_plan`); an elevated security surface
   runs a threat-modeling Security phase whose mitigations thread into the coder
   and every reviewer turn. Per-phase cost is visible in the ledger.
+- **Stepped workflow engine** — `createWorkflowSession(config)` exposes the
+  plan → [security] → code ⇄ review graph as an explicit, inspectable
+  `WorkflowState`: `step(state)` runs the ONE pending role turn and returns the
+  post-turn state plus the `AvailableTransition[]` on offer WITHOUT committing
+  one, and the pure `applyTransition(state, chosen)` yields the next state. A
+  driver picks each transition — `advance`, `rework` (re-run the coder without a
+  review in between), or `stop`. `runPipeline` is now the autonomous auto-driver
+  over this engine (always take the default transition), byte-for-byte its prior
+  behavior. Transition policy is a setting, not a constant: `WorkflowDefaults`
+  (`onChangesRequested`, `autoAdvance`, plus `maxRounds`/`defaultComplexity`)
+  each defaults to today's behavior. This is the substrate a human-stepped UI or
+  the conversational orchestrator drives.
 - **Provider registry** — `src/registry/`: plain-data provider + model config,
   a strict fail-loud `parseRegistryConfig` validator (https-only absolute base
   URLs, no embedded userinfo), and `resolveRegistry` turning declared data plus

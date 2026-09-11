@@ -49,9 +49,12 @@ export type {
 export { isWorkflowModule } from "./workflow";
 export type { WorkflowContext, WorkflowModule } from "./workflow";
 export { runPipeline } from "./orchestration/pipeline";
+export { applyTransition, autoDriver, createWorkflowSession } from "./orchestration/session";
 export { OrchestrationError } from "./orchestration/types";
 export type {
+  AvailableTransition,
   Complexity,
+  Driver,
   IssueSeverity,
   OrchestrationErrorCode,
   PipelineConfig,
@@ -61,9 +64,14 @@ export type {
   RoleSpec,
   RoundRecord,
   SecuritySurface,
+  StepResult,
+  TransitionKind,
   Verdict,
   VerdictIssue,
   VerdictStatus,
+  WorkflowDefaults,
+  WorkflowPhase,
+  WorkflowState,
 } from "./orchestration/types";
 export { buildSubmitVerdictTool, SUBMIT_VERDICT_TOOL_NAME } from "./orchestration/verdict";
 export type { VerdictCapture } from "./orchestration/verdict";

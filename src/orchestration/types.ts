@@ -135,6 +135,40 @@ export interface PipelineRouting {
 }
 
 /**
+ * Transition-policy defaults for the stepped workflow engine.
+ *
+ * WHY this exists (docs/contracts/config.md): the two policy decisions the loop
+ * makes -- whether a `changes_requested` verdict with rounds remaining advances
+ * to another code round or halts, and whether the linear phases (plan ->
+ * security -> code -> review) auto-advance or pause for a driver decision -- are
+ * values a caller might reasonably want to change, so they are SETTINGS with
+ * efficient defaults, never hardcoded constants inlined in the engine.
+ *
+ * Each field is OPTIONAL and defaults to today's exact behavior, so an absent
+ * `WorkflowDefaults` (the `runPipeline` path never sets one) is byte-for-byte
+ * the prior pipeline:
+ * - `onChangesRequested` (default `'advance'`): on `changes_requested` with
+ *   `round < maxRounds`, does the DEFAULT transition advance to the next code
+ *   round (`'advance'`) or stop (`'stop'`)? `'advance'` reproduces the loop.
+ * - `autoAdvance` (default `true`): are the forward linear edges (plan->next,
+ *   security->code, code->review) marked as the default transition (`true`, so
+ *   `autoDriver` walks the graph) or is `stop` the default at each linear phase
+ *   (`false`, so an auto-driver halts and a human/orchestrator driver chooses)?
+ * - `maxRounds` / `defaultComplexity`: stepped-native mirrors of the values a
+ *   `PipelineConfig` carries as its required `maxRounds` and
+ *   `routing.defaultComplexity`. When both are supplied the top-level config
+ *   fields win (they are the validated, authoritative source in the
+ *   `runPipeline` path); these let a direct `createWorkflowSession` caller that
+ *   has no routing still name a default complexity.
+ */
+export interface WorkflowDefaults {
+  onChangesRequested?: "advance" | "stop";
+  autoAdvance?: boolean;
+  maxRounds?: number;
+  defaultComplexity?: Complexity;
+}
+
+/**
  * Everything `runPipeline` needs to drive one plan -> (code<->review) run.
  *
  * `planner` is the ONLY optional role: a run may skip planning, but it always
@@ -171,6 +205,13 @@ export interface PipelineConfig {
    * `config.models`). See `PipelineRouting`.
    */
   routing?: PipelineRouting;
+  /**
+   * OPTIONAL transition-policy overrides for the stepped engine underneath
+   * `runPipeline`. Absent (as `runPipeline` always leaves it) every knob takes
+   * its today's-behavior default, so the run is byte-for-byte the prior
+   * pipeline. See `WorkflowDefaults`.
+   */
+  defaults?: WorkflowDefaults;
 }
 
 /**
@@ -258,3 +299,114 @@ export class OrchestrationError extends Error {
     this.detail = detail;
   }
 }
+
+/**
+ * The phases of the stepped workflow graph, in the order they normally run.
+ *
+ * `plan` and `security` are conditional (a plan phase only when a planner role
+ * is configured; a security phase only on an `elevated` surface WITH a security
+ * role). `code` and `review` alternate for up to `maxRounds` rounds. `done` is
+ * the terminal phase -- a state in `done` is never stepped again; its outcome is
+ * read via `toPipelineResult`. This enum is the single source of truth for the
+ * step graph that used to live as inline control flow inside `runPipeline`.
+ */
+export type WorkflowPhase = "plan" | "security" | "code" | "review" | "done";
+
+/**
+ * The kind of edge a driver can take out of a completed step.
+ *
+ * - `advance`: move forward along the linear graph (plan->next, security->code,
+ *   code->review) or, out of a `changes_requested` review, on to the next code
+ *   round.
+ * - `rework`: re-run the SAME role for another attempt without moving forward --
+ *   from a code phase it re-runs the coder (another `code:N` turn, no review in
+ *   between); offered after an `approved` review so a driver can force one more
+ *   coder pass. It is NEVER a default transition.
+ * - `stop`: settle the run (phase -> `done`). The default on an `approved`
+ *   review and on a `changes_requested` review that has exhausted `maxRounds`.
+ */
+export type TransitionKind = "advance" | "rework" | "stop";
+
+/**
+ * One edge a driver may take out of the step that just completed.
+ *
+ * A `step` returns the FULL set of available transitions with exactly one marked
+ * `isDefault` (under the resolved `WorkflowDefaults`); `autoDriver` picks that
+ * one, a human/orchestrator driver may pick any. `toPhase`/`toRound` are where
+ * the edge leads -- `applyTransition` reads only these two to compute the next
+ * state, which is what keeps it a PURE function of `(state, chosen)`.
+ */
+export interface AvailableTransition {
+  kind: TransitionKind;
+  isDefault: boolean;
+  toPhase: WorkflowPhase;
+  toRound: number;
+}
+
+/**
+ * The explicit, inspectable state of a workflow run BETWEEN steps.
+ *
+ * This is the value a stepped driver (a human UI, the conversational
+ * orchestrator, or `runPipeline`'s auto-driver) threads from one `step` to the
+ * next. It carries everything a later phase needs -- the plan summary and the
+ * last coder output feed the next prompt; `complexity`/`effective` drive model
+ * selection; `verdicts`/`runIds` accumulate the same values the old
+ * `PipelineResult` exposed, so `toPipelineResult` can reproduce it exactly.
+ * `phase` is the phase the NEXT `step` will run; `done`/`approved` are set by
+ * `applyTransition` when a `stop` edge is taken.
+ */
+export interface WorkflowState {
+  phase: WorkflowPhase;
+  /** The current code<->review round (1-based); also the label in `code:N`/`review:N`. */
+  round: number;
+  /** The planner's final text (or `''` with no planner), fed to the round-1 coder. */
+  planSummary: string;
+  /** The most recent coder output, fed to the reviewer that follows it. */
+  changeSummary: string;
+  /** The planner's structured complexity tier, when it submitted one. */
+  complexity?: Complexity;
+  /** The planner's structured security surface, when it submitted one. */
+  securitySurface?: SecuritySurface;
+  /** The security phase's final text (or `''`), threaded into round-1 coder + every reviewer. */
+  securityNotes: string;
+  /** The complexity every pre-plan role routes on (routing.defaultComplexity ?? 'medium'). */
+  preComplexity: Complexity;
+  /** The complexity every post-plan role routes on (`complexity ?? preComplexity`). */
+  effective: Complexity;
+  /** Verdicts in round order; `length` is the completed-round count (== result `rounds`). */
+  verdicts: Verdict[];
+  /** Every role-run's id in run order (planner, security, then coder/reviewer per round). */
+  runIds: string[];
+  /** True once a `stop` edge has settled the run; the driver loop stops stepping. */
+  done: boolean;
+  /** The settled approval outcome, set by `applyTransition` on a `stop` edge. */
+  approved: boolean;
+}
+
+/**
+ * What one `step` returns: the state AFTER running the pending role turn (runId
+ * appended, verdict/plan recorded, ledger written) but BEFORE any transition is
+ * committed, the immediate `result` of the turn for a driver to inspect, and the
+ * `transitions` on offer. Committing a transition is a separate, pure
+ * `applyTransition(state, chosen)` call -- `step` never advances the phase
+ * itself, which is what lets a driver decide.
+ */
+export interface StepResult {
+  state: WorkflowState;
+  result: {
+    phase: WorkflowPhase;
+    runId: string;
+    text: string;
+    verdict?: Verdict;
+    plan?: Plan;
+  };
+  transitions: AvailableTransition[];
+}
+
+/**
+ * A driver: given the transitions a `step` offers, choose exactly one to commit.
+ * `autoDriver` (picks the `isDefault` edge) reproduces `runPipeline`; a stepped
+ * UI or the conversational orchestrator supplies its own, e.g. one that pauses
+ * on every step or forces a rework.
+ */
+export type Driver = (transitions: AvailableTransition[]) => AvailableTransition;

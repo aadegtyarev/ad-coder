@@ -14,6 +14,12 @@ import { MemoryLedgerSink } from "../src/ledger/ledger";
 import { OrchestrationError } from "../src/orchestration/types";
 import type { PipelineRouting, RoleSpec, Verdict } from "../src/orchestration/types";
 import { runPipeline } from "../src/orchestration/pipeline";
+import {
+  applyTransition,
+  autoDriver,
+  createWorkflowSession,
+} from "../src/orchestration/session";
+import type { AvailableTransition, WorkflowState } from "../src/orchestration/types";
 import { parseVerdict, SUBMIT_VERDICT_TOOL_NAME } from "../src/orchestration/verdict";
 import { parsePlan, SUBMIT_PLAN_TOOL_NAME } from "../src/orchestration/plan";
 import type { Plan } from "../src/orchestration/types";
@@ -825,4 +831,146 @@ test("routing (e): with no routing, each turn runs on its own RoleSpec.model", a
   // Routing absent: the configured RoleSpec.model is used verbatim.
   expect(log.coder).toBe("cheap");
   expect(log.reviewer).toBe("strong");
+});
+
+/**
+ * Drive a session to completion with a supplied driver, returning the settled
+ * state. Mirrors runPipeline's loop but lets a test choose each transition (the
+ * whole point of the stepped engine) rather than always taking the default.
+ */
+async function drive(
+  session: ReturnType<typeof createWorkflowSession>,
+  driver: (transitions: AvailableTransition[], state: WorkflowState) => AvailableTransition,
+): Promise<WorkflowState> {
+  let state = session.initialState();
+  while (!state.done) {
+    const { state: settled, transitions } = await session.step(state);
+    state = applyTransition(settled, driver(transitions, settled));
+  }
+  return state;
+}
+
+/** Sum the provider-reported total cost across every ledger record. */
+function totalCost(sink: MemoryLedgerSink): number {
+  return sink.records().reduce((acc, r) => acc + r.usage.cost.total, 0);
+}
+
+test("stepped: auto-driver yields the same verdict/rounds/ledger as runPipeline", async () => {
+  const changes: Verdict = {
+    status: "changes_requested",
+    issues: [{ severity: "major", what: "handle empty input" }],
+    summary: "needs a fix",
+  };
+  const approve: Verdict = { status: "approved", issues: [], summary: "fixed" };
+  const scenario = () => [
+    fauxAssistantMessage("plan it"),
+    fauxAssistantMessage("code r1"),
+    ...reviewerTurn(changes),
+    fauxAssistantMessage("code r2"),
+    ...reviewerTurn(approve),
+  ];
+
+  // Reference: runPipeline over a fixed faux scenario.
+  const a = fixture();
+  const aSink = new MemoryLedgerSink();
+  a.faux.setResponses(scenario());
+  const viaPipeline = await runPipeline({
+    targetDir: a.targetDir,
+    models: a.models,
+    task: "implement Q",
+    maxRounds: 3,
+    roles: { planner: a.role("planner", "You plan."), coder: a.role("coder", "You code."), reviewer: reviewerRole(a) },
+    ledgerSink: aSink,
+  });
+
+  // Same scenario, driven step-by-step with autoDriver.
+  const b = fixture();
+  const bSink = new MemoryLedgerSink();
+  b.faux.setResponses(scenario());
+  const session = createWorkflowSession({
+    targetDir: b.targetDir,
+    models: b.models,
+    task: "implement Q",
+    maxRounds: 3,
+    roles: { planner: b.role("planner", "You plan."), coder: b.role("coder", "You code."), reviewer: reviewerRole(b) },
+    ledgerSink: bSink,
+  });
+  const settled = await drive(session, (transitions) => autoDriver(transitions));
+
+  expect(settled.approved).toBe(viaPipeline.approved);
+  expect(settled.verdicts.length).toBe(viaPipeline.rounds);
+  expect(settled.verdicts).toEqual(viaPipeline.verdicts);
+  const labels = (sink: MemoryLedgerSink) => sink.records().map((r) => `${r.role}/${r.step}`);
+  expect(labels(bSink)).toEqual(labels(aSink));
+  expect(totalCost(bSink)).toBe(totalCost(aSink));
+});
+
+test("stepped: a rework driver re-runs the coder with no review in between", async () => {
+  const fx = fixture();
+  const sink = new MemoryLedgerSink();
+  const approve: Verdict = { status: "approved", issues: [], summary: "ok" };
+  // code:1, then (rework) code:2, then review:2 approves.
+  fx.faux.setResponses([
+    fauxAssistantMessage("code r1"),
+    fauxAssistantMessage("code r2"),
+    ...reviewerTurn(approve),
+  ]);
+  const session = createWorkflowSession({
+    targetDir: fx.targetDir,
+    models: fx.models,
+    task: "implement R",
+    maxRounds: 3,
+    roles: { coder: fx.role("coder", "You code."), reviewer: reviewerRole(fx) },
+    ledgerSink: sink,
+  });
+
+  // Rework once out of the first code phase, then take defaults.
+  let reworked = false;
+  const settled = await drive(session, (transitions) => {
+    const rework = transitions.find((t) => t.kind === "rework");
+    if (!reworked && rework !== undefined) {
+      reworked = true;
+      return rework;
+    }
+    return autoDriver(transitions);
+  });
+
+  const steps = sink.records().map((r) => r.step);
+  expect(steps).toContain("code:1");
+  expect(steps).toContain("code:2");
+  // Exactly one review round, and never a review:1 (the rework skipped it).
+  const reviewSteps = [...new Set(steps.filter((s) => s.startsWith("review:")))];
+  expect(reviewSteps).toEqual(["review:2"]);
+  expect(steps).not.toContain("review:1");
+  expect(settled.round).toBe(2);
+  expect(settled.approved).toBe(true);
+});
+
+test("stepped: a stop-after-plan driver ends with no code or review records", async () => {
+  const fx = fixture();
+  const sink = new MemoryLedgerSink();
+  const plan: Plan = { complexity: "medium", securitySurface: "none", summary: "s" };
+  fx.faux.setResponses([...plannerTurn(plan)]);
+  const session = createWorkflowSession({
+    targetDir: fx.targetDir,
+    models: fx.models,
+    task: "implement S",
+    maxRounds: 3,
+    roles: { planner: plannerRole(fx), coder: fx.role("coder", "You code."), reviewer: reviewerRole(fx) },
+    ledgerSink: sink,
+  });
+
+  // Stop immediately after the plan step instead of advancing to code.
+  const settled = await drive(session, (transitions) => {
+    const stop = transitions.find((t) => t.kind === "stop");
+    return stop ?? autoDriver(transitions);
+  });
+
+  const steps = sink.records().map((r) => r.step);
+  expect(steps).toContain("plan");
+  expect(steps.some((s) => s.startsWith("code:"))).toBe(false);
+  expect(steps.some((s) => s.startsWith("review:"))).toBe(false);
+  expect(settled.done).toBe(true);
+  expect(settled.approved).toBe(false);
+  expect(settled.verdicts).toHaveLength(0);
 });

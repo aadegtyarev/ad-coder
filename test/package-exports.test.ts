@@ -1,13 +1,16 @@
 import { expect, test } from "bun:test";
 import {
   anthropicCompatiblePreset,
+  applyTransition,
   assertTurnFitsBudget,
+  autoDriver,
   buildDefaultProfile,
   buildSubmitPlanTool,
   buildSubmitVerdictTool,
   ContextBudgetError,
   ContextCompactor,
   createRoleRunner,
+  createWorkflowSession,
   deepseekPreset,
   defineTool,
   diffUsage,
@@ -39,7 +42,9 @@ import {
 } from "ad-coder";
 import type {
   ApiKind,
+  AvailableTransition,
   Complexity,
+  Driver,
   ContextBudget,
   ConversationConfig,
   ConversationSession,
@@ -77,13 +82,18 @@ import type {
   RunRoleOptions,
   RunRoleParams,
   RunRoleResult,
+  StepResult,
   Summarizer,
   Tool,
+  TransitionKind,
   VerdictCapture,
   Verdict,
   VerdictIssue,
   VerdictStatus,
+  WorkflowDefaults,
   WorkflowModule,
+  WorkflowPhase,
+  WorkflowState,
 } from "ad-coder";
 
 // The README documents `from "ad-coder"` as the public surface, which only
@@ -114,6 +124,9 @@ test("the package is importable by its published name", () => {
   expect(typeof RunnerError).toBe("function");
   expect(typeof resolveTargetDir).toBe("function");
   expect(typeof runPipeline).toBe("function");
+  expect(typeof createWorkflowSession).toBe("function");
+  expect(typeof applyTransition).toBe("function");
+  expect(typeof autoDriver).toBe("function");
   expect(typeof OrchestrationError).toBe("function");
   expect(typeof buildSubmitVerdictTool).toBe("function");
   expect(typeof SUBMIT_VERDICT_TOOL_NAME).toBe("string");
@@ -168,6 +181,20 @@ test("the package is importable by its published name", () => {
   const _pipelineResult: PipelineResult | undefined = undefined;
   const _pipelineRouting: PipelineRouting | undefined = undefined;
   expect(_pipelineRouting).toBeUndefined();
+  const _workflowState: WorkflowState | undefined = undefined;
+  const _stepResult: StepResult | undefined = undefined;
+  const _availableTransition: AvailableTransition | undefined = undefined;
+  const _transitionKind: TransitionKind | undefined = undefined;
+  const _workflowPhase: WorkflowPhase | undefined = undefined;
+  const _workflowDefaults: WorkflowDefaults | undefined = undefined;
+  const _driver: Driver | undefined = undefined;
+  expect(_workflowState).toBeUndefined();
+  expect(_stepResult).toBeUndefined();
+  expect(_availableTransition).toBeUndefined();
+  expect(_transitionKind).toBeUndefined();
+  expect(_workflowPhase).toBeUndefined();
+  expect(_workflowDefaults).toBeUndefined();
+  expect(_driver).toBeUndefined();
   const _orchCode: OrchestrationErrorCode | undefined = undefined;
   const _apiKind: ApiKind | undefined = undefined;
   const _credSource: CredentialSource | undefined = undefined;

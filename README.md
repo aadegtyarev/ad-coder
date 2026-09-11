@@ -99,6 +99,17 @@ Per-role model selection is optionally complexity-driven: pass a `routing`
 role's model is chosen from the planner-rated complexity. Routing is optional —
 omit it and each role runs on its configured `RoleSpec.model` exactly as before.
 
+`runPipeline` is the autonomous driver over a STEPPED engine you can also drive
+yourself. `createWorkflowSession(config)` exposes the same plan → [security] →
+code ⇄ review graph as an explicit `WorkflowState`: `step(state)` runs the one
+pending role turn and hands back the available transitions (`advance`, `rework`,
+`stop`) without committing one, and the pure `applyTransition(state, chosen)`
+gives the next state — so a human-stepped UI or the conversational orchestrator
+can decide each transition. `runPipeline` just takes the default transition
+every step (`autoDriver`). Transition policy is a setting, not a constant: an
+optional `WorkflowDefaults` (`onChangesRequested`, `autoAdvance`) defaults to the
+autonomous behavior.
+
 ## Documentation
 
 - [Architecture](docs/ARCHITECTURE.md) — components and how they connect
