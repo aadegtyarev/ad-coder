@@ -240,6 +240,24 @@ module-locality from the touched-file set to decide what can parallelize.
   prompt = raw file read (byte-preserving, no templating — it is the cache prefix);
   task prompt = templatable via pi's loadPromptTemplates. Fail loud on an
   unresolvable name. Fits "small prompts + built-in and custom roles". Small.
+- **`ad-coder bootstrap` — start a NEW project (research-first)** — the greenfield
+  sibling of `init` below (which ADOPTS an existing project). LDO's `/ldo-bootstrap`,
+  which THIS project itself came from: a conversational, research-first flow —
+  (1) separate the problem from the proposed solution; (2) PRIOR-ART RESEARCH ("does
+  it already exist? can we build ON something?") via a researcher role/subagent with
+  WEB tools; (3) shaping questions, only the ones that FORK the stack; (4) propose a
+  stack + phased roadmap, each choice with a rejected alternative; (5) `git init`
+  locally + OFFER to create a repo; (6) hand the first Phase-0 task to the pipeline.
+  KEY: the research step is the highest-LEVERAGE one because it runs BEFORE a line of
+  code and can change the whole FOUNDATION — self-proven here (the prior-art search
+  found the pi packages and turned "write a bespoke harness" into "build on an MIT
+  SDK"). So research is first-class in bootstrap, never skipped. This is the
+  GREENFIELD MODE of the conversational orchestrator; `init` is the ADOPT-EXISTING
+  mode — two entry points. Depends on: the orchestrator (its mode) + a researcher
+  role with web tools (tools-seam DONE; web tools + network-default-open both decided)
+  + the git-init/offer-repo step (Publisher-adjacent). The first publish + repo
+  bootstrap of ad-coder itself was done BY HAND this session; bootstrap automates it
+  for the next project.
 - **`ad-coder init` — adopt an existing project** (built by another harness, e.g.
   Claude Code). DISCOVER and DECLARE, never overwrite. Two tiers: (A) mechanical —
   adopt existing gates from the project's own configs (package.json scripts,
