@@ -91,6 +91,20 @@ workflows — one substrate, swappable drivers.
   coder, looked, sent it back or on to the reviewer") and the **orchestrator** (an
   autonomous driver role). The orchestrator is NOT privileged — it is one driver of
   the same stepped engine, not the only way to run a workflow.
+
+- **The orchestrator is ALWAYS present; auto/manual is a dial on its AUTHORITY, not
+  a separate UI.** You can always talk to it — discuss, ask it to run a specific
+  step or review something. What the auto/manual switch changes is how much it
+  DRIVES the pass: in `auto` it advances steps itself; in `manual` the human
+  advances (a slash-command to run a named role, or a natural-language request to
+  the orchestrator), and it runs the one step, shows the result, and waits. So the
+  two "drivers" are not two modes you pick between — the orchestrator is the
+  ever-present surface, and the human's authority over transitions is turned up or
+  down.
+- **With no workflow connected there are just the roles**, run individually (that
+  is `runRole` + the human deciding what runs next) — which is exactly the shape of
+  manual stepping. A workflow only adds a step-graph (the transitions) over the same
+  roles.
 - **Driver and cross-cutting roles** (orchestrator, researcher, the common preamble)
   live OUTSIDE any workflow — `prompts/roles/`, `prompts/common/`. Their prompts are
   a DIFFERENT CATEGORY from a workflow's worker prompts, which live inside the
@@ -448,7 +462,11 @@ workflows — one substrate, swappable drivers.
 - **TUI — the human surface to everything, built for convenience** (Phase 3, after
   the orchestrator). Not a showcase: it EXPOSES the machinery already built,
   clearly and reachably. Chat with the orchestrator (images paste in later, fed to
-  a vision model via .ad-coder/scratch/). EVERY setting is reachable and clear in
+  an AUTO/MANUAL mode switch (always visible) dials how much the orchestrator drives
+    the pass; the orchestrator chat is ALWAYS available, only its influence changes.
+    Run a role two ways: a SLASH/COMMAND with convenient names, grouped and sorted,
+    OR a natural-language request to the orchestrator — it runs the step and shows
+    the result. EVERY setting is reachable and clear in
   the TUI, not just configurable in code — model routing/profiles, compaction mode
   incl. disable->halt, percent-of-window budgets, providers, per-role tools; never
   buried. STATISTICS — the ledger made visible: live and historical cost per
