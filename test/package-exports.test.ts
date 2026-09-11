@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import {
   anthropicCompatiblePreset,
   assertTurnFitsBudget,
+  buildDefaultProfile,
   buildSubmitPlanTool,
   buildSubmitVerdictTool,
   ContextBudgetError,
@@ -17,8 +18,11 @@ import {
   openaiCompatiblePreset,
   openrouterPreset,
   OrchestrationError,
+  parseProfile,
   parseRegistryConfig,
+  ProfileError,
   RegistryError,
+  resolveProfile,
   resolveRegistry,
   resolveTargetDir,
   runPipeline,
@@ -34,6 +38,7 @@ import type {
   Complexity,
   ContextBudget,
   CredentialSource,
+  DefaultProfileModels,
   GateReport,
   IssueSeverity,
   ModelConfig,
@@ -42,12 +47,18 @@ import type {
   OrchestrationErrorCode,
   PipelineConfig,
   PipelineResult,
+  Profile,
+  ProfileEntry,
+  ProfileErrorCode,
+  ProfileRole,
   ProviderConfig,
   QualityGate,
   RegistryConfig,
   RegistryErrorCode,
   ResolvedRegistry,
+  ResolvedSelection,
   RoleRunner,
+  SpawnOverride,
   RoleSpec,
   RoundRecord,
   SecuritySurface,
@@ -96,6 +107,10 @@ test("the package is importable by its published name", () => {
   expect(typeof SUBMIT_PLAN_TOOL_NAME).toBe("string");
   expect(typeof parseRegistryConfig).toBe("function");
   expect(typeof resolveRegistry).toBe("function");
+  expect(typeof parseProfile).toBe("function");
+  expect(typeof resolveProfile).toBe("function");
+  expect(typeof buildDefaultProfile).toBe("function");
+  expect(typeof ProfileError).toBe("function");
   expect(typeof deepseekPreset).toBe("function");
   expect(typeof openrouterPreset).toBe("function");
   expect(typeof openaiCompatiblePreset).toBe("function");
@@ -133,6 +148,20 @@ test("the package is importable by its published name", () => {
   const _registryConfig: RegistryConfig | undefined = undefined;
   const _registryErrCode: RegistryErrorCode | undefined = undefined;
   const _resolvedRegistry: ResolvedRegistry | undefined = undefined;
+  const _profile: Profile | undefined = undefined;
+  const _profileEntry: ProfileEntry | undefined = undefined;
+  const _profileRole: ProfileRole | undefined = undefined;
+  const _spawnOverride: SpawnOverride | undefined = undefined;
+  const _resolvedSelection: ResolvedSelection | undefined = undefined;
+  const _profileErrCode: ProfileErrorCode | undefined = undefined;
+  const _defaultProfileModels: DefaultProfileModels | undefined = undefined;
+  expect(_profile).toBeUndefined();
+  expect(_profileEntry).toBeUndefined();
+  expect(_profileRole).toBeUndefined();
+  expect(_spawnOverride).toBeUndefined();
+  expect(_resolvedSelection).toBeUndefined();
+  expect(_profileErrCode).toBeUndefined();
+  expect(_defaultProfileModels).toBeUndefined();
   expect(_apiKind).toBeUndefined();
   expect(_credSource).toBeUndefined();
   expect(_modelConfig).toBeUndefined();

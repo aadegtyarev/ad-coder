@@ -47,6 +47,16 @@ network (pi-ai's fauxProvider) and demonstrated live on DeepSeek.
   NAME; a missing one throws `RegistryError('missing_credential', <NAME>)`. Five
   presets ship: `deepseekPreset`, `openrouterPreset`, `openaiCompatiblePreset`,
   `anthropicCompatiblePreset`, and the OAuth-delegated `openaiCodexPreset`.
+- **Profiles** — `src/profiles/`: the composer layer above the registry that
+  resolves a `(role, complexity)` cell — or a per-spawn `SpawnOverride` — to a
+  registry model NAME and then to a live pi `Model<Api>`, plus an advisory
+  `{ maxOutput, cacheRetention }`. A strict fail-loud `parseProfile` validator
+  (five `ProfileRole`s including a forward-looking `recorder`, seen-Set duplicate
+  detection on the `role:complexity` key), `resolveProfile` (which rethrows a
+  registry `unknown_model` as `ProfileError('unknown_model')` so the layer
+  presents one typed surface), and a provider-agnostic `buildDefaultProfile`
+  builder. The advisory hints have no sink yet and nothing wires this into
+  `runPipeline` — both are a deliberate follow-on.
 - **Built-in role prompts** — `prompts/{planner,coder,reviewer,security}.md`.
 - **Packaging** — MIT license, CI (typecheck + tests on Bun), and one-command
   install/update from GitHub.

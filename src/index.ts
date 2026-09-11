@@ -79,3 +79,16 @@ export type {
   ResolvedRegistry,
 } from "./registry/types";
 export type { RegistryErrorCode } from "./registry/errors";
+export { parseProfile } from "./profiles/validate";
+export { resolveProfile } from "./profiles/resolve";
+export { buildDefaultProfile } from "./profiles/default-profile";
+export { ProfileError } from "./profiles/errors";
+export type { ProfileErrorCode } from "./profiles/errors";
+export type { DefaultProfileModels } from "./profiles/default-profile";
+export type {
+  Profile,
+  ProfileEntry,
+  ProfileRole,
+  ResolvedSelection,
+  SpawnOverride,
+} from "./profiles/types";
