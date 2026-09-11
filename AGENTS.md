@@ -70,6 +70,20 @@ nobody opens. Durable knowledge goes to the place the next reader actually looks
 turn, write it there; when it does not, let it go. This applies to the orchestrator
 as much as to whoever is developing ad-coder.
 
+## Naming: workflow vs pipeline
+
+Two words that are easy to blur, kept distinct on purpose. A **workflow** is the
+stepped SUBSTRATE — the scriptable step-graph concept: `createWorkflowSession` owns
+a graph, `step`/`applyTransition`/a `Driver` walk it, and any number of workflows
+(a bare role, a custom step-graph a user drops under `.ad-coder/workflows/`) can ride
+it. The **pipeline** is the ONE built-in workflow: the plan → [security] → code ⇄
+review flow (`runPipeline`, the auto-driver over a workflow session). So the
+orchestrator's autonomous tool is `run_pipeline` (it runs that one built-in flow to
+completion), while its manual `run_step` / `choose_transition` tools drive the
+underlying WORKFLOW session one step at a time. When you write "workflow" mean the
+substrate/graph; when you write "pipeline" mean the specific built-in flow — do not
+use them interchangeably.
+
 ## An enforceable rule is a contract, not a note here
 
 This file is for ORIENTATION and non-enforced conventions. A rule that guides the

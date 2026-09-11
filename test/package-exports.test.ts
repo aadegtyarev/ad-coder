@@ -10,6 +10,7 @@ import type {
   ConversationStepOptions,
   ConversationToolCall,
   ConversationTurnResult,
+  CostReport,
   CredentialSource,
   DefaultProfileModels,
   DriveErrorCode,
@@ -19,6 +20,10 @@ import type {
   IssueSeverity,
   ModelConfig,
   OrchestrationErrorCode,
+  Orchestrator,
+  OrchestratorConfig,
+  OrchestratorDeps,
+  OrchestratorErrorCode,
   PipelineConfig,
   PipelineResult,
   PipelineRouting,
@@ -41,12 +46,15 @@ import type {
   RoleRunner,
   RoleSpec,
   RoundRecord,
+  RunPipelineResult,
   RunRoleOptions,
   RunRoleParams,
   RunRoleResult,
   SecuritySurface,
   SpawnOverride,
+  StepCost,
   StepResult,
+  StepView,
   Summarizer,
   Tool,
   TransitionKind,
@@ -65,10 +73,13 @@ import {
   assertTurnFitsBudget,
   autoDriver,
   buildDefaultProfile,
+  buildOrchestratorTools,
   buildSubmitPlanTool,
   buildSubmitVerdictTool,
+  CHOOSE_TRANSITION_TOOL_NAME,
   ContextBudgetError,
   ContextCompactor,
+  createOrchestrator,
   createRoleRunner,
   createWorkflowSession,
   DriveError,
@@ -80,6 +91,7 @@ import {
   isWorkflowModule,
   Ledger,
   OrchestrationError,
+  OrchestratorError,
   openaiCodexPreset,
   openaiCompatiblePreset,
   openrouterPreset,
@@ -88,6 +100,8 @@ import {
   parseProfile,
   parseRegistryConfig,
   RegistryError,
+  RUN_PIPELINE_TOOL_NAME,
+  RUN_STEP_TOOL_NAME,
   RunnerError,
   resolvePipelineConfig,
   resolveProfile,
@@ -96,11 +110,13 @@ import {
   resolveTargetDir,
   runPipeline,
   runRole,
+  SHOW_COST_TOOL_NAME,
   SUBMIT_PLAN_TOOL_NAME,
   SUBMIT_VERDICT_TOOL_NAME,
   SUMMARIZATION_PROMPT,
   silentNoopWarning,
   startConversation,
+  startOrchestrator,
   toolCallCounts,
   UsageDeltaTracker,
 } from "ad-coder";
@@ -159,6 +175,14 @@ test("the package is importable by its published name", () => {
   expect(typeof DriveError).toBe("function");
   expect(typeof driveWorkflow).toBe("function");
   expect(typeof silentNoopWarning).toBe("function");
+  expect(typeof createOrchestrator).toBe("function");
+  expect(typeof buildOrchestratorTools).toBe("function");
+  expect(typeof startOrchestrator).toBe("function");
+  expect(typeof OrchestratorError).toBe("function");
+  expect(typeof RUN_PIPELINE_TOOL_NAME).toBe("string");
+  expect(typeof RUN_STEP_TOOL_NAME).toBe("string");
+  expect(typeof CHOOSE_TRANSITION_TOOL_NAME).toBe("string");
+  expect(typeof SHOW_COST_TOOL_NAME).toBe("string");
   const _budgetPercents: BudgetPercents | undefined = undefined;
   const _resolvableProvider: ResolvableProvider | undefined = undefined;
   const _resolveConfigOpts: ResolvePipelineConfigOptions | undefined = undefined;
@@ -219,6 +243,22 @@ test("the package is importable by its published name", () => {
   expect(_workflowDefaults).toBeUndefined();
   expect(_driver).toBeUndefined();
   const _orchCode: OrchestrationErrorCode | undefined = undefined;
+  const _orchestrator: Orchestrator | undefined = undefined;
+  const _orchestratorDeps: OrchestratorDeps | undefined = undefined;
+  const _orchestratorConfig: OrchestratorConfig | undefined = undefined;
+  const _orchestratorErrCode: OrchestratorErrorCode | undefined = undefined;
+  const _runPipelineResult: RunPipelineResult | undefined = undefined;
+  const _stepView: StepView | undefined = undefined;
+  const _stepCost: StepCost | undefined = undefined;
+  const _costReport: CostReport | undefined = undefined;
+  expect(_orchestrator).toBeUndefined();
+  expect(_orchestratorDeps).toBeUndefined();
+  expect(_orchestratorConfig).toBeUndefined();
+  expect(_orchestratorErrCode).toBeUndefined();
+  expect(_runPipelineResult).toBeUndefined();
+  expect(_stepView).toBeUndefined();
+  expect(_stepCost).toBeUndefined();
+  expect(_costReport).toBeUndefined();
   const _apiKind: ApiKind | undefined = undefined;
   const _credSource: CredentialSource | undefined = undefined;
   const _modelConfig: ModelConfig | undefined = undefined;
