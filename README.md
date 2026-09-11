@@ -78,6 +78,25 @@ cache/cost facts.
 
 ## Run
 
+### Usage at a glance
+
+```sh
+ad-coder run   <script.ts>                                --target-dir <dir>
+ad-coder role  <planner|coder|reviewer|security> "<task>" --target-dir <dir>
+ad-coder drive "<task>"                                   --target-dir <dir> [--auto]
+```
+
+Shared options for `role` and `drive`:
+`--provider <deepseek|openrouter|openai-codex>`,
+`--strong-model`/`--mid-model`/`--cheap-model <name>`,
+`--max-rounds <n>`, `--default-complexity <trivial|medium|complex>`.
+
+**Seeing usage / help.** Running `ad-coder` with no command — or an unknown
+command or flag — prints this usage to stderr and exits non-zero. A proper
+per-command `--help`/`-h` (auto-derived from the command registry) is on the
+way; see [docs/contracts/cli.md](docs/contracts/cli.md).
+
+
 The canonical demo drives a real plan → [security] → code ⇄ review pipeline on a
 clean throwaway directory:
 
