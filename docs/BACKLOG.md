@@ -1,27 +1,22 @@
 # Backlog
 
+## Current priority
+
+- [next] Build the TUI over the headless conversation and orchestration
+  surfaces. Breakpoint control and composable isolation remain designed
+  requirements in `docs/ROADMAP.md`; they are not ahead of this priority.
+
 ## 2026-09-12
 
-- [done] Configurable session generation-call and provider-reported cost thresholds are enforced at the shared Models boundary and exposed through the console.
-- [next] Build the TUI over the headless conversation/orchestration surfaces.
 
-## Active sequence (confirmed 2026-09-11)
+## Provider reliability
 
-This ordering overrides the chronological notes below when choosing the next
-product task:
-
-1. ~~Activate the existing context summarizer/compaction path~~ — delivered in
-   squash-merged PR #6 (`f110b26`); `bun test`, `bun run check`, and CI passed.
-2. ~~Implement per-command `--help` / `-h`, derived from the command registry~~
-   — delivered 2026-09-11; focused CLI tests, `bun run check`, and `bun test`
-   passed.
-3. ~~Build the minimal human console (5.5).~~ — delivered 2026-09-12; 206 tests,
-   typecheck, Biome, and diff checks passed.
-4. ~~Add configurable session turn-count and cost thresholds.~~ Delivered 2026-09-12.
-5. Build the TUI.
-
-Breakpoint control and composable isolation remain designed requirements in
-`docs/ROADMAP.md`; they are not ahead of this sequence.
+- [high] Diagnose the openai-codex OAuth pipeline's empty zero-cost stage
+  responses before treating it as a working provider. Close this only with a
+  deterministic regression test or repeatable smoke showing meaningful Planner
+  and Coder output plus a Reviewer verdict, or an earlier actionable CLI error.
+  Evidence: [failed 2026-09-12 pipeline smoke](reviews/2026-09-12-openai-codex-cli-pipeline-smoke.md)
+  and [earlier single-role observation](reviews/2026-09-11-human-cli-config-role.md).
 
 ## 2026-09-10
 

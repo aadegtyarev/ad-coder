@@ -20,6 +20,14 @@
 | Runtime suite and required quality command | not run | Bun unavailable (exit 127); scoped tests, full suite, and `bun run check` could not start |
 | Diff hygiene | passed | `git diff --check` passed |
 
+### Historical delivery-run evidence
+
+Before this review, the delivery handoff recorded a full local Bun 1.3.0 run:
+`bun test` reported 218 tests and 0 failures. This is retained as historical
+verification evidence only; it does not override this receipt's
+changes-requested verdict, because the review still found required
+harness-visible failure-path coverage unproven.
+
 ## Attacks
 
 | Vector | Outcome | Evidence |

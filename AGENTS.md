@@ -16,8 +16,15 @@ NOT cross GitHub to another machine, so it is lost the moment you switch hardwar
 - A design decision → `docs/ROADMAP.md` (or a decision record). ROADMAP is canonical.
 - A working convention or operator preference → this file.
 - Architecture / how a module works → `docs/ARCHITECTURE.md`.
+- An unresolved item and the current product priority → `docs/BACKLOG.md`.
+- Verification, review, and incident evidence → a dated file in `docs/reviews/`.
+- Measured provider or SDK research → the relevant `docs/*-economics.md` or
+  `docs/*-capabilities.md` research note.
 - A tool-local memory may hold at most lightweight pointers to the above and
   genuinely cross-project facts about the operator — never project content.
+
+README is navigation, not a second copy of these documents. Contracts remain
+the only home for enforceable project-wide rules.
 
 ## Prompts: small, but carry the load-bearing guard-rails
 
@@ -100,10 +107,25 @@ Reviewer blocking on a non-clean run).
 
 ## Step closeout
 
-After every material implementation step, persist the handoff state before
-stopping: update `docs/BACKLOG.md` with completion and the next priority, and
-update `docs/CHECKPOINT.md` with the verified result. Do not leave this project
-knowledge only in the chat transcript.
+After every material implementation step, persist the handoff before stopping:
+write a dated `docs/reviews/` receipt with the verdict and command evidence;
+update `docs/ARCHITECTURE.md` only when the current system map changed; and
+update `docs/BACKLOG.md` only for unresolved work and the current priority. Put
+decisions in `docs/ROADMAP.md` and research in its relevant research note.
+There is no parallel checkpoint file. Do not leave project knowledge only in a
+chat transcript or ignored harness runtime state.
+
+## Working-tree and harness notes
+
+- Changes go through a feature branch/worktree and PR; the operator merges. Do
+  not push directly to `main`. Historical direct-main commits `958254a` and
+  `c09e4ef` predate this rule and were accepted by operator decision.
+- The product requirement is that plan reuse and isolation remain composable;
+  do not inherit a harness limitation that makes them mutually exclusive.
+- Earlier legacy-LDO research runs failed when a StructuredOutput `findings`
+  field arrived malformed. Treat that as harness evidence, not a product fact;
+  provide already-verified facts or diagnose the harness before relying on that
+  research mode.
 
 
 
