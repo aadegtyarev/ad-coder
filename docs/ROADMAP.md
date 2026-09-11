@@ -69,6 +69,38 @@ module-locality from the touched-file set to decide what can parallelize.
   size gate, bounded fail-loud GateReport, argv-only (no shell string). Not yet
   wired into ad-coder's own build — a deliberate follow-up.
 
+## pi ecosystem: reuse the libraries, do not fork the agent (decided 2026-09-11)
+
+Prior-art recon of the pi ecosystem (`@earendil-works/*`, by badlogic). Decision:
+build on the LIBRARIES, never on the agent product.
+
+- Build on `pi-agent-core` (low-level core: the turn-level cacheRetention control our
+  economics needs), NOT on `pi-coding-agent` (the full `pi` CLI agent). Forking that
+  means endless upstream-chasing, and it deliberately SKIPS the pipeline / sub-agents /
+  plan-mode that are ad-coder's differentiation. In pi's own philosophy ("minimal core,
+  extend via packages, we skip sub-agents/plan-mode") ad-coder is exactly the
+  opinionated workflow layer you build yourself — so we do, standalone.
+- **Reuse `pi-tui`** (MIT, standalone — deps only marked + get-east-asian-width; no
+  coupling to the agent) as the TUI component library. Its built-ins map to our TUI
+  almost 1:1: SettingsList (every setting reachable), SelectList (session list), Editor
+  + autocomplete (chat input + slash commands), Markdown (role output), Image (pasted
+  images -> vision), Box/VStack/HStack/ScrollView (panels + live cost/context), Loader,
+  bracketed paste, themes; differential flicker-free rendering. ad-coder's TUI renders
+  OUR data (ledger stats, sessions, the conversation loop) through pi-tui's controls,
+  not a hand-rolled renderer. Adding it is a normal low-risk lib dependency.
+- **Evaluate `chord`** (app-composition runtime: services, RPC, replicated state,
+  plugins — the substrate pi's own RPC/package modes use) for the machine-API /
+  top-orchestrator+Telegram / multi-user / plugin layers. A framework-sized commitment,
+  so adopt deliberately for those specific features, not as the foundation.
+- **Evaluate `pi-telemetry`** (vendor-neutral span/event telemetry contracts,
+  exportable to standard tracing) as the substrate UNDER the ledger/observability: a run
+  is a span, a role turn a child span, usage/cost/toolCalls its attributes — exportable
+  observability instead of only our JSONL, and possibly consuming spans pi-agent-core
+  already emits.
+
+Net: standalone harness + our differentiation on pi-agent-core; reuse pi's libraries
+(pi-tui now; chord / pi-telemetry evaluated per-layer); never fork the agent.
+
 ## Workflow execution model (decided 2026-09-11)
 
 The unifying architecture under the orchestrator, stepped mode, and pluggable
