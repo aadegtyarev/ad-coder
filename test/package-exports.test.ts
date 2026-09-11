@@ -1,17 +1,25 @@
 import { expect, test } from "bun:test";
 import {
+  anthropicCompatiblePreset,
   assertTurnFitsBudget,
   buildSubmitPlanTool,
   buildSubmitVerdictTool,
   ContextBudgetError,
   ContextCompactor,
   createRoleRunner,
+  deepseekPreset,
   defineTool,
   diffUsage,
   GateRunner,
   isWorkflowModule,
   Ledger,
+  openaiCodexPreset,
+  openaiCompatiblePreset,
+  openrouterPreset,
   OrchestrationError,
+  parseRegistryConfig,
+  RegistryError,
+  resolveRegistry,
   resolveTargetDir,
   runPipeline,
   runRole,
@@ -22,16 +30,23 @@ import {
   UsageDeltaTracker,
 } from "ad-coder";
 import type {
+  ApiKind,
   Complexity,
   ContextBudget,
+  CredentialSource,
   GateReport,
   IssueSeverity,
+  ModelConfig,
   Plan,
   PlanCapture,
   OrchestrationErrorCode,
   PipelineConfig,
   PipelineResult,
+  ProviderConfig,
   QualityGate,
+  RegistryConfig,
+  RegistryErrorCode,
+  ResolvedRegistry,
   RoleRunner,
   RoleSpec,
   RoundRecord,
@@ -79,6 +94,14 @@ test("the package is importable by its published name", () => {
   expect(typeof SUBMIT_VERDICT_TOOL_NAME).toBe("string");
   expect(typeof buildSubmitPlanTool).toBe("function");
   expect(typeof SUBMIT_PLAN_TOOL_NAME).toBe("string");
+  expect(typeof parseRegistryConfig).toBe("function");
+  expect(typeof resolveRegistry).toBe("function");
+  expect(typeof deepseekPreset).toBe("function");
+  expect(typeof openrouterPreset).toBe("function");
+  expect(typeof openaiCompatiblePreset).toBe("function");
+  expect(typeof anthropicCompatiblePreset).toBe("function");
+  expect(typeof openaiCodexPreset).toBe("function");
+  expect(typeof RegistryError).toBe("function");
   // Type-only imports are erased; reference them so the imports are not unused.
   const _budget: ContextBudget | undefined = undefined;
   const _summarizer: Summarizer | undefined = undefined;
@@ -103,6 +126,20 @@ test("the package is importable by its published name", () => {
   const _pipelineConfig: PipelineConfig | undefined = undefined;
   const _pipelineResult: PipelineResult | undefined = undefined;
   const _orchCode: OrchestrationErrorCode | undefined = undefined;
+  const _apiKind: ApiKind | undefined = undefined;
+  const _credSource: CredentialSource | undefined = undefined;
+  const _modelConfig: ModelConfig | undefined = undefined;
+  const _providerConfig: ProviderConfig | undefined = undefined;
+  const _registryConfig: RegistryConfig | undefined = undefined;
+  const _registryErrCode: RegistryErrorCode | undefined = undefined;
+  const _resolvedRegistry: ResolvedRegistry | undefined = undefined;
+  expect(_apiKind).toBeUndefined();
+  expect(_credSource).toBeUndefined();
+  expect(_modelConfig).toBeUndefined();
+  expect(_providerConfig).toBeUndefined();
+  expect(_registryConfig).toBeUndefined();
+  expect(_registryErrCode).toBeUndefined();
+  expect(_resolvedRegistry).toBeUndefined();
   expect(_budget).toBeUndefined();
   expect(_summarizer).toBeUndefined();
   expect(_tool).toBeUndefined();

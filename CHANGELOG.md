@@ -39,6 +39,14 @@ network (pi-ai's fauxProvider) and demonstrated live on DeepSeek.
   via tool calls (`submit_verdict`, `submit_plan`); an elevated security surface
   runs a threat-modeling Security phase whose mitigations thread into the coder
   and every reviewer turn. Per-phase cost is visible in the ledger.
+- **Provider registry** — `src/registry/`: plain-data provider + model config,
+  a strict fail-loud `parseRegistryConfig` validator (https-only absolute base
+  URLs, no embedded userinfo), and `resolveRegistry` turning declared data plus
+  the harness environment into a pi `Models` collection with a stable-name
+  lookup. Credentials resolve through an injectable env accessor by declared var
+  NAME; a missing one throws `RegistryError('missing_credential', <NAME>)`. Five
+  presets ship: `deepseekPreset`, `openrouterPreset`, `openaiCompatiblePreset`,
+  `anthropicCompatiblePreset`, and the OAuth-delegated `openaiCodexPreset`.
 - **Built-in role prompts** — `prompts/{planner,coder,reviewer,security}.md`.
 - **Packaging** — MIT license, CI (typecheck + tests on Bun), and one-command
   install/update from GitHub.

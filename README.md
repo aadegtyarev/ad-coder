@@ -38,15 +38,34 @@ working on). Set the key for the provider(s) you use, e.g.:
 ```sh
 export DEEPSEEK_API_KEY=...      # DeepSeek
 export OPENROUTER_API_KEY=...    # OpenRouter
-export OPENAI_API_KEY=...        # OpenAI / Codex
-export ANTHROPIC_API_KEY=...     # Anthropic
+export OPENAI_API_KEY=...        # native OpenAI via openaiCompatiblePreset
+export ANTHROPIC_API_KEY=...     # native Anthropic via anthropicCompatiblePreset
 ```
 
-Presettable providers (all supported by pi-ai): **deepseek**, **openrouter**,
-**openai** and **openai-codex**, **anthropic**, plus **custom OpenAI-compatible**
-and **custom Anthropic-compatible** endpoints (LM Studio, vLLM, self-hosted) via
-a caller-supplied base URL. See [docs/pi-capabilities.md](docs/pi-capabilities.md)
-for the per-provider cache/cost facts.
+OpenAI Codex uses OAuth, not an environment key.
+
+The registry (`src/registry/`) ships exactly **five** provider presets:
+
+- **`deepseekPreset`** — DeepSeek, key from `DEEPSEEK_API_KEY`.
+- **`openrouterPreset`** — OpenRouter (dual-api; a model may override its own
+  `api`), key from `OPENROUTER_API_KEY`.
+- **`openaiCompatiblePreset`** — any OpenAI-compatible endpoint (LM Studio,
+  vLLM, self-hosted). Caller supplies `id`, `baseUrl`, and the credential
+  env-var name.
+- **`anthropicCompatiblePreset`** — any Anthropic-compatible endpoint. Caller
+  supplies `id`, `baseUrl`, and the credential env-var name.
+- **`openaiCodexPreset`** — OpenAI Codex. **OAuth-based, not an env-var key**;
+  the resolver delegates to pi-ai's shipped `openaiCodexProvider()`.
+
+There is deliberately **no** separate native-OpenAI or native-Anthropic preset.
+Reach **native OpenAI** through `openaiCompatiblePreset` with
+`baseUrl: "https://api.openai.com/v1"`, and **native Anthropic** through
+`anthropicCompatiblePreset` with `baseUrl: "https://api.anthropic.com"` — native
+Anthropic this way gives full `cacheRetention` control (the project's
+cache-control thesis). Every preset's base URL must be an absolute **https** URL.
+
+See [docs/pi-capabilities.md](docs/pi-capabilities.md) for the per-provider
+cache/cost facts.
 
 ## Run
 

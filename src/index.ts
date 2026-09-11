@@ -60,3 +60,22 @@ export { buildSubmitVerdictTool, SUBMIT_VERDICT_TOOL_NAME } from "./orchestratio
 export type { VerdictCapture } from "./orchestration/verdict";
 export { buildSubmitPlanTool, SUBMIT_PLAN_TOOL_NAME } from "./orchestration/plan";
 export type { PlanCapture } from "./orchestration/plan";
+export { parseRegistryConfig } from "./registry/validate";
+export { resolveRegistry } from "./registry/resolve";
+export {
+  deepseekPreset,
+  openrouterPreset,
+  openaiCompatiblePreset,
+  anthropicCompatiblePreset,
+  openaiCodexPreset,
+} from "./registry/presets";
+export { RegistryError } from "./registry/errors";
+export type {
+  ApiKind,
+  CredentialSource,
+  ModelConfig,
+  ProviderConfig,
+  RegistryConfig,
+  ResolvedRegistry,
+} from "./registry/types";
+export type { RegistryErrorCode } from "./registry/errors";
