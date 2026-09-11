@@ -43,3 +43,29 @@ quirk, an SDK signature, a measured cost), write it to `docs/` at that moment �
 batch at the end. Research that lives only in a chat transcript is lost when the
 session ends and re-paid in tokens the next time someone needs it. The repo is the
 durable store; the transcript is not.
+
+## Everything configurable is configurable; defaults are maximally efficient
+
+If a behavior has a reasonable alternative someone might want, expose it as
+configuration rather than hardcoding one choice. The counterweight to a small
+config surface is not fewer knobs — it is good DEFAULTS: ship the most efficient
+option (not the most conservative), so a user gets good behavior out of the box
+and can override any of it. "Opinionated defaults, everything overridable", never
+"configure everything yourself".
+
+This is not a soft convention — it is an ENFORCED contract that the reviewer reads
+and blocks on: `docs/contracts/config.md`. Otherwise config-worthy values get
+hardcoded as constants. It applies especially to the context/compaction strategy
+(see docs/ROADMAP.md): a user who wants full control must be able to turn
+auto-compaction OFF entirely and have the harness HALT and require a manual
+clear/compact command instead of silently summarizing history.
+
+## Put knowledge where it is read; keep the session lean
+
+Do not hoard state in the conversation — it is re-sent every turn and overflows.
+Do not scatter it into a memory store that does not travel or a scratch file
+nobody opens. Durable knowledge goes to the place the next reader actually looks:
+`docs/ROADMAP.md` (design), `docs/ARCHITECTURE.md` (how it works), this file
+(conventions), `docs/contracts/` (enforced rules). When something matters past the
+turn, write it there; when it does not, let it go. This applies to the orchestrator
+as much as to whoever is developing ad-coder.

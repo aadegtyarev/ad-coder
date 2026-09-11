@@ -39,3 +39,12 @@ assertion. Name what you are unsure of.
 Additive and backward-compatible by default. Credentials only from the environment,
 never from the target project. Typed errors carry names and numbers — never secrets
 or payloads. Keep runs short and atomic. Keep the docs in step with the change.
+
+## Keep the session lean; put knowledge where it is read
+Do not try to hold everything in the conversation — it is re-sent every turn, it
+costs, and it overflows. Do not scatter state into notes and files nobody reads.
+Durable knowledge goes where the next reader actually looks: the project's docs
+(`docs/ROADMAP.md` for design, `docs/ARCHITECTURE.md` for how it works, `AGENTS.md`
+for conventions, `docs/contracts/` for enforced rules). When something matters past
+this turn, write it there; when it does not, let it go. A lean session and
+knowledge in its right place beat a full context and a pile of unread files.

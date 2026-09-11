@@ -392,6 +392,34 @@ module-locality from the touched-file set to decide what can parallelize.
   after an approved verdict or a standalone tool the orchestrator invokes. This
   session bootstrapped the first publish by hand; the Publisher automates it.
 
+- **Configurable compaction (modes + disable + percent-of-window budget)** —
+  context management is the project's centerpiece, so its strategy is a first-class
+  knob, not a hardcode (enforced by docs/contracts/config.md). Modes: (a) `auto` —
+  summarize when the budget is exceeded (today's behavior); (b) `cache-aware` —
+  compact in LARGE, INFREQUENT steps so the new `[system + tools + summary]` prefix
+  stays stable across many following turns (editing the message-head invalidates
+  the whole tail's cache, so the win is amortizing that to once-per-big-step and
+  keeping the summary itself a re-cacheable stable prefix; the verbatim system
+  prompt and tool defs are never touched); (c) `disabled -> halt` — never summarize
+  silently, STOP and require an explicit manual clear/compact command
+  (gates-over-prompts applied to context, for users who want no automatic edits to
+  history). Also express the budget as a PERCENT of the model contextWindow
+  (resolved to absolute tokens against the model) so one budget is portable across
+  a 200k and a 32k model, keeping reserveTokens (room for the reply) as its own
+  knob. Default to the most efficient mode. Recon first: verify pi's request
+  assembly order (system -> tools -> messages) so the cache boundary is placed right.
+- **TUI — the human surface to everything, built for convenience** (Phase 3, after
+  the orchestrator). Not a showcase: it EXPOSES the machinery already built,
+  clearly and reachably. Chat with the orchestrator (images paste in later, fed to
+  a vision model via .ad-coder/scratch/). EVERY setting is reachable and clear in
+  the TUI, not just configurable in code — model routing/profiles, compaction mode
+  incl. disable->halt, percent-of-window budgets, providers, per-role tools; never
+  buried. STATISTICS — the ledger made visible: live and historical cost per
+  role/step/round/session, cache efficiency, break-even (the cost thesis is only
+  real if the user can SEE it). SESSION LIST — browse, inspect, resume, fork.
+  LIVE context/cache panel — usage vs budget, when compaction fired, hit ratio.
+  Built on pi-tui. The bar is CONVENIENT, not merely functional.
+
 ## Open backlog (mechanical)
 
 See docs/BACKLOG.md. Notably: ContextBudgetError should surface the effective
