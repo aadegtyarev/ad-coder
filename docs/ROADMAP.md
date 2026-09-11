@@ -266,6 +266,18 @@ module-locality from the touched-file set to decide what can parallelize.
   prompt = raw file read (byte-preserving, no templating — it is the cache prefix);
   task prompt = templatable via pi's loadPromptTemplates. Fail loud on an
   unresolvable name. Fits "small prompts + built-in and custom roles". Small.
+
+- **Workflows module (pluggable flow-scripts)** — the LDO-style pipeline flow ships
+  IN the harness but is OPT-IN: enable/disable the built-in flow, and let users author
+  their OWN workflows. HALF-BUILT already: `ad-coder run <script.ts>` loads a workflow
+  module (isWorkflowModule + WorkflowContext), so "write your own" partly exists as
+  run-a-file. GAP = turn run-a-file into a WORKFLOWS REGISTRY, the same declare +
+  resolve + presets shape as the provider registry and the profile module: built-in
+  workflows as NAMED discoverable entries + project workflows (.ad-coder/workflows/*.ts,
+  project overrides by name, mirrors the prompts-as-files search path) + a config to
+  enable/disable the built-in flow + pick-by-name (not only by file path). The built-in
+  pipeline becomes the DEFAULT workflow, not a hardcoded assumption. Slots after the
+  orchestrator (the thing that chooses and drives a workflow).
 - **`ad-coder bootstrap` — start a NEW project (research-first)** — the greenfield
   sibling of `init` below (which ADOPTS an existing project). LDO's `/ldo-bootstrap`,
   which THIS project itself came from: a conversational, research-first flow —
@@ -300,6 +312,21 @@ module-locality from the touched-file set to decide what can parallelize.
   checkpoint = one addressable unit. Durable reload from disk IS possible (unlike
   LDO's in-process resume cache). The session is where compaction's effect lives.
   Small extension of the runner seam.
+
+- **In-project scratch (working files + attachments)** — a gitignored working-files
+  area INSIDE the project (not external — knowledge and working material both stay
+  in the project), for: agent drops/downloads a file, TUI-pasted images (fed to a
+  vision model by path), and throwaway TEST SCRIPTS / SPIKES the agent writes AND
+  runs (the recon-before-planning pattern that has already caught wrong assumptions
+  twice). HOME: no new namespace — `.ad-coder/` is already the gitignored runtime
+  dir (ledger/sessions); scratch is `.ad-coder/scratch/`. GITIGNORE MECHANIC: write
+  `.ad-coder/.gitignore` containing `*` so the folder ignores its own contents and
+  the project's own `.gitignore` is never touched. TWO trust postures: external
+  content (downloads, pasted images) is inert data referenced by path; the agent's
+  own spikes are meant to RUN — which is exactly where the sandbox matters (the
+  spike runs inside the jail). Keying (decide when built): per-run
+  (`.ad-coder/scratch/<runId>/`, symmetric with the ledger) vs per-session (chat
+  attachments outlive a run) — likely both, same runId key as ledger/session.
 - **Multi-user + pluggable backlog** — multi-user is the SAME conflict-avoidance
   as project memory (per-file records) + worktree isolation, under more writers;
   the ledger gains an actor/user dimension. Backlog becomes a pluggable
