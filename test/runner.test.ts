@@ -4,12 +4,13 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { Model } from "@earendil-works/pi-ai";
 import type { Api } from "@earendil-works/pi-ai";
-import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
+import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, Type } from "@earendil-works/pi-ai";
 import { LEDGER_BASE_DIR } from "../src/ledger/ledger";
 import { defineRole } from "../src/role";
 import type { Role } from "../src/role";
 import { RunnerError, resolveTargetDir } from "../src/runner/errors";
 import { runRole } from "../src/runner/runner";
+import { defineTool } from "../src/runner/tool";
 import type { Summarizer } from "../src/context/compactor";
 
 const CONTEXT_WINDOW = 200_000;
@@ -27,6 +28,45 @@ function harnessFixture() {
       modelId: model.id,
       systemPrompt: "You code.",
       activeToolNames: ["bash", "read", "write", "edit"],
+      cacheRetention: "none",
+      contextBudget: { maxTokens: 100_000, reserveTokens: 10_000, keepRecentTokens: 20_000 },
+    },
+    model,
+  );
+  return { faux, models, model, role };
+}
+
+/**
+ * A custom tool that records every invocation's note into `calls`, so a test can
+ * assert both THAT it fired and WITH WHAT arguments. Built via `defineTool` to
+ * exercise the same authoring surface a caller uses.
+ */
+function recordingTool(name: string, calls: string[]) {
+  return defineTool({
+    name,
+    description: "Record a note for the test to observe.",
+    label: "record note",
+    parameters: Type.Object({ note: Type.String() }),
+    async execute(_toolCallId, params) {
+      calls.push(params.note);
+      return { content: [{ type: "text", text: "recorded" }], details: undefined };
+    },
+  });
+}
+
+/** Like harnessFixture but with a caller-chosen activeToolNames allow-list. */
+function fixtureWithActiveTools(activeToolNames: string[]) {
+  const faux = fauxProvider({ provider: "faux", models: [{ id: "faux-1", contextWindow: CONTEXT_WINDOW }] });
+  const models = createModels();
+  models.setProvider(faux.provider);
+  const model = faux.getModel() as Model<Api>;
+  const role: Role = defineRole(
+    {
+      name: "coder",
+      provider: "faux",
+      modelId: model.id,
+      systemPrompt: "You code.",
+      activeToolNames,
       cacheRetention: "none",
       contextBudget: { maxTokens: 100_000, reserveTokens: 10_000, keepRecentTokens: 20_000 },
     },
@@ -141,4 +181,84 @@ test("runRole rejects a malformed runId before building a ledger path", async ()
   await expect(
     runRole({ role, targetDir, models, model, prompt: "x", runId: "../escape" }),
   ).rejects.toBeInstanceOf(RunnerError);
+});
+
+test("(a,b) runRole invokes a supplied custom tool and captures its arguments", async () => {
+  const calls: string[] = [];
+  const { faux, models, model, role } = fixtureWithActiveTools([
+    "bash",
+    "read",
+    "write",
+    "edit",
+    "record_note",
+  ]);
+  faux.setResponses([
+    fauxAssistantMessage(fauxToolCall("record_note", { note: "hello-from-model" })),
+    fauxAssistantMessage("done"),
+  ]);
+
+  const result = await runRole({
+    role,
+    targetDir,
+    models,
+    model,
+    prompt: "record a note",
+    tools: [recordingTool("record_note", calls)],
+  });
+
+  expect(result.result.status).toBe("completed");
+  // (a) the side effect fired exactly once; (b) with the args the model passed.
+  expect(calls).toEqual(["hello-from-model"]);
+});
+
+test("(c) a custom tool colliding with a built-in throws RunnerError tool_name_collision", async () => {
+  const calls: string[] = [];
+  const { faux, models, model, role } = harnessFixture();
+  faux.setResponses([fauxAssistantMessage("done")]);
+
+  try {
+    await runRole({
+      role,
+      targetDir,
+      models,
+      model,
+      prompt: "x",
+      tools: [recordingTool("bash", calls)],
+    });
+    throw new Error("expected a throw");
+  } catch (error) {
+    expect(error).toBeInstanceOf(RunnerError);
+    expect((error as RunnerError).code).toBe("tool_name_collision");
+    expect((error as RunnerError).path).toBe("bash");
+  }
+});
+
+test("(d) activeToolNames still filters the combined set: a custom tool it excludes never fires", async () => {
+  const calls: string[] = [];
+  // The role allows only the built-ins; the custom tool is supplied but its name
+  // is absent from the allow-list, so the harness must not register it.
+  const { faux, models, model, role } = fixtureWithActiveTools(["bash", "read", "write", "edit"]);
+  faux.setResponses([fauxAssistantMessage("done")]);
+
+  const result = await runRole({
+    role,
+    targetDir,
+    models,
+    model,
+    prompt: "do nothing with the custom tool",
+    tools: [recordingTool("record_note", calls)],
+  });
+
+  expect(result.result.status).toBe("completed");
+  expect(calls).toEqual([]);
+});
+
+test("(e) runRole with no tools param settles exactly as today", async () => {
+  const { faux, models, model, role } = harnessFixture();
+  faux.setResponses([fauxAssistantMessage("done")]);
+
+  const result = await runRole({ role, targetDir, models, model, prompt: "no custom tools" });
+
+  expect(result.result.status).toBe("completed");
+  expect(result.droppedRecords).toBe(0);
 });

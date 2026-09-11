@@ -89,6 +89,17 @@ module-locality from the touched-file set to decide what can parallelize.
   bash tool is NOT confined to targetDir (it is a starting cwd, not a sandbox);
   real out-of-process sandboxing (seccomp/container/egress deny) remains a
   follow-up, with `activeToolNames` the current gate.
+- **Runner tools seam** — DONE. `runRole`/`RunRoleParams` and `RoleRunner`/
+  `RunRoleOptions` gained an OPTIONAL `tools?: Tool[]` that EXTENDS the built-in
+  `[bash,read,write,edit]` set, plus `defineTool`/`Tool` (ad-coder's own tool
+  surface, parallel to `defineRole`) and an `assertUniqueToolNames` collision
+  guard (a custom tool colliding with a built-in or another custom tool throws a
+  typed `RunnerError` code `tool_name_collision`, never silently shadowed).
+  `activeToolNames` still filters the combined set uniformly. Absent `tools`
+  reproduces prior behavior byte-for-byte. This UNBLOCKS the genuine
+  `submit_verdict` tool-call verdict and per-role custom tools (e.g. the
+  conversational orchestrator's run-pipeline / show-ledger tools), but does NOT
+  itself rewire the orchestration verdict — that is the next follow-on.
 - **Wire ad-coder's own gates** — the gates module exists but ad-coder still runs
   only typecheck+test on itself. Add a size gate + (when a formatter/linter is
   chosen) format/lint gates over the repo. Dogfooding the gates-over-prompts
@@ -214,9 +225,9 @@ module-locality from the touched-file set to decide what can parallelize.
   ships: the reviewer emits its verdict as a schema-validated JSON artifact it
   WRITES via the existing write tool (the filesystem is the bus). **Follow-up:**
   the genuine `submit_verdict` tool-call verdict — the reviewer CALLING a verdict
-  tool rather than writing a file — is deferred because it needs an optional
-  `tools` param on `runRole` (which today hardcodes `[bash,read,write,edit]` with
-  no injection seam). Bootstrap caveat: a bug in the runner/orchestration corrupts
+  tool rather than writing a file — is now UNBLOCKED: `runRole` gained the
+  optional `tools` injection seam, but this orchestration path has not yet been
+  rewired to hand the reviewer a `submit_verdict` tool. Bootstrap caveat: a bug in the runner/orchestration corrupts
   its own development, so early self-hosting stays partial (narrow modules via
   ad-coder, risky core via LDO or human) and supervised; faux tests + human remain
   ground truth for the core.

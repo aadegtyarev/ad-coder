@@ -25,7 +25,13 @@ import { FileLedgerSink, Ledger, LEDGER_BASE_DIR } from "../ledger/ledger";
 import type { LedgerSink } from "../ledger/ledger";
 import type { Role } from "../role";
 import { toHarnessOptions } from "../role";
-import { assertLedgerDirWithinTarget, assertRunId, resolveTargetDir } from "./errors";
+import {
+  assertLedgerDirWithinTarget,
+  assertRunId,
+  assertUniqueToolNames,
+  resolveTargetDir,
+} from "./errors";
+import type { Tool } from "./tool";
 
 /**
  * Everything a single turn needs that is NOT baked into the Role.
@@ -60,6 +66,18 @@ export interface RunRoleParams {
   ledgerSink?: LedgerSink;
   /** Defaults to BACKGROUND_CONTEXT. */
   context?: Context;
+  /**
+   * Custom tools that EXTEND the built-in [bash,read,write,edit] set for this
+   * turn. Absent means today's behavior exactly -- only the built-ins register.
+   *
+   * A name that collides with a built-in OR with another custom tool is rejected
+   * with a typed `RunnerError` (code `tool_name_collision`) before the harness is
+   * built, rather than silently shadowing. `activeToolNames` still gates the
+   * COMBINED set: a role exposes a custom tool only by listing its name, and a
+   * custom tool absent from a non-empty `activeToolNames` is filtered out exactly
+   * like a built-in.
+   */
+  tools?: Tool[];
 }
 
 /**
@@ -108,12 +126,17 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
 
   const env = new NodeExecutionEnv({ cwd: absTargetDir });
   const toolContext: ExecutionToolContext = { env };
-  const tools: AgentHarnessTool<ExecutionToolContext>[] = [
+  const builtin: AgentHarnessTool<ExecutionToolContext>[] = [
     createBashTool(),
     createReadTool(),
     createWriteTool(),
     createEditTool(),
   ];
+  // Concatenate before validating so the collision guard sees the full set
+  // (built-in-vs-custom and custom-vs-custom). `?? []` avoids ever registering
+  // `undefined` when no custom tools were supplied -- prior behavior byte-for-byte.
+  const tools = [...builtin, ...(params.tools ?? [])];
+  assertUniqueToolNames(tools);
 
   const session = params.session ?? (await new MemorySessionRepo().create({}, context));
 

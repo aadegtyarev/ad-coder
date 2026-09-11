@@ -7,7 +7,8 @@ export type RunnerErrorCode =
   | "not_found"
   | "not_a_directory"
   | "invalid_run_id"
-  | "unsafe_ledger_dir";
+  | "unsafe_ledger_dir"
+  | "tool_name_collision";
 
 /**
  * Raised when a runner precondition fails before any harness is built. Carries
@@ -47,6 +48,31 @@ export function assertRunId(runId: string): string {
     );
   }
   return runId;
+}
+
+/**
+ * Reject a combined tool set that registers the same name twice.
+ *
+ * Run over the FULL built-in + custom array BEFORE the harness is constructed so
+ * a collision surfaces as a typed, numbers-and-paths-only `RunnerError` rather
+ * than the harness's raw `TypeError('Duplicate tool name')`. Catches every
+ * collision class: a custom tool shadowing a built-in (bash/read/write/edit) AND
+ * two custom tools sharing a name. The error's `path` carries only the colliding
+ * tool name -- a caller-supplied identifier, exactly like `invalid_run_id`
+ * carries the rejected run id -- never tool content or arguments.
+ */
+export function assertUniqueToolNames(tools: readonly { name: string }[]): void {
+  const seen = new Set<string>();
+  for (const tool of tools) {
+    if (seen.has(tool.name)) {
+      throw new RunnerError(
+        "tool_name_collision",
+        tool.name,
+        `duplicate tool name "${tool.name}"; a custom tool may not shadow a built-in or another custom tool`,
+      );
+    }
+    seen.add(tool.name);
+  }
 }
 
 /**

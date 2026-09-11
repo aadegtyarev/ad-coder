@@ -32,6 +32,8 @@ export type { LedgerRecord, UsageAmounts, UsageDelta } from "./ledger/types";
 export { diffUsage, usageAmounts, UsageDeltaTracker } from "./ledger/usage";
 export { RunnerError, resolveTargetDir } from "./runner/errors";
 export type { RunnerErrorCode } from "./runner/errors";
+export { defineTool } from "./runner/tool";
+export type { Tool } from "./runner/tool";
 export { runRole } from "./runner/runner";
 export type { RunRoleParams, RunRoleResult } from "./runner/runner";
 export { createRoleRunner } from "./runner/role-runner";

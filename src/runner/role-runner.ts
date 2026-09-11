@@ -5,6 +5,7 @@ import type { LedgerSink } from "../ledger/ledger";
 import type { Role } from "../role";
 import { runRole } from "./runner";
 import type { RunRoleResult } from "./runner";
+import type { Tool } from "./tool";
 
 /** Per-call overrides a bound RoleRunner accepts; the bound fields are not repeated. */
 export interface RunRoleOptions {
@@ -14,6 +15,13 @@ export interface RunRoleOptions {
   session?: Session;
   ledgerSink?: LedgerSink;
   context?: Context;
+  /**
+   * Custom tools for THIS turn only, extending the built-in set (see
+   * `RunRoleParams.tools`). Per-call rather than bound in `RoleRunnerConfig`
+   * because one RoleRunner drives multiple roles and only some need a custom
+   * tool (e.g. only a reviewer role needs `submit_verdict`).
+   */
+  tools?: Tool[];
 }
 
 /**
@@ -64,6 +72,7 @@ export function createRoleRunner(config: RoleRunnerConfig): RoleRunner {
         ...(opts?.laneName !== undefined && { laneName: opts.laneName }),
         ...(opts?.ledgerSink !== undefined && { ledgerSink: opts.ledgerSink }),
         ...(opts?.context !== undefined && { context: opts.context }),
+        ...(opts?.tools !== undefined && { tools: opts.tools }),
       });
     },
   };

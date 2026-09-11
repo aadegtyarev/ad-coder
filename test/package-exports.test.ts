@@ -4,6 +4,7 @@ import {
   ContextBudgetError,
   ContextCompactor,
   createRoleRunner,
+  defineTool,
   diffUsage,
   GateRunner,
   isWorkflowModule,
@@ -31,6 +32,7 @@ import type {
   RunRoleParams,
   RunRoleResult,
   Summarizer,
+  Tool,
   Verdict,
   VerdictIssue,
   VerdictStatus,
@@ -59,6 +61,7 @@ test("the package is importable by its published name", () => {
   expect(typeof GateRunner).toBe("function");
   expect(typeof runRole).toBe("function");
   expect(typeof createRoleRunner).toBe("function");
+  expect(typeof defineTool).toBe("function");
   expect(typeof RunnerError).toBe("function");
   expect(typeof resolveTargetDir).toBe("function");
   expect(typeof runPipeline).toBe("function");
@@ -66,6 +69,7 @@ test("the package is importable by its published name", () => {
   // Type-only imports are erased; reference them so the imports are not unused.
   const _budget: ContextBudget | undefined = undefined;
   const _summarizer: Summarizer | undefined = undefined;
+  const _tool: Tool | undefined = undefined;
   const _gate: QualityGate | undefined = undefined;
   const _report: GateReport | undefined = undefined;
   const _params: RunRoleParams | undefined = undefined;
@@ -83,6 +87,7 @@ test("the package is importable by its published name", () => {
   const _orchCode: OrchestrationErrorCode | undefined = undefined;
   expect(_budget).toBeUndefined();
   expect(_summarizer).toBeUndefined();
+  expect(_tool).toBeUndefined();
   expect(_gate).toBeUndefined();
   expect(_report).toBeUndefined();
   expect(_params).toBeUndefined();

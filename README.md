@@ -136,6 +136,35 @@ that returns it wholesale writes that content to stdout, bypassing the CLI's
 own discipline of keeping provider content off stdout. Return `runId`,
 `ledgerPath`, `status`, or a narrowed projection instead.
 
+**Custom tools (optional).** Pass `tools` on `runRole` (or per call on a
+`RoleRunner`'s `runRole` `opts`) to EXTEND the built-in `[bash,read,write,edit]`
+set for that turn. Author a tool with `defineTool` (ad-coder's own surface,
+parallel to `defineRole`; its `Tool` type is `AgentHarnessTool<ExecutionToolContext>`).
+Omitting `tools` reproduces the default behavior exactly. A custom tool whose
+name collides with a built-in or with another custom tool is REJECTED with a
+typed `RunnerError` (code `tool_name_collision`) before the harness is built,
+never silently shadowed. The Role's `activeToolNames` still gates the COMBINED
+set: a role exposes a custom tool only by listing its name, and a custom tool
+absent from a non-empty `activeToolNames` is filtered out exactly like a
+built-in.
+
+```ts
+import { defineTool, runRole } from "ad-coder";
+import { Type } from "@earendil-works/pi-ai";
+
+const submitVerdict = defineTool({
+  name: "submit_verdict",
+  description: "Record the review verdict.",
+  label: "submit verdict",
+  parameters: Type.Object({ status: Type.String() }),
+  async execute(_id, params) {
+    return { content: [{ type: "text", text: "ok" }], details: undefined };
+  },
+});
+
+await runRole({ role, targetDir, models, model, prompt, tools: [submitVerdict] });
+```
+
 **`targetDir` is a starting directory, not a sandbox.** `NodeExecutionEnv({ cwd })`
 sets only the shell's initial working directory; the `bash` tool can `cd /`,
 read any file the harness user can read, and reach the network. `targetDir`
@@ -174,16 +203,17 @@ if (!result.approved) {
 }
 ```
 
-**The verdict is a filesystem artifact, not a tool call.** `runRole` hardcodes
-its tool set and exposes no tool-injection seam, so the reviewer cannot *call* a
-verdict tool. Instead it **writes** a JSON verdict via the existing write tool to
+**The verdict is a filesystem artifact, not (yet) a tool call.** The reviewer
+**writes** a JSON verdict via the existing write tool to
 `<targetDir>/.ad-coder/verdict/<reviewerRunId>.json`; `runPipeline` reads it back
 and strictly schema-validates it (`status` ∈ `{approved, changes_requested}`,
 `issues` an array of `{severity, what}`, `summary` a string). A **missing or
 malformed** verdict is a hard `OrchestrationError` (never a silent pass); a
 well-formed `changes_requested` is a legitimate non-approval whose issues become
-the coder's next prompt. The genuine `submit_verdict` tool-call form is a deferred
-follow-up (it needs an optional `tools` param on `runRole`).
+the coder's next prompt. `runRole` now carries the optional `tools` seam that
+*could* hand the reviewer a `submit_verdict` tool, but this pipeline has not been
+rewired to use it — the genuine tool-call verdict is the next follow-on the seam
+unlocks.
 
 ## The ledger
 
