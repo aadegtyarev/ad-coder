@@ -69,3 +69,11 @@ nobody opens. Durable knowledge goes to the place the next reader actually looks
 (conventions), `docs/contracts/` (enforced rules). When something matters past the
 turn, write it there; when it does not, let it go. This applies to the orchestrator
 as much as to whoever is developing ad-coder.
+
+## An enforceable rule is a contract, not a note here
+
+This file is for ORIENTATION and non-enforced conventions. A rule that guides the
+build and that a coder could violate belongs in `docs/contracts/` (the reviewer reads
+it and blocks on a violation), not here. Current contracts: `config.md` (everything
+configurable), `architecture.md` (headless core + thin fronts, every capability
+reachable programmatically — the harness is friendly to humans AND machines).

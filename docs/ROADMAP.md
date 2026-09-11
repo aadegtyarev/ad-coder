@@ -517,6 +517,44 @@ workflows — one substrate, swappable drivers.
     creds; network-default-open covers a browser, hardened runs opt into limits).
     Both are also candidate capabilities ad-coder gives its OWN roles, not only
     tools used to develop ad-coder.
+  - GUIDED SETUP (remove the install friction): the user should rarely type
+    `npm i -D ...` by hand. The ORCHESTRATOR detects the project's stack and PROPOSES
+    the useful servers (a TS project -> typescript-language-server; a web app ->
+    Playwright MCP; Python -> pyright); on consent it runs the install (a
+    package-manager command via bash) and REGISTERS the server in config — then
+    auto-discovery finds it. The TUI settings mirror this: known-useful tools per
+    detected stack as checkboxes (enable/disable) + an install button, the same
+    "enabled servers" config underneath. Manual install stays the fallback. Installing
+    is a TRUST decision (network + writes), so the orchestrator PROPOSES, never installs
+    silently; later the install runs under the sandbox+wallet.
+
+- **Web tools (fetch + search)** — pi ships NONE (built-ins are only
+  bash/read/write/edit/error; `web_search` in pi-ai is Anthropic's server-side tool,
+  provider-only/not portable). ad-coder provides its own on the tool-source model:
+  **web-fetch** is a trivial built-in (HTTP GET via defineTool); **web-search** needs a
+  backend, best via the MCP seam (Brave/Tavily/fetch MCP) or a small adapter over a
+  configurable search provider (key = a setting). Needed by the researcher role +
+  bootstrap prior-art research + guided tool setup.
+- **Orientation notes as a cache; web research as the cache-miss that refills it** —
+  reduce user burden and stop the orchestrator flailing. TWO layers (the project's own
+  cache thesis applied to knowledge): (1) a committed project NOTES/orientation doc the
+  orchestrator reads FIRST — cheap, project-specific ("where X lives, the tool we
+  chose, a gotcha"); (2) web research (researcher role) as the CACHE-MISS path —
+  current, graded "fresh AND time-tested" by the researcher's confidence. KEY: research
+  REFILLS the notes — a durable finding is written back so next time it is a cheap
+  note-read, not a re-paid search. Net: give the orchestrator bash (install) + web
+  tools (research) + notes (orient) and it self-serves tooling setup on consent.
+- **Machine-facing interface + top-orchestrator + Telegram bridge** — ad-coder must be
+  drivable by a layer ABOVE it (prior art: the operator's
+  github.com/aadegtyarev/claude-orchestrator — manage sessions, bridge to Telegram,
+  control/observe from a phone). Requirement it imposes NOW: a machine-drivable surface
+  (structured CLI I/O `--json` and/or an API/RPC server) plus an EVENT STREAM (step
+  done, cost, verdict, need-input) the bridge relays. The remote human over Telegram is
+  just ANOTHER DRIVER (or an approver of the orchestrator's proposals) — fits the
+  swappable-drivers model and the auto/manual dial. Composes with sessions
+  (browse/resume from the phone), the ledger (cost as a notification), consent, and the
+  sandbox+wallet. This is the multi-user/remote surface. Enforced by
+  docs/contracts/architecture.md (every capability reachable programmatically).
 
 ## Open backlog (mechanical)
 

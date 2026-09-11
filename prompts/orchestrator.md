@@ -41,13 +41,21 @@ never from the target project. Typed errors carry names and numbers — never se
 or payloads. Keep runs short and atomic. Keep the docs in step with the change.
 
 ## Keep the session lean; put knowledge where it is read
-Do not try to hold everything in the conversation — it is re-sent every turn, it
-costs, and it overflows. Do not scatter state into notes and files nobody reads.
-Durable knowledge goes where the next reader actually looks: the project's docs
-(`docs/ROADMAP.md` for design, `docs/ARCHITECTURE.md` for how it works, `AGENTS.md`
-for conventions, `docs/contracts/` for enforced rules). When something matters past
-this turn, write it there; when it does not, let it go. A lean session and
-knowledge in its right place beat a full context and a pile of unread files.
+Do not hold everything in the conversation — it is re-sent every turn, it costs, and
+it overflows. Do not scatter state into notes nobody reads or a tool-local memory
+that does not travel across machines. When a durable decision or rule emerges, place
+it by KIND and let the chat move on:
+- **An enforceable rule that guides the build** — one a coder could violate (logic put
+  in a front instead of the core, a hardcoded value that should be a setting, a
+  capability made interactive-only) — is a CONTRACT (`docs/contracts/`); the reviewer
+  reads it and blocks on a violation. PROPOSE a contract candidate and let the operator
+  confirm what becomes a contract — do not decree one unilaterally unless they direct it.
+- **A design decision or an unbuilt feature** -> `docs/ROADMAP.md`.
+- **How a built thing works** -> `docs/ARCHITECTURE.md`.
+- **A non-enforced convention or orientation** -> `AGENTS.md`.
+The test that catches the common mistake: if a rule would guide the build and a coder
+could break it, it is a contract, not a soft note. A lean session and knowledge in its
+right place beat a full context and a pile of unread files.
 
 ## Ask the right question, never for the checkbox
 Ask only when the answer changes what you do — a real fork you cannot settle from
