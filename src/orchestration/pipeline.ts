@@ -6,11 +6,13 @@ import type { Context, Session } from "@earendil-works/pi-agent-core";
 import type { TextContent } from "@earendil-works/pi-ai";
 import { createRoleRunner } from "../runner/role-runner";
 import type { Tool } from "../runner/tool";
-import type { RoleSpec, Verdict, VerdictIssue } from "./types";
+import type { Complexity, RoleSpec, Verdict, VerdictIssue } from "./types";
 import { OrchestrationError } from "./types";
 import type { PipelineConfig, PipelineResult } from "./types";
 import { buildSubmitVerdictTool, formatReviewerInstruction } from "./verdict";
 import type { VerdictCapture } from "./verdict";
+import { buildSubmitPlanTool, formatPlannerInstruction } from "./plan";
+import type { PlanCapture } from "./plan";
 
 /**
  * Compose the EXISTING single-turn `runRole` into a plan -> (code<->review loop)
@@ -88,10 +90,29 @@ export async function runPipeline(config: PipelineConfig): Promise<PipelineResul
   const runIds: string[] = [];
 
   let planSummary = "";
+  // SOFT signal: undefined means no planner, or a planner that never called
+  // submit_plan. Only a MALFORMED submission is a hard failure (below).
+  let complexity: Complexity | undefined;
   if (config.roles.planner !== undefined) {
     const plannerRunId = crypto.randomUUID();
     runIds.push(plannerRunId);
-    planSummary = await runTurn(config.roles.planner, config.task, "plan", plannerRunId);
+    // Fresh holder + tool for the planner turn (same keying as the reviewer's).
+    const capture: PlanCapture = {};
+    const submitPlanTool = buildSubmitPlanTool(capture, plannerRunId);
+    const plannerPrompt = `${config.task}\n\n${formatPlannerInstruction()}`;
+    planSummary = await runTurn(config.roles.planner, plannerPrompt, "plan", plannerRunId, [
+      submitPlanTool,
+    ]);
+    // A captured error is parsePlan's OrchestrationError, swallowed by the
+    // harness into an error tool-result and re-thrown here (HARD malformed_plan).
+    // A captured plan sets the complexity signal. An EMPTY holder is legitimate:
+    // complexity stays undefined and the run proceeds (NO missing_plan).
+    if (capture.error !== undefined) {
+      throw capture.error;
+    }
+    if (capture.plan !== undefined) {
+      complexity = capture.plan.complexity;
+    }
   }
 
   for (let round = 1; round <= config.maxRounds; round += 1) {
@@ -143,11 +164,23 @@ export async function runPipeline(config: PipelineConfig): Promise<PipelineResul
     verdicts.push(verdict);
 
     if (verdict.status === "approved") {
-      return { approved: true, rounds: round, verdicts, runIds };
+      return {
+        approved: true,
+        rounds: round,
+        verdicts,
+        runIds,
+        ...(complexity !== undefined && { complexity }),
+      };
     }
   }
 
-  return { approved: false, rounds: config.maxRounds, verdicts, runIds };
+  return {
+    approved: false,
+    rounds: config.maxRounds,
+    verdicts,
+    runIds,
+    ...(complexity !== undefined && { complexity }),
+  };
 }
 
 function composeCoderPrompt(task: string, context: string): string {

@@ -43,10 +43,12 @@ export type { WorkflowContext, WorkflowModule } from "./workflow";
 export { runPipeline } from "./orchestration/pipeline";
 export { OrchestrationError } from "./orchestration/types";
 export type {
+  Complexity,
   IssueSeverity,
   OrchestrationErrorCode,
   PipelineConfig,
   PipelineResult,
+  Plan,
   RoleSpec,
   RoundRecord,
   Verdict,
@@ -55,3 +57,5 @@ export type {
 } from "./orchestration/types";
 export { buildSubmitVerdictTool, SUBMIT_VERDICT_TOOL_NAME } from "./orchestration/verdict";
 export type { VerdictCapture } from "./orchestration/verdict";
+export { buildSubmitPlanTool, SUBMIT_PLAN_TOOL_NAME } from "./orchestration/plan";
+export type { PlanCapture } from "./orchestration/plan";

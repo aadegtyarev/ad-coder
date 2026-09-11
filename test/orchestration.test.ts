@@ -15,6 +15,8 @@ import { OrchestrationError } from "../src/orchestration/types";
 import type { RoleSpec, Verdict } from "../src/orchestration/types";
 import { runPipeline } from "../src/orchestration/pipeline";
 import { parseVerdict, SUBMIT_VERDICT_TOOL_NAME } from "../src/orchestration/verdict";
+import { parsePlan, SUBMIT_PLAN_TOOL_NAME } from "../src/orchestration/plan";
+import type { Plan } from "../src/orchestration/types";
 import { defineRole } from "../src/role";
 import type { Role } from "../src/role";
 
@@ -62,6 +64,24 @@ function fixture(): Fixture {
 /** A reviewer role that can call submit_verdict (only this role needs the tool). */
 function reviewerRole(fx: Fixture): RoleSpec {
   return fx.role("reviewer", "You review.", ["bash", "read", "write", "edit", SUBMIT_VERDICT_TOOL_NAME]);
+}
+
+/** A planner role that can call submit_plan (only this role needs the tool). */
+function plannerRole(fx: Fixture): RoleSpec {
+  return fx.role("planner", "You plan.", ["bash", "read", "write", "edit", SUBMIT_PLAN_TOOL_NAME]);
+}
+
+/**
+ * A scripted planner turn: call submit_plan with the plan args, then a text
+ * summary. Two faux responses, because the harness re-prompts after the tool
+ * call until a no-tool message settles the turn. The arg type admits a plain
+ * record so malformed payloads can be scripted alongside well-formed plans.
+ */
+function plannerTurn(args: Plan | Record<string, unknown>): FauxResponseStep[] {
+  return [
+    fauxAssistantMessage(fauxToolCall(SUBMIT_PLAN_TOOL_NAME, args)),
+    fauxAssistantMessage("plan text"),
+  ];
 }
 
 /** The text of the newest user message the provider was called with. */
@@ -307,4 +327,102 @@ test("a malformed submission throws OrchestrationError malformed_verdict", async
   }
   expect(caught).toBeInstanceOf(OrchestrationError);
   expect((caught as OrchestrationError).code).toBe("malformed_verdict");
+});
+
+test("parsePlan accepts a well-formed plan and rejects bad complexity / non-string summary / non-object", () => {
+  const plan = parsePlan({ complexity: "medium", summary: "s" }, "run-id");
+  expect(plan.complexity).toBe("medium");
+  expect(plan.summary).toBe("s");
+
+  const cases: unknown[] = [
+    { complexity: "huge", summary: "s" },
+    { complexity: "medium", summary: 5 },
+    ["not", "an", "object"],
+    null,
+    "string",
+  ];
+  for (const value of cases) {
+    let caught: unknown;
+    try {
+      parsePlan(value, "run-id");
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(OrchestrationError);
+    expect((caught as OrchestrationError).code).toBe("malformed_plan");
+  }
+});
+
+test("a planner calling submit_plan surfaces result.complexity", async () => {
+  const fx = fixture();
+  const planner = plannerRole(fx);
+  const coder = fx.role("coder", "You code.");
+  const reviewer = reviewerRole(fx);
+  const verdict: Verdict = { status: "approved", issues: [], summary: "ok" };
+  fx.faux.setResponses([
+    ...plannerTurn({ complexity: "medium", summary: "plan summary" }),
+    fauxAssistantMessage("coded"),
+    ...reviewerTurn(verdict),
+  ]);
+
+  const result = await runPipeline({
+    targetDir: fx.targetDir,
+    models: fx.models,
+    task: "implement P",
+    maxRounds: 3,
+    roles: { planner, coder, reviewer },
+  });
+
+  expect(result.approved).toBe(true);
+  expect(result.complexity).toBe("medium");
+});
+
+test("a planner emitting only text leaves result.complexity undefined and the run approves", async () => {
+  const fx = fixture();
+  const planner = plannerRole(fx);
+  const coder = fx.role("coder", "You code.");
+  const reviewer = reviewerRole(fx);
+  const verdict: Verdict = { status: "approved", issues: [], summary: "ok" };
+  fx.faux.setResponses([
+    fauxAssistantMessage("plan: do X, no tool call"),
+    fauxAssistantMessage("coded"),
+    ...reviewerTurn(verdict),
+  ]);
+
+  const result = await runPipeline({
+    targetDir: fx.targetDir,
+    models: fx.models,
+    task: "implement Q",
+    maxRounds: 3,
+    roles: { planner, coder, reviewer },
+  });
+
+  expect(result.approved).toBe(true);
+  expect(result.complexity).toBeUndefined();
+});
+
+test("a malformed submit_plan throws OrchestrationError malformed_plan", async () => {
+  const fx = fixture();
+  const planner = plannerRole(fx);
+  const coder = fx.role("coder", "You code.");
+  const reviewer = reviewerRole(fx);
+  // complexity "huge" passes the permissive schema but fails parsePlan.
+  fx.faux.setResponses([
+    ...plannerTurn({ complexity: "huge", summary: "s" }),
+  ]);
+
+  let caught: unknown;
+  try {
+    await runPipeline({
+      targetDir: fx.targetDir,
+      models: fx.models,
+      task: "implement R",
+      maxRounds: 1,
+      roles: { planner, coder, reviewer },
+    });
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught).toBeInstanceOf(OrchestrationError);
+  expect((caught as OrchestrationError).code).toBe("malformed_plan");
 });

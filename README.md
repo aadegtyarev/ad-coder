@@ -224,6 +224,18 @@ hard `OrchestrationError` (never a silent pass); a well-formed
 `changes_requested` is a legitimate non-approval whose issues become the coder's
 next prompt.
 
+**The plan complexity is an optional `submit_plan` tool call.** When a planner is
+present it is handed a fresh `submit_plan` tool (same `runRole` `tools` seam);
+calling it with `{ complexity: "trivial" | "medium" | "complex", summary }`
+surfaces the tier on `result.complexity`. This is a **soft** signal: unlike the
+verdict, a planner that never calls the tool is NOT an error — `result.complexity`
+is simply `undefined` and the run proceeds on the free-text plan. Only a
+**malformed** submission (a bad complexity value or non-string summary, caught by
+the hand-written `parsePlan`) is a hard `OrchestrationError` (`malformed_plan`).
+The complexity is exposed for a later complexity-aware routing feature; this
+release does not yet use it to pick models. The planner role must list
+`submit_plan` in its `activeToolNames` for the tool to be reachable.
+
 ## The ledger
 
 One JSONL record per turn under `.ad-coder/ledger/<runId>.jsonl`:

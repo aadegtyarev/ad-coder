@@ -107,8 +107,20 @@ module-locality from the touched-file set to decide what can parallelize.
   authoritative strict validator (the tool's schema is permissive at the enum
   leaves), an absent call is `missing_verdict` and a failed validation is
   `malformed_verdict` — both hard `OrchestrationError`s. The IMMEDIATE next
-  follow-on on the same pattern is `submit_plan` / `rate_complexity` (a planner
-  emitting STRUCTURED complexity), see Profiles + complexity-aware model routing.
+  follow-on on the same pattern was `submit_plan` (a planner emitting STRUCTURED
+  complexity), now DONE (see below); its CONSUMER, complexity-aware model routing,
+  remains open — see Profiles + complexity-aware model routing.
+- **`submit_plan` structured complexity** — DONE. The optional planner can now
+  emit STRUCTURED complexity (`trivial`/`medium`/`complex`) plus a summary by
+  CALLING a `submit_plan` tool built per planner turn (via the `runRole` tools
+  seam), mirroring `submit_verdict`. `parsePlan` is the authoritative strict
+  validator (schema permissive at the `complexity` leaf). CRUCIAL soft/hard split:
+  unlike the verdict, an ABSENT call is NOT an error — it leaves
+  `PipelineResult.complexity` undefined and the run proceeds (there is NO
+  `missing_plan`); only a MALFORMED call is a hard `malformed_plan`. This unit
+  makes complexity AVAILABLE on `result.complexity` but deliberately does NOT wire
+  it into model selection — that is the Profiles + complexity-aware routing
+  follow-on below, which CONSUMES this signal.
 - **Wire ad-coder's own gates** — the gates module exists but ad-coder still runs
   only typecheck+test on itself. Add a size gate + (when a formatter/linter is
   chosen) format/lint gates over the repo. Dogfooding the gates-over-prompts
@@ -138,12 +150,11 @@ module-locality from the touched-file set to decide what can parallelize.
   cheap models to simple features and strong models to complex ones, like LDO
   (a weak Coder on a complex feature buys extra review rounds, and a round is a
   full Coder+Reviewer pass, so the strong model is cheaper spent upfront where the
-  work is). PREREQUISITE: the planner must emit STRUCTURED complexity
-  (trivial/medium/complex), which it currently does not — it only produces text.
-  Mirror the verdict: a `submit_plan` / `rate_complexity` tool carrying the
-  complexity — the IMMEDIATE next follow-on on the same pattern the
-  `submit_verdict` tool-call verdict (done) established. Then the pipeline
-  reads complexity and picks coder/reviewer models per `(complexity × role)`.
+  work is). PREREQUISITE (now MET): the planner emits STRUCTURED complexity
+  (trivial/medium/complex) via the `submit_plan` tool — DONE, surfaced on
+  `result.complexity`. What remains OPEN here is the CONSUMER: this feature must
+  read `result.complexity` and pick coder/reviewer models per `(complexity ×
+  role)`. The signal exists; nothing selects models from it yet.
   ad-coder EDGE: the ledger already measures per-role/round cost, so routing can
   later be LEARNED from observation ("cheap coder averaged 2.3 rounds on medium
   features, strong 1.1 — which is cheaper end to end?") rather than only declared —

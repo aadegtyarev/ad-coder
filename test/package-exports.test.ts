@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
   assertTurnFitsBudget,
+  buildSubmitPlanTool,
   buildSubmitVerdictTool,
   ContextBudgetError,
   ContextCompactor,
@@ -15,14 +16,18 @@ import {
   runPipeline,
   runRole,
   RunnerError,
+  SUBMIT_PLAN_TOOL_NAME,
   SUBMIT_VERDICT_TOOL_NAME,
   SUMMARIZATION_PROMPT,
   UsageDeltaTracker,
 } from "ad-coder";
 import type {
+  Complexity,
   ContextBudget,
   GateReport,
   IssueSeverity,
+  Plan,
+  PlanCapture,
   OrchestrationErrorCode,
   PipelineConfig,
   PipelineResult,
@@ -71,6 +76,8 @@ test("the package is importable by its published name", () => {
   expect(typeof OrchestrationError).toBe("function");
   expect(typeof buildSubmitVerdictTool).toBe("function");
   expect(typeof SUBMIT_VERDICT_TOOL_NAME).toBe("string");
+  expect(typeof buildSubmitPlanTool).toBe("function");
+  expect(typeof SUBMIT_PLAN_TOOL_NAME).toBe("string");
   // Type-only imports are erased; reference them so the imports are not unused.
   const _budget: ContextBudget | undefined = undefined;
   const _summarizer: Summarizer | undefined = undefined;
@@ -82,6 +89,9 @@ test("the package is importable by its published name", () => {
   const _opts: RunRoleOptions | undefined = undefined;
   const _runner: RoleRunner | undefined = undefined;
   const _capture: VerdictCapture | undefined = undefined;
+  const _planCapture: PlanCapture | undefined = undefined;
+  const _complexity: Complexity | undefined = undefined;
+  const _plan: Plan | undefined = undefined;
   const _verdict: Verdict | undefined = undefined;
   const _issue: VerdictIssue | undefined = undefined;
   const _status: VerdictStatus | undefined = undefined;
@@ -101,6 +111,9 @@ test("the package is importable by its published name", () => {
   expect(_opts).toBeUndefined();
   expect(_runner).toBeUndefined();
   expect(_capture).toBeUndefined();
+  expect(_planCapture).toBeUndefined();
+  expect(_complexity).toBeUndefined();
+  expect(_plan).toBeUndefined();
   expect(_verdict).toBeUndefined();
   expect(_issue).toBeUndefined();
   expect(_status).toBeUndefined();
