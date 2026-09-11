@@ -351,6 +351,47 @@ module-locality from the touched-file set to decide what can parallelize.
   ad-coder, risky core via LDO or human) and supervised; faux tests + human remain
   ground truth for the core.
 
+- **Conversational orchestrator** — the top interface layer and the critical path
+  to a usable MVP: a chat that shapes the task, then drives the pipeline
+  (stepped or autonomous). The one genuinely NEW primitive it needs is a multi-turn
+  CONVERSATION LOOP — the runner drives a single turn; the orchestrator holds
+  context across many. Everything else is composition of what exists: an
+  orchestrator ROLE (prompt already at prompts/orchestrator.md) with its own TOOLS
+  (run_pipeline, show_cost/ledger, spawn) via the tools-seam, profile-switchable
+  like any role. After the role + triage land, a CLI dialog already works; the TUI
+  is a skin on top. The orchestrator prompt carries JUDGMENT only; mechanics
+  (resume tracking, model routing, git staging) stay in the harness/config — gates
+  over prompts.
+- **Orchestrator triage** — trivial-edit-inline vs run-the-pipeline. A MECHANICAL
+  FLOOR (a change touching a contract, a security surface, or a size threshold
+  forces the pipeline regardless of how small it looks) + the orchestrator's
+  JUDGMENT above it + post-hoc deterministic gates as a backstop. The orchestrator
+  triages coarse (pipeline-or-not, before any code is read); the planner rates fine
+  complexity INSIDE the pipeline. Resolves the chicken-and-egg: the coarse decision
+  needs no planner, the fine one lives where the code is read.
+- **Subagents & fork** — one primitive, the context source varies. A SUBAGENT is
+  runRole with a fixed role (planner/researcher/coder) or an ad-hoc prompt the
+  orchestrator composes. A FORK is a subagent that inherits the orchestrator's OWN
+  context and model and returns only a summary — context economy: spin off a
+  detour, keep only its conclusion, not its whole transcript. Unblocked by the
+  runner tools-seam (done); the orchestrator gets spawn_subagent / fork tools.
+- **Common preamble + orchestrator profile** — a short shared prompt preamble that
+  ad-coder COMPOSES and prepends to every role's system prompt BEFORE handing the
+  final string to the harness (so the verbatim/cacheable guarantee holds — the
+  harness still sees one opaque string). This is where the CONTEXT-ECONOMY
+  discipline lives ONCE (turns x context, carry-less-forward, grep-before-open,
+  batch calls, cap output, don't re-read) instead of being triplicated across role
+  prompts — it was deliberately held out of the 2026-09-11 prompt-fidelity pass for
+  exactly this home. The orchestrator role itself is profile-switchable like any
+  other. Cache-optimal: a stable preamble is a shared cache prefix.
+- **Publisher role** — ad-coder's /ldo-ship equivalent: tidy the work, create a
+  branch, run the gates/tests as a HARD pre-publish check (a gate, not a prompt),
+  open a PR, squash-merge. Its job is git/gh operations, so it needs PRIVILEGED
+  tools via the tools-seam + ideally the credential broker (git push / gh pr run on
+  the host with creds, the agent sees results not secrets). Can be a pipeline phase
+  after an approved verdict or a standalone tool the orchestrator invokes. This
+  session bootstrapped the first publish by hand; the Publisher automates it.
+
 ## Open backlog (mechanical)
 
 See docs/BACKLOG.md. Notably: ContextBudgetError should surface the effective

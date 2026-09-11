@@ -34,3 +34,12 @@ output schemas) — those arrive with the feature that needs them, not before.
 Typed errors carry names/paths/numbers only, never secrets or file contents. The
 `.ad-coder/` runtime dir (ledger, sessions, scratch) is gitignored via its own
 `.ad-coder/.gitignore` (`*`), so the project's root `.gitignore` is never touched.
+
+## Write verified research to the repo as you find it, not batched
+
+When research or reconnaissance establishes a fact worth keeping (a provider
+quirk, an SDK signature, a measured cost), write it to `docs/` at that moment —
+`docs/pi-capabilities.md`, `docs/cost-economics.md`, or the relevant doc — not in a
+batch at the end. Research that lives only in a chat transcript is lost when the
+session ends and re-paid in tokens the next time someone needs it. The repo is the
+durable store; the transcript is not.
