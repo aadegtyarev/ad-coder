@@ -18,8 +18,10 @@ The pipeline sequences roles with structured tool-call handoffs (the reviewer
 submits a verdict; the planner a complexity and security surface). For chat-style
 work there is a multi-turn substrate — `startConversation(config)` builds one
 harness once and re-drives it turn after turn, keeping history on the durable
-session branch with a per-turn ledger row and the compactor for long chats;
-`runRole` stays the single-turn primitive. Built on Bun + TypeScript, proven with
+session branch with a per-turn ledger row. A context budget and a compactor
+are in place for long chats, but automatic summarization is not yet wired into
+the CLI paths — it is next on the [roadmap](docs/ROADMAP.md). `runRole` stays
+the single-turn primitive. Built on Bun + TypeScript, proven with
 no network (a faux provider) and demonstrated live on DeepSeek — a full feature
 for a fraction of a cent.
 
@@ -45,13 +47,18 @@ Credentials come from your **environment** (never from the project ad-coder is
 working on). Set the key for the provider(s) you use, e.g.:
 
 ```sh
-export DEEPSEEK_API_KEY=...      # DeepSeek
-export OPENROUTER_API_KEY=...    # OpenRouter
-export OPENAI_API_KEY=...        # native OpenAI via openaiCompatiblePreset
-export ANTHROPIC_API_KEY=...     # native Anthropic via anthropicCompatiblePreset
+export DEEPSEEK_API_KEY=...      # DeepSeek   — the CLI selects it on key presence
+export OPENROUTER_API_KEY=...    # OpenRouter — the CLI selects it on key presence
 ```
 
-OpenAI Codex uses OAuth, not an environment key.
+The **CLI** picks a provider by env-var PRESENCE, in precedence order
+`DEEPSEEK_API_KEY` → `OPENROUTER_API_KEY` → OpenAI-Codex OAuth (override with
+`--provider`). OpenAI Codex uses OAuth, not an environment key.
+
+Native OpenAI and native Anthropic are **not** auto-selected by the CLI from
+`OPENAI_API_KEY` / `ANTHROPIC_API_KEY`. Reach them through the **library**
+presets `openaiCompatiblePreset` / `anthropicCompatiblePreset`, where you supply
+the `baseUrl` and the credential env-var name yourself (see below).
 
 The registry (`src/registry/`) ships exactly **five** provider presets:
 
@@ -77,6 +84,25 @@ See [docs/pi-capabilities.md](docs/pi-capabilities.md) for the per-provider
 cache/cost facts.
 
 ## Run
+
+### Usage at a glance
+
+```sh
+ad-coder run   <script.ts>                                --target-dir <dir>
+ad-coder role  <planner|coder|reviewer|security> "<task>" --target-dir <dir>
+ad-coder drive "<task>"                                   --target-dir <dir> [--auto]
+```
+
+Shared options for `role` and `drive`:
+`--provider <deepseek|openrouter|openai-codex>`,
+`--strong-model`/`--mid-model`/`--cheap-model <name>`,
+`--max-rounds <n>`, `--default-complexity <trivial|medium|complex>`.
+
+**Seeing usage / help.** Running `ad-coder` with no command — or an unknown
+command or flag — prints this usage to stderr and exits non-zero. A proper
+per-command `--help`/`-h` (auto-derived from the command registry) is on the
+way; see [docs/contracts/cli.md](docs/contracts/cli.md).
+
 
 The canonical demo drives a real plan → [security] → code ⇄ review pipeline on a
 clean throwaway directory:
