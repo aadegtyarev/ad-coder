@@ -3,6 +3,7 @@ import type {
   ConversationToolCall,
   ConversationTurnResult,
 } from "../conversation/conversation";
+import { EmptyTurnError } from "../runner/errors";
 import { SessionLimitError } from "../session-limits";
 
 export const DEFAULT_CONSOLE_MAX_INPUT_BYTES = 65_536;
@@ -149,6 +150,11 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
       if (error instanceof SessionLimitError) {
         params.error.write(SESSION_LIMIT_MESSAGE);
         reason = "session_limit";
+      } else if (error instanceof EmptyTurnError) {
+        params.error.write(
+          "ad-coder: provider returned a failed empty turn; verify authentication and retry\n",
+        );
+        reason = "turn_failed";
       } else {
         params.error.write(TURN_FAILED_MESSAGE);
         reason = "turn_failed";

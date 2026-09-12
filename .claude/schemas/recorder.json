@@ -1,0 +1,20 @@
+{
+  "type": "object",
+  "properties": {
+    "worktree_root": { "type": "string" },
+    "files_written": { "type": "array", "items": { "type": "string" } },
+    "backlog": {
+      "type": "object",
+      "properties": {
+        "destination": { "type": "string", "enum": ["file", "github", "none"] },
+        "file": { "type": ["string", "null"] },
+        "count": { "type": "number" }
+      },
+      "required": ["destination", "file", "count"],
+      "additionalProperties": false
+    },
+    "notes": { "type": "string" }
+  },
+  "required": ["worktree_root", "files_written", "backlog", "notes"],
+  "additionalProperties": false
+}

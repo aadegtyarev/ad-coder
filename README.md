@@ -10,16 +10,23 @@ their prompts as trusted unless you restrict tools or provide an external sandbo
 
 ## Requirements and installation
 
-Use Bun 1.3+ (the pi packages also require Node 22.19+). The private repository
-is installed through SSH-authenticated GitHub access:
+Use Bun 1.3+ (the pi packages also require Node 22.19+). Use a local,
+reviewable clone so dependency resolution stays frozen and no global package
+installation is mutated:
 
 ```sh
-bun install -g git+ssh://git@github.com/aadegtyarev/ad-coder.git
+git clone git@github.com:aadegtyarev/ad-coder.git
+cd ad-coder
+bun install --frozen-lockfile --ignore-scripts
+bun link
 ad-coder --help
+ad-coder about
 ```
 
-Update an existing global install with `bun update -g ad-coder`. For local
-development, clone the repository, then run `bun install` and `bun link`.
+To update, inspect and pull the clone, repeat the frozen script-disabled install,
+then refresh its local `bun link`. `ad-coder about --json` reports package
+semver, source revision when Git metadata is available, and linked-development
+state. The project does not claim or test a global install/update workflow.
 
 The registry is the authoritative CLI reference: use `ad-coder --help` and
 `ad-coder <command> --help` for the exact commands and flags.
@@ -60,8 +67,10 @@ credentials fail before a model request and direct you to `auth login`.
 
 ## First run
 
-Choose an existing target project. `--target-dir` is required for the
-role/pipeline/orchestrator commands and is realpath-resolved. It is a starting
+Choose an existing target project. `console` defaults to the invocation working
+directory; its explicit `--target-dir` overrides that default and `~/` is
+resolved against the user home. Other role/pipeline commands require
+`--target-dir`. Targets are realpath-resolved. A target is a starting
 working directory, **not a sandbox**: a role with `bash` can leave it, read
 files available to you, and use the network. Credentials remain outside the
 target project; do not run untrusted tasks with unrestricted tools.
@@ -80,6 +89,10 @@ is the non-interactive/scripted mode:
 ad-coder drive "Make a small reviewed maintenance change" \
   --provider openai-codex --target-dir ./my-project --auto
 ```
+
+When a planner role is configured, it must submit a structured affected-surface
+and contract-coverage analysis. Missing analysis and unresolved research gaps
+stop before coding; `--auto` does not bypass this requirements gate.
 
 Without `--auto`, `drive` pauses after every role for a transition choice. A
 standalone `role` is single-turn: its accepted `--max-rounds` has no effect,

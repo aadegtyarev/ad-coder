@@ -418,3 +418,36 @@ test("multiple provider keys with no explicit provider warns and selects by prec
   expect(config.routing?.registry.getModel("deepseek-chat")).toBeDefined();
   expect(messages.some((m) => m.includes("multiple provider keys"))).toBe(true);
 });
+
+test("surface analysis limits expose effective values and winning provenance", () => {
+  const config = resolvePipelineConfig({
+    task: "x",
+    targetDir: "/tmp/target",
+    env: fakeEnv({}),
+    warn: silent,
+    surfaceAnalysisLimits: { maxItems: 7 },
+  });
+  expect(config.surfaceAnalysisLimits).toEqual({
+    maxItems: 7,
+    maxTextBytes: 0,
+    maxAggregateBytes: 0,
+    maxDepth: 0,
+  });
+  expect(config.effectiveConfig?.["surfaceAnalysisLimits.maxItems"]).toEqual({
+    value: 7,
+    source: "cli",
+  });
+  expect(config.effectiveConfig?.["surfaceAnalysisLimits.maxDepth"]).toEqual({
+    value: 0,
+    source: "built-in-default",
+  });
+  expect(() =>
+    resolvePipelineConfig({
+      task: "x",
+      targetDir: "/tmp/target",
+      env: fakeEnv({}),
+      warn: silent,
+      surfaceAnalysisLimits: { maxItems: Number.MAX_SAFE_INTEGER + 1 },
+    }),
+  ).toThrow("non-negative safe integer");
+});

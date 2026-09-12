@@ -2,7 +2,13 @@ import * as crypto from "node:crypto";
 import * as path from "node:path";
 import type { WorkflowSession } from "../orchestration/session";
 import { applyTransition, autoDriver, toPipelineResult } from "../orchestration/session";
-import type { Driver, PipelineResult, StepResult, WorkflowState } from "../orchestration/types";
+import type {
+  Driver,
+  PipelineResult,
+  ResearchDispatchIntent,
+  StepResult,
+  WorkflowState,
+} from "../orchestration/types";
 import type { ProjectStore } from "../project-store/project-store";
 import type { VersionedState } from "../project-store/types";
 import { ProjectStoreError } from "../project-store/types";
@@ -51,6 +57,11 @@ export interface RunCheckpoint {
   contractReviews: ContractReviewRecord[];
   closeout?: CoordinatorCloseout;
   pendingStep?: StepResult;
+  researchEffect?: {
+    intent: ResearchDispatchIntent;
+    status: "prepared" | "dispatched" | "completed";
+  };
+  pause?: { phase: "research"; code: string; action: string };
 }
 
 export interface RunCoordinatorOptions {
@@ -65,9 +76,22 @@ export const DEFAULT_RUN_COORDINATOR_OPTIONS = {
   decisionLimit: 0,
   checkpointByteLimit: 0,
 } as const;
+const MANDATORY_CHECKPOINT_MAX_BYTES = 8 * 1024 * 1024;
+
+function assertCheckpointSize(
+  value: RunCheckpoint,
+  configuredLimit: number,
+  enforceConfigured = true,
+): void {
+  const checkpointBytes = Buffer.byteLength(JSON.stringify(value));
+  if (checkpointBytes > MANDATORY_CHECKPOINT_MAX_BYTES)
+    throw new ProjectOperationsError("resource_limit", "mandatoryCheckpointByteLimit");
+  if (enforceConfigured && configuredLimit > 0 && checkpointBytes > configuredLimit)
+    throw new ProjectOperationsError("resource_limit", "checkpointByteLimit");
+}
 
 export interface CoordinatorRunResult {
-  status: "awaiting_decision" | "complete";
+  status: "awaiting_decision" | "paused" | "complete";
   checkpoint: RunCheckpoint;
   result?: PipelineResult;
 }
@@ -76,6 +100,11 @@ export interface DecisionResolution {
   source: "operator";
   action: "accept" | "reject" | "defer";
   contractText?: string;
+}
+
+export interface ResearchPauseResolution {
+  source: "operator";
+  action: "retry";
 }
 
 export type CoordinatorDriver = (
@@ -130,20 +159,18 @@ export class RunCoordinator {
         throw new ProjectOperationsError("invalid_config", runId);
     } catch (error) {
       if (!(error instanceof ProjectStoreError) || error.code !== "not_found") throw error;
-      this.persisted = store.writeVersionedJson(
-        this.checkpointPath,
-        {
-          schemaVersion: 1,
-          runId,
-          phase: "workflow",
-          workflowState: session.initialState(),
-          followUps: [],
-          completedEffects: [],
-          decisions: [],
-          contractReviews: [],
-        },
-        0,
-      );
+      const initial: RunCheckpoint = {
+        schemaVersion: 1,
+        runId,
+        phase: "workflow",
+        workflowState: session.initialState(),
+        followUps: [],
+        completedEffects: [],
+        decisions: [],
+        contractReviews: [],
+      };
+      assertCheckpointSize(initial, this.checkpointByteLimit, false);
+      this.persisted = store.writeVersionedJson(this.checkpointPath, initial, 0);
     }
   }
 
@@ -151,12 +178,19 @@ export class RunCoordinator {
     return clone(this.persisted.value);
   }
 
+  resumeResearch(resolution: ResearchPauseResolution): void {
+    const checkpoint = this.persisted.value;
+    if (resolution.source !== "operator" || checkpoint.pause?.phase !== "research")
+      throw new ProjectOperationsError("unauthorized_resolution", checkpoint.runId);
+    const next = { ...checkpoint };
+    delete next.pause;
+    if (next.researchEffect?.status === "dispatched")
+      next.researchEffect = { intent: next.researchEffect.intent, status: "prepared" };
+    this.save(next);
+  }
+
   private save(value: RunCheckpoint): void {
-    if (
-      this.checkpointByteLimit > 0 &&
-      Buffer.byteLength(JSON.stringify(value)) > this.checkpointByteLimit
-    )
-      throw new ProjectOperationsError("resource_limit", "checkpointByteLimit");
+    assertCheckpointSize(value, this.checkpointByteLimit);
     try {
       this.persisted = this.store.writeVersionedJson(
         this.checkpointPath,
@@ -183,10 +217,80 @@ export class RunCoordinator {
   }
 
   async prepareStep(): Promise<StepResult | undefined> {
-    const checkpoint = this.persisted.value;
+    let checkpoint = this.persisted.value;
     if (checkpoint.phase !== "workflow" || checkpoint.workflowState.done) return undefined;
     if (checkpoint.pendingStep !== undefined) return clone(checkpoint.pendingStep);
-    const result = await this.session.step(checkpoint.workflowState);
+    if (checkpoint.workflowState.phase === "research") {
+      if (checkpoint.pause !== undefined) return undefined;
+      if (checkpoint.researchEffect?.status === "dispatched") {
+        this.save({
+          ...checkpoint,
+          pause: {
+            phase: "research",
+            code: "ambiguous_dispatch",
+            action: "reconcile the provider effect by its effectId, then resume explicitly",
+          },
+        });
+        return undefined;
+      }
+      if (checkpoint.researchEffect === undefined) {
+        let intent: ResearchDispatchIntent | undefined;
+        try {
+          intent = this.session.prepareResearch?.(checkpoint.workflowState);
+        } catch (error) {
+          this.save({
+            ...checkpoint,
+            pause: {
+              phase: "research",
+              code: "unsafe_request",
+              action: error instanceof Error ? error.message : "narrow the research request",
+            },
+          });
+          return undefined;
+        }
+        if (intent === undefined) {
+          this.save({
+            ...checkpoint,
+            pause: {
+              phase: "research",
+              code: "researcher_unavailable",
+              action: "configure roles.researcher and resume",
+            },
+          });
+          return undefined;
+        }
+        this.save({
+          ...checkpoint,
+          workflowState: { ...checkpoint.workflowState, researchIntent: intent },
+          researchEffect: { intent, status: "prepared" },
+        });
+        checkpoint = this.persisted.value;
+      }
+      this.save({
+        ...checkpoint,
+        researchEffect: {
+          ...(checkpoint.researchEffect as NonNullable<RunCheckpoint["researchEffect"]>),
+          status: "dispatched",
+        },
+      });
+      checkpoint = this.persisted.value;
+    }
+    let result: StepResult;
+    try {
+      result = await this.session.step(checkpoint.workflowState);
+    } catch (error) {
+      if (checkpoint.workflowState.phase !== "research") throw error;
+      this.save({
+        ...this.persisted.value,
+        pause: {
+          phase: "research",
+          code: "research_rejected",
+          action:
+            error instanceof Error ? error.message : "inspect and retry the research response",
+        },
+      });
+      return undefined;
+    }
     const followUps = aggregateFollowUps(
       [...checkpoint.followUps, ...(result.result.followUps ?? [])],
       this.store.projectOperations,
@@ -199,7 +303,20 @@ export class RunCoordinator {
               : record,
           )
         : checkpoint.contractReviews;
-    this.save({ ...checkpoint, followUps, contractReviews, pendingStep: result });
+    const completedResearch =
+      checkpoint.workflowState.phase === "research" ? checkpoint.researchEffect : undefined;
+    this.save({
+      ...checkpoint,
+      followUps,
+      contractReviews,
+      pendingStep: result,
+      ...(completedResearch !== undefined && {
+        researchEffect: { intent: completedResearch.intent, status: "completed" as const },
+        completedEffects: [
+          ...new Set([...checkpoint.completedEffects, completedResearch.intent.effectId]),
+        ].sort(),
+      }),
+    });
     return clone(result);
   }
 
@@ -450,7 +567,11 @@ export class RunCoordinator {
     driver: CoordinatorDriver = autoDriver,
     onStep?: (result: StepResult) => void | Promise<void>,
   ): Promise<CoordinatorRunResult> {
-    while (this.persisted.value.phase === "workflow") await this.step(driver, onStep);
+    while (this.persisted.value.phase === "workflow") {
+      const stepped = await this.step(driver, onStep);
+      if (stepped === undefined && this.persisted.value.pause !== undefined)
+        return { status: "paused", checkpoint: this.checkpoint };
+    }
     if (this.persisted.value.phase === "follow-ups") this.processFollowUps();
     if (this.persisted.value.phase === "decisions") {
       for (const decision of this.persisted.value.decisions) {

@@ -8,6 +8,8 @@ export type { AuthErrorCode } from "./auth/errors";
 export { AuthError } from "./auth/errors";
 export type { AuthLoginResult, AuthLogoutResult, AuthStatus } from "./auth/operations";
 export { getAuthStatus, login, logout, requireModelAuthentication } from "./auth/operations";
+export type { BuildInfo } from "./build-info";
+export { resolveBuildInfo } from "./build-info";
 export type {
   CostMode,
   ModelCapabilities,
@@ -139,12 +141,20 @@ export {
 } from "./orchestration/orchestrator";
 export { runPipeline } from "./orchestration/pipeline";
 export type { PlanCapture } from "./orchestration/plan";
-export { buildSubmitPlanTool, SUBMIT_PLAN_TOOL_NAME } from "./orchestration/plan";
+export {
+  buildSubmitPlanTool,
+  CONTRACT_INDEX,
+  DEFAULT_SURFACE_ANALYSIS_LIMITS,
+  parsePlan,
+  SUBMIT_PLAN_TOOL_NAME,
+} from "./orchestration/plan";
 export type { WorkflowSession } from "./orchestration/session";
 export { applyTransition, autoDriver, createWorkflowSession } from "./orchestration/session";
 export type {
   AvailableTransition,
   Complexity,
+  ContractCoverage,
+  ContractCoverageStatus,
   Driver,
   IssueSeverity,
   OrchestrationErrorCode,
@@ -154,10 +164,15 @@ export type {
   PipelineRouting,
   PipelineStageMetrics,
   Plan,
+  ResearchDispatchIntent,
+  ResearchProvenance,
   RoleSpec,
   RoundRecord,
   SecuritySurface,
   StepResult,
+  SurfaceAnalysis,
+  SurfaceAnalysisEntry,
+  SurfaceAnalysisLimits,
   TransitionKind,
   Verdict,
   VerdictIssue,
@@ -271,6 +286,7 @@ export type {
   DecisionResolution,
   DecisionStatus,
   OperatorDecision,
+  ResearchPauseResolution,
   RunCheckpoint,
   RunCoordinatorOptions,
 } from "./project-operations/run-coordinator";
@@ -344,6 +360,7 @@ export type { Role, RoleRunDeps } from "./role";
 export { defineRole, resolveRoleModel, toHarnessOptions } from "./role";
 export type { RunnerErrorCode } from "./runner/errors";
 export {
+  EmptyTurnError,
   ProviderLimitError,
   providerLimitFrom,
   RunnerError,

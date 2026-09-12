@@ -264,14 +264,22 @@ workflows — one substrate, swappable drivers.
   `malformed_verdict` — both hard `OrchestrationError`s. The next step on the
   same pattern, `submit_plan` for structured complexity, is also delivered; its
   complexity-aware routing consumer is described below.
-- **`submit_plan` structured complexity** — DONE. The optional planner can now
-  emit STRUCTURED complexity (`trivial`/`medium`/`complex`) plus a summary by
+- **`submit_plan` requirements governance** — DONE. A configured planner must
+  submit STRUCTURED complexity (`trivial`/`medium`/`complex`), summary, project
+  type, affected surfaces, and one contract-coverage decision per surface by
   CALLING a `submit_plan` tool built per planner turn (via the `runRole` tools
   seam), mirroring `submit_verdict`. `parsePlan` is the authoritative strict
-  validator (schema permissive at the `complexity` leaf). CRUCIAL soft/hard split:
-  unlike the verdict, an ABSENT call is NOT an error — it leaves
-  `PipelineResult.complexity` undefined and the run proceeds (there is NO
-  `missing_plan`); only a MALFORMED call is a hard `malformed_plan`. This unit
+  validator (schema permissive at the leaves). An absent call is a hard
+  `missing_plan`; malformed or incomplete coverage is `malformed_plan`; and a
+  `research_required` decision enters a durable Research phase before coding.
+  Inputs are bounded, IDs must be unique, and contract IDs resolve through a
+  deterministic exported canonical index. Optional surface-analysis governance
+  limits are production-configured with zero-disabled semantics and effective
+  source provenance. Research uses separate mandatory positive transport and
+  persistence ceilings, a strict response schema, independently loaded canonical
+  contract evidence, and normalized secret-free provenance. Its deterministic
+  intent is checkpointed before dispatch; ambiguous dispatches and validation
+  failures become actionable durable pauses, with explicit operator resume. This unit
   makes complexity available on `result.complexity`; the Profiles +
   complexity-aware routing implementation below consumes this signal.
 - **`submit_plan` securitySurface + conditional Security phase** — DONE. The same
@@ -312,8 +320,11 @@ workflows — one substrate, swappable drivers.
   data), and the researcher is the SAME role bootstrap uses (research at project
   start; this = research per feature inside an existing project). Soft/hard mirror
   submit_plan: an absent flag is not an error (only malformed is hard); `required`
-  with no configured researcher role skips quietly. Depends on: the researcher role
-  with web tools (tools-seam DONE; web tools + network-default-open both decided).
+  with no configured researcher role pauses durably before Coder dispatch. The
+  current implementation sends only canonical surface/contract identifiers and
+  never arbitrary task or planner prose. Broader research-provider integrations
+  remain dependent on the researcher role with web tools (tools-seam DONE; web
+  tools + network-default-open both decided).
 - **Wire ad-coder's own gates** — the gates module exists but ad-coder still runs
   only typecheck+test on itself. Add a size gate + (when a formatter/linter is
   chosen) format/lint gates over the repo. Dogfooding the gates-over-prompts

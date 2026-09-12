@@ -1,0 +1,20 @@
+{
+  "type": "object",
+  "properties": {
+    "summary": { "type": "string" },
+    "files_changed": { "type": "array", "items": { "type": "string" } },
+    "tests": {
+      "type": "object",
+      "properties": {
+        "result": { "type": "string" },
+        "command": { "type": "string" }
+      },
+      "required": ["result", "command"],
+      "additionalProperties": false
+    },
+    "docs_updated": { "type": "array", "items": { "type": "string" } },
+    "deviations": { "type": "array", "items": { "type": "string" } }
+  },
+  "required": ["summary", "files_changed", "tests", "docs_updated", "deviations"],
+  "additionalProperties": false
+}

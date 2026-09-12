@@ -1,7 +1,7 @@
 import { Type } from "@earendil-works/pi-ai";
 import type { Tool } from "../runner/tool";
 import { defineTool } from "../runner/tool";
-import type { IssueSeverity, Verdict, VerdictIssue, VerdictStatus } from "./types";
+import type { IssueSeverity, SurfaceAnalysis, Verdict, VerdictIssue, VerdictStatus } from "./types";
 import { OrchestrationError } from "./types";
 
 /** The tool name the reviewer calls to submit its verdict. */
@@ -37,7 +37,7 @@ export interface VerdictCapture {
  * `detail` is a path-safe token (the reviewer runId) carried onto the error's
  * `detail` field; it is NEVER content and never the verdict body.
  */
-export function parseVerdict(value: unknown, detail: string): Verdict {
+export function parseVerdict(value: unknown, detail: string, expected?: SurfaceAnalysis): Verdict {
   const bad = (message: string): never => {
     throw new OrchestrationError("malformed_verdict", detail, message);
   };
@@ -74,8 +74,53 @@ export function parseVerdict(value: unknown, detail: string): Verdict {
   if (typeof record.summary !== "string") {
     return bad("verdict.summary must be a string");
   }
+  let coverage: Verdict["coverage"];
+  const applicable = expected?.coverage.filter(({ status }) => status === "covered") ?? [];
+  if (applicable.length > 0) {
+    if (!Array.isArray(record.coverage)) return bad("verdict.coverage must be an array");
+    coverage = record.coverage.map((entry, index) => {
+      if (typeof entry !== "object" || entry === null || Array.isArray(entry))
+        return bad(`verdict.coverage[${index}] must be an object`);
+      const item = entry as Record<string, unknown>;
+      if (
+        typeof item.surfaceId !== "string" ||
+        !Array.isArray(item.contractIds) ||
+        !item.contractIds.every((id) => typeof id === "string") ||
+        !Array.isArray(item.evidence) ||
+        !item.evidence.every((evidence) => typeof evidence === "string")
+      )
+        return bad(`verdict.coverage[${index}] fields are invalid`);
+      return {
+        surfaceId: item.surfaceId,
+        contractIds: item.contractIds as string[],
+        evidence: item.evidence as string[],
+      };
+    });
+    const expectedBySurface = new Map(
+      applicable.map((item) => [item.surfaceId, new Set(item.contractIds)]),
+    );
+    if (coverage.length !== expectedBySurface.size) return bad("verdict.coverage is incomplete");
+    const seen = new Set<string>();
+    for (const item of coverage) {
+      const contracts = expectedBySurface.get(item.surfaceId);
+      if (contracts === undefined || seen.has(item.surfaceId))
+        return bad("verdict.coverage contains unknown or duplicate surfaceId");
+      seen.add(item.surfaceId);
+      if (
+        item.contractIds.length !== contracts.size ||
+        item.contractIds.some((id) => !contracts.has(id)) ||
+        item.evidence.length === 0
+      )
+        return bad(`verdict.coverage does not support ${item.surfaceId}`);
+    }
+  }
 
-  return { status: status as VerdictStatus, issues, summary: record.summary };
+  return {
+    status: status as VerdictStatus,
+    issues,
+    summary: record.summary,
+    ...(coverage && { coverage }),
+  };
 }
 
 /**
@@ -94,7 +139,11 @@ export function parseVerdict(value: unknown, detail: string): Verdict {
  *
  * `detail` is the reviewer runId, threaded onto any `OrchestrationError.detail`.
  */
-export function buildSubmitVerdictTool(capture: VerdictCapture, detail: string): Tool {
+export function buildSubmitVerdictTool(
+  capture: VerdictCapture,
+  detail: string,
+  expected?: SurfaceAnalysis,
+): Tool {
   return defineTool({
     name: SUBMIT_VERDICT_TOOL_NAME,
     description: "Record the review verdict.",
@@ -103,6 +152,15 @@ export function buildSubmitVerdictTool(capture: VerdictCapture, detail: string):
       status: Type.String(),
       issues: Type.Array(Type.Object({ severity: Type.String(), what: Type.String() })),
       summary: Type.String(),
+      coverage: Type.Optional(
+        Type.Array(
+          Type.Object({
+            surfaceId: Type.String(),
+            contractIds: Type.Array(Type.String()),
+            evidence: Type.Array(Type.String()),
+          }),
+        ),
+      ),
     }),
     async execute(_toolCallId, params) {
       try {
@@ -110,7 +168,7 @@ export function buildSubmitVerdictTool(capture: VerdictCapture, detail: string):
         // capture, so the pipeline reads the final submission of the round.
         // `delete` (not `= undefined`) clears the sibling under
         // exactOptionalPropertyTypes, where the field is not typed `| undefined`.
-        capture.verdict = parseVerdict(params, detail);
+        capture.verdict = parseVerdict(params, detail, expected);
         delete capture.error;
         return { content: [{ type: "text", text: "verdict recorded" }], details: undefined };
       } catch (error) {
@@ -131,11 +189,17 @@ export function buildSubmitVerdictTool(capture: VerdictCapture, detail: string):
  * and the tests agree on it verbatim. No filesystem path is involved: the
  * verdict travels as tool-call args, not a written file.
  */
-export function formatReviewerInstruction(): string {
+export function formatReviewerInstruction(expected?: SurfaceAnalysis): string {
+  const applicable = expected?.coverage.filter(({ status }) => status === "covered") ?? [];
   return [
     `When your review is complete, submit your verdict by calling the ${SUBMIT_VERDICT_TOOL_NAME} tool.`,
     "Call it with this shape:",
-    '{ "status": "approved" | "changes_requested", "issues": [ { "severity": "blocker" | "major" | "minor", "what": "<one issue>" } ], "summary": "<short summary>" }',
+    applicable.length === 0
+      ? '{ "status": "approved" | "changes_requested", "issues": [ { "severity": "blocker" | "major" | "minor", "what": "<one issue>" } ], "summary": "<short summary>" }'
+      : '{ "status": "approved" | "changes_requested", "issues": [ { "severity": "blocker" | "major" | "minor", "what": "<one issue>" } ], "summary": "<short summary>", "coverage": [{"surfaceId":"<id>","contractIds":["<id>"],"evidence":["<verification>"]}] }',
+    ...(applicable.length === 0
+      ? []
+      : [`Cover exactly these surfaces: ${applicable.map((item) => item.surfaceId).join(", ")}.`]),
     'Use "approved" only when no further changes are required; otherwise "changes_requested" with each required change as an issue.',
   ].join("\n");
 }

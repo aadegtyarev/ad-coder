@@ -19,7 +19,7 @@ import {
   getOrThrow,
 } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/harness/env/nodejs";
-import type { Api, Model, Models } from "@earendil-works/pi-ai";
+import type { Api, Model, Models, TextContent } from "@earendil-works/pi-ai";
 import { closeOpenAICodexWebSocketSessions } from "@earendil-works/pi-ai/api/openai-codex-responses";
 import { requireModelAuthentication } from "../auth/operations";
 import type { CompactionPolicy, Summarizer } from "../context/compactor";
@@ -39,6 +39,7 @@ import type { SessionLimitController } from "../session-limits";
 import {
   assertRunId,
   assertUniqueToolNames,
+  EmptyTurnError,
   providerLimitFrom,
   RunnerError,
   resolveTargetDir,
@@ -390,6 +391,24 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
         code: "code" in details ? details.code : result.error.code,
       });
       if (providerLimit !== undefined) throw providerLimit;
+    }
+    if (result.status === "failed") {
+      const entries = await session.findEntries(
+        { type: "message", order: "desc", limit: 20 },
+        context,
+      );
+      let text = "";
+      for (const entry of entries) {
+        if (entry.type !== "message" || entry.message.role !== "assistant") continue;
+        text = entry.message.content
+          .filter((part): part is TextContent => part.type === "text")
+          .map((part) => part.text)
+          .join("");
+        break;
+      }
+      if (text.trim() === "" && usage.freshInput + usage.cachedInput + usage.output === 0) {
+        throw new EmptyTurnError(runId);
+      }
     }
     if ("status" in result && result.status === "suspended") {
       // lane.prompt returns OperationResultRecord | SuspendedRun. A single-turn

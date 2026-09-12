@@ -19,8 +19,9 @@
   "scripts": {
     "test": "bun test",
     "typecheck": "tsc --noEmit",
-    "check": "biome check src test",
-    "check:fix": "biome check --write src test",
+    "check": "biome check src test scripts",
+    "check:fix": "biome check --write src test scripts",
+    "smoke:artifact": "bun run scripts/artifact-smoke.ts",
     "format": "biome format --write src test",
     "lint": "biome lint src test",
     "start": "bun run src/cli.ts"

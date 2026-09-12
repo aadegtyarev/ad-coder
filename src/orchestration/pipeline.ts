@@ -2,6 +2,7 @@ import { ProjectOperationsError } from "../project-operations/errors";
 import { RunCoordinator } from "../project-operations/run-coordinator";
 import { createWorkflowSession } from "./session";
 import type { PipelineConfig, PipelineResult } from "./types";
+import { OrchestrationError } from "./types";
 
 /**
  * Compose the EXISTING single-turn `runRole` into a plan -> [security] ->
@@ -52,6 +53,13 @@ export async function runPipeline(config: PipelineConfig): Promise<PipelineResul
   const session = createWorkflowSession(config);
   const coordinator = new RunCoordinator(session, session.projectStore, config.coordinator);
   const completed = await coordinator.run();
+  if (completed.status === "paused" && completed.checkpoint.pause !== undefined) {
+    throw new OrchestrationError(
+      "requirements_unresolved",
+      completed.checkpoint.runId,
+      completed.checkpoint.pause.action,
+    );
+  }
   if (completed.result === undefined) {
     const decision = completed.checkpoint.decisions.find((item) => item.status === "pending");
     throw new ProjectOperationsError(
