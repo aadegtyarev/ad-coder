@@ -5,8 +5,9 @@
 - [next] Implement the decided incremental pipeline-context
   strategy for scoped Planner reconnaissance, Coder fix handoffs, and repeated
   Reviewer verification. Include configurable full-context fallback on scope
-  drift/large diffs/insufficient context and per-stage fresh/cached/output,
-  files-read, diff-size, strategy, and fallback-reason telemetry.
+  drift/large diffs/insufficient context and fallback-reason telemetry. The
+  baseline per-stage token/read/diff/context-strategy observability and durable
+  provider-limit pause/resume are delivered; incremental handoffs are not.
 
 ## Future control plane and plugins
 
@@ -16,13 +17,6 @@
 - [planned] Add a minimal trusted plugin registry for local/npm packages over the
   existing tool/workflow/driver seams, followed by a Telegram driver that binds
   chats or topics to durable sessions.
-- [planned] Add a headless Codex subscription-status adapter over the installed
-  Codex app-server protocol (`account/rateLimits/read` plus
-  `account/rateLimits/updated`). Expose plan type, ordinary-usage availability,
-  primary/secondary used percentages and reset times, credit/spend-control state,
-  and reset-credit count to CLI/TUI; omit account identifiers and degrade to an
-  explicit `unavailable` state when the Codex CLI/protocol is absent.
-
 ## 2026-09-12
 
 - [medium] Provide a built-in distributed `GitHubClaimCoordinator`; the headless backend currently requires callers to inject a shared coordinator and rejects mutations when none is supplied (CWE-362).

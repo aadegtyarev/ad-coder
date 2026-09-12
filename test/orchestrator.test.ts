@@ -15,6 +15,7 @@ import {
   buildControlPlaneTools,
   createOrchestratorControlPlane,
   DEFAULT_CONTROL_PLANE_CONFIG,
+  LiveRetryCoordinator,
   triageControlPlaneTask,
 } from "../src/orchestration/control-plane";
 import { SUBMIT_FOLLOW_UP_TOOL_NAME } from "../src/orchestration/follow-up";
@@ -26,6 +27,7 @@ import {
   RUN_STEP_TOOL_NAME,
   startOrchestrator,
 } from "../src/orchestration/orchestrator";
+import { createWorkflowSession } from "../src/orchestration/session";
 import { DriveError } from "../src/orchestration/transition-guard";
 import type {
   PipelineConfig,
@@ -35,9 +37,11 @@ import type {
   Verdict,
 } from "../src/orchestration/types";
 import { SUBMIT_VERDICT_TOOL_NAME } from "../src/orchestration/verdict";
+import { RunCoordinator } from "../src/project-operations/run-coordinator";
 import { ProjectStore } from "../src/project-store/project-store";
 import type { Role } from "../src/role";
 import { defineRole } from "../src/role";
+import { ProviderLimitError } from "../src/runner/errors";
 import type { Tool } from "../src/runner/tool";
 import { SessionLimitController, SessionLimitError } from "../src/session-limits";
 
@@ -378,7 +382,203 @@ const approvedPipeline: PipelineResult = {
   rounds: 1,
   verdicts: [{ status: "approved", issues: [], summary: "ok" }],
   runIds: [],
+  stageMetrics: [],
 };
+
+test("provider exhaustion durably pauses and uses a safe hint before configured retry", async () => {
+  const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-provider-limit-"));
+  let calls = 0;
+  const scheduled: Array<{ id: string; delay: number; callback: () => void }> = [];
+  const control = createOrchestratorControlPlane({
+    store: new ProjectStore(targetDir),
+    id: () => "provider-limited-run",
+    config: { retryIntervalMs: 9_000 },
+    retryCoordinator: {
+      schedule: (id, delay, callback) => scheduled.push({ id, delay, callback }),
+      cancel: () => undefined,
+    },
+    execute: async () => {
+      calls += 1;
+      if (calls === 1) throw new ProviderLimitError(2_500);
+      return { result: approvedPipeline };
+    },
+    resolveAutoDecision: async () => ({
+      action: "accept" as const,
+      rationale: "auto mandate",
+      evidence: ["docs/contracts/operation-modes.md"],
+    }),
+  });
+  const run = control.start({ requestKey: "provider-limit", task: "work", mode: "auto" });
+  expect((await control.resume(run.id)).status).toBe("paused");
+  expect(control.status(run.id).externalLimit).toEqual({
+    source: "provider",
+    state: "exhausted",
+    resumable: true,
+    retryAfterMs: 2_500,
+  });
+  expect(scheduled.map(({ id, delay }) => ({ id, delay }))).toEqual([{ id: run.id, delay: 2_500 }]);
+  expect(
+    control.events(run.id, 0).some((event) => event.type === "run.paused.external_limit"),
+  ).toBe(true);
+  await scheduled[0]?.callback();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(control.status(run.id).status).toBe("complete");
+  expect(calls).toBe(2);
+});
+
+test("retryIntervalMs zero disables provider-hint scheduling", async () => {
+  const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-provider-no-retry-"));
+  let scheduled = 0;
+  const control = createOrchestratorControlPlane({
+    store: new ProjectStore(targetDir),
+    id: () => "provider-no-retry",
+    config: { retryIntervalMs: 0 },
+    retryCoordinator: {
+      schedule: () => {
+        scheduled += 1;
+      },
+      cancel: () => undefined,
+    },
+    execute: async () => {
+      throw new ProviderLimitError(1_000);
+    },
+    resolveAutoDecision: async () => ({
+      action: "accept" as const,
+      rationale: "auto mandate",
+      evidence: ["docs/contracts/operation-modes.md"],
+    }),
+  });
+  const run = control.start({ requestKey: "provider-no-retry", task: "work", mode: "auto" });
+  expect((await control.resume(run.id)).status).toBe("paused");
+  expect(scheduled).toBe(0);
+});
+
+test("reconstructed provider-limit resume keeps committed stages and reruns only the interrupted stage", async () => {
+  const fx = fixture();
+  const store = new ProjectStore(fx.targetDir);
+  const verdict: Verdict = { status: "approved", issues: [], summary: "ok" };
+  approveScenario(fx, verdict);
+  let executions = 0;
+  const dependencies = {
+    store,
+    id: () => "provider-restart-run",
+    execute: async (record: { id: string }) => {
+      const session = createWorkflowSession({
+        ...fx.buildConfig("restart safely"),
+        coordinator: { runId: record.id },
+      });
+      const coordinator = new RunCoordinator(session, store, { runId: record.id });
+      executions += 1;
+      if (executions === 1) {
+        await coordinator.step();
+        throw new ProviderLimitError(5_000);
+      }
+      const completed = await coordinator.run();
+      if (completed.result === undefined) throw new Error("missing pipeline result");
+      return { result: completed.result };
+    },
+    resolveAutoDecision: async () => ({
+      action: "accept" as const,
+      rationale: "auto mandate",
+      evidence: ["docs/contracts/operation-modes.md"],
+    }),
+  };
+  const initial = createOrchestratorControlPlane(dependencies);
+  const run = initial.start({ requestKey: "provider-restart", task: "work", mode: "auto" });
+  expect((await initial.resume(run.id)).status).toBe("paused");
+  expect(initial.report(run.id).stageMetrics.map((metric) => metric.stage)).toEqual(["plan"]);
+  expect(fx.faux.state.callCount).toBe(1);
+
+  const reconstructed = createOrchestratorControlPlane({
+    ...dependencies,
+    store: new ProjectStore(fx.targetDir),
+  });
+  expect((await reconstructed.resume(run.id)).status).toBe("complete");
+  expect(reconstructed.report(run.id).stageMetrics.map((metric) => metric.stage)).toEqual([
+    "plan",
+    "code:1",
+    "review:1",
+  ]);
+  expect(fx.faux.state.callCount).toBe(4);
+});
+
+test("automatic provider retries back off and stop at the durable configured ceiling", async () => {
+  const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-provider-retry-ceiling-"));
+  const scheduled: Array<{ delay: number; callback: () => void }> = [];
+  const dependencies = {
+    store: new ProjectStore(targetDir),
+    id: () => "provider-retry-ceiling",
+    config: { retryIntervalMs: 2_000, maxAutomaticRetryAttempts: 2 },
+    retryCoordinator: {
+      schedule: (_id: string, delay: number, callback: () => Promise<void>) =>
+        scheduled.push({ delay, callback }),
+      cancel: () => undefined,
+    },
+    execute: async () => {
+      throw new ProviderLimitError(1_000);
+    },
+    resolveAutoDecision: async () => ({
+      action: "accept" as const,
+      rationale: "auto mandate",
+      evidence: ["docs/contracts/operation-modes.md"],
+    }),
+  };
+  const control = createOrchestratorControlPlane(dependencies);
+  const run = control.start({ requestKey: "retry-ceiling", task: "work", mode: "auto" });
+  expect((await control.resume(run.id)).status).toBe("paused");
+  expect(scheduled[0]?.delay).toBe(1_000);
+  scheduled.shift()?.callback();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(scheduled[0]?.delay).toBe(2_000);
+  scheduled.shift()?.callback();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(scheduled).toHaveLength(0);
+
+  const reconstructed = createOrchestratorControlPlane(dependencies);
+  expect((await reconstructed.resume(run.id)).status).toBe("paused");
+  expect(scheduled).toHaveLength(0);
+});
+
+test("live retry coordinator jitters delays, cancels stale timers, and bounds host admissions", async () => {
+  const timers: Array<{ callback: () => void; delay: number; cancelled: boolean }> = [];
+  let releaseFirst: (() => void) | undefined;
+  const firstGate = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+  const started: string[] = [];
+  const coordinator = new LiveRetryCoordinator({
+    maxConcurrentAdmissions: 1,
+    jitterRatio: 0.1,
+    random: () => 1,
+    setTimer: (callback, delay) => {
+      const timer = { callback, delay, cancelled: false };
+      timers.push(timer);
+      return timer as unknown as ReturnType<typeof setTimeout>;
+    },
+    clearTimer: (timer) => {
+      (timer as unknown as { cancelled: boolean }).cancelled = true;
+    },
+  });
+  coordinator.schedule("stale", 10_000, async () => {
+    started.push("stale");
+  });
+  coordinator.cancel("stale");
+  coordinator.schedule("first", 10_000, async () => {
+    started.push("first");
+    await firstGate;
+  });
+  coordinator.schedule("second", 10_000, async () => {
+    started.push("second");
+  });
+
+  expect(timers.map((timer) => timer.delay)).toEqual([11_000, 11_000, 11_000]);
+  for (const timer of timers) if (!timer.cancelled) timer.callback();
+  await Promise.resolve();
+  expect(started).toEqual(["first"]);
+  releaseFirst?.();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(started).toEqual(["first", "second"]);
+});
 
 test("control-plane start is durable, immediate, idempotent, and reconstructable", async () => {
   const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-control-plane-"));
@@ -581,6 +781,51 @@ test("control-plane cancellation is durable and model tools omit manual resoluti
   const names = buildControlPlaneTools(control).map((tool) => tool.name);
   expect(names).toContain("control_decisions");
   expect(names).not.toContain("control_decision_resolve");
+});
+
+test("stage metrics survive reconstruction and model reports expose counts, not read paths", async () => {
+  const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-control-metrics-"));
+  const result: PipelineResult = {
+    ...approvedPipeline,
+    stageMetrics: [
+      {
+        stage: "code:1",
+        input: 13,
+        cachedInput: 5,
+        freshInput: 8,
+        output: 3,
+        readFiles: ["src/private-name.ts"],
+        readFilesTotal: 1,
+        readFilesTruncated: 0,
+        diffBytes: 42,
+        contextStrategy: "auto",
+      },
+    ],
+  };
+  const dependencies = {
+    store: new ProjectStore(targetDir),
+    id: () => "metrics-run",
+    execute: async () => ({ result }),
+    resolveAutoDecision: async () => ({
+      action: "accept" as const,
+      rationale: "auto mandate",
+      evidence: ["docs/contracts/operation-modes.md"],
+    }),
+  };
+  const control = createOrchestratorControlPlane(dependencies);
+  const run = control.start({ requestKey: "metrics", task: "work", mode: "auto" });
+  await control.resume(run.id);
+  const reconstructed = createOrchestratorControlPlane({
+    ...dependencies,
+    store: new ProjectStore(targetDir),
+  });
+  expect(reconstructed.report(run.id).stageMetrics).toEqual(result.stageMetrics);
+  const reportTool = buildControlPlaneTools(reconstructed).find(
+    (tool) => tool.name === "control_report",
+  );
+  const safeReport = await callTool(reportTool as Tool, { id: run.id });
+  expect(safeReport).toContain('"readFilesTotal":1');
+  expect(safeReport).not.toContain("private-name");
 });
 
 test("mechanical triage forces contracts, elevated security, and large work through pipeline", () => {

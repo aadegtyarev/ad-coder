@@ -121,8 +121,7 @@ Orchestrator reasoning option retain precedence; other providers keep their
 existing defaults.
 
 Verification: 309 Bun tests with 1,577 assertions, TypeScript, Biome, and
-`git diff --check` passed. A follow-up is recorded for a headless Codex
-subscription-status adapter using the installed app-server rate-limit protocol.
+`git diff --check` passed.
 
 ## 2026-09-12 — Daemon-free control plane
 
@@ -160,3 +159,28 @@ semantic exception with default `1` and `0` unlimited.
 
 Verification: 318 Bun tests with 1,624 assertions, TypeScript, Biome, and the focused concurrency,
 validation, decomposition, event-cursor, and stale-publication tests pass.
+
+## 2026-09-12 — Stage observability and provider-limit recovery
+
+Pipeline stages now retain safe token/cache/output totals, bounded normalized
+dedicated-read observations, streamed cumulative Git diff byte counts, and the
+resolved context strategy through workflow checkpoints, `PipelineResult`,
+`RunReport`, safe control reports, and CLI JSON. Structured rate/quota exhaustion
+durably pauses with a safe retry delay and clears the execution lease; the CLI
+binds the coordinator to the durable control run ID, so explicit or scheduled
+resume continues the same checkpoint. Timed retry is disabled at `0`; positive
+configuration enables bounded exponential retry through a shared live-host
+admission coordinator, with validated hints, jitter, a 24-hour delay cap, and a
+durable configurable attempt ceiling (`0` means unlimited). Git diff probes disable repository
+fsmonitor hooks through a sanitized environment override, while reported read paths omit
+terminal controls and Unicode-format controls. Subscription status, provider fallback, context
+shrinking, and incremental context handoffs remain out of scope.
+
+The direct `bun` executable was absent from PATH, so the pre-edit focused baseline
+could not start. The documented offline-cache invocation then reproduced Bun:
+the planner-scoped verification passes 87 tests with 563 assertions, the expanded
+eight-file verification passes 164 tests with 1,098 assertions, and the full suite
+passes 330 tests with 1,696 assertions. TypeScript, Biome, and `git diff --check` pass.
+The second Reviewer returned further findings after one fix cycle; per operator policy the next
+model fix cycle was stopped and the Orchestrator completed the final audit locally. The full local
+gate is green and authorizes publication.

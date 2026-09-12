@@ -1,3 +1,5 @@
+import { spawn } from "node:child_process";
+import * as fs from "node:fs";
 import * as path from "node:path";
 import type {
   AgentHarnessOptions,
@@ -34,7 +36,13 @@ import type { ProjectStoreConfig } from "../project-store/types";
 import type { Role } from "../role";
 import { toHarnessOptions } from "../role";
 import type { SessionLimitController } from "../session-limits";
-import { assertRunId, assertUniqueToolNames, resolveTargetDir } from "./errors";
+import {
+  assertRunId,
+  assertUniqueToolNames,
+  providerLimitFrom,
+  RunnerError,
+  resolveTargetDir,
+} from "./errors";
 import type { Tool } from "./tool";
 
 /**
@@ -88,6 +96,8 @@ export interface RunRoleParams {
   tools?: Tool[];
   /** Shared model-call controller for a larger session. */
   sessionLimitController?: SessionLimitController;
+  /** Zero disables each observation limit. */
+  observability?: { maxReadPaths?: number; maxReadPathBytes?: number };
 }
 
 /**
@@ -106,6 +116,73 @@ export interface RunRoleResult {
   /** Non-zero means the audit trail has holes for this run. */
   droppedRecords: number;
   result: OperationResultRecord;
+  observations: RoleObservations;
+}
+
+export interface RoleObservations {
+  input: number;
+  cachedInput: number;
+  freshInput: number;
+  output: number;
+  readFiles: string[];
+  readFilesTotal: number;
+  readFilesTruncated: number;
+  diffBytes: number;
+  contextStrategy: "auto" | "disabled-then-halt";
+}
+
+const SAFE_DIFF_ARGV = ["diff", "--no-ext-diff", "--no-textconv"] as const;
+
+function safeGitEnvironment(): NodeJS.ProcessEnv {
+  const environment = Object.fromEntries(
+    Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_")),
+  );
+  return {
+    ...environment,
+    GIT_CONFIG_COUNT: "1",
+    GIT_CONFIG_KEY_0: "core.fsmonitor",
+    GIT_CONFIG_VALUE_0: "false",
+  };
+}
+
+function isSafeReportedPath(value: string): boolean {
+  return ![...value].some((character) => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    return (
+      codePoint < 32 ||
+      codePoint === 127 ||
+      (codePoint >= 0xd800 && codePoint <= 0xdfff) ||
+      /\p{Cf}/u.test(character)
+    );
+  });
+}
+
+/** Stream and discard diff content so observability cannot buffer an unbounded patch. */
+export function measureSafeGitDiffBytes(
+  targetDir: string,
+  spawnGit: typeof spawn = spawn,
+): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const child = spawnGit("git", [...SAFE_DIFF_ARGV], {
+      cwd: targetDir,
+      env: safeGitEnvironment(),
+      shell: false,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    let bytes = 0;
+    child.stdout.on("data", (chunk: Buffer) => {
+      bytes += chunk.byteLength;
+    });
+    child.once("error", () =>
+      reject(new RunnerError("diff_metric_failed", targetDir, "git diff metric failed")),
+    );
+    child.once("close", (code) => {
+      if (code === 0) resolve(bytes);
+      else if (code === 129)
+        resolve(0); // A target without a Git worktree has no measurable diff.
+      else reject(new RunnerError("diff_metric_failed", targetDir, "git diff metric failed"));
+    });
+  });
 }
 
 /**
@@ -163,6 +240,12 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
     throw new TypeError("custom summarizer cannot be used with positive session limits");
   }
   const compaction = resolveCompactionPolicy(explicitPolicy, models, params.model);
+  const usage = { freshInput: 0, cachedInput: 0, output: 0 };
+  let providerLimitObservation: ReturnType<typeof providerLimitFrom>;
+  const readFiles = new Set<string>();
+  const seenReadFiles = new Set<string>();
+  const maxReadPaths = params.observability?.maxReadPaths ?? 0;
+  const maxReadPathBytes = params.observability?.maxReadPathBytes ?? 0;
 
   const store =
     params.session === undefined
@@ -220,6 +303,45 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
   }
   ledger.attach(harness.hooks);
   compactor?.attach(harness.hooks);
+  harness.hooks.on("after_response", (event) => {
+    usage.freshInput += event.message.usage.input;
+    usage.cachedInput += event.message.usage.cacheRead;
+    usage.output += event.message.usage.output;
+    if (event.status === 429) {
+      const retryAfter = Object.entries(event.headers ?? {}).find(
+        ([name]) => name.toLowerCase() === "retry-after",
+      )?.[1];
+      const retryAfterSeconds =
+        retryAfter !== undefined && /^\d+(?:\.\d+)?$/.test(retryAfter)
+          ? Number(retryAfter)
+          : undefined;
+      providerLimitObservation = providerLimitFrom({ status: 429, retryAfterSeconds });
+    }
+    return undefined;
+  });
+  harness.hooks.on("after_tool", (event) => {
+    if (event.toolName !== "read" || event.isError) return undefined;
+    const candidate = event.args.path;
+    if (typeof candidate !== "string" || candidate.includes("\0")) return undefined;
+    try {
+      const resolved = fs.realpathSync(path.resolve(absTargetDir, candidate));
+      const relative = path.relative(absTargetDir, resolved);
+      if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative))
+        return undefined;
+      if (
+        (maxReadPathBytes > 0 && Buffer.byteLength(relative) > maxReadPathBytes) ||
+        !isSafeReportedPath(relative)
+      )
+        return undefined;
+      const normalized = relative.split(path.sep).join("/");
+      if (seenReadFiles.has(normalized)) return undefined;
+      seenReadFiles.add(normalized);
+      if (maxReadPaths === 0 || readFiles.size < maxReadPaths) readFiles.add(normalized);
+    } catch {
+      // A successful tool hook may still name a virtual or subsequently removed file; omit it safely.
+    }
+    return undefined;
+  });
 
   try {
     const lane = await harness.lane(params.laneName ?? "main", context);
@@ -241,10 +363,34 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
     }
     const prompted = await lane.prompt(params.prompt, undefined, context).catch((error) => {
       controller?.assertNoBoundaryFailure();
+      const providerLimit = providerLimitFrom(error);
+      if (providerLimit !== undefined) throw providerLimit;
       throw error;
     });
     controller?.assertNoBoundaryFailure();
-    const result = getOrThrow(prompted);
+    if (providerLimitObservation !== undefined) throw providerLimitObservation;
+    const result = (() => {
+      try {
+        return getOrThrow(prompted);
+      } catch (error) {
+        const providerLimit = providerLimitFrom(error);
+        if (providerLimit !== undefined) throw providerLimit;
+        throw error;
+      }
+    })();
+    if (result.status === "failed" && result.error !== undefined) {
+      const details =
+        result.error.details !== null &&
+        typeof result.error.details === "object" &&
+        !Array.isArray(result.error.details)
+          ? result.error.details
+          : {};
+      const providerLimit = providerLimitFrom({
+        ...details,
+        code: "code" in details ? details.code : result.error.code,
+      });
+      if (providerLimit !== undefined) throw providerLimit;
+    }
     if ("status" in result && result.status === "suspended") {
       // lane.prompt returns OperationResultRecord | SuspendedRun. A single-turn
       // faux/live drive settles; a suspended run means a deferred provider
@@ -254,11 +400,23 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
         `runRole: run ${runId} suspended; single-turn drive does not resume deferrals`,
       );
     }
+    const diffBytes = await measureSafeGitDiffBytes(absTargetDir);
     return {
       runId,
       ledgerPath,
       droppedRecords: ledger.droppedRecords,
       result,
+      observations: {
+        input: usage.freshInput + usage.cachedInput,
+        cachedInput: usage.cachedInput,
+        freshInput: usage.freshInput,
+        output: usage.output,
+        readFiles: [...readFiles].sort(),
+        readFilesTotal: seenReadFiles.size,
+        readFilesTruncated: Math.max(0, seenReadFiles.size - readFiles.size),
+        diffBytes,
+        contextStrategy: compaction.mode === "disabled-then-halt" ? "disabled-then-halt" : "auto",
+      },
     };
   } finally {
     await harness.close(context);

@@ -232,6 +232,12 @@ export interface PipelineConfig {
   projectStoreConfig?: ProjectStoreConfig;
   /** Durable coordinator identity; supply runId to resume an interrupted run. */
   coordinator?: RunCoordinatorOptions;
+  observability?: {
+    /** Maximum retained read-path sample; zero disables the limit. */
+    maxReadPaths?: number;
+    /** Maximum UTF-8 bytes per retained path; zero disables the limit. */
+    maxReadPathBytes?: number;
+  };
 }
 
 /**
@@ -282,6 +288,21 @@ export interface PipelineResult {
   securitySurface?: SecuritySurface;
   /** Applicable contract rules carried by the planner's structured submission. */
   contractRequirements?: string[];
+  /** Safe per-stage resource observations in execution order. */
+  stageMetrics: PipelineStageMetrics[];
+}
+
+export interface PipelineStageMetrics {
+  stage: string;
+  input: number;
+  cachedInput: number;
+  freshInput: number;
+  output: number;
+  readFiles: string[];
+  readFilesTotal: number;
+  readFilesTruncated: number;
+  diffBytes: number;
+  contextStrategy: "auto" | "disabled-then-halt";
 }
 
 export type PipelineOutcome = "approved" | "decomposition_required";
@@ -406,6 +427,8 @@ export interface WorkflowState {
   verdicts: Verdict[];
   /** Every role-run's id in run order (planner, security, then coder/reviewer per round). */
   runIds: string[];
+  /** Completed-stage observations, retained in stable execution order. */
+  stageMetrics?: PipelineStageMetrics[];
   /** True once a `stop` edge has settled the run; the driver loop stops stepping. */
   done: boolean;
   /** The settled approval outcome, set by `applyTransition` on a `stop` edge. */

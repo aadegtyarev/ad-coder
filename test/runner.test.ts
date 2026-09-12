@@ -1,4 +1,6 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
+import { EventEmitter } from "node:events";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -16,8 +18,13 @@ import { LEDGER_BASE_DIR } from "../src/ledger/ledger";
 import { ProjectStore } from "../src/project-store/project-store";
 import type { Role } from "../src/role";
 import { defineRole } from "../src/role";
-import { RunnerError, resolveTargetDir } from "../src/runner/errors";
-import { runRole } from "../src/runner/runner";
+import {
+  ProviderLimitError,
+  providerLimitFrom,
+  RunnerError,
+  resolveTargetDir,
+} from "../src/runner/errors";
+import { measureSafeGitDiffBytes, runRole } from "../src/runner/runner";
 import { defineTool } from "../src/runner/tool";
 import { SessionLimitController, SessionLimitError } from "../src/session-limits";
 
@@ -108,6 +115,10 @@ test("runRole drives one turn to a settled result and lands the ledger under tar
   expect(result.result.status).toBe("completed");
   expect(result.ledgerPath).toBe(path.join(targetDir, LEDGER_BASE_DIR, `${result.runId}.jsonl`));
   expect(result.droppedRecords).toBe(0);
+  expect(result.observations?.input).toBe(
+    (result.observations?.freshInput ?? 0) + (result.observations?.cachedInput ?? 0),
+  );
+  expect(result.observations?.contextStrategy).toBe("auto");
 
   // Exactly one after_response record under targetDir, and nothing under cwd.
   const lines = fs
@@ -130,6 +141,27 @@ test("runRole drives one turn to a settled result and lands the ledger under tar
 
   const underCwd = path.join(process.cwd(), LEDGER_BASE_DIR, `${result.runId}.jsonl`);
   expect(fs.existsSync(underCwd)).toBe(false);
+});
+
+test("provider limit classification uses only structured codes and validated delays", () => {
+  const limited = providerLimitFrom({
+    status: 429,
+    retryAfterMs: 2_500,
+    message: "secret provider body",
+    headers: { authorization: "secret" },
+  });
+  expect(limited).toBeInstanceOf(ProviderLimitError);
+  expect(limited?.retryAfterMs).toBe(2_500);
+  expect(JSON.stringify(limited)).not.toContain("secret");
+  expect(providerLimitFrom({ code: "insufficient_quota", retryAfterMs: -1 })?.retryAfterMs).toBe(
+    undefined,
+  );
+  expect(providerLimitFrom({ status: 429, retry_after: 1.25 })?.retryAfterMs).toBe(1_250);
+  expect(providerLimitFrom({ status: 429, resetAtMs: 12_000 }, 10_000)?.retryAfterMs).toBe(2_000);
+  expect(
+    providerLimitFrom({ status: 429, retryAfterMs: 86_400_001 })?.retryAfterMs,
+  ).toBeUndefined();
+  expect(providerLimitFrom({ status: 401, code: "authentication_error" })).toBeUndefined();
 });
 
 test("runRole rejects missing authentication before provider generation", async () => {
@@ -164,6 +196,105 @@ test("runRole roots the execution tools at targetDir", async () => {
   const marker = path.join(targetDir, "marker.txt");
   expect(fs.existsSync(marker)).toBe(true);
   expect(fs.readFileSync(marker, "utf8").trim()).toBe("rooted");
+});
+
+test("runRole observes only safe successful dedicated reads once", async () => {
+  const observedPath = path.join(targetDir, "observed.txt");
+  const misleadingPath = path.join(targetDir, "unsafe\u202Etxt");
+  fs.writeFileSync(observedPath, "observed", "utf8");
+  fs.writeFileSync(misleadingPath, "misleading", "utf8");
+  const { faux, models, model, role } = harnessFixture();
+  faux.setResponses([
+    fauxAssistantMessage(fauxToolCall("read", { path: "observed.txt" })),
+    fauxAssistantMessage(fauxToolCall("read", { path: "observed.txt" })),
+    fauxAssistantMessage(fauxToolCall("read", { path: "missing.txt" })),
+    fauxAssistantMessage(fauxToolCall("read", { path: misleadingPath })),
+    fauxAssistantMessage(fauxToolCall("bash", { command: "cat observed.txt" })),
+    fauxAssistantMessage("done"),
+  ]);
+
+  const result = await runRole({ role, targetDir, models, model, prompt: "read files" });
+
+  expect(result.observations?.readFiles).toEqual(["observed.txt"]);
+  expect(result.observations?.readFilesTotal).toBe(1);
+  expect(result.observations?.readFilesTruncated).toBe(0);
+});
+
+test("read observation deduplicates paths omitted after the report sample fills", async () => {
+  fs.writeFileSync(path.join(targetDir, "first.txt"), "first", "utf8");
+  fs.writeFileSync(path.join(targetDir, "second.txt"), "second", "utf8");
+  const { faux, models, model, role } = harnessFixture();
+  faux.setResponses([
+    fauxAssistantMessage(fauxToolCall("read", { path: "first.txt" })),
+    fauxAssistantMessage(fauxToolCall("read", { path: "second.txt" })),
+    fauxAssistantMessage(fauxToolCall("read", { path: "second.txt" })),
+    fauxAssistantMessage("done"),
+  ]);
+
+  const result = await runRole({
+    role,
+    targetDir,
+    models,
+    model,
+    prompt: "read files",
+    observability: { maxReadPaths: 1 },
+  });
+
+  expect(result.observations?.readFiles).toEqual(["first.txt"]);
+  expect(result.observations?.readFilesTotal).toBe(2);
+  expect(result.observations?.readFilesTruncated).toBe(1);
+});
+
+test("safe diff measurement disables repository fsmonitor hooks and reports bytes only", async () => {
+  const repository = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-safe-diff-"));
+  const marker = path.join(repository, "fsmonitor-ran");
+  const hook = path.join(repository, "fsmonitor.sh");
+  fs.writeFileSync(hook, `#!/bin/sh\ntouch '${marker}'\n`, { mode: 0o700 });
+  execFileSync("git", ["init", "-q"], { cwd: repository });
+  execFileSync("git", ["config", "core.fsmonitor", hook], { cwd: repository });
+  fs.writeFileSync(path.join(repository, "tracked.txt"), "base\n");
+  execFileSync("git", ["add", "tracked.txt"], { cwd: repository });
+  execFileSync(
+    "git",
+    ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "base"],
+    {
+      cwd: repository,
+    },
+  );
+  fs.rmSync(marker, { force: true });
+  fs.writeFileSync(path.join(repository, "tracked.txt"), "changed\n");
+
+  const expected = execFileSync(
+    "git",
+    ["-c", "core.fsmonitor=false", "diff", "--no-ext-diff", "--no-textconv"],
+    { cwd: repository },
+  ).byteLength;
+  expect(await measureSafeGitDiffBytes(repository)).toBe(expected);
+  expect(fs.existsSync(marker)).toBe(false);
+});
+
+test("safe diff measurement streams bytes with the exact fixed git argv", async () => {
+  const processEvents = new EventEmitter();
+  const stdout = new EventEmitter();
+  let invocation:
+    | { command: string; args: readonly string[]; shell: boolean | undefined }
+    | undefined;
+  const spawnGit = ((command: string, args: readonly string[], options: { shell?: boolean }) => {
+    invocation = { command, args, shell: options.shell };
+    queueMicrotask(() => {
+      stdout.emit("data", Buffer.alloc(7));
+      stdout.emit("data", Buffer.alloc(5));
+      processEvents.emit("close", 0);
+    });
+    return Object.assign(processEvents, { stdout });
+  }) as unknown as Parameters<typeof measureSafeGitDiffBytes>[1];
+
+  expect(await measureSafeGitDiffBytes(targetDir, spawnGit)).toBe(12);
+  expect(invocation).toEqual({
+    command: "git",
+    args: ["diff", "--no-ext-diff", "--no-textconv"],
+    shell: false,
+  });
 });
 
 test("runRole does not invoke the summarizer when the turn fits the budget", async () => {

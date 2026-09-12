@@ -44,6 +44,7 @@ import type {
   PipelineConfig,
   PipelineResult,
   PipelineRouting,
+  PipelineStageMetrics,
   Plan,
   PlanCapture,
   Profile,
@@ -68,6 +69,7 @@ import type {
   ResolvedSelection,
   ResolvePipelineConfigOptions,
   ResolvePromptOptions,
+  RoleObservations,
   RoleRunner,
   RoleSpec,
   RoundRecord,
@@ -142,6 +144,7 @@ import {
   inspectImportedLdoWork,
   isWorkflowModule,
   Ledger,
+  LiveRetryCoordinator,
   listProjectSessions,
   OrchestrationError,
   OrchestratorError,
@@ -153,6 +156,7 @@ import {
   ProjectStore,
   ProjectStoreError,
   PromptError,
+  ProviderLimitError,
   parseProfile,
   parseRegistryConfig,
   preflightRepositoryPublishing,
@@ -216,6 +220,8 @@ test("the package is importable by its published name", () => {
   expect(typeof SUMMARIZATION_PROMPT).toBe("string");
   expect(typeof GateRunner).toBe("function");
   expect(typeof runRole).toBe("function");
+  expect(typeof ProviderLimitError).toBe("function");
+  expect(typeof LiveRetryCoordinator).toBe("function");
   expect(typeof ProjectStore).toBe("function");
   expect(typeof ProjectStoreError).toBe("function");
   expect(typeof ProjectOperationsError).toBe("function");
@@ -310,6 +316,8 @@ test("the package is importable by its published name", () => {
   const _publishingResult: PublishingResult | undefined = undefined;
   const _publishingConfig: RepositoryPublishingConfig | undefined = undefined;
   const _publishingPreflight: RepositoryPublishingPreflight | undefined = undefined;
+  const _stageMetrics: PipelineStageMetrics | undefined = undefined;
+  const _roleObservations: RoleObservations | undefined = undefined;
   expect(_budgetPercents).toBeUndefined();
   expect(_contextBudgetPercents).toBeUndefined();
   expect(_configurableRole).toBeUndefined();
@@ -328,6 +336,8 @@ test("the package is importable by its published name", () => {
   expect(_publishingResult).toBeUndefined();
   expect(_publishingConfig).toBeUndefined();
   expect(_publishingPreflight).toBeUndefined();
+  expect(_stageMetrics).toBeUndefined();
+  expect(_roleObservations).toBeUndefined();
   // Type-only imports are erased; reference them so the imports are not unused.
   const _budget: ContextBudget | undefined = undefined;
   const _summarizer: Summarizer | undefined = undefined;

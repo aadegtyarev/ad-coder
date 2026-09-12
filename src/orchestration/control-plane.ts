@@ -7,10 +7,11 @@ import { ProjectOperationsError } from "../project-operations/errors";
 import type { ProjectStore } from "../project-store/project-store";
 import type { VersionedState } from "../project-store/types";
 import { ProjectStoreError } from "../project-store/types";
+import { MAX_PROVIDER_RETRY_HINT_MS, ProviderLimitError } from "../runner/errors";
 import type { Tool } from "../runner/tool";
 import { defineTool } from "../runner/tool";
 import type { SessionLimitController, SessionLimitSnapshot } from "../session-limits";
-import type { PipelineResult, Verdict } from "./types";
+import type { PipelineResult, PipelineStageMetrics, Verdict } from "./types";
 
 export type RunMode = "auto" | "manual";
 export type ControlPlaneRunStatus =
@@ -50,6 +51,8 @@ export interface ExternalLimit {
   source: "provider" | "session" | "project";
   state: "unavailable" | "limited" | "unknown" | "exhausted";
   resumable: true;
+  /** Validated delay only; provider headers and messages are never retained. */
+  retryAfterMs?: number;
 }
 
 export interface DurableRunRecord {
@@ -84,6 +87,8 @@ export interface DurableRunRecord {
   publication?: PublicationSummary;
   sessionLimitSnapshot?: SessionLimitSnapshot;
   operations?: RunOperationalSummary;
+  /** Persisted so process reconstruction cannot reset the automatic retry ceiling. */
+  automaticRetryAttempts?: number;
 }
 
 export type ControlPlaneEventType =
@@ -141,6 +146,7 @@ export interface RunReport {
   filesChanged: string[];
   checks: Array<{ name: string; status: "passed" | "failed" | "skipped" }>;
   usage: { turns: number; costUsd: number };
+  stageMetrics: PipelineStageMetrics[];
   checkpointPath: string;
   backlog: { destination: string; file?: string; count: number };
 }
@@ -193,7 +199,14 @@ export interface ControlPlaneConfig {
   maxActiveRootRuns?: number;
   maxProjectTurns?: number;
   maxProjectCostUsd?: number;
+  /** Zero disables all automatic timed retry, including provider hints. */
+  retryIntervalMs?: number;
+  /** Zero disables automatic retry; positive values bound attempts per run. */
+  maxAutomaticRetryAttempts?: number;
 }
+
+export const MAX_RETRY_DELAY_MS = MAX_PROVIDER_RETRY_HINT_MS;
+export const MAX_AUTOMATIC_RETRY_ATTEMPTS = 100;
 
 export const DEFAULT_CONTROL_PLANE_CONFIG = {
   autoDecomposition: true,
@@ -203,6 +216,8 @@ export const DEFAULT_CONTROL_PLANE_CONFIG = {
   maxActiveRootRuns: 0,
   maxProjectTurns: 0,
   maxProjectCostUsd: 0,
+  retryIntervalMs: 0,
+  maxAutomaticRetryAttempts: 0,
 } as const;
 
 export interface ProviderAvailability {
@@ -216,10 +231,110 @@ export interface PipelineExecution {
   operations?: RunOperationalSummary;
 }
 
+export interface RetryCoordinator {
+  schedule(runId: string, delayMs: number, callback: () => Promise<void>): void;
+  cancel(runId: string): void;
+}
+
+export interface LiveRetryCoordinatorOptions {
+  /** Host-wide provider admissions. A positive bound is required. */
+  maxConcurrentAdmissions?: number;
+  /** Ready callbacks retained while admissions are busy. A positive bound is required. */
+  maxQueuedAdmissions?: number;
+  /** Fractional delay spread applied symmetrically. Defaults to 10%. */
+  jitterRatio?: number;
+  random?: () => number;
+  setTimer?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
+  clearTimer?: (timer: ReturnType<typeof setTimeout>) => void;
+}
+
+/**
+ * Shared live-host retry gate. One instance is deliberately reusable by every
+ * control plane in a process, so provider recovery cannot bypass a host-wide
+ * admission bound by creating more run objects.
+ */
+export class LiveRetryCoordinator implements RetryCoordinator {
+  private readonly pending = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly ready: Array<{ runId: string; callback: () => Promise<void> }> = [];
+  private active = 0;
+  private readonly maxConcurrentAdmissions: number;
+  private readonly maxQueuedAdmissions: number;
+  private readonly jitterRatio: number;
+  private readonly random: () => number;
+  private readonly setTimer: NonNullable<LiveRetryCoordinatorOptions["setTimer"]>;
+  private readonly clearTimer: NonNullable<LiveRetryCoordinatorOptions["clearTimer"]>;
+
+  constructor(options: LiveRetryCoordinatorOptions = {}) {
+    this.maxConcurrentAdmissions = options.maxConcurrentAdmissions ?? 1;
+    this.maxQueuedAdmissions = options.maxQueuedAdmissions ?? 1_024;
+    this.jitterRatio = options.jitterRatio ?? 0.1;
+    if (!Number.isSafeInteger(this.maxConcurrentAdmissions) || this.maxConcurrentAdmissions <= 0)
+      throw new ProjectOperationsError("invalid_config", "maxConcurrentAdmissions");
+    if (!Number.isSafeInteger(this.maxQueuedAdmissions) || this.maxQueuedAdmissions <= 0)
+      throw new ProjectOperationsError("invalid_config", "maxQueuedAdmissions");
+    if (!Number.isFinite(this.jitterRatio) || this.jitterRatio < 0 || this.jitterRatio > 1)
+      throw new ProjectOperationsError("invalid_config", "jitterRatio");
+    this.random = options.random ?? Math.random;
+    this.setTimer = options.setTimer ?? setTimeout;
+    this.clearTimer = options.clearTimer ?? clearTimeout;
+  }
+
+  schedule(runId: string, delayMs: number, callback: () => Promise<void>): void {
+    this.cancel(runId);
+    const spread = delayMs * this.jitterRatio;
+    const jittered = Math.round(delayMs - spread + this.random() * spread * 2);
+    const timer = this.setTimer(
+      () => {
+        if (this.pending.get(runId) !== timer) return;
+        this.pending.delete(runId);
+        if (this.ready.length >= this.maxQueuedAdmissions) {
+          process.stderr.write(
+            "ad-coder: provider retry queue is full; explicit resume required\n",
+          );
+          return;
+        }
+        this.ready.push({ runId, callback });
+        this.drain();
+      },
+      Math.min(MAX_RETRY_DELAY_MS, Math.max(1_000, jittered)),
+    );
+    this.pending.set(runId, timer);
+  }
+
+  cancel(runId: string): void {
+    const timer = this.pending.get(runId);
+    if (timer !== undefined) this.clearTimer(timer);
+    this.pending.delete(runId);
+    const queued = this.ready.findIndex((entry) => entry.runId === runId);
+    if (queued >= 0) this.ready.splice(queued, 1);
+  }
+
+  private drain(): void {
+    while (this.active < this.maxConcurrentAdmissions) {
+      const entry = this.ready.shift();
+      if (entry === undefined) return;
+      this.active += 1;
+      void entry
+        .callback()
+        .catch(() => {
+          process.stderr.write(
+            "ad-coder: provider retry callback failed; explicit resume required\n",
+          );
+        })
+        .finally(() => {
+          this.active -= 1;
+          this.drain();
+        });
+    }
+  }
+}
+
 export interface ControlPlaneDependencies {
   store: ProjectStore;
   execute: (record: Readonly<DurableRunRecord>) => Promise<PipelineExecution>;
   providerAvailability?: () => Promise<ProviderAvailability> | ProviderAvailability;
+  /** Shared live-host gate. Daemon-free callers omit it and resume explicitly. */
+  retryCoordinator?: RetryCoordinator;
   resolveAutoDecision?: (
     decision: Readonly<DecisionRecord>,
     record: Readonly<DurableRunRecord>,
@@ -361,6 +476,10 @@ export class OrchestratorControlPlane {
           : Number.isSafeInteger(value) && (value as number) >= 0;
       if (!valid) throw new ProjectOperationsError("invalid_config", name);
     }
+    if (this.config.retryIntervalMs > MAX_RETRY_DELAY_MS)
+      throw new ProjectOperationsError("invalid_config", "retryIntervalMs");
+    if (this.config.maxAutomaticRetryAttempts > MAX_AUTOMATIC_RETRY_ATTEMPTS)
+      throw new ProjectOperationsError("invalid_config", "maxAutomaticRetryAttempts");
   }
 
   private now(): string {
@@ -374,6 +493,24 @@ export class OrchestratorControlPlane {
 
   private indexPath(): string {
     return path.join(this.deps.store.layout.runs, "control-index.json");
+  }
+
+  private stageMetrics(record: DurableRunRecord): PipelineStageMetrics[] {
+    if (record.result?.stageMetrics !== undefined)
+      return structuredClone(record.result.stageMetrics);
+    const coordinatorPath = path.join(this.deps.store.layout.runs, `coordinator-${record.id}.json`);
+    try {
+      const checkpoint = this.deps.store.readVersionedJson<{
+        workflowState?: { stageMetrics?: PipelineStageMetrics[] };
+      }>(coordinatorPath);
+      return structuredClone(checkpoint.value.workflowState?.stageMetrics ?? []);
+    } catch (error) {
+      if (error instanceof ProjectStoreError && error.code === "not_found") {
+        // Queued and legacy runs legitimately have no coordinator checkpoint yet.
+        return [];
+      }
+      throw error;
+    }
   }
 
   private read(id: string): VersionedState<DurableRunRecord> {
@@ -632,6 +769,7 @@ export class OrchestratorControlPlane {
   }
 
   cancel(id: string): SafeRunStatus {
+    this.deps.retryCoordinator?.cancel(id);
     const state = this.read(id);
     if (["complete", "failed", "cancelled"].includes(state.value.status))
       return safeStatus(state.value);
@@ -652,6 +790,7 @@ export class OrchestratorControlPlane {
         !(["pipeline", "decision", "publication"] as const).includes(input.runUntil))
     )
       throw new ProjectOperationsError("invalid_config", "resume");
+    this.deps.retryCoordinator?.cancel(id);
     let state = this.read(id);
     const budgetRecord = this.read(state.value.rootRunId).value;
     if (budgetRecord.sessionLimitSnapshot !== undefined)
@@ -858,6 +997,50 @@ export class OrchestratorControlPlane {
     } catch (error) {
       this.persistSessionLimits(state.value.rootRunId);
       state = this.read(id);
+      if (error instanceof ProviderLimitError) {
+        const externalLimit: ExternalLimit = {
+          source: "provider",
+          state: "exhausted",
+          resumable: true,
+          ...(error.retryAfterMs !== undefined && { retryAfterMs: error.retryAfterMs }),
+        };
+        const configured = this.config.retryIntervalMs;
+        const attempts = state.value.automaticRetryAttempts ?? 0;
+        const shouldSchedule =
+          configured > 0 &&
+          (this.config.maxAutomaticRetryAttempts === 0 ||
+            attempts < this.config.maxAutomaticRetryAttempts) &&
+          this.deps.retryCoordinator !== undefined;
+        const pausedRecord: DurableRunRecord = {
+          ...state.value,
+          status: "paused",
+          externalLimit,
+          providerTurnInFlight: false,
+          updatedAt: this.now(),
+          ...(shouldSchedule && { automaticRetryAttempts: attempts + 1 }),
+        };
+        delete pausedRecord.executionLease;
+        delete pausedRecord.failureCode;
+        const paused = this.write(state, this.withEvent(pausedRecord, "run.paused.external_limit"));
+        if (shouldSchedule) {
+          const retryCoordinator = this.deps.retryCoordinator;
+          if (retryCoordinator === undefined)
+            throw new ProjectOperationsError("invalid_config", "retryCoordinator");
+          const baseDelay = error.retryAfterMs ?? configured;
+          const requested = Math.min(MAX_RETRY_DELAY_MS, baseDelay * 2 ** attempts);
+          const delay = Math.min(MAX_RETRY_DELAY_MS, Math.max(1_000, requested));
+          retryCoordinator.schedule(id, delay, async () => {
+            await this.resume(id).catch((resumeError) => {
+              const code =
+                resumeError !== null && typeof resumeError === "object" && "code" in resumeError
+                  ? String((resumeError as { code: unknown }).code)
+                  : "unexpected";
+              process.stderr.write(`ad-coder: scheduled retry failed (${code})\n`);
+            });
+          });
+        }
+        return safeStatus(paused.value);
+      }
       const code =
         error !== null && typeof error === "object" && "code" in error
           ? String((error as { code: unknown }).code)
@@ -902,6 +1085,7 @@ export class OrchestratorControlPlane {
         turns: snapshot?.admittedTurns ?? 0,
         costUsd: snapshot?.observedCostUsd ?? 0,
       },
+      stageMetrics: this.stageMetrics(record),
       checkpointPath: record.operations?.checkpointPath ?? this.recordPath(id),
       backlog: structuredClone(record.operations?.backlog ?? { destination: "skipped", count: 0 }),
     };
@@ -1281,6 +1465,18 @@ export function buildControlPlaneTools(control: OrchestratorControlPlane): Tool[
             filesChangedCount: report.filesChanged.length,
             checkStatuses: report.checks.map((check) => check.status),
             usage: report.usage,
+            stageMetrics: report.stageMetrics.map((metric) => ({
+              stage: metric.stage,
+              input: metric.input,
+              cachedInput: metric.cachedInput,
+              freshInput: metric.freshInput,
+              output: metric.output,
+              readFilesTotal: metric.readFilesTotal,
+              readFilesTruncated: metric.readFilesTruncated,
+              diffBytes: metric.diffBytes,
+              contextStrategy: metric.contextStrategy,
+            })),
+            retryAfterMs: report.run.externalLimit?.retryAfterMs,
             backlogCount: report.backlog.count,
           };
         })(),
