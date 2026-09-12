@@ -12,6 +12,12 @@
   Orchestrator narrows the work from project evidence or asks only on a real
   product/architecture fork.
 
+- [next-after-control-plane] Implement the decided incremental pipeline-context
+  strategy for scoped Planner reconnaissance, Coder fix handoffs, and repeated
+  Reviewer verification. Include configurable full-context fallback on scope
+  drift/large diffs/insufficient context and per-stage fresh/cached/output,
+  files-read, diff-size, strategy, and fallback-reason telemetry.
+
 ## Future control plane and plugins
 
 - [planned] Add a headless multi-project `SessionManager`, per-session worktrees,
