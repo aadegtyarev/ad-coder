@@ -37,6 +37,8 @@ export interface Role {
   activeToolNames?: string[];
   cacheRetention: CacheRetention;
   thinkingLevel?: ThinkingLevel;
+  /** Per-provider request timeout in milliseconds; zero/absent disables it. */
+  requestTimeoutMs?: number;
   /** ad-coder's own context ceiling, validated against the model's window. */
   contextBudget: ContextBudget;
 }
@@ -98,6 +100,11 @@ export function defineRole(input: Role, model: Model<Api>): Role {
       `defineRole(${input.name}): thinkingLevel must be one of ${THINKING_LEVELS.join(", ")}`,
     );
   }
+  if (
+    input.requestTimeoutMs !== undefined &&
+    (!Number.isSafeInteger(input.requestTimeoutMs) || input.requestTimeoutMs < 0)
+  )
+    throw new Error(`defineRole(${input.name}): requestTimeoutMs must be a non-negative integer`);
   validateContextBudget(input.name, input.contextBudget, model);
   return input;
 }
@@ -119,7 +126,12 @@ export function toHarnessOptions(role: Role, deps: RoleRunDeps): AgentHarnessOpt
       activeToolNames: [...role.activeToolNames],
     }),
     ...(role.thinkingLevel !== undefined && { thinkingLevel: role.thinkingLevel }),
-    streamOptions: { cacheRetention: role.cacheRetention },
+    streamOptions: {
+      cacheRetention: role.cacheRetention,
+      ...(role.requestTimeoutMs !== undefined && role.requestTimeoutMs > 0
+        ? { timeoutMs: role.requestTimeoutMs }
+        : {}),
+    },
     // Pi's compaction prompt is a hardcoded constant, so the context strategy
     // stays in ad-coder. All three fields are required even when disabled.
     compaction: { enabled: false, reserveTokens: 0, keepRecentTokens: 0 },

@@ -15,6 +15,12 @@ test("resolves a built-in prompt by name byte-for-byte", () => {
   expect(resolvePrompt("coder")).toBe(direct);
 });
 
+test("ships the Auditor contract-coverage prompt", () => {
+  const prompt = resolvePrompt("auditor");
+  expect(prompt).toContain("contract_missing");
+  expect(prompt).toContain("explicitly approves");
+});
+
 test("a project prompt shadows the built-in of the same name", () => {
   const projectDir = tmpDir();
   const dir = path.join(projectDir, ".ad-coder", "prompts");

@@ -6,12 +6,35 @@ Only unresolved work belongs here. Current behavior is in
 
 ## Current priority
 
+- [high] **Complete workflow-module extraction** (`src/workflows/`,
+  `src/orchestration/`, `src/cli/resolve-config.ts`): conversational activation
+  and tool removal are delivered, but the built-in pipeline's role/config
+  resolver, prompts, graph implementation, and headless core still live in shared
+  orchestration modules. Move that whole bundle behind the workflow manifest so
+  a disabled module is not constructed while seeding a general conversation.
+
+- [next] **Auditor role and periodic project-health dispatch**
+  (`src/orchestration/`, `src/project-tools/`): wire the shipped cold-read Auditor
+  prompt over `explore_project`. Persist drift counters and last-audit state,
+  trigger at configurable size/churn/cross-boundary/release thresholds, and put
+  evidenced violations, missing-contract proposals, and decomposition candidates
+  through durable backlog/operator-approval paths. Then add the separate
+  characterization-test-pinned refactor executor described in ROADMAP. Raw line
+  counts never authorize refactoring.
+
 - [next] **Incremental pipeline context** (`src/orchestration/`,
   `src/context/`): implement scoped Planner reconnaissance, Coder fix handoffs,
-  and repeated Reviewer verification. Keep a configurable full-context fallback
-  for scope drift, large diffs, or insufficient context, and report its reason.
+  and adaptive Reviewer verification. The first review is a broad cold review;
+  after `changes_requested`, pass only the findings, changed diff, preserved
+  evidence, and affected contracts into a focused re-review. Escalate back to a
+  full review only for scope drift, a materially large new diff, changed risk, or
+  insufficient evidence, and report that reason. Match the speed and judgment of
+  an effective conversational Orchestrator rather than blindly repeating whole
+  prompts.
   Per-stage token/read/diff/context-strategy observability and durable
-  provider-limit pause/resume are already delivered.
+  provider-limit pause/resume are already delivered. Acceptance includes lower
+  re-review latency and token cost without a worse escaped-defect rate, measured
+  from the dogfood run rather than asserted.
 
 ## Security and runtime boundaries
 
@@ -26,6 +49,18 @@ Only unresolved work belongs here. Current behavior is in
   must not be returned or logged wholesale.
 
 ## Reliability and observability
+
+- [next] **Semantic tool-activity stream** (`src/runner/`, `src/conversation/`,
+  `src/cli/`): implement the headless lifecycle-event contract in
+  proposed contract in `docs/proposed-contracts/tool-observability.md`, activate
+  it only when implementation conforms, then render a compact live `Explored` /
+  `Read` / `Search` / `Edit` / `Run` / `Web` / `Inspect image` view in console
+  and stable JSON events for machine clients. Preserve heartbeat as the no-event
+  fallback and expose only bounded allowlisted metadata.
+  Deliver this in a separate branch through ad-coder's own built-in pipeline as
+  a dogfood evaluation. Record per-role model/thinking level, duration,
+  input/cache/output/reasoning tokens, cost, review rounds, escaped defects, and
+  accepted-result total so profile efficiency can be compared from evidence.
 
 - [medium] **Distributed GitHub claims** (`src/project-operations/`): provide a
   built-in shared `GitHubClaimCoordinator`; mutations currently require an

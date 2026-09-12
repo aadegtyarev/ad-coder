@@ -17,3 +17,8 @@ Rules for ad-coder's command-line front. A violation is always blocking.
   automatically. A hand-written usage/help string that can drift from the actual
   commands is exactly the violation this contract exists to prevent. This is the
   human half of architecture.md's "friendly to humans AND machines".
+- 2026-09-12: A model-backed CLI operation immediately identifies its role or
+  stage on stderr, emits a configurable periodic heartbeat while no result is
+  available, and applies a configurable provider-request timeout. Zero disables
+  heartbeat or timeout explicitly. Machine-result stdout stays free of progress
+  text, and timeout is a visible non-success rather than an empty completion.

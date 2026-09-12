@@ -1,6 +1,6 @@
 {
   "name": "ad-coder",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "A small, explicit multi-provider agent harness: roles over pi-agent-core, per-role/step cost ledger, in-house context management, and a plan->[security]->code<->review pipeline.",
   "license": "MIT",
@@ -16,12 +16,21 @@
   "bin": {
     "ad-coder": "./src/cli.ts"
   },
+  "files": [
+    "src",
+    "prompts",
+    "examples",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
   "scripts": {
     "test": "bun test",
     "typecheck": "tsc --noEmit",
     "check": "biome check src test scripts",
     "check:fix": "biome check --write src test scripts",
     "check:release": "bun run scripts/check-release.ts",
+    "check:docs": "bun run scripts/check-docs.ts",
     "smoke:artifact": "bun run scripts/artifact-smoke.ts",
     "format": "biome format --write src test",
     "lint": "biome lint src test",

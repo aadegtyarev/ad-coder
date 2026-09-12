@@ -69,7 +69,9 @@ test("keeps one session across ordered turns, ignores blanks, and closes once on
   expect(result).toEqual({ reason: "exit", completedTurns: 2 });
   expect(output.text()).toContain("ad-coder console");
   expect(output.text()).toContain("reply  first");
-  expect(error.text()).toBe("");
+  expect(error.text()).toBe(
+    "ad-coder: console turn started (0s)\nad-coder: console turn started (0s)\n",
+  );
 });
 
 test("counts UTF-8 bytes across chunks and rejects an oversized line before step", async () => {
@@ -196,7 +198,10 @@ test("typed session exhaustion stops input with no fabricated JSON record", asyn
   expect(session.inputs).toEqual(["first"]);
   expect(session.closes).toBe(1);
   expect(output.text()).toBe("");
-  expect(error.text()).toBe("ad-coder: session resource limit reached\n");
+  expect(error.text()).toBe(
+    '{"type":"progress","event":"started","stage":"console-turn","elapsedSeconds":0}\n' +
+      "ad-coder: session resource limit reached\n",
+  );
 });
 
 test("rejects invalid programmatic byte limits and still closes EOF exactly once", async () => {
@@ -221,4 +226,54 @@ test("rejects invalid programmatic byte limits and still closes EOF exactly once
   });
   expect(result.reason).toBe("eof");
   expect(eofSession.closes).toBe(1);
+});
+
+test("an in-flight console turn reports structured progress on stderr", async () => {
+  const session = fakeSession();
+  const originalStep = session.step.bind(session);
+  session.step = async (input) => {
+    await new Promise((resolve) => setTimeout(resolve, 12));
+    return originalStep(input);
+  };
+  const error = new Capture();
+  await runConsole({
+    session,
+    input: Readable.from("hello\n/exit\n"),
+    output: new Capture(),
+    error,
+    mode: "json",
+    heartbeatMs: 5,
+  });
+  const progress = error
+    .text()
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  expect(progress[0]).toEqual({
+    type: "progress",
+    event: "started",
+    stage: "console-turn",
+    elapsedSeconds: 0,
+  });
+  expect(progress.some(({ event }) => event === "heartbeat")).toBe(true);
+});
+
+test("zero heartbeat keeps the immediate stage event and disables only periodic events", async () => {
+  const error = new Capture();
+  await runConsole({
+    session: fakeSession(),
+    input: Readable.from("hello\n/exit\n"),
+    output: new Capture(),
+    error,
+    mode: "json",
+    heartbeatMs: 0,
+  });
+  const progress = error
+    .text()
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  expect(progress).toEqual([
+    { type: "progress", event: "started", stage: "console-turn", elapsedSeconds: 0 },
+  ]);
 });

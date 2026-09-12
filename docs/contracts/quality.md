@@ -18,6 +18,26 @@ Rules for the project's own code quality. A violation is always blocking.
   to Semantic Versioning; its exact version has a dated changelog heading, passes
   `bun run check:release`, and is the version reported by `ad-coder about`. A
   version already merged as an install target is never silently reused.
+- 2026-09-12: Project health is reviewed beyond the current diff. Before a public
+  release, after a drift signal (oversized or high-churn module, repeated
+  cross-boundary edits, or eight accumulated drift observations), and on an
+  operator-requested audit, run a cold whole-project audit covering cohesion,
+  dependency direction, duplication, testability, dead paths, and human-readable
+  documentation. The Auditor records evidenced decomposition candidates in the
+  backlog and never refactors them itself.
+- 2026-09-12: A decomposition refactor begins with characterization tests, keeps
+  each move behavior-preserving and green, and reports every test expectation
+  that had to change. Prefer AST/LSP moves over regenerating working code.
+- 2026-09-12: Gate output, project reconnaissance, web responses, and image bytes
+  have mandatory positive safety ceilings because their content enters model or
+  report contexts. Defaults live in exported typed config objects and every
+  ceiling is overridable; zero is not accepted for these denial-of-service guards.
+- 2026-09-12: Auditor and Reviewer assess function, class, module, and file size
+  together with cohesion, responsibility count, dependency fan-in/fan-out,
+  churn, and test seams. No raw line threshold alone authorizes a refactor.
+  Comments must explain rationale, contract, provenance, risk, or a non-obvious
+  invariant; narration of syntax, duplicated types, stale history, and generated
+  verbosity are quality defects when clearer code can carry the meaning.
 
 ## Sources
 

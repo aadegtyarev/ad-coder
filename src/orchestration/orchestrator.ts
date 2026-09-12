@@ -1,6 +1,6 @@
 import { Type } from "@earendil-works/pi-ai";
 import type { ResolvePipelineConfigOptions } from "../cli/resolve-config";
-import { resolvePipelineConfig } from "../cli/resolve-config";
+import { resolveOrchestratorSeed, resolvePipelineConfig } from "../cli/resolve-config";
 import type { ConversationSession } from "../conversation/conversation";
 import { startConversation as startConversationImpl } from "../conversation/conversation";
 import type { MemoryLedgerSink } from "../ledger/ledger";
@@ -14,6 +14,9 @@ import type { Tool } from "../runner/tool";
 import { defineTool } from "../runner/tool";
 import type { SessionLimitSnapshot, SessionLimits } from "../session-limits";
 import { SessionLimitController } from "../session-limits";
+import { buildWebTools } from "../web/tools";
+import { resolveWorkflowModules } from "../workflows/registry";
+import type { OrchestratorWorkflowModule } from "../workflows/types";
 import type { WorkflowSession } from "./session";
 import { autoDriver, createWorkflowSession } from "./session";
 import { assertTransitionOffered, DriveError } from "./transition-guard";
@@ -30,9 +33,27 @@ import type {
 
 /** The four tool names the orchestrator model drives the workflow through. */
 export const RUN_PIPELINE_TOOL_NAME = "run_pipeline";
+export const DECOMPOSE_TASK_TOOL_NAME = "decompose_task";
 export const RUN_STEP_TOOL_NAME = "run_step";
 export const CHOOSE_TRANSITION_TOOL_NAME = "choose_transition";
 export const SHOW_COST_TOOL_NAME = "show_cost";
+export const RUN_ROLE_TOOL_NAME = "run_role";
+
+export const DELEGATABLE_ROLE_NAMES = [
+  "planner",
+  "researcher",
+  "security",
+  "coder",
+  "reviewer",
+  "auditor",
+] as const;
+export type DelegatableRoleName = (typeof DELEGATABLE_ROLE_NAMES)[number];
+
+export interface DelegatedRoleResult {
+  role: DelegatableRoleName;
+  text: string;
+  cost: number;
+}
 
 /**
  * Why an orchestrator-core precondition was rejected. Distinct from
@@ -46,7 +67,8 @@ export const SHOW_COST_TOOL_NAME = "show_cost";
 export type OrchestratorErrorCode =
   | "no_active_session"
   | "awaiting_transition"
-  | "no_pending_transition";
+  | "no_pending_transition"
+  | "invalid_role";
 
 /**
  * Raised on an orchestrator-core precondition failure. Carries a `code`
@@ -85,6 +107,12 @@ export interface RunPipelineResult {
   perStep: StepCost[];
   /** Sum of `perStep` costs for this run. */
   totalCost: number;
+}
+
+export interface DecompositionResult {
+  plan: Plan;
+  text: string;
+  cost: StepCost;
 }
 
 /**
@@ -148,6 +176,7 @@ export interface OrchestratorDeps {
  */
 export interface Orchestrator {
   runPipeline(task: string): Promise<RunPipelineResult>;
+  decomposeTask(task: string): Promise<DecompositionResult>;
   beginStepping(task: string): void;
   stepOnce(): Promise<StepView>;
   chooseTransition(kind: TransitionKind, rationale?: string): WorkflowPhase;
@@ -220,6 +249,34 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     }
     const totalCost = perStep.reduce((sum, e) => sum + e.cost, 0);
     return { result: completed.result, perStep, totalCost };
+  };
+
+  const decomposeTask = async (task: string): Promise<DecompositionResult> => {
+    const config = buildConfig(task);
+    if (config.roles.planner === undefined) {
+      throw new OrchestratorError(
+        "no_active_session",
+        "planner",
+        "decomposition requires a planner role",
+      );
+    }
+    const workflow = createWorkflowSession(config);
+    const isolated = new RunCoordinator(workflow, workflow.projectStore, config.coordinator);
+    const before = sink.records().length;
+    const prepared = await isolated.prepareStep();
+    if (
+      prepared === undefined ||
+      prepared.result.phase !== "plan" ||
+      prepared.result.plan === undefined
+    ) {
+      throw new OrchestratorError(
+        "no_active_session",
+        "plan",
+        "planner did not return a decomposition",
+      );
+    }
+    const cost = recordStep("plan", before, sink.records().length);
+    return { plan: prepared.result.plan, text: prepared.result.text, cost };
   };
 
   const beginStepping = (task: string): void => {
@@ -313,7 +370,15 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     };
   };
 
-  return { runPipeline, beginStepping, stepOnce, chooseTransition, showCost, isStepping };
+  return {
+    runPipeline,
+    decomposeTask,
+    beginStepping,
+    stepOnce,
+    chooseTransition,
+    showCost,
+    isStepping,
+  };
 }
 
 /**
@@ -364,6 +429,42 @@ function lastVerdictStatus(result: PipelineResult): string {
   return result.verdicts[result.verdicts.length - 1]?.status ?? "none";
 }
 
+/** Build general role delegation; unlike workflow tools this remains available with no module. */
+export function buildRunRoleTool(
+  runRole: (role: DelegatableRoleName, task: string) => Promise<DelegatedRoleResult>,
+): Tool {
+  return defineTool({
+    name: RUN_ROLE_TOOL_NAME,
+    description:
+      "Run one shipped worker role independently. Available roles: planner, researcher, security, coder, reviewer, auditor. This does not start or advance a workflow.",
+    label: "run role",
+    parameters: Type.Object({ role: Type.String(), task: Type.String() }),
+    async execute(_toolCallId, params) {
+      try {
+        if (!(DELEGATABLE_ROLE_NAMES as readonly string[]).includes(params.role)) {
+          throw new OrchestratorError(
+            "invalid_role",
+            params.role,
+            `unknown delegated role; expected one of ${DELEGATABLE_ROLE_NAMES.join(", ")}`,
+          );
+        }
+        const result = await runRole(params.role as DelegatableRoleName, params.task);
+        return {
+          content: [
+            {
+              type: "text",
+              text: `${result.role} complete (cost ${result.cost})\n${result.text || "(no text)"}`,
+            },
+          ],
+          details: undefined,
+        };
+      } catch (error) {
+        return { content: [{ type: "text", text: safeErrorText(error) }], details: undefined };
+      }
+    },
+  });
+}
+
 /**
  * Build the four tools that let an orchestrator model drive the workflow.
  *
@@ -377,7 +478,37 @@ function lastVerdictStatus(result: PipelineResult): string {
  * a tool call. Leaves are permissive `Type.String()` so the core's own guards
  * stay the gate, mirroring `buildSubmitVerdictTool`.
  */
-export function buildOrchestratorTools(core: Orchestrator): Tool[] {
+export function buildBuiltInPipelineTools(core: Orchestrator): Tool[] {
+  const decomposeTaskTool = defineTool({
+    name: DECOMPOSE_TASK_TOOL_NAME,
+    description:
+      "Run only the Planner and return a structured decomposition with affected surfaces and contract coverage. Does not dispatch Coder or alter a manual workflow.",
+    label: "decompose task",
+    parameters: Type.Object({ task: Type.String() }),
+    async execute(_toolCallId, params) {
+      try {
+        const result = await core.decomposeTask(params.task);
+        return {
+          content: [
+            {
+              type: "text",
+              text: [
+                `complexity: ${result.plan.complexity}`,
+                `security surface: ${result.plan.securitySurface}`,
+                `summary: ${result.plan.summary}`,
+                `surfaces: ${result.plan.surfaceAnalysis.surfaces.map(({ name }) => name).join(", ")}`,
+                `planner cost: ${result.cost.cost}`,
+              ].join("\n"),
+            },
+          ],
+          details: result.plan,
+        };
+      } catch (error) {
+        return { content: [{ type: "text", text: safeErrorText(error) }], details: undefined };
+      }
+    },
+  });
+
   const runPipelineTool = defineTool({
     name: RUN_PIPELINE_TOOL_NAME,
     description:
@@ -484,7 +615,21 @@ export function buildOrchestratorTools(core: Orchestrator): Tool[] {
     },
   });
 
-  return [runPipelineTool, runStepTool, chooseTransitionTool, showCostTool];
+  return [runPipelineTool, decomposeTaskTool, runStepTool, chooseTransitionTool, showCostTool];
+}
+
+/** Compose general plugins with only the workflow modules explicitly enabled by the host. */
+export function buildOrchestratorTools(
+  core: Orchestrator | undefined,
+  pluginTools: Tool[] = buildWebTools(),
+  workflowModules: readonly OrchestratorWorkflowModule[] = [],
+): Tool[] {
+  if (workflowModules.length > 0 && core === undefined)
+    throw new Error("enabled workflow modules require an orchestrator core");
+  return [
+    ...pluginTools,
+    ...workflowModules.flatMap((module) => module.buildTools(core as Orchestrator)),
+  ];
 }
 
 /**
@@ -498,6 +643,11 @@ export type OrchestratorConfig = Omit<ResolvePipelineConfigOptions, "task"> & {
   sessionLimits?: SessionLimits;
   /** Optional construction seam for embedding hosts that own the conversation lifecycle. */
   startConversation?: typeof startConversationImpl;
+  /** Independent worker-session seam; defaults to the same headless conversation constructor. */
+  startDelegatedConversation?: typeof startConversationImpl;
+  workflowModules?: readonly OrchestratorWorkflowModule[];
+  /** Empty by default: the built-in pipeline is shipped but opt-in. */
+  enabledWorkflows?: readonly string[];
 };
 
 /**
@@ -520,18 +670,89 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
   const sink = new MemoryLedgerSinkImpl();
   const controller = new SessionLimitController(config.sessionLimits);
   const buildConfig = (task: string): PipelineConfig => resolvePipelineConfig({ ...config, task });
-  const core = createOrchestrator({
-    buildConfig,
-    ledgerSink: sink,
-    sessionLimitController: controller,
-  });
-  const tools = buildOrchestratorTools(core);
-
   // A placeholder task only seeds the config that yields the orchestrator's own
   // conversation model + window budget; the real per-run task arrives through
   // the tools. Its independent role selection still shares the registry and
   // credential boundary with the pipeline.
-  const seed = buildConfig("orchestrate");
+  const seed = resolveOrchestratorSeed({ ...config, task: "orchestrate" });
+  const enabledModules = resolveWorkflowModules(
+    config.workflowModules ?? [],
+    config.enabledWorkflows ?? [],
+  );
+  const core =
+    enabledModules.length === 0
+      ? undefined
+      : createOrchestrator({
+          buildConfig,
+          ledgerSink: sink,
+          sessionLimitController: controller,
+        });
+  const delegatedRoleTool = buildRunRoleTool(async (name, task) => {
+    // Resolve worker roles lazily: disabling the pipeline does not construct its
+    // graph, yet every role remains independently callable by the Orchestrator.
+    const resolved = resolvePipelineConfig({ ...config, task });
+    const base =
+      name === "planner"
+        ? resolved.roles.planner
+        : name === "researcher"
+          ? resolved.roles.researcher
+          : name === "security"
+            ? resolved.roles.security
+            : name === "coder"
+              ? resolved.roles.coder
+              : name === "reviewer"
+                ? resolved.roles.reviewer
+                : resolved.roles.auditor;
+    if (base === undefined) {
+      throw new OrchestratorError("invalid_role", name, `role ${name} is not configured`);
+    }
+    const writable = name === "coder";
+    const delegatedTools = resolved.pluginToolsForModel?.(base.model) ?? resolved.pluginTools ?? [];
+    const availablePluginNames = delegatedTools.map((tool) => tool.name);
+    const role = defineRole(
+      {
+        ...base.role,
+        name,
+        systemPrompt: `${resolvePrompt(name, { projectDir: config.targetDir })}\n\nThis is an independent role invocation. Return the complete result as assistant text; do not expect pipeline submission tools.`,
+        activeToolNames: [
+          "read",
+          "bash",
+          ...(writable ? ["write", "edit"] : []),
+          ...availablePluginNames,
+        ],
+      },
+      base.model,
+    );
+    const before = sink.records().length;
+    const conversation = await (config.startDelegatedConversation ?? startConversationImpl)({
+      role,
+      targetDir: config.targetDir,
+      models: resolved.models,
+      model: base.model,
+      tools: delegatedTools,
+      ledgerSink: sink,
+      sessionLimitController: controller,
+      ...(resolved.compaction !== undefined && { compaction: resolved.compaction }),
+      ...(resolved.projectStoreConfig !== undefined && {
+        projectStoreConfig: resolved.projectStoreConfig,
+      }),
+    });
+    try {
+      const turn = await conversation.step(task, { step: `role:${name}` });
+      const cost = sink
+        .records()
+        .slice(before)
+        .reduce((sum, record) => sum + record.usage.cost.total, 0);
+      return { role: name, text: turn.assistantText, cost };
+    } finally {
+      await conversation.close();
+    }
+  });
+  const tools = buildOrchestratorTools(
+    core,
+    [...(seed.pluginTools ?? []), delegatedRoleTool],
+    enabledModules,
+  );
   const orchestratorSpec = seed.roles.orchestrator ?? seed.roles.coder;
   const orchestratorModel = orchestratorSpec.model;
   const orchestratorRole: Role = defineRole(
@@ -540,18 +761,13 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
       provider: orchestratorModel.provider,
       modelId: orchestratorModel.id,
       systemPrompt: resolvePrompt("orchestrator", { projectDir: config.targetDir }),
-      activeToolNames: [
-        "read",
-        "bash",
-        RUN_PIPELINE_TOOL_NAME,
-        RUN_STEP_TOOL_NAME,
-        CHOOSE_TRANSITION_TOOL_NAME,
-        SHOW_COST_TOOL_NAME,
-      ],
       cacheRetention: "short",
       contextBudget: orchestratorSpec.role.contextBudget,
       ...(orchestratorSpec.role.thinkingLevel !== undefined && {
         thinkingLevel: orchestratorSpec.role.thinkingLevel,
+      }),
+      ...(orchestratorSpec.role.requestTimeoutMs !== undefined && {
+        requestTimeoutMs: orchestratorSpec.role.requestTimeoutMs,
       }),
     },
     orchestratorModel,

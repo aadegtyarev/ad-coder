@@ -18,6 +18,43 @@ const environment = {
   NODE_AUTH_TOKEN: "",
 };
 
+const MAX_AUDITED_FILES = 2_000;
+const MAX_AUDITED_FILE_BYTES = 1_000_000;
+const PACKED_ROOTS = new Set(["src", "prompts", "examples"]);
+const PACKED_FILES = new Set(["package.json", "README.md", "CHANGELOG.md", "LICENSE"]);
+const TRACKED_ROOTS = new Set([
+  ".claude", // reviewed developer-only LDO harness; intentionally excluded from package files
+  ".github",
+  "docs",
+  "examples",
+  "prompts",
+  "scripts",
+  "src",
+  "test",
+]);
+const TRACKED_FILES = new Set([
+  ".gitignore",
+  "AGENTS.md",
+  "CHANGELOG.md",
+  "CLAUDE.md",
+  "LICENSE",
+  "README.md",
+  "biome.json",
+  "bun.lock",
+  "package.json",
+  "tsconfig.json",
+]);
+const SECRET_PATTERNS: Array<[string, RegExp]> = [
+  ["private-key", /-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/],
+  ["github-token", /\b(?:ghp|github_pat)_[A-Za-z0-9_]{20,}\b/],
+  ["openai-key", /\bsk-[A-Za-z0-9_-]{20,}\b/],
+  ["aws-access-key", /\bAKIA[0-9A-Z]{16}\b/],
+];
+const TRACKED_FIXTURE_ALLOWLIST = new Map([
+  // Exercises production FollowUp secret rejection; this invalid credential is never packed.
+  ["test/project-operations.test.ts", new Set(["github-token"])],
+]);
+
 async function run(command: string[], cwd: string): Promise<string> {
   const child = Bun.spawn(command, { cwd, env: environment, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, code] = await Promise.all([
@@ -29,7 +66,47 @@ async function run(command: string[], cwd: string): Promise<string> {
   return stdout;
 }
 
+function walkFiles(directory: string): string[] {
+  return fs
+    .readdirSync(directory, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => path.join(entry.parentPath, entry.name));
+}
+
+function auditFiles(
+  files: string[],
+  base: string,
+  label: string,
+  allowlist: ReadonlyMap<string, ReadonlySet<string>> = new Map(),
+): void {
+  if (files.length > MAX_AUDITED_FILES) throw new Error(`${label} file inventory exceeds limit`);
+  for (const file of files) {
+    const relative = path.relative(base, file);
+    const stat = fs.statSync(file);
+    if (stat.size > MAX_AUDITED_FILE_BYTES) {
+      throw new Error(`${label} file exceeds audit byte limit: ${relative}`);
+    }
+    const content = fs.readFileSync(file, "utf8");
+    for (const [kind, pattern] of SECRET_PATTERNS) {
+      if (pattern.test(content) && !allowlist.get(relative)?.has(kind))
+        throw new Error(`${label} ${kind} candidate: ${relative}`);
+    }
+  }
+}
+
 try {
+  const tracked = (await run(["git", "ls-files", "-z"], root))
+    .split("\0")
+    .filter(Boolean)
+    .map((name) => path.join(root, name));
+  for (const file of tracked) {
+    const relative = path.relative(root, file);
+    const rootName = relative.split(path.sep)[0] as string;
+    if (!TRACKED_FILES.has(relative) && !TRACKED_ROOTS.has(rootName)) {
+      throw new Error(`unexpected tracked file: ${relative}`);
+    }
+  }
+  auditFiles(tracked, root, "tracked", TRACKED_FIXTURE_ALLOWLIST);
   await run(["bun", "pm", "pack", "--ignore-scripts", "--destination", scratch], root);
   const archiveName = fs.readdirSync(scratch).find((name) => name.endsWith(".tgz"));
   if (archiveName === undefined) throw new Error("package manager did not produce an artifact");
@@ -38,6 +115,19 @@ try {
   if (!/^[a-f0-9]{64}$/.test(digest)) throw new Error("artifact integrity digest was not produced");
   await run(["tar", "-xzf", archive], scratch);
   const artifact = path.join(scratch, "package");
+  const packed = walkFiles(artifact);
+  for (const file of packed) {
+    const relative = path.relative(artifact, file);
+    const rootName = relative.split(path.sep)[0] as string;
+    if (!PACKED_FILES.has(relative) && !PACKED_ROOTS.has(rootName)) {
+      throw new Error(`unexpected packed file: ${relative}`);
+    }
+  }
+  for (const required of ["package.json", "README.md", "LICENSE"]) {
+    if (!fs.existsSync(path.join(artifact, required)))
+      throw new Error(`packed file missing: ${required}`);
+  }
+  auditFiles(packed, artifact, "packed");
   fs.copyFileSync(path.join(root, "bun.lock"), path.join(artifact, "bun.lock"));
   await run(
     ["bun", "install", "--frozen-lockfile", "--ignore-scripts", "--cache-dir", readOnlyCache],

@@ -451,7 +451,10 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       prompt,
       "plan",
       runId,
-      [submitPlanTool],
+      [
+        submitPlanTool,
+        ...(config.pluginToolsForModel?.(selection.model) ?? config.pluginTools ?? []),
+      ],
     );
     const runIds = [...state.runIds, runId];
     // A captured error is parsePlan's OrchestrationError, swallowed by the
@@ -616,7 +619,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
         ].join("\n"),
         "research",
         researchRunId,
-        [],
+        config.pluginToolsForModel?.(researcher.model) ?? config.pluginTools ?? [],
         false,
       );
     } catch {
@@ -753,6 +756,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       prompt,
       "security",
       runId,
+      config.pluginToolsForModel?.(selection.model) ?? config.pluginTools,
     );
     const nextState: WorkflowState = {
       ...state,
@@ -790,6 +794,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       context,
       `code:${round}`,
       runId,
+      config.pluginToolsForModel?.(selection.model) ?? config.pluginTools,
     );
     const nextState: WorkflowState = {
       ...state,
@@ -827,7 +832,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       prompt,
       `review:${round}`,
       runId,
-      [submitTool],
+      [submitTool, ...(config.pluginToolsForModel?.(selection.model) ?? config.pluginTools ?? [])],
     );
     // Missing/malformed here throws OrchestrationError -- distinct from a
     // legitimate non-approval, which is a well-formed changes_requested verdict.

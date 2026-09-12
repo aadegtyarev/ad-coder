@@ -6,8 +6,10 @@ import type { Profile, ProfileEntry, ProfileRole } from "./types";
 
 const PROFILE_ROLES: readonly ProfileRole[] = [
   "planner",
+  "researcher",
   "coder",
   "reviewer",
+  "auditor",
   "security",
   "recorder",
 ];

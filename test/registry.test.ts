@@ -54,6 +54,26 @@ test("parseRegistryConfig returns a typed config on valid data", () => {
   expect(parsed.providers[0]!.models[0]!.name).toBe("m1");
 });
 
+test("model input modalities are validated and reach the resolved model", () => {
+  const cfg = config({ providers: [provider({ models: [model({ input: ["text", "image"] })] })] });
+  expect(parseRegistryConfig(cfg).providers[0]?.models[0]?.input).toEqual(["text", "image"]);
+  const resolved = resolveRegistry(cfg, { env: fakeEnv({ P1_KEY: "test-key" }) });
+  expect(resolved.getModel("m1").input).toEqual(["text", "image"]);
+});
+
+test("model input modalities reject duplicates and unknown values", () => {
+  expect(() =>
+    parseRegistryConfig(
+      config({ providers: [provider({ models: [model({ input: ["text", "text"] })] })] }),
+    ),
+  ).toThrow(RegistryError);
+  expect(() =>
+    parseRegistryConfig(
+      config({ providers: [provider({ models: [model({ input: ["audio"] as never })] })] }),
+    ),
+  ).toThrow(RegistryError);
+});
+
 test("contextWindow defaults to 200000 when omitted", () => {
   const withoutWindow = model();
   delete withoutWindow.contextWindow;

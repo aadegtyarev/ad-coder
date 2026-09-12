@@ -19,12 +19,15 @@ import { resolveProfile } from "../profiles/resolve";
 import type { Profile, ProfileRole, ResolvedSelection } from "../profiles/types";
 import { parseProfile } from "../profiles/validate";
 import type { ProjectStoreConfig } from "../project-store/types";
+import { buildExploreProjectTool, EXPLORE_PROJECT_TOOL_NAME } from "../project-tools/explore";
 import { resolvePrompt } from "../prompts/prompts";
 import { deepseekPreset, openaiCodexPreset, openrouterPreset } from "../registry/presets";
 import { resolveRegistry } from "../registry/resolve";
 import type { ProviderConfig, RegistryConfig, ResolvedRegistry } from "../registry/types";
 import type { Role } from "../role";
 import { defineRole } from "../role";
+import type { Tool } from "../runner/tool";
+import { buildImageInspectionTool, buildWebTools } from "../web/tools";
 
 /**
  * The three shipped providers this resolver can select from the environment.
@@ -46,12 +49,21 @@ export type ResolvableProvider = "deepseek" | "openrouter" | "openai-codex";
  * `defineRole`), which the defaults satisfy (0.10 + 0.25 < 0.90).
  */
 export type BudgetPercents = ContextBudgetPercents;
-export type ConfigurableRole = "planner" | "security" | "coder" | "reviewer" | "orchestrator";
+export type ConfigurableRole =
+  | "planner"
+  | "researcher"
+  | "security"
+  | "coder"
+  | "reviewer"
+  | "auditor"
+  | "orchestrator";
+export type BuiltInPluginName = "explore" | "web" | "vision";
 
 /** maxRounds default when the caller does not override it. */
 const DEFAULT_MAX_ROUNDS = 2;
 /** The complexity every pre-plan role and later fallback routes on by default. */
 const DEFAULT_COMPLEXITY: Complexity = "medium";
+export const DEFAULT_REQUEST_TIMEOUT_MS = 120_000;
 const THINKING_LEVELS: readonly ThinkingLevel[] = [
   "off",
   "minimal",
@@ -63,9 +75,11 @@ const THINKING_LEVELS: readonly ThinkingLevel[] = [
 ];
 const CONFIGURABLE_ROLES: readonly ConfigurableRole[] = [
   "planner",
+  "researcher",
   "security",
   "coder",
   "reviewer",
+  "auditor",
   "orchestrator",
 ];
 
@@ -112,11 +126,16 @@ export interface ResolvePipelineConfigOptions {
   profile?: Profile;
   overrides?: Partial<Record<ProfileRole, import("../profiles/types").SpawnOverride>>;
   plannerModel?: string;
+  researcherModel?: string;
   securityModel?: string;
   coderModel?: string;
   reviewerModel?: string;
+  auditorModel?: string;
   orchestratorModel?: string;
+  /** Image-capable registered model used when a text-only role calls inspect_image. */
+  visionModel?: string;
   orchestratorThinkingLevel?: ThinkingLevel;
+  requestTimeoutMs?: number;
   compactionMode?: CompactionMode;
   summarizerModel?: string;
   allowCrossProviderSummarization?: boolean;
@@ -129,6 +148,10 @@ export interface ResolvePipelineConfigOptions {
   projectStoreConfig?: ProjectStoreConfig;
   /** Persistent provider credentials; defaults to the private user-local store. */
   credentials?: CredentialStore;
+  /** Replace every built-in plugin tool; pass an empty array to disable plugins. */
+  pluginTools?: Tool[];
+  /** Select built-in plugin groups; defaults to all three. Mutually exclusive with pluginTools. */
+  enabledPlugins?: readonly BuiltInPluginName[];
 }
 
 /** Env-var names whose PRESENCE selects a provider, in precedence order. */
@@ -182,7 +205,7 @@ function selectProvider(
  * Resolve a runnable `PipelineConfig` from the environment: select a provider,
  * build its registry from the shipped preset, route strong/mid/cheap NAMES
  * through the default profile, derive a window-relative budget, and build the
- * four pipeline roles from the built-in prompts.
+ * the built-in worker roles from their prompts.
  *
  * CREDENTIAL BOUNDARY. Keys resolve ONLY through the injected `env` accessor,
  * handed straight to `resolveRegistry({ env })`. A selected env-var provider
@@ -190,7 +213,22 @@ function selectProvider(
  * (name only) from `resolveRegistry`; this function does NOT catch or reformat
  * it. The codex fallback is OAuth-only and never throws `missing_credential`.
  */
-export function resolvePipelineConfig(options: ResolvePipelineConfigOptions): PipelineConfig {
+function resolveConfig(
+  options: ResolvePipelineConfigOptions,
+  orchestratorOnly: boolean,
+): PipelineConfig {
+  const requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+  if (!Number.isSafeInteger(requestTimeoutMs) || requestTimeoutMs < 0)
+    throw new Error("requestTimeoutMs must be a non-negative safe integer");
+  if (options.pluginTools !== undefined && options.enabledPlugins !== undefined)
+    throw new Error("pluginTools cannot be combined with enabledPlugins");
+  const enabledPlugins = options.enabledPlugins ?? ["explore", "web", "vision"];
+  for (const name of enabledPlugins) {
+    if (name !== "explore" && name !== "web" && name !== "vision")
+      throw new Error(`unknown built-in plugin "${String(name)}"`);
+  }
+  if (new Set(enabledPlugins).size !== enabledPlugins.length)
+    throw new Error("enabledPlugins must not contain duplicates");
   validateRoleBudgetPercents(options.roleBudgetPercents);
   const surfaceAnalysisLimits: SurfaceAnalysisLimits = {
     ...DEFAULT_SURFACE_ANALYSIS_LIMITS,
@@ -289,9 +327,11 @@ export function resolvePipelineConfig(options: ResolvePipelineConfigOptions): Pi
 
   const explicitModels: Partial<Record<ProfileRole, string>> = {
     ...(options.plannerModel !== undefined && { planner: options.plannerModel }),
+    ...(options.researcherModel !== undefined && { researcher: options.researcherModel }),
     ...(options.securityModel !== undefined && { security: options.securityModel }),
     ...(options.coderModel !== undefined && { coder: options.coderModel }),
     ...(options.reviewerModel !== undefined && { reviewer: options.reviewerModel }),
+    ...(options.auditorModel !== undefined && { auditor: options.auditorModel }),
   };
   const overrides = { ...options.overrides };
   for (const [role, model] of Object.entries(explicitModels)) {
@@ -321,27 +361,11 @@ export function resolvePipelineConfig(options: ResolvePipelineConfigOptions): Pi
         cacheRetention: "short",
         contextBudget: budget,
         ...(selection.thinkingLevel !== undefined && { thinkingLevel: selection.thinkingLevel }),
+        requestTimeoutMs,
       },
       model,
     );
     return { role, model };
-  };
-
-  const roles = {
-    planner: buildRole("planner", [
-      "read",
-      "bash",
-      SUBMIT_PLAN_TOOL_NAME,
-      SUBMIT_FOLLOW_UP_TOOL_NAME,
-    ]),
-    security: buildRole("security", ["read", "bash", SUBMIT_FOLLOW_UP_TOOL_NAME]),
-    coder: buildRole("coder", ["read", "write", "edit", "bash", SUBMIT_FOLLOW_UP_TOOL_NAME]),
-    reviewer: buildRole("reviewer", [
-      "read",
-      "bash",
-      SUBMIT_VERDICT_TOOL_NAME,
-      SUBMIT_FOLLOW_UP_TOOL_NAME,
-    ]),
   };
 
   const orchestratorSelection: ResolvedSelection =
@@ -350,22 +374,101 @@ export function resolvePipelineConfig(options: ResolvePipelineConfigOptions): Pi
       : useCodexOAuthDefaults
         ? { model: registry.getModel("codex-sol"), thinkingLevel: "low" }
         : resolveProfile(profile, registry, "coder", defaultComplexity, overrides.coder);
+  const visionModel =
+    options.visionModel !== undefined ? registry.getModel(options.visionModel) : undefined;
+  if (visionModel !== undefined && !visionModel.input.includes("image")) {
+    throw new Error(`visionModel "${options.visionModel}" does not support image input`);
+  }
+  const commonBuiltInTools = [
+    ...(enabledPlugins.includes("explore") ? [buildExploreProjectTool(options.targetDir)] : []),
+    ...(enabledPlugins.includes("web") ? buildWebTools() : []),
+  ];
+  const pluginToolsForModel =
+    options.pluginTools === undefined
+      ? (activeModel: Model<Api>): Tool[] => [
+          ...commonBuiltInTools,
+          ...(enabledPlugins.includes("vision")
+            ? [
+                buildImageInspectionTool({
+                  targetDir: options.targetDir,
+                  models: registry.models,
+                  activeModel,
+                  ...(visionModel !== undefined && { visionModel }),
+                }),
+              ]
+            : []),
+        ]
+      : undefined;
+  const pluginTools =
+    options.pluginTools ?? pluginToolsForModel?.(orchestratorSelection.model) ?? [];
   const orchestrator = buildNamedRole(
     "orchestrator",
     orchestratorSelection.model,
     ["read", "bash"],
     options.orchestratorThinkingLevel ?? orchestratorSelection.thinkingLevel,
   );
+  const pipelineRoles = orchestratorOnly
+    ? undefined
+    : {
+        planner: buildRole("planner", [
+          "read",
+          "bash",
+          EXPLORE_PROJECT_TOOL_NAME,
+          SUBMIT_PLAN_TOOL_NAME,
+          SUBMIT_FOLLOW_UP_TOOL_NAME,
+        ]),
+        researcher: buildRole("researcher", [
+          "read",
+          "bash",
+          EXPLORE_PROJECT_TOOL_NAME,
+          "web_search",
+          "web_read",
+          SUBMIT_FOLLOW_UP_TOOL_NAME,
+        ]),
+        security: buildRole("security", [
+          "read",
+          "bash",
+          EXPLORE_PROJECT_TOOL_NAME,
+          SUBMIT_FOLLOW_UP_TOOL_NAME,
+        ]),
+        coder: buildRole("coder", [
+          "read",
+          "write",
+          "edit",
+          "bash",
+          EXPLORE_PROJECT_TOOL_NAME,
+          SUBMIT_FOLLOW_UP_TOOL_NAME,
+        ]),
+        reviewer: buildRole("reviewer", [
+          "read",
+          "bash",
+          EXPLORE_PROJECT_TOOL_NAME,
+          SUBMIT_VERDICT_TOOL_NAME,
+          SUBMIT_FOLLOW_UP_TOOL_NAME,
+        ]),
+        auditor: buildRole("auditor", [
+          "read",
+          "bash",
+          EXPLORE_PROJECT_TOOL_NAME,
+          "web_search",
+          "web_read",
+          SUBMIT_FOLLOW_UP_TOOL_NAME,
+        ]),
+      };
 
   if (compactionMode !== "disabled-then-halt") {
-    const reachable = profile.entries
-      .filter((entry) => entry.role !== "recorder")
-      .map((entry) => registry.getModel(entry.model));
-    for (const [role, override] of Object.entries(overrides)) {
-      if (role !== "recorder" && override !== undefined)
-        reachable.push(registry.getModel(override.model));
+    const reachable = [orchestratorSelection.model];
+    if (!orchestratorOnly) {
+      reachable.push(
+        ...profile.entries
+          .filter((entry) => entry.role !== "recorder")
+          .map((entry) => registry.getModel(entry.model)),
+      );
+      for (const [role, override] of Object.entries(overrides)) {
+        if (role !== "recorder" && override !== undefined)
+          reachable.push(registry.getModel(override.model));
+      }
     }
-    reachable.push(orchestratorSelection.model);
     assertSummarizerWindow(summarizerModel, reachable);
   }
 
@@ -391,6 +494,7 @@ export function resolvePipelineConfig(options: ResolvePipelineConfigOptions): Pi
           cacheRetention: "short",
           contextBudget: budget,
           ...(thinkingLevel !== undefined && { thinkingLevel }),
+          requestTimeoutMs,
         },
         model,
       ),
@@ -402,8 +506,13 @@ export function resolvePipelineConfig(options: ResolvePipelineConfigOptions): Pi
     models: registry.models,
     task: options.task,
     maxRounds,
+    pluginTools,
+    ...(pluginToolsForModel !== undefined && { pluginToolsForModel }),
     surfaceAnalysisLimits,
-    roles: { ...roles, orchestrator },
+    roles:
+      pipelineRoles === undefined
+        ? { coder: orchestrator, reviewer: orchestrator, orchestrator }
+        : { ...pipelineRoles, orchestrator },
     ledgerSink: new MemoryLedgerSink(),
     compaction:
       compactionMode === "disabled-then-halt"
@@ -422,9 +531,11 @@ export function resolvePipelineConfig(options: ResolvePipelineConfigOptions): Pi
       ...(Object.keys(overrides).length > 0 && { overrides }),
       budgetPercents: {
         planner: options.roleBudgetPercents?.planner ?? options.budgetPercents ?? {},
+        researcher: options.roleBudgetPercents?.researcher ?? options.budgetPercents ?? {},
         security: options.roleBudgetPercents?.security ?? options.budgetPercents ?? {},
         coder: options.roleBudgetPercents?.coder ?? options.budgetPercents ?? {},
         reviewer: options.roleBudgetPercents?.reviewer ?? options.budgetPercents ?? {},
+        auditor: options.roleBudgetPercents?.auditor ?? options.budgetPercents ?? {},
       },
     },
     defaults: { maxRounds, defaultComplexity },
@@ -447,6 +558,18 @@ export function resolvePipelineConfig(options: ResolvePipelineConfigOptions): Pi
         value: cheap,
         source: options.cheapModel !== undefined ? "cli" : "registry-default",
       },
+      visionModel: {
+        value: visionModel?.id ?? "not-configured",
+        source: options.visionModel !== undefined ? "cli" : "built-in-default",
+      },
+      pluginTools: {
+        value: pluginTools.length,
+        source: options.pluginTools !== undefined ? "api" : "built-in-default",
+      },
+      enabledPlugins: {
+        value: options.pluginTools !== undefined ? "custom" : enabledPlugins.join(",") || "none",
+        source: options.enabledPlugins !== undefined ? "cli" : "built-in-default",
+      },
       maxRounds: {
         value: maxRounds,
         source: options.maxRounds !== undefined ? "cli" : "built-in-default",
@@ -458,6 +581,10 @@ export function resolvePipelineConfig(options: ResolvePipelineConfigOptions): Pi
       compactionMode: {
         value: compactionMode,
         source: options.compactionMode !== undefined ? "cli" : "built-in-default",
+      },
+      requestTimeoutMs: {
+        value: requestTimeoutMs,
+        source: options.requestTimeoutMs !== undefined ? "cli" : "built-in-default",
       },
       ...Object.fromEntries(
         Object.entries(surfaceAnalysisLimits).map(([name, value]) => [
@@ -476,4 +603,14 @@ export function resolvePipelineConfig(options: ResolvePipelineConfigOptions): Pi
       projectStoreConfig: options.projectStoreConfig,
     }),
   };
+}
+
+/** Resolve the complete built-in pipeline, including every pipeline role and prompt. */
+export function resolvePipelineConfig(options: ResolvePipelineConfigOptions): PipelineConfig {
+  return resolveConfig(options, false);
+}
+
+/** Resolve only conversational model/config state; pipeline roles and prompts stay lazy. */
+export function resolveOrchestratorSeed(options: ResolvePipelineConfigOptions): PipelineConfig {
+  return resolveConfig(options, true);
 }

@@ -7,7 +7,13 @@ import type { CommandExecutor, GateReport, GateResult, QualityGate } from "./typ
  * tool spewing megabytes); capping here keeps a report small enough to feed back
  * as a model turn's input and denies a verbose tool the ability to flood it.
  */
-const DEFAULT_MAX_OUTPUT_CHARS = 4000;
+export interface GateRunnerConfig {
+  maxOutputChars: number;
+}
+
+export const DEFAULT_GATE_RUNNER_CONFIG: Readonly<GateRunnerConfig> = Object.freeze({
+  maxOutputChars: 4000,
+});
 
 /**
  * Runs declared quality gates over a set of file paths and returns a fail-loud
@@ -35,7 +41,9 @@ export class GateRunner {
   }) {
     this.executor = deps.executor;
     this.cwd = deps.cwd ?? process.cwd();
-    this.maxOutputChars = deps.maxOutputChars ?? DEFAULT_MAX_OUTPUT_CHARS;
+    this.maxOutputChars = deps.maxOutputChars ?? DEFAULT_GATE_RUNNER_CONFIG.maxOutputChars;
+    if (!Number.isSafeInteger(this.maxOutputChars) || this.maxOutputChars <= 0)
+      throw new Error("maxOutputChars must be a positive safe integer");
   }
 
   /**

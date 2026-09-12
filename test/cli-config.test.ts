@@ -66,9 +66,11 @@ test("mixed-window roles select independently and derive independent budgets", (
     registryConfig: mixedRegistry(),
     profile: buildDefaultProfile({ strong: "large", mid: "small", cheap: "small" }),
     plannerModel: "small",
+    researcherModel: "large",
     securityModel: "large",
     coderModel: "small",
     reviewerModel: "large",
+    auditorModel: "small",
     orchestratorModel: "small",
     summarizerModel: "large",
     env: fakeEnv({ LOCAL_KEY: "k" }),
@@ -76,8 +78,10 @@ test("mixed-window roles select independently and derive independent budgets", (
   });
   expect(config.roles.planner?.model.contextWindow).toBe(32000);
   expect(config.roles.security?.model.contextWindow).toBe(200000);
+  expect(config.roles.researcher?.model.contextWindow).toBe(200000);
   expect(config.roles.coder.role.contextBudget.maxTokens).toBe(28800);
   expect(config.roles.reviewer.role.contextBudget.maxTokens).toBe(180000);
+  expect(config.roles.auditor?.role.contextBudget.maxTokens).toBe(28800);
   expect(config.roles.orchestrator?.model.contextWindow).toBe(32000);
 });
 
@@ -94,7 +98,14 @@ test("every complexity route and override derives from its dispatched model wind
   });
   const routing = config.routing!;
   for (const complexity of ["trivial", "medium", "complex"] as const) {
-    for (const role of ["planner", "security", "coder", "reviewer"] as const) {
+    for (const role of [
+      "planner",
+      "researcher",
+      "security",
+      "coder",
+      "reviewer",
+      "auditor",
+    ] as const) {
       const model = resolveProfile(
         routing.profile,
         routing.registry,
@@ -450,4 +461,43 @@ test("surface analysis limits expose effective values and winning provenance", (
       surfaceAnalysisLimits: { maxItems: Number.MAX_SAFE_INTEGER + 1 },
     }),
   ).toThrow("non-negative safe integer");
+});
+
+test("built-in plugin groups are selectable, visible, and mutually exclusive with custom tools", () => {
+  const base = {
+    task: "x",
+    targetDir: "/tmp",
+    registryConfig: mixedRegistry(),
+    profile: buildDefaultProfile({ strong: "large", mid: "small", cheap: "small" }),
+    summarizerModel: "large",
+    env: fakeEnv({ LOCAL_KEY: "k" }),
+    warn: silent,
+  } as const;
+  const selected = resolvePipelineConfig({ ...base, enabledPlugins: ["explore"] });
+  expect(selected.pluginTools?.map(({ name }) => name)).toEqual(["explore_project"]);
+  expect(selected.effectiveConfig?.enabledPlugins).toEqual({ value: "explore", source: "cli" });
+  expect(() => resolvePipelineConfig({ ...base, enabledPlugins: [], pluginTools: [] })).toThrow(
+    "pluginTools cannot be combined with enabledPlugins",
+  );
+});
+
+test("provider request timeout is effective, visible, and zero-disabled", () => {
+  const base = {
+    task: "x",
+    targetDir: "/tmp",
+    registryConfig: mixedRegistry(),
+    profile: buildDefaultProfile({ strong: "large", mid: "small", cheap: "small" }),
+    summarizerModel: "large",
+    env: fakeEnv({ LOCAL_KEY: "k" }),
+    warn: silent,
+  } as const;
+  const defaults = resolvePipelineConfig(base);
+  expect(defaults.roles.coder.role.requestTimeoutMs).toBe(120_000);
+  expect(defaults.effectiveConfig?.requestTimeoutMs).toEqual({
+    value: 120_000,
+    source: "built-in-default",
+  });
+  const disabled = resolvePipelineConfig({ ...base, requestTimeoutMs: 0 });
+  expect(disabled.roles.coder.role.requestTimeoutMs).toBe(0);
+  expect(disabled.effectiveConfig?.requestTimeoutMs).toEqual({ value: 0, source: "cli" });
 });
