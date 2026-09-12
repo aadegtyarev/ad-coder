@@ -17,7 +17,10 @@ import type {
   FauxResponseStep,
 } from "@earendil-works/pi-ai/providers/faux";
 import { MemoryLedgerSink } from "../src/ledger/ledger";
-import { SUBMIT_FOLLOW_UP_TOOL_NAME } from "../src/orchestration/follow-up";
+import {
+  buildSubmitFollowUpTool,
+  SUBMIT_FOLLOW_UP_TOOL_NAME,
+} from "../src/orchestration/follow-up";
 import { runPipeline } from "../src/orchestration/pipeline";
 import { parsePlan, SUBMIT_PLAN_TOOL_NAME } from "../src/orchestration/plan";
 import { applyTransition, autoDriver, createWorkflowSession } from "../src/orchestration/session";
@@ -33,6 +36,7 @@ import { OrchestrationError } from "../src/orchestration/types";
 import { parseVerdict, SUBMIT_VERDICT_TOOL_NAME } from "../src/orchestration/verdict";
 import { buildDefaultProfile } from "../src/profiles/default-profile";
 import type { Profile } from "../src/profiles/types";
+import { ProjectOperationsError } from "../src/project-operations/errors";
 import { type RunCheckpoint, RunCoordinator } from "../src/project-operations/run-coordinator";
 import { ProjectStore } from "../src/project-store/project-store";
 import type { ResolvedRegistry } from "../src/registry/types";
@@ -285,6 +289,88 @@ test("parseVerdict rejects a bad status, non-array issues, a missing what, and a
     expect(caught).toBeInstanceOf(OrchestrationError);
     expect((caught as OrchestrationError).code).toBe("malformed_verdict");
   }
+});
+
+test("submit_follow_up advertises discriminated variants and rejects all-fields calls safely", () => {
+  const tool = buildSubmitFollowUpTool({ followUps: [] }, { producer: "coder", runId: "run-1" });
+  const schema = tool.parameters as unknown as {
+    anyOf: Array<{ properties: Record<string, unknown>; additionalProperties?: boolean }>;
+  };
+  expect(schema.anyOf.map((variant) => Object.keys(variant.properties).sort())).toEqual([
+    ["contract", "evidence", "kind", "title"],
+    ["evidence", "kind", "title"],
+    ["document", "evidence", "kind", "title"],
+    ["evidence", "kind", "priority", "title"],
+  ]);
+  expect(schema.anyOf.every((variant) => variant.additionalProperties === false)).toBe(true);
+
+  const allFields = {
+    kind: "note",
+    title: "Auxiliary note",
+    evidence: [{ summary: "Observed in a focused test" }],
+    contract: "quality",
+    document: "docs/ARCHITECTURE.md",
+    priority: "high",
+  };
+  let diagnostic: unknown;
+  try {
+    tool.prepareArguments?.(allFields);
+  } catch (error) {
+    diagnostic = error;
+  }
+  expect(diagnostic).toBeInstanceOf(ProjectOperationsError);
+  expect((diagnostic as ProjectOperationsError).code).toBe("invalid_follow_up");
+  expect((diagnostic as ProjectOperationsError).detail).toBe("follow-up has an unknown field");
+  expect((diagnostic as Error).message).not.toContain("Auxiliary note");
+});
+
+test("Coder and Reviewer primary results survive rejected all-fields follow-up metadata", async () => {
+  const fx = fixture();
+  const tools = [SUBMIT_FOLLOW_UP_TOOL_NAME];
+  const coder = fx.role("coder", "You code.", tools);
+  const reviewer = fx.role("reviewer", "You review.", [...tools, SUBMIT_VERDICT_TOOL_NAME]);
+  const malformedFollowUp = (title: string) =>
+    fauxAssistantMessage(
+      fauxToolCall(SUBMIT_FOLLOW_UP_TOOL_NAME, {
+        kind: "note",
+        title,
+        evidence: [{ summary: "Observed in the implementation" }],
+        contract: "quality",
+        document: "docs/ARCHITECTURE.md",
+        priority: "high",
+      }),
+    );
+  let reviewerPrompt = "";
+  fx.faux.setResponses([
+    malformedFollowUp("Coder auxiliary metadata"),
+    fauxAssistantMessage("coder primary result"),
+    malformedFollowUp("Reviewer auxiliary metadata"),
+    (context) => {
+      reviewerPrompt = lastUserText(context);
+      return fauxAssistantMessage(
+        fauxToolCall(SUBMIT_VERDICT_TOOL_NAME, {
+          status: "approved",
+          issues: [],
+          summary: "primary review passed",
+        }),
+      );
+    },
+    fauxAssistantMessage("reviewer primary result"),
+  ]);
+
+  const result = await runPipeline({
+    targetDir: fx.targetDir,
+    models: fx.models,
+    task: "implement",
+    maxRounds: 1,
+    roles: { coder, reviewer },
+  });
+
+  expect(reviewerPrompt).toContain("coder primary result");
+  expect(result.approved).toBe(true);
+  expect(result.verdicts).toEqual([
+    { status: "approved", issues: [], summary: "primary review passed" },
+  ]);
 });
 
 test("direct pipeline captures FollowUps with engine provenance and closes them without orchestrator", async () => {

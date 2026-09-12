@@ -12,6 +12,56 @@ export interface FollowUpCapture {
   error?: ProjectOperationsError;
 }
 
+const evidenceSchema = Type.Object(
+  {
+    summary: Type.String(),
+    path: Type.Optional(Type.String()),
+    line: Type.Optional(Type.Number()),
+    sha256: Type.Optional(Type.String()),
+  },
+  { additionalProperties: false },
+);
+
+const followUpParameters = Type.Union([
+  Type.Object(
+    {
+      kind: Type.Literal("contract"),
+      title: Type.String(),
+      evidence: Type.Array(evidenceSchema),
+      contract: Type.Optional(Type.String()),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("note"),
+      title: Type.String(),
+      evidence: Type.Array(evidenceSchema),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("design-doc-drift"),
+      title: Type.String(),
+      evidence: Type.Array(evidenceSchema),
+      document: Type.String(),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("backlog"),
+      title: Type.String(),
+      evidence: Type.Array(evidenceSchema),
+      priority: Type.Optional(
+        Type.Union([Type.Literal("low"), Type.Literal("medium"), Type.Literal("high")]),
+      ),
+    },
+    { additionalProperties: false },
+  ),
+]);
+
 export function buildSubmitFollowUpTool(
   capture: FollowUpCapture,
   provenance: FollowUpProvenance,
@@ -20,21 +70,10 @@ export function buildSubmitFollowUpTool(
     name: SUBMIT_FOLLOW_UP_TOOL_NAME,
     description: "Record durable follow-up work discovered during this turn.",
     label: "submit follow-up",
-    parameters: Type.Object({
-      kind: Type.String(),
-      title: Type.String(),
-      evidence: Type.Array(
-        Type.Object({
-          summary: Type.String(),
-          path: Type.Optional(Type.String()),
-          line: Type.Optional(Type.Number()),
-          sha256: Type.Optional(Type.String()),
-        }),
-      ),
-      contract: Type.Optional(Type.String()),
-      document: Type.Optional(Type.String()),
-      priority: Type.Optional(Type.String()),
-    }),
+    parameters: followUpParameters,
+    prepareArguments(params) {
+      return validateFollowUpCandidate(params);
+    },
     async execute(_toolCallId, params) {
       try {
         const candidate = validateFollowUpCandidate(params) as FollowUpCandidate;
