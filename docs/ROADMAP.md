@@ -165,9 +165,11 @@ workflows — one substrate, swappable drivers.
   their own under `.ad-coder/workflows/<name>/`, enable/disable per config). The
   registry pattern (providers, profiles) applies — a third registry. This is the
   [[workflows-module]] refined.
-- A workflow runs in two modes: **autonomous** (`runPipeline` to completion, today)
-  or **stepped** (run ONE step, hand control back). Stepped is the missing
-  substrate — `runPipeline` is all-or-nothing today.
+- A workflow runs in two modes: **autonomous** (`runPipeline` to completion) or
+  **stepped** (run one step and hand control back). The stepped substrate is
+  implemented: `createWorkflowSession`, `step`, and `applyTransition` own the
+  graph, while `autoDriver`, the human `drive` CLI, and the orchestrator are
+  drivers over the same engine.
 - **Stepped execution is the substrate; WHO decides the next step is a pluggable
   DRIVER.** Two drivers: the **human** (manual — "ran the plan, read it, ran the
   coder, looked, sent it back or on to the reviewer") and the **orchestrator** (an
@@ -203,12 +205,10 @@ workflows — one substrate, swappable drivers.
   future migration of today's flat `prompts/*.md` into the workflow-module layout —
   do it WITH the workflows-module build, not before; the resolver already supports
   the paths.)
-- **Path to MVP (reordered):** (1) stepped workflow substrate → (2) human-driven
-  stepped CLI + standalone role runs ("plan, read, code, look, rework/review") →
-  (3) the orchestrator as an autonomous driver on the SAME substrate → (4) TUI.
-  Human-in-the-loop before autonomy: nearer, safer, and mostly composition of
-  runRole + a thin stepped driver + a CLI. The orchestrator stops being a blocker
-  for a usable MVP.
+- **MVP delivery status:** the stepped substrate, human `drive` CLI, standalone
+  roles, autonomous orchestrator driver, and daemon-free durable control plane
+  are delivered. The remaining human-front follow-up is a TUI; custom workflow
+  modules/plugins and richer multi-project operation remain future work.
 - **REQUIREMENT — composable isolation + plan-reuse.** Worktree isolation and
   plan-reuse MUST be COMPOSABLE, not mutually exclusive: a plan reviewed in one pass
   must be implementable in an isolated worktree in the next. ad-coder must NOT
@@ -218,15 +218,11 @@ workflows — one substrate, swappable drivers.
   stepped engine (which threads an explicit `WorkflowState`) is the substrate that
   makes this natural — a plan produced by one driver/target is a value another can
   resume against a different target.
-- **REQUIREMENT — breakpoint control.** A driver must be able to AUTO-ADVANCE
-  through phases and PAUSE before any chosen phase (a breakpoint), then RESUME from
-  any point. The `createOrchestrator` stepping seam already makes this reachable
-  (`stepOnce` runs exactly one role turn and hands control back with the offered
-  transitions; `chooseTransition` commits one); the missing piece is a **run-until-phase
-  driver** — an auto-driver that walks the default edges like `autoDriver` but halts
-  before a named target phase and returns control, so a caller/UI can set a
-  breakpoint without hand-stepping every phase. Named as an explicit follow-on the
-  stepping tools expose.
+- **REQUIREMENT — breakpoint control (implemented).** Drivers can auto-advance
+  through phases and pause before a chosen phase, then resume from durable state.
+  The trusted `control run-until` action exposes this without requiring a caller
+  to hand-step every transition; model-facing tools retain only the bounded
+  transition authority described above.
 
 ## After that (designed, ordered)
 
@@ -265,10 +261,9 @@ workflows — one substrate, swappable drivers.
   filesystem `.ad-coder/verdict/` scheme is retired. `parseVerdict` stays the
   authoritative strict validator (the tool's schema is permissive at the enum
   leaves), an absent call is `missing_verdict` and a failed validation is
-  `malformed_verdict` — both hard `OrchestrationError`s. The IMMEDIATE next
-  follow-on on the same pattern was `submit_plan` (a planner emitting STRUCTURED
-  complexity), now DONE (see below); its CONSUMER, complexity-aware model routing,
-  remains open — see Profiles + complexity-aware model routing.
+  `malformed_verdict` — both hard `OrchestrationError`s. The next step on the
+  same pattern, `submit_plan` for structured complexity, is also delivered; its
+  complexity-aware routing consumer is described below.
 - **`submit_plan` structured complexity** — DONE. The optional planner can now
   emit STRUCTURED complexity (`trivial`/`medium`/`complex`) plus a summary by
   CALLING a `submit_plan` tool built per planner turn (via the `runRole` tools
@@ -277,9 +272,8 @@ workflows — one substrate, swappable drivers.
   unlike the verdict, an ABSENT call is NOT an error — it leaves
   `PipelineResult.complexity` undefined and the run proceeds (there is NO
   `missing_plan`); only a MALFORMED call is a hard `malformed_plan`. This unit
-  makes complexity AVAILABLE on `result.complexity` but deliberately does NOT wire
-  it into model selection — that is the Profiles + complexity-aware routing
-  follow-on below, which CONSUMES this signal.
+  makes complexity available on `result.complexity`; the Profiles +
+  complexity-aware routing implementation below consumes this signal.
 - **`submit_plan` securitySurface + conditional Security phase** — DONE. The same
   `submit_plan` call now also carries a `securitySurface` (`none`/`low`/`elevated`),
   strictly validated by `parsePlan` (schema permissive at the leaf; a bad value is
@@ -349,11 +343,10 @@ workflows — one substrate, swappable drivers.
   cheap models to simple features and strong models to complex ones, like LDO
   (a weak Coder on a complex feature buys extra review rounds, and a round is a
   full Coder+Reviewer pass, so the strong model is cheaper spent upfront where the
-  work is). PREREQUISITE (now MET): the planner emits STRUCTURED complexity
-  (trivial/medium/complex) via the `submit_plan` tool — DONE, surfaced on
-  `result.complexity`. What remains OPEN here is the CONSUMER: this feature must
-  read `result.complexity` and pick coder/reviewer models per `(complexity ×
-  role)`. The signal exists; nothing selects models from it yet.
+  work is). The planner emits structured complexity (trivial/medium/complex) via
+  `submit_plan`, surfaced on `result.complexity`; routing selects each post-plan
+  role from its `(complexity × role)` profile cell, with the configured default
+  complexity as the fallback when the planner emits no structured signal.
   ad-coder EDGE: the ledger already measures per-role/round cost, so routing can
   later be LEARNED from observation ("cheap coder averaged 2.3 rounds on medium
   features, strong 1.1 — which is cheaper end to end?") rather than only declared —
@@ -533,9 +526,9 @@ workflows — one substrate, swappable drivers.
   `runRole` (sequence + code⇄review loop) + a reviewer verdict protocol — now
   ships: the reviewer submits its verdict by CALLING a `submit_verdict` tool
   built per reviewer round (via the `runRole` tools seam) and strictly validated
-  by `parseVerdict` — the filesystem-artifact first-cut is retired. **Next
-  follow-on** on the same pattern: `submit_plan` / `rate_complexity`, a planner
-  emitting structured complexity for complexity-aware model routing. Bootstrap caveat: a bug in the runner/orchestration corrupts
+  by `parseVerdict` — the filesystem-artifact first-cut is retired. The planner's
+  `submit_plan` structured complexity and its complexity-aware routing consumer
+  are delivered. Bootstrap caveat: a bug in the runner/orchestration corrupts
   its own development, so early self-hosting stays partial (narrow modules via
   ad-coder, risky core via LDO or human) and supervised; faux tests + human remain
   ground truth for the core.
@@ -559,12 +552,11 @@ workflows — one substrate, swappable drivers.
   over prompts. The transition guard (`DriveError`/`DriveErrorCode`/`assertTransitionOffered`)
   relocated DOWN to `src/orchestration/transition-guard.ts` so the headless core can
   depend on the guard without the CLI front; both drivers share one implementation,
-  re-exported byte-for-byte from `src/cli/drive.ts`. FOLLOW-ONS (not built here):
-  a `drive`-style CLI subcommand fronting `startOrchestrator`; the spawn/fork tools
-  (spawn_subagent / fork, below); researcher/publisher tools (each brings its own
-  credential/URL/egress surface — flag it when it lands); and the run-until-phase
-  BREAKPOINT driver (below), which the `beginStepping`/`stepOnce`/`chooseTransition`
-  seam already exposes.
+  re-exported byte-for-byte from `src/cli/drive.ts`. The `console` CLI subcommand
+  fronts `startOrchestrator`. FOLLOW-ONS (not built here) are the spawn/fork tools
+  (spawn_subagent / fork, below) and researcher/publisher tools (each brings its
+  own credential/URL/egress surface — flag it when it lands). Durable
+  `control run-until` breakpoint control is implemented.
 - **Orchestrator triage** — trivial-edit-inline vs run-the-pipeline. A MECHANICAL
   FLOOR (a change touching a contract, a security surface, or a size threshold
   forces the pipeline regardless of how small it looks) + the orchestrator's

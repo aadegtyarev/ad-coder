@@ -1,5 +1,28 @@
 # Checkpoint
 
+## 2026-09-12 — Documentation and onboarding reconciliation
+
+Reconciled README, ARCHITECTURE, ROADMAP, and BACKLOG with the registry-declared
+CLI and current MVP. The installation and first-run path now covers Bun/private
+GitHub installation, Codex browser or device-code OAuth, auth status, standalone
+roles, automatic `drive --auto`, the interactive `console`, daemon-free durable
+`control`, configuration, and diagnostics. Documentation now records the seven
+CLI fronts (`auth`, `control`, `operations`, `run`, `role`, `drive`, `console`),
+the delivered stepped engine and breakpoint control, and the actual provider
+precedence DeepSeek → OpenRouter → Codex OAuth. It also states the intentional
+no-sandbox boundary and credential location clearly. Root `.gitignore` was not
+edited.
+
+Verification: registry help for root/control/operations passed. The focused auth,
+CLI, role, drive, console, and configuration suite passed with 63 tests and 416
+assertions (`npm exec --offline -- bun test test/auth.test.ts
+test/cli-config.test.ts test/cli.test.ts test/cli-role.test.ts
+test/cli-drive.test.ts test/cli-console.test.ts`; exit 0). The full-suite result
+was 331 passing tests and 1,699 assertions (`npm exec --offline -- bun test`; exit
+0). `npm exec --offline -- bun run typecheck`, `npm exec --offline -- bun run
+check`, and `git diff --check` were also run after this documentation change;
+their successful results are recorded with the closeout.
+
 ## 2026-09-12 — Persistent OpenAI Codex OAuth readiness
 
 Codex OAuth credentials persist in a private user-local file through an injectable

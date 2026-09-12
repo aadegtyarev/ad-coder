@@ -1,78 +1,49 @@
 # Backlog
 
+Only unresolved work belongs here. Current behavior is in
+[ARCHITECTURE.md](ARCHITECTURE.md); future design is in
+[ROADMAP.md](ROADMAP.md).
+
 ## Current priority
 
-- [next] Implement the decided incremental pipeline-context
-  strategy for scoped Planner reconnaissance, Coder fix handoffs, and repeated
-  Reviewer verification. Include configurable full-context fallback on scope
-  drift/large diffs/insufficient context and fallback-reason telemetry. The
-  baseline per-stage token/read/diff/context-strategy observability and durable
-  provider-limit pause/resume are delivered; incremental handoffs are not.
+- [next] **Incremental pipeline context** (`src/orchestration/`,
+  `src/context/`): implement scoped Planner reconnaissance, Coder fix handoffs,
+  and repeated Reviewer verification. Keep a configurable full-context fallback
+  for scope drift, large diffs, or insufficient context, and report its reason.
+  Per-stage token/read/diff/context-strategy observability and durable
+  provider-limit pause/resume are already delivered.
 
-## Future control plane and plugins
+## Security and runtime boundaries
 
-- [planned] After the daemon-free control plane settles, evaluate a multi-project
-  SessionManager, per-session worktrees and an optional daemon/event stream for
-  frontends that require continuously running remote sessions.
-- [planned] Add a minimal trusted plugin registry for local/npm packages over the
-  existing tool/workflow/driver seams, followed by a Telegram driver that binds
-  chats or topics to durable sessions.
-## 2026-09-12
+- [high] **Real tool sandboxing** (`src/runner/`): `targetDir` is only a
+  starting cwd. Add out-of-process filesystem/network isolation for untrusted
+  tasks; tool allow-lists are not a host sandbox.
+- [medium] **Process-cwd credential exposure** (`src/cli.ts`): ensure a target
+  `.env` cannot become provider credentials through Bun's cwd loading; resolve
+  credentials independently and refuse or clearly warn on unsafe overlap.
+- [low] **Result-content handling** (`src/runner/role-runner.ts`): document or
+  narrow `RunRoleResult.result`, which can contain prompt/response detail and
+  must not be returned or logged wholesale.
 
-- [medium] Provide a built-in distributed `GitHubClaimCoordinator`; the headless backend currently requires callers to inject a shared coordinator and rejects mutations when none is supplied (CWE-362).
+## Reliability and observability
 
-## Provider reliability
+- [medium] **Distributed GitHub claims** (`src/project-operations/`): provide a
+  built-in shared `GitHubClaimCoordinator`; mutations currently require an
+  injected coordinator and fail closed without one.
+- [low] **Usage tracker retention** (`src/ledger/usage.ts`): bound or release
+  unique `UsageDeltaTracker` stream keys, or document why per-run lifetime is safe.
+- [low] **Ledger retention** (`src/ledger/`, README): define an operator-facing
+  retention/pruning policy for target `.ad-coder/ledger` files.
+- [minor] **Context-budget diagnostics** (`src/context/budget.ts`): include the
+  effective ceiling in `ContextBudgetError`.
 
-DeepSeek is the verified dogfood provider: a real one-round CLI pipeline reached
-Planner, Coder, and Reviewer and was approved for $0.01502091. See the
-[live-smoke receipt](reviews/2026-09-12-deepseek-cli-pipeline-smoke.md).
+## Product follow-ups
 
-- [done] Diagnose the openai-codex OAuth pipeline's empty zero-cost stage
-  responses before treating it as a working provider. Close this only with a
-  deterministic regression test or repeatable smoke showing meaningful Planner
-  and Coder output plus a Reviewer verdict, or an earlier actionable CLI error.
-  Evidence: [failed 2026-09-12 pipeline smoke](reviews/2026-09-12-openai-codex-cli-pipeline-smoke.md)
-  and [earlier single-role observation](reviews/2026-09-11-human-cli-config-role.md).
-  Closed by persistent OAuth plus live authenticated role, Orchestrator, and full
-  pipeline runs. The pipeline produced meaningful Planner/Coder text and an approved
-  Reviewer verdict in one round for $0.17039500.
-
-## 2026-09-10
-
-- [low] UsageDeltaTracker (src/ledger/usage.ts): Map growth unbounded when stream IDs are unique per run — either add explicit `forget(key)` call on stream end, or cap with LRU eviction and document the cap. Alternative: accept that per-run unique keys do not accumulate across runs (directory `.ad-coder/ledger/` is gitignored, cleaned externally).
-- [low] Ledger (.ad-coder/ledger/): Files accumulate with no stated retention policy — document in README that directory is gitignored and subject to external pruning; consider CI/CD cleanup strategy.
-
-## 2026-09-11
-
-- [minor] src/context/budget.ts: ContextBudgetError's message text says "measured N tokens against maxTokens M" but does not surface the effective ceiling (min(maxTokens, model.contextWindow)) that actually determined the throw. When a role defined against a 200000-window model is invoked with a 1000-window model, the error displays "maxTokens 100000" despite the real determining threshold being 1000. Adding the effective ceiling to ContextBudgetError fields and message text would make error messages self-consistent with why they fired (cosmetic/debugging-clarity; pass/fail behavior is correct).
-- [high] src/runner/runner.ts: Injection risk — NodeExecutionEnv({ cwd }) sets only the shell's starting directory, not a chroot/container/egress boundary. A bash turn can cd /, read any file the harness user can read, and reach the network. The credential boundary depends on the Role's activeToolNames (deny-all or scoped set for untrusted input) and does not depend on cwd confinement. Document plainly that cwd is a starting directory only and bash grants full FS+network access; track real sandboxing (seccomp/container/egress deny) as a follow-up.
-- [medium] src/runner/runner.ts: Data exposure risk — The credential boundary silently depends on the harness process cwd differing from targetDir. Bun auto-loads .env from process.cwd into process.env at startup, and if cwd is inside or equal to targetDir, then targetDir/.env's credentials are loaded and the models built from that env carry them, collapsing the boundary without any code reading targetDir/.env. Enforce (in CLI wiring) that credentials are resolved before/independently of targetDir; refuse or warn when resolved absTargetDir equals or contains process.cwd().
-- [low] src/runner/errors.ts: Symlink pre-plant attack — FileLedgerSink enforces O_NOFOLLOW only on the final file component. Pre-planted symlinks at <targetDir>/.ad-coder or <targetDir>/.ad-coder/ledger redirect ledger writes outside targetDir. Resolve the real path of the ledger directory and verify it is contained within absTargetDir with no symlinked components before opening, or create the .ad-coder/ledger chain with per-component symlink checks.
-- [low] src/runner/runner.ts: Path traversal risk — The default ledger path is computed from caller-supplied params.runId before it is validated against RUN_ID_PATTERN. Traversal is currently blocked implicitly by Ledger constructor throw ordering. Validate params.runId against RUN_ID_PATTERN before constructing the FileLedgerSink path so a malformed runId cannot form a filesystem path; do not depend on Ledger constructor throw.
-- [low] src/runner/role-runner.ts: Data exposure risk — RunRoleResult carries the full settled OperationResultRecord including assistant message content and request detail. The CLI's stdout discipline only protects the workflow's own return value; a workflow that returns the runRole result verbatim writes full prompt/response content to stdout, bypassing that discipline. Document that RunRoleResult.result carries request detail and must not be returned/logged wholesale.
-- [info] src/runner/errors.ts: Trust stance mismatch — resolveScriptPath (cli.ts) refuses symlinks; resolveTargetDir only checks exists-and-is-directory. Decide and document targetDir's trust stance: if it should match resolveScriptPath, refuse a symlinked targetDir (or fs.realpathSync it and report the resolved path). If symlinks are intentionally allowed, state that in the JSDoc so the difference is deliberate, not accidental.
-
-- [question] runner: the live end-to-end run showed two runIds — RunRoleResult.runId (the runRole/ledger-filename id) differs from the `runId` field INSIDE the ledger JSONL record (which comes from the harness session/operation id). Confirm this is intended (two distinct ids: runRole id for the file, harness operation id in the record) rather than an attribution mismatch; if intended, document it; if not, align them so a record self-identifies by the same id as its file.
-
-- [done] runner: runRole hardcodes tools [bash,read,write,edit] with NO tool-injection seam (runner.ts:111-116), violating the injected-seam idiom the rest of the codebase follows. Add an optional `tools?` param so callers can supply custom tools. Unlocks: the proper submit_verdict tool-call verdict (replacing the orchestration filesystem-artifact first-cut), custom tools per role, and the conversational orchestrator's own tools (run pipeline / show ledger). DELIVERED: `runRole`/`RunRoleParams` + `RoleRunner`/`RunRoleOptions` carry an optional additive `tools?: Tool[]` extending the built-ins; `defineTool`/`Tool` expose ad-coder's own tool surface; `assertUniqueToolNames` rejects a built-in/custom name collision with a typed `RunnerError` (code `tool_name_collision`); `activeToolNames` filters the combined set uniformly. The orchestration verdict rewire to a `submit_verdict` tool is the (still open) next follow-on this unblocks.
-
-- [done] src/cli/: Delivered the orchestrator CLI front as `ad-coder console --target-dir <dir> [--json]`, a persistent REPL over `startOrchestrator` with formatted and machine output. The earlier proposed one-task `orchestrator --auto` shape was superseded by the minimal human-console design (2026-09-12).
-
-- [medium] src/orchestration/orchestrator.ts: Spawn/fork tools for the orchestrator. A SUBAGENT is `runRole` with a fixed role (planner/researcher/coder) or an ad-hoc prompt the orchestrator composes. A FORK is a subagent that inherits the orchestrator's own context and model and returns only a summary (context economy: spin off a detour, keep only its conclusion). Both are per-role custom tools via the tools-seam. Unblocked by: the runner tools-seam (done) and the orchestrator tools wiring (done). Named follow-on from the orchestrator core (2026-09-11).
-
-- [medium] src/orchestration/orchestrator.ts + src/runner/tool.ts: Researcher and Publisher tool wrappers for the orchestrator. Researcher refills NOTES with fresh findings; Publisher should invoke the delivered headless repository-publishing core. The wrappers retain their credential/URL/egress surfaces. Named follow-on from the orchestrator core (2026-09-11).
-
-- [medium] src/orchestration/orchestrator.ts: Run-until-phase breakpoint driver. A driver (like `autoDriver`) that auto-advances through default edges but halts before a named target phase and returns control, enabling a caller/UI to set a breakpoint without hand-stepping every phase. Sits on the existing `beginStepping`/`stepOnce`/`chooseTransition` seam already exposed. Example: auto-run planner+researcher then stop before code; or run through code then stop before review. Requirement already documented in `docs/ROADMAP.md` workflow-execution-model section (breakpoint control). Named follow-on from the orchestrator core (2026-09-11).
-
-- [minor] src/orchestration/orchestrator.ts: CostReport.totalCost documentation. The JSDoc correctly states totalCost sums every record on the shared MemoryLedgerSink, while perStep reflects only workflow-step turns. In a real `startOrchestrator` conversation, totalCost can exceed perStep's sum once the orchestrator model has back-and-forth turns — the test covering the relationship only exercises the core in isolation. Add one sentence to CostReport.totalCost JSDoc making explicit that it can exceed perStep's sum in multi-turn conversational scenarios. No behavioral fix needed; documentation clarity only.
-- [followup] orchestration: runPipeline is fire-and-forget (Promise<PipelineResult>). Add a STEPPED drive that yields control after each phase (generator/callback) so the conversational orchestrator can offer manual cycle-stepping (the planOnly analog) vs autonomous run-to-completion. runPipeline becomes the run-to-completion wrapper over the stepped driver.
-
-- [decided] role tools: make Role.activeToolNames OPTIONAL — absent → ALL tools (harness already defaults that way), [] → none, ["read"] → subset. Operator decision: enumerate-everything is fragile (add a web tool, forget a role, silent breakage); narrowing is subtraction from all; default-open + observe + narrow-from-evidence beats default-closed + guess. Overrides the earlier required-field guard. PAIRS WITH: tool-usage observability (record which tools each role invoked, via the after_tool hook, per role/run — the ledger has role/step/tokens/cost but NOT tool calls) so narrowing is deliberate. DISTINCTION: the allow-list is economy + intentional narrowing; the SANDBOX (separate follow-up) is the untrusted-task safety boundary — do not conflate. activeToolNames already saves tokens (only active tools defs are sent, generation.js:43, in the cache prefix).
-- [minor] src/registry/validate.ts: parseCredential's envVar check only requires non-empty string — does not restrict to valid environment-variable name format (alphanumeric/underscore only). Whitespace, newlines, control chars accepted and flow verbatim into RegistryError.detail/message, creating minor log-injection/confusing-output vector if config is less carefully authored than assumed. Recommendation: optionally add /^[A-Za-z_][A-Za-z0-9_]*$/.test(envVar) validation, rejecting with invalid_config. Not blocking given operator-trusted config trust boundary (verified only affects error-message readability, not security controls).
-- [nit] test/package-exports.test.ts: expect(_pipelineRouting) assertion placed inline immediately after _pipelineRouting declaration (line 145), breaking the file's own pattern of declaring all _xyz consts first (lines 122-144) then asserting them together (lines 161-197). Functionally harmless, does not block. Recommendation: move expect(_pipelineRouting).toBeUndefined() into batched assertion block next to other config/result assertions, matching the rest of the file's style.
-- [minor] src/orchestration/session.ts: applyTransition(state, chosen) trusts chosen unconditionally — never checks that chosen is actually one of the AvailableTransition objects step() just offered for that state. Consistent with plan's explicit 'PURE' design (Redux-reducer mirror) and drivers are trusted caller code, not untrusted external input, so not a security/correctness bug today. → If a future driver becomes less trusted (e.g., conversational orchestrator exposes free-form transition choice to a model), consider having applyTransition or step assert chosen is reference-equal to (or matches kind+toPhase+toRound of) one of the offered transitions, so a forged/stale transition throws instead of silently corrupting invariants. Not blocking; no current caller does this.
-- [nit] src/cli.ts: `--max-rounds` flag accepted/validated/threaded for `ad-coder role` subcommand, but has zero effect on single-turn role run (per design). README wording not explicit about this. → Optional clarification: one-line README note that `--max-rounds` accepted for parity with future `ad-coder drive` loop but has no effect on single `role` invocation. Purely cosmetic.
-- [minor] src/cli.ts: `driveCommand` duplicates `roleCommand`'s block (~15 lines, lines ~277-294 vs new driveCommand) parsing --provider/--max-rounds/--default-complexity, resolving target dir, and building resolvePipelineConfig options almost verbatim. → Extract a shared helper (e.g. `buildPipelineConfig(task, targetDirArg, flags)` returning the config, or returning `{config, absTargetDir}`) used by both, preventing drift as new flags are added in the future.
-- [deferred] registry/cli: Native OpenAI provider preset — `openaiPreset()` (api `openai-completions`, baseUrl `https://api.openai.com/v1`, credential `OPENAI_API_KEY`) wired into `resolve-config` like `deepseekPreset` (ResolvableProvider + PROVIDER_BY_ENV appended last + PROVIDER_PRESETS + parseProviderFlag + usage), exported and pinned in tests, so real per-token OpenAI costs land in the ledger instead of faux zeros. Deferred by operator: `openai-codex` (oauth) covers OpenAI for now. Note: two LDO `research: true` runs stalled on an LDO researcher StructuredOutput bug (the `findings` field arrived malformed, 5 retries exhausted) — when picked up, either drop `research: true` and supply verified current model ids + per-1M pricing directly, or retry once the LDO researcher bug is fixed. Ship costs as operator-overridable defaults per docs/contracts/config.md.
-
-## 2026-09-12
+- [medium] **Orchestrator worker tools** (`src/orchestration/orchestrator.ts`):
+  add bounded spawn/fork, researcher, and publisher wrappers on the existing
+  custom-tool seam with explicit credential/URL/egress boundaries.
+- [planned] **Multi-project and plugin frontends**: evaluate a SessionManager,
+  optional daemon/event stream, trusted local/npm plugin registry, and Telegram
+  driver after the daemon-free control plane settles.
+- [planned] **TUI**: build a richer human front over the headless workflow/control
+  APIs; it must not be the only path to any capability.
