@@ -17,6 +17,7 @@ import {
   createOrchestrator,
   RUN_PIPELINE_TOOL_NAME,
   RUN_STEP_TOOL_NAME,
+  startOrchestrator,
 } from "../src/orchestration/orchestrator";
 import { DriveError } from "../src/orchestration/transition-guard";
 import type { PipelineConfig, RoleSpec, TransitionKind, Verdict } from "../src/orchestration/types";
@@ -87,6 +88,23 @@ function fixture(): Fixture {
 
   return { faux, sink, targetDir, buildConfig };
 }
+
+test("startOrchestrator automatically resolves its target-local prompt override", async () => {
+  const targetDir = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-orchestrator-prompt-")),
+  );
+  const promptDir = path.join(targetDir, ".ad-coder", "prompts");
+  fs.mkdirSync(promptDir, { recursive: true });
+  fs.writeFileSync(path.join(promptDir, "orchestrator.md"), "", "utf8");
+
+  await expect(
+    startOrchestrator({
+      targetDir,
+      env: (name) => (name === "DEEPSEEK_API_KEY" ? "test-only" : undefined),
+      warn: () => {},
+    }),
+  ).rejects.toThrow("systemPrompt must be a non-empty string");
+});
 
 /** Script a plan -> code -> review(approved) run: one faux queue, in phase order. */
 function approveScenario(fx: Fixture, verdict: Verdict): void {

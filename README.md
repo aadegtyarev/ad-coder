@@ -10,9 +10,12 @@ it doesn't.
 Roles are presets over the harness (model + verbatim prompt + tool allow-list +
 context budget). The allow-list is default-open: omit it and a role gets every
 registered tool, set `[]` to deny all, or name an exact set. A role's system
-prompt can be referenced by name via `resolvePrompt("coder", { projectDir })` —
-a project's `.ad-coder/prompts/<name>.md` overrides the shipped built-in, read
-verbatim. A ledger attributes real token cost — and which tools each response
+prompt can be referenced by name via `resolvePrompt("coder", { projectDir })`.
+The built-in pipeline and conversational orchestrator automatically use each
+target project's `.ad-coder/prompts/<role>.md` when present, overriding the
+shipped prompt byte-verbatim. These files are trusted operator configuration:
+there is intentionally no opt-in, size, symlink, permission, or content cage in
+this MVP. A ledger attributes real token cost — and which tools each response
 requested — to each role, step and run.
 The pipeline sequences roles with structured tool-call handoffs (the reviewer
 submits a verdict; the planner a complexity and security surface). For chat-style
@@ -235,7 +238,7 @@ autonomous behavior.
 - [Roadmap & design decisions](docs/ROADMAP.md) — durable decisions, delivery status, and forward design
 - [Backlog](docs/BACKLOG.md) — current priority and unresolved work
 - [Contracts](docs/contracts/) — enforced project-wide rules
-- [Reviews & incident receipts](docs/reviews/) — dated verification evidence and open findings
+- [Reviews & incident receipts](docs/reviews/) — exceptional incident evidence and historical receipts
 - [Cost economics](docs/cost-economics.md) — the pricing/optimization thesis, measured
 - [pi capabilities](docs/pi-capabilities.md) — verified facts about the pi SDK this rests on
 - [Changelog](CHANGELOG.md)

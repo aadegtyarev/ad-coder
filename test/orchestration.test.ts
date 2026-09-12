@@ -378,12 +378,27 @@ test("parsePlan accepts a well-formed plan and rejects bad complexity / bad secu
   expect(plan.complexity).toBe("medium");
   expect(plan.securitySurface).toBe("elevated");
   expect(plan.summary).toBe("s");
+  expect(plan.contractRequirements).toEqual([]);
+
+  const contracted = parsePlan(
+    {
+      complexity: "medium",
+      securitySurface: "low",
+      summary: "s",
+      contractRequirements: ["Headless-first."],
+    },
+    "run-id",
+  );
+  expect(contracted.contractRequirements).toEqual(["Headless-first."]);
 
   const cases: unknown[] = [
     { complexity: "huge", securitySurface: "none", summary: "s" },
     { complexity: "medium", securitySurface: "extreme", summary: "s" },
     { complexity: "medium", summary: "s" },
     { complexity: "medium", securitySurface: "none", summary: 5 },
+    { complexity: "medium", securitySurface: "none", summary: "s", contractRequirements: "x" },
+    { complexity: "medium", securitySurface: "none", summary: "s", contractRequirements: null },
+    { complexity: "medium", securitySurface: "none", summary: "s", contractRequirements: [""] },
     ["not", "an", "object"],
     null,
     "string",
@@ -400,15 +415,25 @@ test("parsePlan accepts a well-formed plan and rejects bad complexity / bad secu
   }
 });
 
-test("a planner calling submit_plan surfaces result.complexity and result.securitySurface", async () => {
+test("a planner submission carries contract requirements into the coder prompt and result", async () => {
   const fx = fixture();
   const planner = plannerRole(fx);
   const coder = fx.role("coder", "You code.");
   const reviewer = reviewerRole(fx);
   const verdict: Verdict = { status: "approved", issues: [], summary: "ok" };
+  const coderPrompts: string[] = [];
+  const coderStep: FauxResponseFactory = (context) => {
+    coderPrompts.push(lastUserText(context));
+    return fauxAssistantMessage("coded");
+  };
   fx.faux.setResponses([
-    ...plannerTurn({ complexity: "medium", securitySurface: "low", summary: "plan summary" }),
-    fauxAssistantMessage("coded"),
+    ...plannerTurn({
+      complexity: "medium",
+      securitySurface: "low",
+      summary: "plan summary",
+      contractRequirements: ["Headless-first."],
+    }),
+    coderStep,
     ...reviewerTurn(verdict),
   ]);
 
@@ -423,6 +448,9 @@ test("a planner calling submit_plan surfaces result.complexity and result.securi
   expect(result.approved).toBe(true);
   expect(result.complexity).toBe("medium");
   expect(result.securitySurface).toBe("low");
+  expect(result.contractRequirements).toEqual(["Headless-first."]);
+  expect(coderPrompts[0]).toContain("Applicable project contracts (blocking requirements):");
+  expect(coderPrompts[0]).toContain("- Headless-first.");
 });
 
 test("a planner emitting only text leaves result.complexity undefined and the run approves", async () => {

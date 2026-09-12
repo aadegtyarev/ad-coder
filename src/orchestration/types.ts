@@ -88,6 +88,8 @@ export interface Plan {
   complexity: Complexity;
   securitySurface: SecuritySurface;
   summary: string;
+  /** Exact applicable contract rules, or faithful labeled compression when oversized. */
+  contractRequirements?: string[];
 }
 
 /**
@@ -263,6 +265,8 @@ export interface PipelineResult {
    * the caller regardless of whether that phase ran.
    */
   securitySurface?: SecuritySurface;
+  /** Applicable contract rules carried by the planner's structured submission. */
+  contractRequirements?: string[];
 }
 
 /**
@@ -367,6 +371,8 @@ export interface WorkflowState {
   round: number;
   /** The planner's final text (or `''` with no planner), fed to the round-1 coder. */
   planSummary: string;
+  /** Applicable contract rules from the structured planner submission. */
+  contractRequirements: string[];
   /** The most recent coder output, fed to the reviewer that follows it. */
   changeSummary: string;
   /** The planner's structured complexity tier, when it submitted one. */

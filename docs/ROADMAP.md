@@ -43,9 +43,16 @@ The repository uses the durable handoff structure: README is orientation and
 navigation; this roadmap owns decisions, delivery status, and forward design;
 `ARCHITECTURE.md` is the concise current-system map; `BACKLOG.md` holds only
 the current priority and unresolved work; `contracts/` holds enforceable rules;
-and `reviews/` holds dated verification and incident evidence. Research remains
-in its focused research notes. There is no checkpoint snapshot: ignored harness
-state and chat history are never canonical project memory.
+thematic operational knowledge belongs under `docs/notes/` while an existing
+`docs/NOTES.md` remains compatible; and `reviews/` retains exceptional incident
+evidence plus historical receipts. Routine verification belongs in durable run
+state. Ignored harness state and chat history are never canonical project memory.
+
+- **Project operations increment 1** — IMPLEMENTED. Built-in pipeline roles and
+  the conversational orchestrator automatically resolve trusted target-local
+  prompt overrides. Planner/Coder/Reviewer prompts now carry the independent
+  contract discovery and enforcement duties needed for reusable target-project
+  operation without requiring ad-coder's exact documentation layout.
 
 - **Phase 0** — DONE (`55f32ff`). Role preset over AgentHarnessOptions; Ledger
   of per-turn usage attributed by role/step/run, cost from Usage.cost never
@@ -409,15 +416,11 @@ workflows — one substrate, swappable drivers.
   runner credential boundary. The sandbox turns the runner targetDir from a
   starting cwd into a real jail. Needed before unsupervised runs on an untrusted
   task.
-- **Prompts as files** — roles reference prompts by name from files, not only
-  inline strings. Both prompts already exist (Role.systemPrompt verbatim; the task
-  prompt via runRole) — the gap is storage. Resolve at the boundary (name → file →
-  verbatim string → Role) keeping Role.systemPrompt a resolved string (protects the
-  verbatim/cacheable property). Search path: built-in prompts (shipped) < project
-  prompts (.ad-coder/prompts/ in targetDir), project overrides by name. System
-  prompt = raw file read (byte-preserving, no templating — it is the cache prefix);
-  task prompt = templatable via pi's loadPromptTemplates. Fail loud on an
-  unresolvable name. Fits "small prompts + built-in and custom roles". Small.
+- **Task prompt templates** — system prompts as files are implemented: pipeline
+  and orchestrator assembly automatically use trusted, byte-verbatim project
+  overrides from `.ad-coder/prompts/`. The remaining gap is optional task/user
+  prompt templating via pi's `loadPromptTemplates`; it must not alter the resolved
+  system prompt's cacheable bytes.
 
 - **Workflows module (pluggable flow-scripts)** — the LDO-style pipeline flow ships
   IN the harness but is OPT-IN: enable/disable the built-in flow, and let users author

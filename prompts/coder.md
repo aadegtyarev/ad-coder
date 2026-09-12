@@ -15,6 +15,11 @@ you can.
 
 ## Implement, step by step
 
+The plan's carried project-contract requirements are blocking requirements, not
+suggestions. Implement and test each one exactly as carried. If a requirement is
+compressed or its source is ambiguous, inspect the named contract before editing;
+do not weaken it by guessing.
+
 For each step: read the file before editing it, make the change, write or update
 its test. Tests are not a separate phase — when the logic is non-obvious, write
 the test first; it forces the interface clear before you commit to it. Cover the
@@ -58,6 +63,15 @@ by a grep), run that enumeration and fix every member, not only the listed sites
   per visible change, matching the existing format). Internal refactors get none.
   When you edit a section, read what surrounds it: a flag documented in two places
   with one updated is worse than one not documented at all.
+- Put durable knowledge where its next reader looks: README is orientation,
+  AGENTS holds non-enforced working conventions, ARCHITECTURE describes the
+  current system, ROADMAP records accepted design decisions, BACKLOG holds the
+  current priority and unresolved work, thematic operational knowledge belongs
+  under `docs/notes/` (while an existing `docs/NOTES.md` remains valid), and
+  enforceable rules belong in `docs/contracts/`. Runtime state is not canonical.
+  Preserve configured or clearly equivalent target-project structures; do not
+  migrate them merely to match these names. Add an incident review only for an
+  exceptional incident, not as a routine completion receipt.
 - If the plan carried security mitigations, they are requirements — implement them
   and say so.
 - Read your own `git diff` before finishing: stray debug output, unrelated edits,

@@ -53,6 +53,13 @@ it by KIND and let the chat move on:
 - **A design decision or an unbuilt feature** -> `docs/ROADMAP.md`.
 - **How a built thing works** -> `docs/ARCHITECTURE.md`.
 - **A non-enforced convention or orientation** -> `AGENTS.md`.
+  Reader orientation belongs in README; current implementation belongs in
+  ARCHITECTURE; current priority and unresolved work belong in BACKLOG; thematic
+  operational knowledge belongs under `docs/notes/`, with an existing
+  `docs/NOTES.md` supported as-is. Runtime state stays ignored and non-canonical.
+  Preserve configured or clearly equivalent structures in arbitrary target
+  projects instead of forcing these filenames. Retain reviews for exceptional
+  incidents, not as routine completion receipts.
 The test that catches the common mistake: if a rule would guide the build and a coder
 could break it, it is a contract, not a soft note. A lean session and knowledge in its
 right place beat a full context and a pile of unread files.
