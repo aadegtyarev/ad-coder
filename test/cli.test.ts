@@ -20,6 +20,7 @@ test("root help succeeds on stdout and failure usage is registry-derived", () =>
     const { code, stdout, stderr } = runCli([flag]);
     expect(code).toBe(0);
     expect(stdout).toContain("usage: ad-coder <command> [options]");
+    expect(stdout).toContain("operations Run a project-operations action and emit JSON.");
     expect(stdout).toContain("run     Run a workflow module.");
     expect(stdout).toContain("role    Run one pipeline role once.");
     expect(stdout).toContain("drive   Interactively drive the built-in pipeline.");
@@ -37,6 +38,7 @@ test("root help succeeds on stdout and failure usage is registry-derived", () =>
 
 test("each command renders its own help before validating required input", () => {
   const commandHelps: ReadonlyArray<readonly [string, string, string]> = [
+    ["operations", "<action>", "--provider"],
     ["run", "<script.ts>", "--provider"],
     ["role", "<planner|coder|reviewer|security>", "--auto"],
     ["drive", "--auto", "<planner|coder|reviewer|security>"],
@@ -56,6 +58,81 @@ test("each command renders its own help before validating required input", () =>
   expect(code).toBe(0);
   expect(stdout).toContain("Role to run.");
   expect(stderr).toBe("");
+});
+
+test("operations exposes FollowUp, documentation, and backlog APIs as JSON", () => {
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-operations-cli-"));
+  fs.mkdirSync(path.join(target, "docs"));
+  fs.writeFileSync(path.join(target, "docs", "NOTES.md"), "# Notes\n");
+  const input = path.join(target, "candidate.json");
+  fs.writeFileSync(
+    input,
+    JSON.stringify({
+      kind: "backlog",
+      title: "novel-credential-format-Z9y8x7w6",
+      evidence: [{ summary: "novel-credential-format-Z9y8x7w6", path: "src/a.ts" }],
+      provenance: [{ producer: "reviewer", runId: "run-1", branch: "feature/ops" }],
+    }),
+  );
+
+  const validated = runCli([
+    "operations",
+    "followup-validate",
+    "--target-dir",
+    target,
+    "--input",
+    input,
+    "--json",
+  ]);
+  expect(validated.code).toBe(0);
+  expect(JSON.parse(validated.stdout).kind).toBe("backlog");
+
+  const created = runCli([
+    "operations",
+    "backlog-create",
+    "--target-dir",
+    target,
+    "--input",
+    input,
+    "--id",
+    "cli-item",
+  ]);
+  expect(created.code).toBe(0);
+  expect(JSON.parse(created.stdout).value.candidate.title).toBe("Redacted backlog candidate");
+  const listed = runCli(["operations", "backlog-list", "--target-dir", target]);
+  expect(JSON.parse(listed.stdout)).toHaveLength(1);
+
+  const noteInput = path.join(target, "note.json");
+  const value = JSON.parse(fs.readFileSync(input, "utf8"));
+  fs.writeFileSync(noteInput, JSON.stringify({ ...value, kind: "note" }));
+  const routed = runCli([
+    "operations",
+    "documentation-route",
+    "--target-dir",
+    target,
+    "--input",
+    noteInput,
+  ]);
+  expect(JSON.parse(routed.stdout).destination).toBe(path.join(target, "docs", "NOTES.md"));
+
+  const invalid = runCli([
+    "operations",
+    "backlog-transition",
+    "--target-dir",
+    target,
+    "--id",
+    "cli-item",
+    "--state",
+    "done",
+    "--json",
+  ]);
+  expect(invalid.code).toBe(2);
+  expect(JSON.parse(invalid.stderr)).toEqual({
+    error: {
+      code: "usage",
+      detail: "--owner, --run-id, and --branch are required for this operations action",
+    },
+  });
 });
 
 test("console help is registry-derived and invalid input limits fail before provider access", () => {

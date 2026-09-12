@@ -8,6 +8,7 @@ import { ProjectStoreFileSystem } from "./filesystem-store";
 import type {
   AttachmentMetadata,
   CleanupResult,
+  ProjectOperationsConfig,
   ProjectSessionMetadata,
   ProjectStoreArea,
   ProjectStoreByteLimits,
@@ -39,6 +40,7 @@ export class ProjectStore {
   readonly retention: ProjectStoreRetention;
   readonly byteLimits: ProjectStoreByteLimits;
   readonly fileSystem: ProjectStoreFileSystem;
+  readonly projectOperations: ProjectOperationsConfig;
   private readonly sessions: JsonlSessionRepo;
 
   constructor(targetDir: string, config: ProjectStoreConfig = {}) {
@@ -55,8 +57,26 @@ export class ProjectStore {
     };
     this.retention = { ...DEFAULT_RETENTION, ...config.retention };
     this.byteLimits = { ...DEFAULT_BYTES, ...config.byteLimits };
+    this.projectOperations = {
+      backlogBackend: "files",
+      evidenceLimit: 0,
+      aggregationLimit: 0,
+      claimLeaseMs: 0,
+      ...config.projectOperations,
+    };
     this.validateLimits(this.retention);
     this.validateLimits(this.byteLimits);
+    this.validateLimits({
+      evidenceLimit: this.projectOperations.evidenceLimit ?? 0,
+      aggregationLimit: this.projectOperations.aggregationLimit ?? 0,
+      claimLeaseMs: this.projectOperations.claimLeaseMs ?? 0,
+    });
+    if (!(["files", "github"] as const).includes(this.projectOperations.backlogBackend ?? "files"))
+      throw new ProjectStoreError(
+        "invalid_config",
+        "projectOperations.backlogBackend",
+        "unsupported backlog backend",
+      );
     this.initialize();
     this.fileSystem = new ProjectStoreFileSystem(root, this.byteLimits.jsonlRecord);
     this.sessions = new JsonlSessionRepo({

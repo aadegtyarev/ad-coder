@@ -119,6 +119,53 @@ export type {
   SpawnOverride,
 } from "./profiles/types";
 export { parseProfile } from "./profiles/validate";
+export type {
+  BacklogClaim,
+  BacklogItem,
+  BacklogState,
+  BacklogStore,
+  ClaimInput,
+} from "./project-operations/backlog";
+export { BACKLOG_STATES, FileBacklogStore } from "./project-operations/backlog";
+export type { DocumentationProposal } from "./project-operations/documentation";
+export {
+  DocumentationRouter,
+  routeDocumentationFollowUp,
+} from "./project-operations/documentation";
+export type { ProjectOperationsErrorCode } from "./project-operations/errors";
+export { ProjectOperationsError } from "./project-operations/errors";
+export {
+  aggregateFollowUps,
+  projectBacklogFollowUp,
+  validateFollowUp,
+} from "./project-operations/follow-ups";
+export type {
+  BacklogMigrationProbe,
+  GitHubCapability,
+  GitHubClaimCoordinator,
+  GitHubCommandExecutor,
+  GitHubCommandRequest,
+  GitHubCommandResult,
+  MigrationSuggestion,
+} from "./project-operations/github-backlog";
+export {
+  createBacklogStore,
+  GitHubBacklogStore,
+  probeBacklogMigration,
+  probeGitHubBacklogCapability,
+  suggestBacklogMigrationOnce,
+} from "./project-operations/github-backlog";
+export type {
+  BacklogFollowUp,
+  ContractFollowUp,
+  DesignDocDriftFollowUp,
+  FollowUp,
+  FollowUpEvidence,
+  FollowUpProvenance,
+  FollowUpValidationOptions,
+  NoteFollowUp,
+} from "./project-operations/types";
+export { DEFAULT_PROJECT_OPERATIONS_CONFIG } from "./project-operations/types";
 export { ProjectStoreFileSystem } from "./project-store/filesystem-store";
 export {
   copyProjectAttachment,
@@ -131,6 +178,7 @@ export {
 export type {
   AttachmentMetadata,
   CleanupResult,
+  ProjectOperationsConfig,
   ProjectSessionMetadata,
   ProjectStoreArea,
   ProjectStoreByteLimits,

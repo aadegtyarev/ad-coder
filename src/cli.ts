@@ -15,8 +15,19 @@ import { Ledger, MemoryLedgerSink } from "./ledger/ledger";
 import { startOrchestrator } from "./orchestration/orchestrator";
 import { createWorkflowSession } from "./orchestration/session";
 import type { Complexity, PipelineConfig, RoleSpec } from "./orchestration/types";
+import type { ClaimInput } from "./project-operations/backlog";
+import { routeDocumentationFollowUp } from "./project-operations/documentation";
+import { ProjectOperationsError } from "./project-operations/errors";
+import { aggregateFollowUps, validateFollowUp } from "./project-operations/follow-ups";
+import type { GitHubCommandExecutor } from "./project-operations/github-backlog";
+import {
+  createBacklogStore,
+  probeBacklogMigration,
+  probeGitHubBacklogCapability,
+} from "./project-operations/github-backlog";
 import { ProjectStore } from "./project-store/project-store";
 import type { ProjectStoreConfig } from "./project-store/types";
+import { ProjectStoreError } from "./project-store/types";
 import type { Role } from "./role";
 import { resolveTargetDir } from "./runner/errors";
 import { createRoleRunner } from "./runner/role-runner";
@@ -30,6 +41,10 @@ const PROVIDERS = ["deepseek", "openrouter", "openai-codex"] as const;
 const COMPLEXITIES = ["trivial", "medium", "complex"] as const;
 
 function fail(message: string): never {
+  if (process.argv[2] === "operations" && process.argv.slice(3).includes("--json")) {
+    process.stderr.write(`${JSON.stringify({ error: { code: "usage", detail: message } })}\n`);
+    process.exit(2);
+  }
   process.stderr.write(`ad-coder: ${message}\n${renderRootHelp()}\n`);
   process.exit(2);
 }
@@ -302,7 +317,7 @@ function parseProjectStoreConfig(value: string | undefined): ProjectStoreConfig 
     fail("--project-store-config must contain a JSON object");
   }
   const object = parsed as Record<string, unknown>;
-  const allowedTop = new Set(["retention", "byteLimits"]);
+  const allowedTop = new Set(["retention", "byteLimits", "projectOperations"]);
   if (Object.keys(object).some((key) => !allowedTop.has(key))) {
     fail("--project-store-config contains an unknown setting");
   }
@@ -332,14 +347,178 @@ function parseProjectStoreConfig(value: string | undefined): ProjectStoreConfig 
       if (
         !allowed.has(key) ||
         typeof setting !== "number" ||
-        !Number.isFinite(setting) ||
+        !Number.isSafeInteger(setting) ||
         setting < 0
       ) {
         fail(`invalid --project-store-config setting: ${groupName}.${key}`);
       }
     }
   }
+  const operations = object.projectOperations;
+  if (operations !== undefined) {
+    if (typeof operations !== "object" || operations === null || Array.isArray(operations))
+      fail("--project-store-config projectOperations must be an object");
+    const operationObject = operations as Record<string, unknown>;
+    const allowed = new Set([
+      "backlogBackend",
+      "evidenceLimit",
+      "aggregationLimit",
+      "claimLeaseMs",
+      "documentation",
+      "github",
+    ]);
+    if (Object.keys(operationObject).some((key) => !allowed.has(key)))
+      fail("--project-store-config contains an unknown projectOperations setting");
+    if (
+      operationObject.backlogBackend !== undefined &&
+      operationObject.backlogBackend !== "files" &&
+      operationObject.backlogBackend !== "github"
+    )
+      fail("invalid --project-store-config setting: projectOperations.backlogBackend");
+    for (const key of ["evidenceLimit", "aggregationLimit", "claimLeaseMs"] as const) {
+      const setting = operationObject[key];
+      if (setting !== undefined && (!Number.isSafeInteger(setting) || (setting as number) < 0))
+        fail(`invalid --project-store-config setting: projectOperations.${key}`);
+    }
+    const documentation = operationObject.documentation;
+    if (documentation !== undefined)
+      validateStringObject(
+        documentation,
+        ["contracts", "notes"],
+        "projectOperations.documentation",
+      );
+    const github = operationObject.github;
+    if (github !== undefined) {
+      if (typeof github !== "object" || github === null || Array.isArray(github))
+        fail("invalid --project-store-config setting: projectOperations.github");
+      const githubObject = github as Record<string, unknown>;
+      const githubAllowed = new Set(["repository", "stateLabels", "managedLabel"]);
+      if (Object.keys(githubObject).some((key) => !githubAllowed.has(key)))
+        fail("--project-store-config contains an unknown projectOperations.github setting");
+      for (const key of ["repository", "managedLabel"] as const)
+        if (
+          githubObject[key] !== undefined &&
+          (typeof githubObject[key] !== "string" || githubObject[key] === "")
+        )
+          fail(`invalid --project-store-config setting: projectOperations.github.${key}`);
+      if (githubObject.stateLabels !== undefined)
+        validateStringObject(
+          githubObject.stateLabels,
+          ["queued", "claimed", "in_progress", "review", "blocked", "done"],
+          "projectOperations.github.stateLabels",
+        );
+    }
+  }
   return object as ProjectStoreConfig;
+}
+
+function validateStringObject(value: unknown, allowedKeys: readonly string[], name: string): void {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    fail(`invalid --project-store-config setting: ${name}`);
+  const object = value as Record<string, unknown>;
+  if (
+    Object.keys(object).some((key) => !allowedKeys.includes(key)) ||
+    Object.values(object).some((entry) => typeof entry !== "string" || entry === "")
+  )
+    fail(`invalid --project-store-config setting: ${name}`);
+}
+
+function readJsonInput(input: string | undefined): unknown {
+  if (input === undefined) fail("--input is required for this operations action");
+  try {
+    return JSON.parse(
+      input === "-"
+        ? fs.readFileSync(0, "utf8")
+        : fs.readFileSync(resolveScriptPath(input), "utf8"),
+    );
+  } catch (error) {
+    fail(`cannot parse operations input: ${errorMessage(error)}`);
+  }
+}
+
+function githubExecutor(): GitHubCommandExecutor {
+  return {
+    execute(request) {
+      try {
+        const result = Bun.spawnSync(request.argv, {
+          ...(request.stdin !== undefined && { stdin: Buffer.from(request.stdin) }),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        return {
+          exitCode: result.exitCode,
+          stdout: result.stdout.toString(),
+          stderr: result.stderr.toString(),
+        };
+      } catch {
+        // A missing/unstartable gh executable is an unavailable capability, not a CLI crash.
+        return { exitCode: 127, stdout: "", stderr: "" };
+      }
+    },
+  };
+}
+
+function operationClaim(flags: Record<string, string | undefined>): ClaimInput {
+  const owner = flags["--owner"];
+  const runId = flags["--run-id"];
+  const branch = flags["--branch"];
+  if (owner === undefined || runId === undefined || branch === undefined)
+    fail("--owner, --run-id, and --branch are required for this operations action");
+  return { owner, runId, branch };
+}
+
+/** Thin JSON front for the headless project-operations APIs. */
+async function operationsCommand(
+  positionals: string[],
+  flags: Record<string, string | undefined>,
+): Promise<void> {
+  const action = positionals[1];
+  if (action === undefined) fail("missing <action>");
+  if (positionals[2] !== undefined) fail("the operations command accepts one positional action");
+  const targetArg = flags["--target-dir"];
+  if (targetArg === undefined) fail("--target-dir is required for the operations command");
+  const targetDir = resolveTargetDir(targetArg);
+  const projectConfig = parseProjectStoreConfig(flags["--project-store-config"]);
+  const store = new ProjectStore(targetDir, projectConfig);
+  const config = store.projectOperations;
+  const input = () => readJsonInput(flags["--input"]);
+  let result: unknown;
+  if (action === "followup-validate") {
+    result = validateFollowUp(input(), { evidenceLimit: config.evidenceLimit ?? 0 });
+  } else if (action === "followup-aggregate") {
+    const candidates = input();
+    if (!Array.isArray(candidates)) fail("aggregate input must be a JSON array");
+    result = aggregateFollowUps(candidates, {
+      evidenceLimit: config.evidenceLimit ?? 0,
+      aggregationLimit: config.aggregationLimit ?? 0,
+    });
+  } else if (action === "documentation-route") {
+    result = routeDocumentationFollowUp(targetDir, input(), config);
+  } else if (action === "github-probe") {
+    const repository = config.github?.repository;
+    if (repository === undefined) fail("GitHub repository is not configured");
+    result = probeGitHubBacklogCapability(githubExecutor(), repository);
+  } else if (action === "migration-probe") {
+    result = probeBacklogMigration(store, githubExecutor(), config);
+  } else {
+    const backlog = createBacklogStore(store, config, githubExecutor());
+    const id = flags["--id"];
+    if (action === "backlog-create") result = backlog.create(input(), id);
+    else if (action === "backlog-list") result = backlog.list();
+    else {
+      if (id === undefined) fail("--id is required for this operations action");
+      if (action === "backlog-get") result = backlog.get(id);
+      else if (action === "backlog-claim") result = backlog.claim(id, operationClaim(flags));
+      else if (action === "backlog-renew") result = backlog.renew(id, operationClaim(flags));
+      else if (action === "backlog-release") result = backlog.release(id, operationClaim(flags));
+      else if (action === "backlog-transition") {
+        const state = flags["--state"];
+        if (state === undefined) fail("--state is required for backlog-transition");
+        result = backlog.transition(id, state as never, operationClaim(flags));
+      } else fail(`unknown operations action: ${action}`);
+    }
+  }
+  process.stdout.write(`${JSON.stringify(result)}\n`);
 }
 
 function buildConfigOptions(
@@ -546,6 +725,34 @@ const PIPELINE_OPTIONS: CommandDefinition["options"] = [
 
 const COMMANDS: readonly CommandDefinition[] = [
   {
+    name: "operations",
+    description: "Run a project-operations action and emit JSON.",
+    positionals: [
+      { name: "<action>", description: "FollowUp, documentation, backlog, or probe action." },
+    ],
+    options: [
+      {
+        name: "--target-dir",
+        value: "<dir>",
+        description: "Directory containing the project to operate on.",
+        required: true,
+      },
+      {
+        name: "--project-store-config",
+        value: "<file.json>",
+        description: "Load project-operations and ProjectStore configuration.",
+      },
+      { name: "--input", value: "<file|->", description: "Read JSON input from a file or stdin." },
+      { name: "--id", value: "<id>", description: "Backlog item identifier." },
+      { name: "--state", value: "<state>", description: "Backlog lifecycle destination." },
+      { name: "--owner", value: "<owner>", description: "Claim owner." },
+      { name: "--run-id", value: "<run-id>", description: "Claiming run identifier." },
+      { name: "--branch", value: "<branch>", description: "Claiming branch." },
+      { name: "--json", description: "Emit one JSON result (default; accepted for automation)." },
+    ],
+    run: ({ positionals, flags }) => operationsCommand(positionals, flags),
+  },
+  {
     name: "run",
     description: "Run a workflow module.",
     positionals: [{ name: "<script.ts>", description: "Workflow module to load and run." }],
@@ -675,7 +882,17 @@ if (import.meta.main) {
   try {
     await main(process.argv.slice(2));
   } catch (error) {
-    process.stderr.write(`ad-coder: ${errorMessage(error)}\n`);
+    if (process.argv[2] === "operations" && process.argv.slice(3).includes("--json")) {
+      const payload =
+        error instanceof ProjectOperationsError
+          ? { code: error.code, detail: error.detail }
+          : error instanceof ProjectStoreError
+            ? { code: error.code, detail: error.path }
+            : { code: "internal_error" };
+      process.stderr.write(`${JSON.stringify({ error: payload })}\n`);
+    } else {
+      process.stderr.write(`ad-coder: ${errorMessage(error)}\n`);
+    }
     process.exit(1);
   }
 }

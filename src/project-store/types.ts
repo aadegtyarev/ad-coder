@@ -27,6 +27,25 @@ export interface ProjectStoreByteLimits {
 export interface ProjectStoreConfig {
   retention?: Partial<ProjectStoreRetention>;
   byteLimits?: Partial<ProjectStoreByteLimits>;
+  projectOperations?: ProjectOperationsConfig;
+}
+
+export interface ProjectOperationsConfig {
+  backlogBackend?: "files" | "github";
+  evidenceLimit?: number;
+  aggregationLimit?: number;
+  claimLeaseMs?: number;
+  documentation?: {
+    contracts?: string;
+    notes?: string;
+  };
+  github?: {
+    repository?: string;
+    stateLabels?: Partial<
+      Record<"queued" | "claimed" | "in_progress" | "review" | "blocked" | "done", string>
+    >;
+    managedLabel?: string;
+  };
 }
 
 export interface VersionedState<T> {
