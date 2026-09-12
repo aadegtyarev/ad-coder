@@ -20,7 +20,14 @@ import type {
 import { resolvePipelineConfig } from "./cli/resolve-config";
 import type { CompactionPolicy } from "./context/compactor";
 import { Ledger, MemoryLedgerSink } from "./ledger/ledger";
+import {
+  createOrchestratorControlPlane,
+  type DecisionRequest,
+  type StartRunInput,
+  triageControlPlaneTask,
+} from "./orchestration/control-plane";
 import { startOrchestrator } from "./orchestration/orchestrator";
+import { runPipeline } from "./orchestration/pipeline";
 import { createWorkflowSession } from "./orchestration/session";
 import type { Complexity, PipelineConfig, RoleSpec } from "./orchestration/types";
 import { parseProfile } from "./profiles/validate";
@@ -60,6 +67,7 @@ import { defineRole } from "./role";
 import { resolveTargetDir } from "./runner/errors";
 import { createRoleRunner } from "./runner/role-runner";
 import type { SessionLimits } from "./session-limits";
+import { SessionLimitController } from "./session-limits";
 import type { WorkflowContext } from "./workflow";
 import { isWorkflowModule } from "./workflow";
 
@@ -438,6 +446,7 @@ function parseProjectStoreConfig(value: string | undefined): ProjectStoreConfig 
       "ldo",
       "github",
       "publishing",
+      "controlPlane",
     ]);
     if (Object.keys(operationObject).some((key) => !allowed.has(key)))
       fail("--project-store-config contains an unknown projectOperations setting");
@@ -505,6 +514,49 @@ function parseProjectStoreConfig(value: string | undefined): ProjectStoreConfig 
           githubObject.stateLabels,
           ["queued", "claimed", "in_progress", "review", "blocked", "done"],
           "projectOperations.github.stateLabels",
+        );
+    }
+    const controlPlane = operationObject.controlPlane;
+    if (controlPlane !== undefined) {
+      if (typeof controlPlane !== "object" || controlPlane === null || Array.isArray(controlPlane))
+        fail("invalid --project-store-config setting: projectOperations.controlPlane");
+      const controlObject = controlPlane as Record<string, unknown>;
+      const controlAllowed = new Set([
+        "autoDecomposition",
+        "maxDecompositionDepth",
+        "maxChildPipelines",
+        "maxQueuedRootRuns",
+        "maxActiveRootRuns",
+        "maxProjectTurns",
+        "maxProjectCostUsd",
+      ]);
+      if (Object.keys(controlObject).some((key) => !controlAllowed.has(key)))
+        fail("--project-store-config contains an unknown projectOperations.controlPlane setting");
+      if (
+        controlObject.autoDecomposition !== undefined &&
+        typeof controlObject.autoDecomposition !== "boolean"
+      )
+        fail(
+          "invalid --project-store-config setting: projectOperations.controlPlane.autoDecomposition",
+        );
+      for (const key of [
+        "maxDecompositionDepth",
+        "maxChildPipelines",
+        "maxQueuedRootRuns",
+        "maxActiveRootRuns",
+        "maxProjectTurns",
+      ] as const) {
+        const setting = controlObject[key];
+        if (setting !== undefined && (!Number.isSafeInteger(setting) || (setting as number) < 0))
+          fail(`invalid --project-store-config setting: projectOperations.controlPlane.${key}`);
+      }
+      const projectCost = controlObject.maxProjectCostUsd;
+      if (
+        projectCost !== undefined &&
+        (typeof projectCost !== "number" || !Number.isFinite(projectCost) || projectCost < 0)
+      )
+        fail(
+          "invalid --project-store-config setting: projectOperations.controlPlane.maxProjectCostUsd",
         );
     }
     const publishing = operationObject.publishing;
@@ -700,8 +752,144 @@ async function operationsCommand(
   const store = new ProjectStore(targetDir, projectConfig);
   const config = store.projectOperations;
   const input = () => readJsonInput(flags["--input"]);
+  const control = (publishInput?: FinishPublishingInput) => {
+    const limits = new SessionLimitController(parseSessionLimits(flags));
+    return createOrchestratorControlPlane({
+      store,
+      ...(config.controlPlane !== undefined && { config: config.controlPlane }),
+      sessionLimits: limits,
+      resolveAutoDecision: async (decision, record) => {
+        const projectEvidence = decision.evidence.filter((reference) => {
+          const candidate = path.resolve(targetDir, reference);
+          return candidate.startsWith(`${targetDir}${path.sep}`) && fs.existsSync(candidate);
+        });
+        if (projectEvidence.length === 0)
+          return {
+            action: "defer" as const,
+            rationale: "Auto mode found no existing project document supporting this decision.",
+            evidence: decision.evidence,
+          };
+        return {
+          action: "accept" as const,
+          rationale: `Auto mode delegated this in-scope decision for run ${record.id}; the cited project documents support it.`,
+          evidence: projectEvidence,
+        };
+      },
+      execute: async (record) => {
+        const pipeline = resolvePipelineConfig({
+          task: record.task,
+          ...buildConfigOptions(targetArg, flags),
+        });
+        pipeline.sessionLimitController = limits;
+        const result = await runPipeline(pipeline);
+        const changed = Bun.spawnSync(["git", "diff", "--name-only", "HEAD"], {
+          cwd: targetDir,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        if (changed.exitCode !== 0)
+          throw new ProjectOperationsError("not_repository", "contentBinding");
+        const reviewedPaths = changed.stdout
+          .toString()
+          .split("\n")
+          .map((entry) => entry.trim())
+          .filter(Boolean);
+        return {
+          result,
+          reviewedPaths,
+          operations: {
+            filesChanged: reviewedPaths,
+            checks: [],
+            checkpointPath: path.join(store.layout.runs, `control-${record.id}.json`),
+            backlog: { destination: "skipped", count: 0 },
+          },
+        };
+      },
+      ...(publishInput !== undefined && {
+        publishApproved: async (_record, binding) => {
+          const published = finishRepositoryPublishing(
+            publishingExecutor(),
+            targetDir,
+            { ...publishInput, approvedTreeOid: binding.publishTreeOid },
+            config.publishing,
+          );
+          return {
+            phase: published.phase,
+            featureOid: published.featureOid,
+            baseOid: published.baseOid,
+            ...(published.prUrl !== undefined &&
+              /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/[1-9][0-9]*$/.test(
+                published.prUrl,
+              ) && { prUrl: published.prUrl }),
+            gateStatuses: [
+              ...(published.localGate?.ran
+                ? [published.localGate.passed ? "local:passed" : "local:failed"]
+                : []),
+              ...(published.ciGate?.ran
+                ? [published.ciGate.passed ? "ci:passed" : "ci:failed"]
+                : []),
+            ],
+            recoveryCategories: ["feature_branch_preserved", "retry_with_fresh_preflight"],
+          };
+        },
+      }),
+    });
+  };
   let result: unknown;
-  if (action === "publish-start") {
+  if (action === "control-triage") {
+    result = { route: triageControlPlaneTask(input() as never) };
+  } else if (action === "control-start") {
+    const supplied = strictOperationInput(input(), ["requestKey", "task", "mode", "scope"], action);
+    result = control().start(supplied as unknown as StartRunInput);
+  } else if (action === "control-status") {
+    const id = flags["--id"];
+    if (id === undefined) fail("--id is required for this operations action");
+    result = control().status(id);
+  } else if (action === "control-list") result = control().list();
+  else if (action === "control-resume" || action === "control-run-until") {
+    const id = flags["--id"];
+    if (id === undefined) fail("--id is required for this operations action");
+    const supplied =
+      flags["--input"] === undefined ? {} : strictOperationInput(input(), ["runUntil"], action);
+    result = await control().resume(id, supplied);
+  } else if (action === "control-cancel") {
+    const id = flags["--id"];
+    if (id === undefined) fail("--id is required for this operations action");
+    result = control().cancel(id);
+  } else if (action === "control-decisions-list") {
+    const id = flags["--id"];
+    if (id === undefined) fail("--id is required for this operations action");
+    result = control().listDecisions(id);
+  } else if (action === "control-events") {
+    const id = flags["--id"];
+    if (id === undefined) fail("--id is required for this operations action");
+    const afterRaw = flags["--after"];
+    const after = afterRaw === undefined ? 0 : Number(afterRaw);
+    result = control().events(id, after);
+  } else if (action === "control-decision-request") {
+    const id = flags["--id"];
+    if (id === undefined) fail("--id is required for this operations action");
+    result = await control().requestDecision(id, input() as DecisionRequest);
+  } else if (action === "control-decision-resolve") {
+    const id = flags["--id"];
+    if (id === undefined) fail("--id is required for this operations action");
+    const supplied = strictOperationInput(input(), ["decisionId", "action", "rationale"], action);
+    result = control().resolveDecisionFromOperator(
+      id,
+      supplied.decisionId as string,
+      supplied.action as "accept" | "reject" | "defer",
+      supplied.rationale as string,
+    );
+  } else if (action === "control-report") {
+    const id = flags["--id"];
+    if (id === undefined) fail("--id is required for this operations action");
+    result = control().report(id);
+  } else if (action === "control-publish") {
+    const id = flags["--id"];
+    if (id === undefined) fail("--id is required for this operations action");
+    const supplied = input() as unknown as FinishPublishingInput;
+    result = await control(supplied).publish(id);
+  } else if (action === "publish-start") {
     const supplied = strictOperationInput(input(), ["preflight", "featureBranch"], action);
     result = startRepositoryPublishing(
       publishingExecutor(),
@@ -712,7 +900,15 @@ async function operationsCommand(
   } else if (action === "publish-finish") {
     const supplied = strictOperationInput(
       input(),
-      ["started", "paths", "commitMessage", "title", "description", "authorizeInitiallyDirtyPaths"],
+      [
+        "started",
+        "paths",
+        "commitMessage",
+        "title",
+        "description",
+        "authorizeInitiallyDirtyPaths",
+        "approvedTreeOid",
+      ],
       action,
     );
     result = finishRepositoryPublishing(
@@ -777,6 +973,32 @@ async function operationsCommand(
     }
   }
   process.stdout.write(`${JSON.stringify(result)}\n`);
+}
+
+const CONTROL_ACTIONS = [
+  "start",
+  "status",
+  "list",
+  "resume",
+  "cancel",
+  "decisions-list",
+  "decision-request",
+  "decision-resolve",
+  "run-until",
+  "report",
+  "publish",
+  "triage",
+] as const;
+
+async function controlCommand(
+  positionals: string[],
+  flags: Record<string, string | undefined>,
+): Promise<void> {
+  const action = positionals[1];
+  if (action === undefined || !(CONTROL_ACTIONS as readonly string[]).includes(action))
+    fail(`control requires one action: ${CONTROL_ACTIONS.join(", ")}`);
+  if (positionals[2] !== undefined) fail("the control command accepts one positional action");
+  await operationsCommand(["operations", `control-${action}`], flags);
 }
 
 function buildConfigOptions(
@@ -1163,19 +1385,38 @@ const COMMANDS: readonly CommandDefinition[] = [
     },
   },
   {
+    name: "control",
+    description: "Control durable daemon-free pipeline runs and emit JSON.",
+    positionals: [
+      {
+        name: `<${CONTROL_ACTIONS.join("|")}>`,
+        description: "Durable control-plane action.",
+      },
+    ],
+    options: [
+      ...PIPELINE_OPTIONS,
+      { name: "--input", value: "<file|->", description: "Read JSON input from a file or stdin." },
+      { name: "--id", value: "<id>", description: "Durable run identifier." },
+      { name: "--after", value: "<sequence>", description: "Event cursor (exclusive)." },
+      { name: "--json", description: "Emit one JSON result (default)." },
+    ],
+    run: ({ positionals, flags }) => controlCommand(positionals, flags),
+  },
+  {
     name: "operations",
     description: "Run a project-operations action and emit JSON.",
     positionals: [
       {
         name: "<action>",
         description:
-          "Action including publish-preflight, publish-start, publish-finish, ldo-resume, and backlog operations.",
+          "Action including control start/status/list/resume/cancel/decisions/run-until/report/publish, publish-preflight, ldo-resume, and backlog operations.",
       },
     ],
     options: [
       ...PIPELINE_OPTIONS,
       { name: "--input", value: "<file|->", description: "Read JSON input from a file or stdin." },
       { name: "--id", value: "<id>", description: "Backlog or imported-work identifier." },
+      { name: "--after", value: "<sequence>", description: "Event cursor (exclusive)." },
       { name: "--state", value: "<state>", description: "Backlog lifecycle destination." },
       { name: "--owner", value: "<owner>", description: "Claim owner." },
       { name: "--run-id", value: "<run-id>", description: "Claiming run identifier." },
@@ -1294,7 +1535,7 @@ async function main(argv: string[]): Promise<void> {
     return;
   }
   const commandName = argv[0];
-  operationsJsonFront = commandName === "operations";
+  operationsJsonFront = commandName === "operations" || commandName === "control";
   const command = COMMANDS.find(({ name }) => name === commandName);
   if (command === undefined)
     fail(commandName === undefined ? "missing command" : `unknown command: ${commandName}`);

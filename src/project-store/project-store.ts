@@ -311,6 +311,36 @@ export class ProjectStore {
     }
   }
 
+  /** Serialize a read/modify/write operation under the destination's store lock. */
+  mutateVersionedJson<T>(
+    destination: string,
+    mutate: (current: VersionedState<T> | undefined) => T,
+  ): VersionedState<T> {
+    this.assertInside(destination);
+    this.createPrivateDir(path.dirname(destination));
+    const release = this.acquireLock(`${destination}.lock`);
+    try {
+      let current: VersionedState<T> | undefined;
+      try {
+        current = this.readVersionedJson<T>(destination);
+      } catch (error) {
+        if (!(error instanceof ProjectStoreError) || error.code !== "not_found") throw error;
+      }
+      const next = { version: (current?.version ?? 0) + 1, value: mutate(current) };
+      const bytes = Buffer.from(`${JSON.stringify(next)}\n`);
+      if (this.byteLimits.state > 0 && bytes.length > this.byteLimits.state)
+        throw new ProjectStoreError(
+          "resource_limit",
+          destination,
+          "state exceeds configured byte limit",
+        );
+      this.atomicWrite(destination, bytes);
+      return next;
+    } finally {
+      release();
+    }
+  }
+
   readVersionedJson<T>(source: string): VersionedState<T> {
     this.assertInside(source);
     let stat: fs.Stats;

@@ -559,8 +559,10 @@ export const autoDriver: Driver = (transitions) => {
  * `complexity`/`securitySurface` are spread only when present (exactOptional).
  */
 export function toPipelineResult(state: WorkflowState): PipelineResult {
+  const approved = state.approved;
   return {
-    approved: state.approved,
+    outcome: approved ? "approved" : "decomposition_required",
+    approved,
     rounds: state.verdicts.length,
     verdicts: state.verdicts,
     runIds: state.runIds,

@@ -16,6 +16,14 @@ network (pi-ai's fauxProvider) and demonstrated live on DeepSeek.
 
 ### Added
 
+- **Durable Orchestrator control-plane foundation** — queued daemon-free starts,
+  atomic request-key admission, reconstruction, safe status/list/tool views,
+  cooperative cancellation, explicit auto/manual decisions, provider/session-limit
+  pauses, scoped child decomposition, reports, breakpoints and reviewed-tree-bound
+  publishing. The machine `operations` CLI exposes trusted control actions.
+  Pipeline results now distinguish `approved` from `decomposition_required`
+  while retaining the compatible `approved` boolean.
+
 - **Project operations Increment 6** — configurable headless repository
   publishing with JSON preflight/start/finish operations, isolated explicit-path
   commits, local/CI/manual gates, exact-head approval, GitHub and local squash

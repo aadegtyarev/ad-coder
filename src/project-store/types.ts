@@ -59,6 +59,7 @@ export interface ProjectOperationsConfig {
     managedLabel?: string;
   };
   publishing?: RepositoryPublishingConfig;
+  controlPlane?: import("../orchestration/control-plane").ControlPlaneConfig;
 }
 
 export type PublishingGate = "local" | "ci" | "local-and-ci" | "manual";

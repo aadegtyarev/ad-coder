@@ -11,6 +11,12 @@ import {
 } from "@earendil-works/pi-ai";
 import type { FauxProviderHandle } from "@earendil-works/pi-ai/providers/faux";
 import { MemoryLedgerSink } from "../src/ledger/ledger";
+import {
+  buildControlPlaneTools,
+  createOrchestratorControlPlane,
+  DEFAULT_CONTROL_PLANE_CONFIG,
+  triageControlPlaneTask,
+} from "../src/orchestration/control-plane";
 import { SUBMIT_FOLLOW_UP_TOOL_NAME } from "../src/orchestration/follow-up";
 import {
   buildOrchestratorTools,
@@ -21,8 +27,15 @@ import {
   startOrchestrator,
 } from "../src/orchestration/orchestrator";
 import { DriveError } from "../src/orchestration/transition-guard";
-import type { PipelineConfig, RoleSpec, TransitionKind, Verdict } from "../src/orchestration/types";
+import type {
+  PipelineConfig,
+  PipelineResult,
+  RoleSpec,
+  TransitionKind,
+  Verdict,
+} from "../src/orchestration/types";
 import { SUBMIT_VERDICT_TOOL_NAME } from "../src/orchestration/verdict";
+import { ProjectStore } from "../src/project-store/project-store";
 import type { Role } from "../src/role";
 import { defineRole } from "../src/role";
 import type { Tool } from "../src/runner/tool";
@@ -357,4 +370,280 @@ test("run_pipeline tool reports approval, rounds, and cost", async () => {
   expect(text).toContain("approved=true");
   expect(text).toContain("rounds=1");
   expect(text).toContain("total cost:");
+});
+
+const approvedPipeline: PipelineResult = {
+  outcome: "approved",
+  approved: true,
+  rounds: 1,
+  verdicts: [{ status: "approved", issues: [], summary: "ok" }],
+  runIds: [],
+};
+
+test("control-plane start is durable, immediate, idempotent, and reconstructable", async () => {
+  const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-control-plane-"));
+  const ids = ["root-one"];
+  let calls = 0;
+  const dependencies = {
+    store: new ProjectStore(targetDir),
+    id: () => ids.shift() as string,
+    execute: async () => {
+      calls += 1;
+      return { result: approvedPipeline };
+    },
+    resolveAutoDecision: async () => ({
+      action: "accept" as const,
+      rationale: "auto mandate",
+      evidence: ["docs/contracts/operation-modes.md"],
+    }),
+  };
+  const first = createOrchestratorControlPlane(dependencies);
+  const started = first.start({ requestKey: "request-one", task: "work", mode: "auto" });
+  expect(started.status).toBe("queued");
+  expect(calls).toBe(0);
+  expect(first.start({ requestKey: "request-one", task: "ignored", mode: "manual" }).id).toBe(
+    started.id,
+  );
+
+  const reconstructed = createOrchestratorControlPlane({
+    ...dependencies,
+    store: new ProjectStore(targetDir),
+  });
+  expect(reconstructed.status(started.id).status).toBe("queued");
+  expect((await reconstructed.resume(started.id)).status).toBe("complete");
+  expect(calls).toBe(1);
+});
+
+test("manual decisions wait for the trusted operator channel while auto records its mandate", async () => {
+  const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-decisions-"));
+  const ids = ["manual-run", "auto-run"];
+  const control = createOrchestratorControlPlane({
+    store: new ProjectStore(targetDir),
+    id: () => ids.shift() as string,
+    execute: async () => ({ result: approvedPipeline }),
+    resolveAutoDecision: async () => ({
+      action: "accept",
+      rationale: "contracts settle the choice",
+      evidence: ["docs/contracts/operation-modes.md"],
+    }),
+  });
+  const scope = { allowedPaths: ["src"], allowedCapabilities: ["edit"], externalEffects: [] };
+  const manual = control.start({ requestKey: "manual", task: "work", mode: "manual", scope });
+  const pending = await control.requestDecision(manual.id, {
+    action: "edit",
+    evidence: ["docs/ROADMAP.md"],
+    scope,
+  });
+  expect(pending.status).toBe("pending");
+  expect(control.status(manual.id).status).toBe("awaiting_decision");
+  expect(
+    control.resolveDecisionFromOperator(manual.id, pending.id, "accept", "approved").status,
+  ).toBe("accepted");
+
+  const auto = control.start({ requestKey: "auto", task: "work", mode: "auto", scope });
+  const resolved = await control.requestDecision(auto.id, {
+    action: "edit",
+    evidence: ["docs/ROADMAP.md"],
+    scope,
+  });
+  expect(resolved.status).toBe("accepted");
+  expect(resolved.mandateSource).toBe("auto_mode");
+  expect(resolved.scope.allowedPaths).toEqual(["src"]);
+});
+
+test("default decomposition creates sequential children and stops siblings on a child split", async () => {
+  expect(DEFAULT_CONTROL_PLANE_CONFIG.maxDecompositionDepth).toBe(1);
+  expect(DEFAULT_CONTROL_PLANE_CONFIG.maxChildPipelines).toBe(0);
+  const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-decomposition-"));
+  const ids = ["root-run", "child-one", "child-two"];
+  const order: string[] = [];
+  const decomposition = {
+    ...approvedPipeline,
+    outcome: "decomposition_required" as const,
+    approved: false,
+    verdicts: [{ status: "changes_requested" as const, issues: [], summary: "split" }],
+  };
+  const scope = { allowedPaths: ["src"], allowedCapabilities: ["edit"], externalEffects: [] };
+  const control = createOrchestratorControlPlane({
+    store: new ProjectStore(targetDir),
+    id: () => ids.shift() as string,
+    execute: async (record) => {
+      order.push(record.id);
+      if (record.depth === 0)
+        return {
+          result: decomposition,
+          children: [
+            { task: "one", parentDecisionId: "d", ...scope },
+            { task: "two", parentDecisionId: "d", ...scope },
+          ],
+        };
+      return {
+        result: decomposition,
+        children: [{ task: "nested", parentDecisionId: "d", ...scope }],
+      };
+    },
+    resolveAutoDecision: async () => ({
+      action: "accept" as const,
+      rationale: "auto mandate",
+      evidence: ["docs/contracts/operation-modes.md"],
+    }),
+  });
+  const rootRun = control.start({ requestKey: "decompose", task: "root", mode: "auto", scope });
+  expect((await control.resume(rootRun.id)).status).toBe("paused");
+  expect(order).toEqual(["root-run", "child-one"]);
+  expect(control.record(rootRun.id).remainingChildren).toHaveLength(1);
+  const decision = control.record(rootRun.id).decisions.at(-1);
+  expect(decision?.status).toBe("accepted");
+  expect(
+    control.record(control.record(rootRun.id).childRunIds[0] as string).authorizationDecisionId,
+  ).toBe(decision?.id);
+});
+
+test("concurrent resume executes one provider turn and emits durable completion", async () => {
+  const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-control-lease-"));
+  let release: (() => void) | undefined;
+  const wait = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let calls = 0;
+  const control = createOrchestratorControlPlane({
+    store: new ProjectStore(targetDir),
+    id: () => "leased-run",
+    resolveAutoDecision: async () => ({
+      action: "accept",
+      rationale: "in scope",
+      evidence: ["docs/ROADMAP.md"],
+    }),
+    execute: async () => {
+      calls += 1;
+      await wait;
+      return { result: approvedPipeline };
+    },
+  });
+  const run = control.start({ requestKey: "lease", task: "work", mode: "auto" });
+  const first = control.resume(run.id);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  expect((await control.resume(run.id)).status).toBe("running");
+  expect(calls).toBe(1);
+  release?.();
+  expect((await first).status).toBe("complete");
+  expect(control.events(run.id, 0).map((event) => event.type)).toEqual(["run.completed"]);
+  expect(control.events(run.id, 1)).toEqual([]);
+});
+
+test("control-plane rejects malformed collection inputs before persistence", async () => {
+  const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-control-validation-"));
+  const control = createOrchestratorControlPlane({
+    store: new ProjectStore(targetDir),
+    execute: async () => ({ result: approvedPipeline }),
+  });
+  expect(() =>
+    control.start({
+      requestKey: "bad",
+      task: "work",
+      mode: "manual",
+      scope: { allowedPaths: "src" as unknown as string[] },
+    }),
+  ).toThrow("invalid_follow_up");
+  expect(control.list()).toEqual([]);
+  const run = control.start({ requestKey: "good", task: "work", mode: "manual" });
+  await expect(
+    control.requestDecision(run.id, { action: "", evidence: [], scope: {} }),
+  ).rejects.toThrow("invalid_follow_up");
+  await expect(control.resume(run.id, { runUntil: "bad" as never })).rejects.toThrow(
+    "invalid_config",
+  );
+});
+
+test("auto admission fails before persistence when no resolver can exercise the mandate", () => {
+  const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-auto-resolver-"));
+  const control = createOrchestratorControlPlane({
+    store: new ProjectStore(targetDir),
+    execute: async () => ({ result: approvedPipeline }),
+  });
+  expect(() => control.start({ requestKey: "auto", task: "work", mode: "auto" })).toThrow(
+    "invalid_config: resolveAutoDecision",
+  );
+  expect(control.list()).toEqual([]);
+});
+
+test("control-plane cancellation is durable and model tools omit manual resolution authority", () => {
+  const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-control-tools-"));
+  const control = createOrchestratorControlPlane({
+    store: new ProjectStore(targetDir),
+    id: () => "manual-cancel",
+    execute: async () => ({ result: approvedPipeline }),
+  });
+  const run = control.start({ requestKey: "manual-cancel", task: "work", mode: "manual" });
+  expect(control.cancel(run.id).status).toBe("cancelled");
+  expect(control.cancel(run.id).status).toBe("cancelled");
+  expect(control.list()).toHaveLength(1);
+  const names = buildControlPlaneTools(control).map((tool) => tool.name);
+  expect(names).toContain("control_decisions");
+  expect(names).not.toContain("control_decision_resolve");
+});
+
+test("mechanical triage forces contracts, elevated security, and large work through pipeline", () => {
+  expect(
+    triageControlPlaneTask({
+      touchesContracts: true,
+      securitySurface: "ordinary",
+      changeSize: "local",
+      reversible: true,
+    }),
+  ).toBe("pipeline");
+  expect(
+    triageControlPlaneTask({
+      touchesContracts: false,
+      securitySurface: "ordinary",
+      changeSize: "local",
+      reversible: true,
+    }),
+  ).toBe("inline");
+});
+
+test("approved reports bind the exact publish tree and reject a stale worktree", async () => {
+  const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-content-binding-"));
+  const git = (...args: string[]) => {
+    const result = Bun.spawnSync(["git", ...args], { cwd: targetDir });
+    expect(result.exitCode).toBe(0);
+  };
+  git("init", "-q");
+  git("config", "user.email", "test@example.invalid");
+  git("config", "user.name", "Test");
+  fs.writeFileSync(path.join(targetDir, "tracked.txt"), "reviewed\n");
+  git("add", "tracked.txt");
+  git("commit", "-qm", "base");
+  fs.writeFileSync(path.join(targetDir, "tracked.txt"), "approved\n");
+  let published = false;
+  const control = createOrchestratorControlPlane({
+    store: new ProjectStore(targetDir),
+    id: () => "binding-run",
+    resolveAutoDecision: async () => ({
+      action: "accept",
+      rationale: "auto mandate",
+      evidence: ["docs/contracts/operation-modes.md"],
+    }),
+    execute: async () => ({ result: approvedPipeline, reviewedPaths: ["tracked.txt"] }),
+    publishApproved: async () => {
+      published = true;
+      return {
+        phase: "finished",
+        gateStatuses: ["local:passed"],
+        recoveryCategories: [],
+      };
+    },
+  });
+  const run = control.start({
+    requestKey: "binding",
+    task: "work",
+    mode: "auto",
+    scope: { externalEffects: ["publish"] },
+  });
+  expect((await control.resume(run.id)).status).toBe("complete");
+  const report = control.report(run.id);
+  expect(report.contentBinding?.publishTreeOid).toMatch(/^[0-9a-f]{40,64}$/);
+  fs.writeFileSync(path.join(targetDir, "tracked.txt"), "changed after review\n");
+  await expect(control.publish(run.id)).rejects.toThrow("stale_binding");
+  expect(published).toBe(false);
 });

@@ -75,6 +75,39 @@ export type { LedgerOptions, LedgerSink } from "./ledger/ledger";
 export { FileLedgerSink, LEDGER_BASE_DIR, Ledger, MemoryLedgerSink } from "./ledger/ledger";
 export type { LedgerRecord, UsageAmounts, UsageDelta } from "./ledger/types";
 export { diffUsage, toolCallCounts, UsageDeltaTracker, usageAmounts } from "./ledger/usage";
+export type {
+  ChildPipelineSpec,
+  ContentBinding,
+  ContentBindingEntry,
+  ControlPlaneConfig,
+  ControlPlaneDependencies,
+  ControlPlaneRunStatus,
+  DecisionRecord,
+  DecisionRequest,
+  DurableRunRecord,
+  ExternalLimit,
+  PipelineExecution,
+  ProviderAvailability,
+  PublicationSummary,
+  ResumeRunInput,
+  RunBreakpoint,
+  RunMode,
+  RunOperationalSummary,
+  RunReport,
+  RunScope,
+  SafeDecisionStatus,
+  SafeRunStatus,
+  StartRunInput,
+  TriageInput,
+} from "./orchestration/control-plane";
+export {
+  buildControlPlaneTools,
+  CONTROL_PLANE_TOOL_NAMES,
+  createOrchestratorControlPlane,
+  DEFAULT_CONTROL_PLANE_CONFIG,
+  OrchestratorControlPlane,
+  triageControlPlaneTask,
+} from "./orchestration/control-plane";
 export type { FollowUpCapture } from "./orchestration/follow-up";
 export {
   buildSubmitFollowUpTool,
@@ -113,6 +146,7 @@ export type {
   IssueSeverity,
   OrchestrationErrorCode,
   PipelineConfig,
+  PipelineOutcome,
   PipelineResult,
   PipelineRouting,
   Plan,

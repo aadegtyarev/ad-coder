@@ -91,6 +91,8 @@ export interface FinishPublishingInput {
   title: string;
   description: PublishingDescription;
   authorizeInitiallyDirtyPaths?: string[];
+  /** Exact reviewed tree; checked after staging and before any ref mutation. */
+  approvedTreeOid?: string;
 }
 
 export interface PublishingResult {
@@ -476,6 +478,8 @@ function buildCommit(
     run(executor, cwd, config, ["git", "read-tree", old], { env });
     run(executor, cwd, config, ["git", "add", "--", ...validatePaths(cwd, input)], { env });
     const tree = output(run(executor, cwd, config, ["git", "write-tree"], { env }));
+    if (input.approvedTreeOid !== undefined && tree !== input.approvedTreeOid)
+      throw new ProjectOperationsError("stale_binding", "published tree");
     commit = output(
       run(executor, cwd, config, ["git", "commit-tree", tree, "-p", old], {
         stdin: `${input.commitMessage}\n`,

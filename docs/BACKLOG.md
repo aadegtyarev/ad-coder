@@ -2,17 +2,7 @@
 
 ## Current priority
 
-- [next] Bring the conversational Orchestrator to LDO-level control with a small
-  structured surface: asynchronous pipeline start, run status/list/resume/cancel,
-  pending-decision list/resolve, run-until breakpoint control, Publisher invocation,
-  and one complete `RunReport` covering files, checks, verdicts, usage, checkpoint,
-  backlog and publication. Mechanical triage must force contracts/security/large
-  changes through the pipeline. The default is `maxRounds: 2`: after one fix cycle,
-  another blocking review returns both verdicts as `decomposition_required`; the
-  Orchestrator narrows the work from project evidence or asks only on a real
-  product/architecture fork.
-
-- [next-after-control-plane] Implement the decided incremental pipeline-context
+- [next] Implement the decided incremental pipeline-context
   strategy for scoped Planner reconnaissance, Coder fix handoffs, and repeated
   Reviewer verification. Include configurable full-context fallback on scope
   drift/large diffs/insufficient context and per-stage fresh/cached/output,
@@ -20,9 +10,9 @@
 
 ## Future control plane and plugins
 
-- [planned] Add a headless multi-project `SessionManager`, per-session worktrees,
-  serialized command queues, daemon lifecycle and event stream. Let the TUI drive
-  several independent sessions in parallel.
+- [planned] After the daemon-free control plane settles, evaluate a multi-project
+  SessionManager, per-session worktrees and an optional daemon/event stream for
+  frontends that require continuously running remote sessions.
 - [planned] Add a minimal trusted plugin registry for local/npm packages over the
   existing tool/workflow/driver seams, followed by a Telegram driver that binds
   chats or topics to durable sessions.

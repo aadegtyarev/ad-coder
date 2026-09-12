@@ -249,13 +249,16 @@ export interface RoundRecord {
 /**
  * The settled outcome of a whole pipeline run.
  *
- * `approved: false` after `rounds === maxRounds` is a LEGITIMATE result the
- * caller inspects -- exhausting the cap is not an error and is never thrown.
+ * `outcome: "decomposition_required"` with `approved: false` after
+ * `rounds === maxRounds` is a LEGITIMATE result the caller inspects --
+ * exhausting the cap is not an error and is never thrown.
  * (A missing or malformed verdict, by contrast, IS a thrown `OrchestrationError`.)
  * `verdicts` and `runIds` are in round order; `runIds` carries every role-run's
  * id (planner, then coder/reviewer per round) for ledger cross-reference.
  */
 export interface PipelineResult {
+  /** Deterministic terminal meaning; retained alongside `approved` for compatibility. */
+  outcome: PipelineOutcome;
   approved: boolean;
   rounds: number;
   verdicts: Verdict[];
@@ -280,6 +283,8 @@ export interface PipelineResult {
   /** Applicable contract rules carried by the planner's structured submission. */
   contractRequirements?: string[];
 }
+
+export type PipelineOutcome = "approved" | "decomposition_required";
 
 /**
  * Why an orchestration precondition or a submitted verdict was rejected.
