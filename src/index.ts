@@ -188,6 +188,16 @@ export {
 export type { WorkflowSession } from "./orchestration/session";
 export { applyTransition, autoDriver, createWorkflowSession } from "./orchestration/session";
 export type {
+  StageLimitReason,
+  StageLimitSnapshot,
+  StageLimits,
+} from "./orchestration/stage-limits";
+export {
+  DEFAULT_STAGE_LIMITS,
+  StageLimitController,
+  StageLimitError,
+} from "./orchestration/stage-limits";
+export type {
   AvailableTransition,
   Complexity,
   ContractCoverage,
