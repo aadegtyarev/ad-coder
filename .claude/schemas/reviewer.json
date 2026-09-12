@@ -1,0 +1,59 @@
+{
+  "type": "object",
+  "properties": {
+    "status": { "type": "string", "enum": ["approved", "changes_requested"] },
+    "summary": { "type": "string" },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "file": { "type": "string" },
+          "severity": { "type": "string", "enum": ["critical", "major", "minor", "nit"] },
+          "what": { "type": "string" },
+          "suggestion": { "type": "string" }
+        },
+        "required": ["file", "severity", "what", "suggestion"],
+        "additionalProperties": false
+      }
+    },
+    "verification": {
+      "type": "object",
+      "properties": {
+        "verdict": { "type": "string", "enum": ["verified", "partial", "failed", "nothing_to_drive"] },
+        "criteria": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "criterion": { "type": "string" },
+              "status": { "type": "string", "enum": ["passed", "failed", "skipped"] },
+              "evidence": { "type": "string" },
+              "note": { "type": "string" }
+            },
+            "required": ["criterion", "status", "evidence", "note"],
+            "additionalProperties": false
+          }
+        },
+        "blockers": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["verdict", "criteria", "blockers"],
+      "additionalProperties": false
+    },
+    "attacks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "vector": { "type": "string" },
+          "outcome": { "type": "string", "enum": ["broke", "held"] },
+          "evidence": { "type": "string" }
+        },
+        "required": ["vector", "outcome", "evidence"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["status", "summary", "issues", "verification", "attacks"],
+  "additionalProperties": false
+}

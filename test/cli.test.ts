@@ -11,7 +11,7 @@ const REPO_ROOT = path.resolve(import.meta.dir, "..");
 const CLI = path.join(REPO_ROOT, "src/cli.ts");
 
 function runCli(args: string[]): { code: number; stdout: string; stderr: string } {
-  const proc = Bun.spawnSync(["bun", "run", CLI, ...args], { cwd: REPO_ROOT });
+  const proc = Bun.spawnSync(["bun", "run", CLI, ...args], { cwd: REPO_ROOT, env: process.env });
   return {
     code: proc.exitCode,
     stdout: proc.stdout.toString(),
@@ -140,6 +140,8 @@ test("each command renders its own help before validating required input", () =>
 
 test("auth status and logout are scriptable and credential output is secret-free", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-auth-cli-"));
+  const priorConfigHome = process.env.XDG_CONFIG_HOME;
+  process.env.XDG_CONFIG_HOME = root;
   const target = path.join(root, "project");
   const credentialPath = path.join(root, "private", "credentials.json");
   fs.mkdirSync(target);
@@ -180,12 +182,16 @@ test("auth status and logout are scriptable and credential output is secret-free
     expect(invalid.code).not.toBe(0);
     expect(invalid.stdout).toBe("");
   } finally {
+    if (priorConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = priorConfigHome;
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
 
 test("auth login selects browser and device-code flows without exposing credentials", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-auth-login-cli-"));
+  const priorConfigHome = process.env.XDG_CONFIG_HOME;
+  process.env.XDG_CONFIG_HOME = root;
   const targetDir = path.join(root, "project");
   const credentialPath = path.join(root, "private", "credentials.json");
   fs.mkdirSync(targetDir);
@@ -247,6 +253,8 @@ test("auth login selects browser and device-code flows without exposing credenti
     }
     expect(selected).toEqual(["browser", "device_code"]);
   } finally {
+    if (priorConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = priorConfigHome;
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
@@ -566,9 +574,9 @@ test("operations validates retry policy and emits stage metrics in control repor
 test("console help is registry-derived and invalid input limits fail before provider access", () => {
   const help = runCli(["console", "--help"]);
   expect(help.code).toBe(0);
-  expect(help.stdout).toContain("usage: ad-coder console --target-dir <dir> [options]");
+  expect(help.stdout).toContain("usage: ad-coder console [options]");
   for (const option of [
-    "--target-dir <dir> (required)",
+    "--target-dir <dir>",
     "--json",
     "--max-input-bytes <n>",
     "--max-session-turns <n>",
@@ -587,7 +595,9 @@ test("console help is registry-derived and invalid input limits fail before prov
     expect(help.stdout).toContain(option);
   }
 
-  expect(runCli(["console"]).stderr).toContain("--target-dir is required");
+  expect(runCli(["console", "--max-input-bytes", "0"]).stderr).toContain(
+    "invalid --max-input-bytes: 0 (expected a positive integer)",
+  );
   for (const value of ["0", "-1", "1.5", "", "nope"]) {
     const result = runCli(["console", "--target-dir", ".", `--max-input-bytes=${value}`]);
     expect(result.code).toBe(2);

@@ -6,8 +6,13 @@ import type { CompactionMode } from "../context/compactor";
 import { assertSummarizerWindow } from "../context/compactor";
 import { MemoryLedgerSink } from "../ledger/ledger";
 import { SUBMIT_FOLLOW_UP_TOOL_NAME } from "../orchestration/follow-up";
-import { SUBMIT_PLAN_TOOL_NAME } from "../orchestration/plan";
-import type { Complexity, PipelineConfig, RoleSpec } from "../orchestration/types";
+import { DEFAULT_SURFACE_ANALYSIS_LIMITS, SUBMIT_PLAN_TOOL_NAME } from "../orchestration/plan";
+import type {
+  Complexity,
+  PipelineConfig,
+  RoleSpec,
+  SurfaceAnalysisLimits,
+} from "../orchestration/types";
 import { SUBMIT_VERDICT_TOOL_NAME } from "../orchestration/verdict";
 import { buildDefaultProfile } from "../profiles/default-profile";
 import { resolveProfile } from "../profiles/resolve";
@@ -116,6 +121,7 @@ export interface ResolvePipelineConfigOptions {
   summarizerModel?: string;
   allowCrossProviderSummarization?: boolean;
   maxRounds?: number;
+  surfaceAnalysisLimits?: Partial<SurfaceAnalysisLimits>;
   defaultComplexity?: Complexity;
   budgetPercents?: BudgetPercents;
   roleBudgetPercents?: Partial<Record<ConfigurableRole, BudgetPercents>>;
@@ -186,6 +192,14 @@ function selectProvider(
  */
 export function resolvePipelineConfig(options: ResolvePipelineConfigOptions): PipelineConfig {
   validateRoleBudgetPercents(options.roleBudgetPercents);
+  const surfaceAnalysisLimits: SurfaceAnalysisLimits = {
+    ...DEFAULT_SURFACE_ANALYSIS_LIMITS,
+    ...options.surfaceAnalysisLimits,
+  };
+  for (const [name, value] of Object.entries(surfaceAnalysisLimits)) {
+    if (!Number.isSafeInteger(value) || value < 0)
+      throw new Error(`surfaceAnalysisLimits.${name} must be a non-negative safe integer`);
+  }
   if (options.registryConfig !== undefined && options.provider !== undefined) {
     throw new Error("provider cannot be combined with registryConfig");
   }
@@ -388,6 +402,7 @@ export function resolvePipelineConfig(options: ResolvePipelineConfigOptions): Pi
     models: registry.models,
     task: options.task,
     maxRounds,
+    surfaceAnalysisLimits,
     roles: { ...roles, orchestrator },
     ledgerSink: new MemoryLedgerSink(),
     compaction:
@@ -413,6 +428,50 @@ export function resolvePipelineConfig(options: ResolvePipelineConfigOptions): Pi
       },
     },
     defaults: { maxRounds, defaultComplexity },
+    effectiveConfig: {
+      provider: {
+        value: provider ?? "custom",
+        source:
+          options.provider !== undefined
+            ? "cli"
+            : PROVIDER_BY_ENV.some(({ envVar }) => env(envVar) !== undefined)
+              ? "environment"
+              : "registry-default",
+      },
+      strongModel: {
+        value: strong,
+        source: options.strongModel !== undefined ? "cli" : "registry-default",
+      },
+      midModel: { value: mid, source: options.midModel !== undefined ? "cli" : "registry-default" },
+      cheapModel: {
+        value: cheap,
+        source: options.cheapModel !== undefined ? "cli" : "registry-default",
+      },
+      maxRounds: {
+        value: maxRounds,
+        source: options.maxRounds !== undefined ? "cli" : "built-in-default",
+      },
+      defaultComplexity: {
+        value: defaultComplexity,
+        source: options.defaultComplexity !== undefined ? "cli" : "built-in-default",
+      },
+      compactionMode: {
+        value: compactionMode,
+        source: options.compactionMode !== undefined ? "cli" : "built-in-default",
+      },
+      ...Object.fromEntries(
+        Object.entries(surfaceAnalysisLimits).map(([name, value]) => [
+          `surfaceAnalysisLimits.${name}`,
+          {
+            value,
+            source:
+              options.surfaceAnalysisLimits?.[name as keyof SurfaceAnalysisLimits] !== undefined
+                ? "cli"
+                : "built-in-default",
+          },
+        ]),
+      ),
+    },
     ...(options.projectStoreConfig !== undefined && {
       projectStoreConfig: options.projectStoreConfig,
     }),

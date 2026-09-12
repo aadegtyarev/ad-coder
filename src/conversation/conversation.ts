@@ -32,7 +32,12 @@ import { ProjectStore } from "../project-store/project-store";
 import type { ProjectStoreConfig } from "../project-store/types";
 import type { Role } from "../role";
 import { toHarnessOptions } from "../role";
-import { assertRunId, assertUniqueToolNames, resolveTargetDir } from "../runner/errors";
+import {
+  assertRunId,
+  assertUniqueToolNames,
+  EmptyTurnError,
+  resolveTargetDir,
+} from "../runner/errors";
 import type { Tool } from "../runner/tool";
 import type { SessionLimits } from "../session-limits";
 import { SessionLimitController } from "../session-limits";
@@ -276,12 +281,16 @@ export async function startConversation(config: ConversationConfig): Promise<Con
         // same discipline as runRole (src/runner/runner.ts).
         throw new Error(`conversation: run ${runId} suspended; step does not resume deferrals`);
       }
+      const assistantText = await extractFinalText(session, context);
+      if (result.status !== "completed" && assistantText.trim() === "") {
+        throw new EmptyTurnError(runId);
+      }
       cumulativeDropped += ledger.droppedRecords;
       return {
         runId,
         step: stepName,
         status: result.status,
-        assistantText: await extractFinalText(session, context),
+        assistantText,
         toolCalls: seen,
         droppedRecords: cumulativeDropped,
       };

@@ -1,0 +1,27 @@
+{
+  "type": "object",
+  "properties": {
+    "status": { "type": "string", "enum": ["clean", "findings"] },
+    "summary": { "type": "string" },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "severity": { "type": "string", "enum": ["critical", "high", "medium", "low", "info"] },
+          "category": { "type": "string", "enum": ["injection", "auth", "data_exposure", "input_validation", "ssrf", "supply_chain", "crypto", "race_condition", "resource", "config"] },
+          "plan_step": { "type": "string" },
+          "what": { "type": "string" },
+          "exploit_scenario": { "type": "string" },
+          "mitigation": { "type": "string" },
+          "cwe": { "type": ["string", "null"] }
+        },
+        "required": ["severity", "category", "plan_step", "what", "exploit_scenario", "mitigation", "cwe"],
+        "additionalProperties": false
+      }
+    },
+    "threat_model_notes": { "type": ["string", "null"] }
+  },
+  "required": ["status", "summary", "findings", "threat_model_notes"],
+  "additionalProperties": false
+}

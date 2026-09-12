@@ -67,6 +67,16 @@ export function assertCredentialPathOutsideProject(
   const candidate = path.join(candidateParent, path.basename(credentialPath));
   const inside = (root: string): boolean =>
     candidate === root || candidate.startsWith(`${root}${path.sep}`);
+  const allowedRoots = [os.homedir()];
+  const configHome = process.env.XDG_CONFIG_HOME;
+  if (configHome !== undefined && path.isAbsolute(configHome)) allowedRoots.push(configHome);
+  const canonicalAllowedRoots = allowedRoots.map((root) => canonicalProspectivePath(root));
+  if (!canonicalAllowedRoots.some(inside))
+    throw new AuthError(
+      "invalid_credential_path",
+      candidate,
+      "credential path must remain inside the user home or configured user config directory",
+    );
   if (inside(project))
     throw new AuthError(
       "invalid_credential_path",

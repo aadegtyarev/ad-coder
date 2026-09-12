@@ -33,6 +33,8 @@ import { OrchestrationError } from "../src/orchestration/types";
 import { parseVerdict, SUBMIT_VERDICT_TOOL_NAME } from "../src/orchestration/verdict";
 import { buildDefaultProfile } from "../src/profiles/default-profile";
 import type { Profile } from "../src/profiles/types";
+import { type RunCheckpoint, RunCoordinator } from "../src/project-operations/run-coordinator";
+import { ProjectStore } from "../src/project-store/project-store";
 import type { ResolvedRegistry } from "../src/registry/types";
 import type { Role } from "../src/role";
 import { defineRole } from "../src/role";
@@ -163,10 +165,41 @@ function securityTurn(text: string): FauxResponseStep[] {
  * record so malformed payloads can be scripted alongside well-formed plans.
  */
 function plannerTurn(args: Plan | Record<string, unknown>): FauxResponseStep[] {
+  const submitted = governedPlan(args);
   return [
-    fauxAssistantMessage(fauxToolCall(SUBMIT_PLAN_TOOL_NAME, args)),
+    fauxAssistantMessage(fauxToolCall(SUBMIT_PLAN_TOOL_NAME, submitted)),
     fauxAssistantMessage("plan text"),
   ];
+}
+
+function governedPlan(args: Plan | Record<string, unknown>): Plan | Record<string, unknown> {
+  return "complexity" in args &&
+    "securitySurface" in args &&
+    "summary" in args &&
+    !("surfaceAnalysis" in args)
+    ? {
+        ...args,
+        surfaceAnalysis: {
+          projectType: "TypeScript CLI/library",
+          surfaces: [
+            {
+              id: "core",
+              name: "programmatic core",
+              rationale: "implementation changes core behavior",
+            },
+          ],
+          coverage: [
+            {
+              surfaceId: "core",
+              status: "not_applicable",
+              contractIds: [],
+              evidence: ["test fixture has no contract-sensitive behavior"],
+              rationale: "no applicable contract in fixture",
+            },
+          ],
+        },
+      }
+    : args;
 }
 
 /** The text of the newest user message the provider was called with. */
@@ -392,12 +425,12 @@ test("an explicit role tool allow-list does not gain submit_follow_up", async ()
 
 test("one round approve returns approved:true rounds:1", async () => {
   const fx = fixture();
-  const planner = fx.role("planner", "You plan.");
+  const planner = plannerRole(fx);
   const coder = fx.role("coder", "You code.");
   const reviewer = reviewerRole(fx);
   const verdict: Verdict = { status: "approved", issues: [], summary: "looks good" };
   fx.faux.setResponses([
-    fauxAssistantMessage("plan: do X"),
+    ...plannerTurn({ complexity: "medium", securitySurface: "none", summary: "plan" }),
     fauxAssistantMessage("coded X"),
     ...reviewerTurn(verdict),
   ]);
@@ -436,7 +469,7 @@ test("pipeline aggregates exact multi-response stage observations in stable orde
   fs.writeFileSync(path.join(fx.targetDir, "tracked.txt"), "base\n");
   execFileSync("git", ["add", "tracked.txt"], { cwd: fx.targetDir });
   execFileSync("git", ["commit", "-qm", "base"], { cwd: fx.targetDir });
-  const plan = { complexity: "medium", securitySurface: "none", summary: "plan" } as const;
+  const plan = governedPlan({ complexity: "medium", securitySurface: "none", summary: "plan" });
   const verdict: Verdict = { status: "approved", issues: [], summary: "ok" };
   fx.faux.setResponses([
     responseWithUsage(
@@ -490,10 +523,10 @@ test("pipeline aggregates exact multi-response stage observations in stable orde
   expect(result.stageMetrics).toEqual([
     {
       stage: "plan",
-      input: 903,
-      cachedInput: 164,
-      freshInput: 739,
-      output: 36,
+      input: 1194,
+      cachedInput: 255,
+      freshInput: 939,
+      output: 124,
       readFiles: ["tracked.txt"],
       readFilesTotal: 1,
       readFilesTruncated: 0,
@@ -514,9 +547,9 @@ test("pipeline aggregates exact multi-response stage observations in stable orde
     },
     {
       stage: "review:1",
-      input: 791,
+      input: 921,
       cachedInput: 118,
-      freshInput: 673,
+      freshInput: 803,
       output: 25,
       readFiles: ["tracked.txt"],
       readFilesTotal: 1,
@@ -593,7 +626,7 @@ test("maxRounds exhausted returns approved:false without throwing", async () => 
 test("a shared ledger sink carries distinct role/step records per round", async () => {
   const fx = fixture();
   const sink = new MemoryLedgerSink();
-  const planner = fx.role("planner", "You plan.");
+  const planner = plannerRole(fx);
   const coder = fx.role("coder", "You code.");
   const reviewer = reviewerRole(fx);
   const changes: Verdict = {
@@ -602,7 +635,7 @@ test("a shared ledger sink carries distinct role/step records per round", async 
     summary: "again",
   };
   fx.faux.setResponses([
-    fauxAssistantMessage("plan"),
+    ...plannerTurn({ complexity: "medium", securitySurface: "none", summary: "plan" }),
     fauxAssistantMessage("code r1"),
     ...reviewerTurn(changes),
     fauxAssistantMessage("code r2"),
@@ -704,8 +737,21 @@ test("a malformed submission throws OrchestrationError malformed_verdict", async
 });
 
 test("parsePlan accepts a well-formed plan and rejects bad complexity / bad securitySurface / non-string summary / non-object", () => {
+  const surfaceAnalysis = {
+    projectType: "TypeScript CLI/library",
+    surfaces: [{ id: "cli", name: "CLI", rationale: "changes CLI" }],
+    coverage: [
+      {
+        surfaceId: "cli",
+        status: "covered",
+        contractIds: ["cli:thin-front"],
+        evidence: ["docs/contracts/cli.md"],
+        rationale: "existing contract applies",
+      },
+    ],
+  } as const;
   const plan = parsePlan(
-    { complexity: "medium", securitySurface: "elevated", summary: "s" },
+    { complexity: "medium", securitySurface: "elevated", summary: "s", surfaceAnalysis },
     "run-id",
   );
   expect(plan.complexity).toBe("medium");
@@ -719,13 +765,14 @@ test("parsePlan accepts a well-formed plan and rejects bad complexity / bad secu
       securitySurface: "low",
       summary: "s",
       contractRequirements: ["Headless-first."],
+      surfaceAnalysis,
     },
     "run-id",
   );
   expect(contracted.contractRequirements).toEqual(["Headless-first."]);
 
   const cases: unknown[] = [
-    { complexity: "huge", securitySurface: "none", summary: "s" },
+    { complexity: "huge", securitySurface: "none", summary: "s", surfaceAnalysis },
     { complexity: "medium", securitySurface: "extreme", summary: "s" },
     { complexity: "medium", summary: "s" },
     { complexity: "medium", securitySurface: "none", summary: 5 },
@@ -786,7 +833,7 @@ test("a planner submission carries contract requirements into the coder prompt a
   expect(coderPrompts[0]).toContain("- Headless-first.");
 });
 
-test("a planner emitting only text leaves result.complexity undefined and the run approves", async () => {
+test("a planner emitting only text fails closed before code", async () => {
   const fx = fixture();
   const planner = plannerRole(fx);
   const coder = fx.role("coder", "You code.");
@@ -798,16 +845,564 @@ test("a planner emitting only text leaves result.complexity undefined and the ru
     ...reviewerTurn(verdict),
   ]);
 
-  const result = await runPipeline({
+  await expect(
+    runPipeline({
+      targetDir: fx.targetDir,
+      models: fx.models,
+      task: "implement Q",
+      maxRounds: 3,
+      roles: { planner, coder, reviewer },
+    }),
+  ).rejects.toMatchObject({ code: "missing_plan" });
+});
+
+test("a default-open planner emitting only text fails closed before code", async () => {
+  const fx = fixture();
+  fx.faux.setResponses([fauxAssistantMessage("plan only")]);
+  await expect(
+    runPipeline({
+      targetDir: fx.targetDir,
+      models: fx.models,
+      task: "implement Q",
+      maxRounds: 1,
+      roles: {
+        planner: fx.role("planner", "plan", undefined),
+        coder: fx.role("coder", "code"),
+        reviewer: reviewerRole(fx),
+      },
+    }),
+  ).rejects.toMatchObject({ code: "missing_plan" });
+});
+
+test("parsePlan rejects invented contract IDs and covered entries without evidence", () => {
+  const base = {
+    complexity: "medium",
+    securitySurface: "none",
+    summary: "plan",
+    surfaceAnalysis: {
+      projectType: "CLI",
+      surfaces: [{ id: "cli", name: "CLI", rationale: "changed" }],
+      coverage: [
+        {
+          surfaceId: "cli",
+          status: "covered",
+          contractIds: ["invented:contract"],
+          evidence: ["claim"],
+          rationale: "applies",
+        },
+      ],
+    },
+  };
+  expect(() => parsePlan(base, "run-id")).toThrow(OrchestrationError);
+  base.surfaceAnalysis.coverage[0]!.contractIds = ["cli:thin-front"];
+  base.surfaceAnalysis.coverage[0]!.evidence = [];
+  expect(() => parsePlan(base, "run-id")).toThrow(OrchestrationError);
+});
+
+test("surface analysis limits are zero-disabled and independently enforced", () => {
+  const value = {
+    complexity: "medium",
+    securitySurface: "low",
+    summary: "plan",
+    contractRequirements: [],
+    surfaceAnalysis: {
+      projectType: "A deliberately long project type",
+      surfaces: [{ id: "cli", name: "CLI", rationale: "changed" }],
+      coverage: [
+        {
+          surfaceId: "cli",
+          status: "covered",
+          contractIds: ["cli:thin-front"],
+          evidence: ["test"],
+          rationale: "applies",
+        },
+      ],
+    },
+  };
+  expect(
+    parsePlan(value, "run-id", {
+      maxItems: 0,
+      maxTextBytes: 0,
+      maxAggregateBytes: 0,
+      maxDepth: 0,
+    }).surfaceAnalysis.projectType,
+  ).toContain("long");
+  expect(() =>
+    parsePlan(value, "run-id", {
+      maxItems: 0,
+      maxTextBytes: 5,
+      maxAggregateBytes: 0,
+      maxDepth: 0,
+    }),
+  ).toThrow(OrchestrationError);
+  expect(() =>
+    parsePlan(value, "run-id", {
+      maxItems: 0,
+      maxTextBytes: 0,
+      maxAggregateBytes: 10,
+      maxDepth: 0,
+    }),
+  ).toThrow(OrchestrationError);
+  expect(() =>
+    parsePlan(value, "run-id", {
+      maxItems: 0,
+      maxTextBytes: 0,
+      maxAggregateBytes: 0,
+      maxDepth: 1,
+    }),
+  ).toThrow(OrchestrationError);
+  expect(() =>
+    parsePlan(value, "run-id", {
+      maxItems: -1,
+      maxTextBytes: 0,
+      maxAggregateBytes: 0,
+      maxDepth: 0,
+    }),
+  ).toThrow(OrchestrationError);
+  for (const invalid of [1.5, Number.MAX_SAFE_INTEGER + 1]) {
+    expect(() =>
+      parsePlan(value, "run-id", {
+        maxItems: invalid,
+        maxTextBytes: 0,
+        maxAggregateBytes: 0,
+        maxDepth: 0,
+      }),
+    ).toThrow(OrchestrationError);
+  }
+  const two = structuredClone(value);
+  two.surfaceAnalysis.surfaces.push({ id: "api", name: "API", rationale: "changed" });
+  two.surfaceAnalysis.coverage.push({
+    surfaceId: "api",
+    status: "covered",
+    contractIds: ["architecture:headless-first"],
+    evidence: ["test"],
+    rationale: "applies",
+  });
+  expect(() =>
+    parsePlan(two, "run-id", { maxItems: 1, maxTextBytes: 0, maxAggregateBytes: 0, maxDepth: 0 }),
+  ).toThrow(OrchestrationError);
+});
+
+test("workflow validates production surface limits before provider dispatch", () => {
+  const fx = fixture();
+  expect(() =>
+    createWorkflowSession({
+      targetDir: fx.targetDir,
+      models: fx.models,
+      task: "x",
+      maxRounds: 1,
+      surfaceAnalysisLimits: { maxItems: 0, maxTextBytes: 0, maxAggregateBytes: 0, maxDepth: 1.5 },
+      roles: { coder: fx.role("coder", "code"), reviewer: reviewerRole(fx) },
+    }),
+  ).toThrow("surfaceAnalysisLimits.maxDepth");
+});
+
+test("research-required surface cannot reach a coder turn", async () => {
+  const fx = fixture();
+  fx.faux.setResponses([
+    ...plannerTurn({
+      complexity: "medium",
+      securitySurface: "low",
+      summary: "plan",
+      contractRequirements: [],
+      surfaceAnalysis: {
+        projectType: "CLI",
+        surfaces: [{ id: "cli", name: "CLI", rationale: "new command" }],
+        coverage: [
+          {
+            surfaceId: "cli",
+            status: "research_required",
+            contractIds: [],
+            evidence: ["no CLI UX contract"],
+            rationale: "standards unknown",
+          },
+        ],
+      },
+    }),
+  ]);
+  await expect(
+    runPipeline({
+      targetDir: fx.targetDir,
+      models: fx.models,
+      task: "implement",
+      maxRounds: 1,
+      roles: {
+        planner: plannerRole(fx),
+        coder: fx.role("coder", "code"),
+        reviewer: reviewerRole(fx),
+      },
+    }),
+  ).rejects.toMatchObject({ code: "requirements_unresolved" });
+});
+
+test("research is checkpointed before dispatch and persists only normalized provenance", async () => {
+  const fx = fixture();
+  fs.mkdirSync(path.join(fx.targetDir, "docs/contracts"), { recursive: true });
+  fs.writeFileSync(
+    path.join(fx.targetDir, "docs/contracts/config.md"),
+    "# Config\n\nCanonical rule.\n",
+  );
+  const secret = "Bearer super-secret-value";
+  const runId = "durable-research";
+  let coordinator: RunCoordinator;
+  let outbound = "";
+  fx.faux.setResponses([
+    ...plannerTurn({
+      complexity: "medium",
+      securitySurface: "low",
+      summary: "safe plan",
+      contractRequirements: [],
+      surfaceAnalysis: {
+        projectType: "CLI",
+        surfaces: [{ id: "cli", name: "CLI", rationale: "new configuration" }],
+        coverage: [
+          {
+            surfaceId: "cli",
+            status: "research_required",
+            contractIds: ["config:configurable"],
+            evidence: ["gap"],
+            rationale: "needs evidence",
+          },
+        ],
+      },
+    }),
+    (context) => {
+      outbound = lastUserText(context);
+      const checkpoint = coordinator.checkpoint;
+      expect(checkpoint.researchEffect?.status).toBe("dispatched");
+      expect(checkpoint.workflowState.phase).toBe("research");
+      expect(JSON.stringify(checkpoint)).not.toContain(secret);
+      return fauxAssistantMessage(
+        JSON.stringify({ summary: "corroborated", resolvedSurfaceIds: ["cli"] }),
+      );
+    },
+  ]);
+  const session = createWorkflowSession({
     targetDir: fx.targetDir,
     models: fx.models,
-    task: "implement Q",
-    maxRounds: 3,
-    roles: { planner, coder, reviewer },
+    task: `implement without exposing ${secret}`,
+    maxRounds: 1,
+    roles: {
+      planner: plannerRole(fx),
+      researcher: fx.role("researcher", "facts only"),
+      coder: fx.role("coder", "code"),
+      reviewer: reviewerRole(fx),
+    },
   });
+  coordinator = new RunCoordinator(session, session.projectStore, { runId });
+  await coordinator.step();
+  expect(coordinator.checkpoint.workflowState.phase).toBe("research");
+  await coordinator.prepareStep();
+  const persisted = JSON.stringify(coordinator.checkpoint);
+  expect(outbound).not.toContain(secret);
+  expect(persisted).not.toContain(secret);
+  expect(persisted).not.toContain("resolvedSurfaceIds");
+  expect(coordinator.checkpoint.completedEffects).toHaveLength(1);
+  expect(coordinator.checkpoint.pendingStep?.state.researchProvenance?.[0]).toMatchObject({
+    destination: "faux/faux-1",
+    summary: "corroborated",
+  });
+});
 
-  expect(result.approved).toBe(true);
-  expect(result.complexity).toBeUndefined();
+test("rejected research payload never reaches durable production-flow artifacts", async () => {
+  const fx = fixture();
+  fs.mkdirSync(path.join(fx.targetDir, "docs/contracts"), { recursive: true });
+  fs.writeFileSync(path.join(fx.targetDir, "docs/contracts/config.md"), "# Config\nCanonical.\n");
+  const rawMarker = "raw-provider-marker-7f43";
+  const injectedSecret = "orchid-moon-private-value";
+  fx.faux.setResponses([
+    ...plannerTurn({
+      complexity: "medium",
+      securitySurface: "low",
+      summary: "safe plan",
+      contractRequirements: [],
+      surfaceAnalysis: {
+        projectType: "CLI",
+        surfaces: [{ id: "cli", name: "CLI", rationale: "configuration" }],
+        coverage: [
+          {
+            surfaceId: "cli",
+            status: "research_required",
+            contractIds: ["config:configurable"],
+            evidence: ["gap"],
+            rationale: "needs evidence",
+          },
+        ],
+      },
+    }),
+    fauxAssistantMessage(
+      JSON.stringify({
+        summary: "candidate",
+        resolvedSurfaceIds: ["cli"],
+        unknown: `${rawMarker}:${injectedSecret}`,
+      }),
+    ),
+  ]);
+  const session = createWorkflowSession({
+    targetDir: fx.targetDir,
+    models: fx.models,
+    task: "implement",
+    maxRounds: 1,
+    roles: {
+      planner: plannerRole(fx),
+      researcher: fx.role("researcher", "facts only"),
+      coder: fx.role("coder", "code"),
+      reviewer: reviewerRole(fx),
+    },
+  });
+  const coordinator = new RunCoordinator(session, session.projectStore, { runId: "reject-raw" });
+  await coordinator.step();
+  expect(await coordinator.prepareStep()).toBeUndefined();
+  expect(coordinator.checkpoint.pause).toMatchObject({
+    phase: "research",
+    code: "research_rejected",
+  });
+  const durableFiles = fs
+    .readdirSync(path.join(fx.targetDir, ".ad-coder"), { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => fs.readFileSync(path.join(entry.parentPath, entry.name), "utf8"))
+    .join("\n");
+  expect(durableFiles).not.toContain(rawMarker);
+  expect(durableFiles).not.toContain(injectedSecret);
+  expect(JSON.stringify(coordinator.checkpoint)).not.toContain(rawMarker);
+  expect(JSON.stringify(coordinator.checkpoint)).not.toContain(injectedSecret);
+});
+
+function researchPlan(): Plan {
+  return {
+    complexity: "medium",
+    securitySurface: "low",
+    summary: "research plan",
+    contractRequirements: [],
+    surfaceAnalysis: {
+      projectType: "CLI",
+      surfaces: [{ id: "cli", name: "CLI", rationale: "changed" }],
+      coverage: [
+        {
+          surfaceId: "cli",
+          status: "research_required",
+          contractIds: ["config:configurable"],
+          evidence: ["gap"],
+          rationale: "needs evidence",
+        },
+      ],
+    },
+  };
+}
+
+function researchSession(
+  fx: Fixture,
+  surfaceAnalysisLimits?: {
+    maxItems: number;
+    maxTextBytes: number;
+    maxAggregateBytes: number;
+    maxDepth: number;
+  },
+) {
+  return createWorkflowSession({
+    targetDir: fx.targetDir,
+    models: fx.models,
+    task: "implement",
+    maxRounds: 1,
+    ...(surfaceAnalysisLimits !== undefined && { surfaceAnalysisLimits }),
+    roles: {
+      planner: plannerRole(fx),
+      researcher: fx.role("researcher", "facts"),
+      coder: fx.role("coder", "code"),
+      reviewer: reviewerRole(fx),
+    },
+  });
+}
+
+test("RunCoordinator propagates positive and zero surface limits", async () => {
+  for (const [runId, maxTextBytes, rejects] of [
+    ["positive-limits", 3, true],
+    ["zero-limits", 0, false],
+  ] as const) {
+    const fx = fixture();
+    fx.faux.setResponses([...plannerTurn(researchPlan())]);
+    const coordinator = new RunCoordinator(
+      researchSession(fx, { maxItems: 0, maxTextBytes, maxAggregateBytes: 0, maxDepth: 0 }),
+      new ProjectStore(fx.targetDir),
+      { runId },
+    );
+    if (rejects) await expect(coordinator.step()).rejects.toMatchObject({ code: "malformed_plan" });
+    else {
+      await coordinator.step();
+      expect(coordinator.checkpoint.workflowState.phase).toBe("research");
+    }
+  }
+});
+
+test("research pauses on missing and invalid canonical corroboration", async () => {
+  for (const [runId, canonical] of [
+    ["missing-canonical", undefined],
+    ["invalid-canonical", ""],
+  ] as const) {
+    const fx = fixture();
+    if (canonical !== undefined) {
+      fs.mkdirSync(path.join(fx.targetDir, "docs/contracts"), { recursive: true });
+      fs.writeFileSync(path.join(fx.targetDir, "docs/contracts/config.md"), canonical);
+    }
+    fx.faux.setResponses([
+      ...plannerTurn(researchPlan()),
+      fauxAssistantMessage(JSON.stringify({ summary: "bounded", resolvedSurfaceIds: ["cli"] })),
+    ]);
+    const session = researchSession(fx);
+    const coordinator = new RunCoordinator(session, session.projectStore, { runId });
+    await coordinator.step();
+    expect(await coordinator.prepareStep()).toBeUndefined();
+    expect(coordinator.checkpoint.pause?.code).toBe("research_rejected");
+    expect(coordinator.checkpoint.pendingStep).toBeUndefined();
+  }
+});
+
+test("mandatory research response ceilings fail closed in production flow", async () => {
+  const responses = [
+    "not json",
+    JSON.stringify({ summary: "x".repeat(4097), resolvedSurfaceIds: ["cli"] }),
+    JSON.stringify({ summary: "x", resolvedSurfaceIds: Array(257).fill("cli") }),
+    JSON.stringify({
+      summary: "x",
+      resolvedSurfaceIds: ["cli"],
+      nested: { a: { b: { c: { d: "raw-depth-marker" } } } },
+    }),
+    JSON.stringify({ summary: "x".repeat(128 * 1024), resolvedSurfaceIds: ["cli"] }),
+  ];
+  for (const [index, response] of responses.entries()) {
+    const fx = fixture();
+    fs.mkdirSync(path.join(fx.targetDir, "docs/contracts"), { recursive: true });
+    fs.writeFileSync(path.join(fx.targetDir, "docs/contracts/config.md"), "canonical");
+    fx.faux.setResponses([...plannerTurn(researchPlan()), fauxAssistantMessage(response)]);
+    const session = researchSession(fx);
+    const coordinator = new RunCoordinator(session, session.projectStore, {
+      runId: `response-ceiling-${index}`,
+      checkpointByteLimit: 0,
+    });
+    await coordinator.step();
+    expect(await coordinator.prepareStep()).toBeUndefined();
+    expect(coordinator.checkpoint.pause?.code).toBe("research_rejected");
+  }
+});
+
+test("mandatory request and initial checkpoint ceilings cannot be disabled", async () => {
+  const fx = fixture();
+  const plan = researchPlan();
+  plan.surfaceAnalysis = {
+    projectType: "CLI",
+    surfaces: Array.from({ length: 257 }, (_, index) => ({
+      id: `surface-${index}`,
+      name: `surface-${index}`,
+      rationale: "changed",
+    })),
+    coverage: Array.from({ length: 257 }, (_, index) => ({
+      surfaceId: `surface-${index}`,
+      status: "research_required" as const,
+      contractIds: [],
+      evidence: ["gap"],
+      rationale: "needs evidence",
+    })),
+  };
+  fx.faux.setResponses([...plannerTurn(plan)]);
+  const session = researchSession(fx, {
+    maxItems: 0,
+    maxTextBytes: 0,
+    maxAggregateBytes: 0,
+    maxDepth: 0,
+  });
+  const coordinator = new RunCoordinator(session, session.projectStore, {
+    runId: "mandatory-request",
+    checkpointByteLimit: 0,
+  });
+  await coordinator.step();
+  expect(await coordinator.prepareStep()).toBeUndefined();
+  expect(coordinator.checkpoint.pause?.code).toBe("unsafe_request");
+
+  const baseSession = researchSession(fx);
+  const oversized = {
+    ...baseSession,
+    initialState: () => ({
+      ...baseSession.initialState(),
+      planSummary: "x".repeat(8 * 1024 * 1024),
+    }),
+  };
+  expect(
+    () =>
+      new RunCoordinator(oversized, oversized.projectStore, {
+        runId: "mandatory-checkpoint",
+        checkpointByteLimit: 0,
+      }),
+  ).toThrow("mandatoryCheckpointByteLimit");
+});
+
+test("dispatched recovery is actionable and concurrent resume accepts one effect", async () => {
+  const fx = fixture();
+  fs.mkdirSync(path.join(fx.targetDir, "docs/contracts"), { recursive: true });
+  fs.writeFileSync(path.join(fx.targetDir, "docs/contracts/config.md"), "canonical");
+  const runId = "concurrent-research";
+  let reopened: RunCoordinator | undefined;
+  let session: ReturnType<typeof researchSession>;
+  fx.faux.setResponses([
+    ...plannerTurn(researchPlan()),
+    async () => {
+      reopened = new RunCoordinator(session, session.projectStore, { runId });
+      expect(await reopened.prepareStep()).toBeUndefined();
+      throw new Error("simulated dispatched transport crash");
+    },
+    fauxAssistantMessage(JSON.stringify({ summary: "recovered", resolvedSurfaceIds: ["cli"] })),
+  ]);
+  session = researchSession(fx);
+  const coordinator = new RunCoordinator(session, session.projectStore, { runId });
+  await coordinator.step();
+  await expect(coordinator.prepareStep()).rejects.toMatchObject({ code: "checkpoint_conflict" });
+  expect(reopened!.checkpoint.pause?.code).toBe("ambiguous_dispatch");
+  const competing = new RunCoordinator(session, session.projectStore, { runId });
+  const attempts = await Promise.allSettled(
+    [reopened!, competing].map(async (candidate) => {
+      candidate.resumeResearch({ source: "operator", action: "retry" });
+      return candidate.prepareStep();
+    }),
+  );
+  expect(attempts.filter(({ status }) => status === "fulfilled")).toHaveLength(1);
+  expect(attempts.filter(({ status }) => status === "rejected")).toHaveLength(1);
+  const winner = [reopened!, competing].find(
+    (candidate) => candidate.checkpoint.completedEffects.length === 1,
+  );
+  expect(winner?.checkpoint.completedEffects).toHaveLength(1);
+  expect(winner?.checkpoint.pendingStep?.state.researchProvenance).toHaveLength(1);
+});
+
+test("a prepared research cursor reopens and completes exactly once without a raw query", async () => {
+  const fx = fixture();
+  fs.mkdirSync(path.join(fx.targetDir, "docs/contracts"), { recursive: true });
+  fs.writeFileSync(path.join(fx.targetDir, "docs/contracts/config.md"), "canonical");
+  fx.faux.setResponses([
+    ...plannerTurn(researchPlan()),
+    fauxAssistantMessage(JSON.stringify({ summary: "resumed", resolvedSurfaceIds: ["cli"] })),
+  ]);
+  const runId = "prepared-research";
+  const session = researchSession(fx);
+  const coordinator = new RunCoordinator(session, session.projectStore, { runId });
+  await coordinator.step();
+  const checkpointPath = path.join(session.projectStore.layout.runs, `coordinator-${runId}.json`);
+  const persisted = session.projectStore.readVersionedJson<RunCheckpoint>(checkpointPath);
+  const intent = session.prepareResearch?.(persisted.value.workflowState);
+  expect(intent).toBeDefined();
+  expect(JSON.stringify(intent)).not.toContain("research-questions");
+  session.projectStore.writeVersionedJson(
+    checkpointPath,
+    {
+      ...persisted.value,
+      workflowState: { ...persisted.value.workflowState, researchIntent: intent },
+      researchEffect: { intent: intent!, status: "prepared" },
+    },
+    persisted.version,
+  );
+  const reopened = new RunCoordinator(session, session.projectStore, { runId });
+  await reopened.prepareStep();
+  expect(reopened.checkpoint.completedEffects).toEqual([intent!.effectId]);
+  expect(reopened.checkpoint.pendingStep?.state.researchProvenance).toHaveLength(1);
+  expect(JSON.stringify(reopened.checkpoint)).not.toContain("research-questions");
 });
 
 test("a malformed submit_plan throws OrchestrationError malformed_plan", async () => {
@@ -1037,7 +1632,11 @@ function plannerTurnRec(
   args: Plan | Record<string, unknown>,
 ): FauxResponseStep[] {
   return [
-    recordStep(log, "planner", fauxAssistantMessage(fauxToolCall(SUBMIT_PLAN_TOOL_NAME, args))),
+    recordStep(
+      log,
+      "planner",
+      fauxAssistantMessage(fauxToolCall(SUBMIT_PLAN_TOOL_NAME, governedPlan(args))),
+    ),
     fauxAssistantMessage("plan text"),
   ];
 }
@@ -1331,7 +1930,7 @@ test("stepped: auto-driver yields the same verdict/rounds/ledger as runPipeline"
   };
   const approve: Verdict = { status: "approved", issues: [], summary: "fixed" };
   const scenario = () => [
-    fauxAssistantMessage("plan it"),
+    ...plannerTurn({ complexity: "medium", securitySurface: "none", summary: "plan" }),
     fauxAssistantMessage("code r1"),
     ...reviewerTurn(changes),
     fauxAssistantMessage("code r2"),
@@ -1348,7 +1947,7 @@ test("stepped: auto-driver yields the same verdict/rounds/ledger as runPipeline"
     task: "implement Q",
     maxRounds: 3,
     roles: {
-      planner: a.role("planner", "You plan."),
+      planner: plannerRole(a),
       coder: a.role("coder", "You code."),
       reviewer: reviewerRole(a),
     },
@@ -1365,7 +1964,7 @@ test("stepped: auto-driver yields the same verdict/rounds/ledger as runPipeline"
     task: "implement Q",
     maxRounds: 3,
     roles: {
-      planner: b.role("planner", "You plan."),
+      planner: plannerRole(b),
       coder: b.role("coder", "You code."),
       reviewer: reviewerRole(b),
     },
@@ -1425,7 +2024,7 @@ test("stepped: a rework driver re-runs the coder with no review in between", asy
 test("stepped: a stop-after-plan driver ends with no code or review records", async () => {
   const fx = fixture();
   const sink = new MemoryLedgerSink();
-  const plan: Plan = { complexity: "medium", securitySurface: "none", summary: "s" };
+  const plan = governedPlan({ complexity: "medium", securitySurface: "none", summary: "s" });
   fx.faux.setResponses([...plannerTurn(plan)]);
   const session = createWorkflowSession({
     targetDir: fx.targetDir,
@@ -1459,7 +2058,7 @@ test("workflow roles share one controller and stop before the next provider disp
   const fx = fixture();
   const controller = new SessionLimitController({ maxTurns: 2 });
   fx.faux.setResponses([
-    fauxAssistantMessage("plan text"),
+    ...plannerTurn({ complexity: "medium", securitySurface: "none", summary: "plan" }),
     fauxAssistantMessage("coded"),
     fauxAssistantMessage("must not review"),
   ]);

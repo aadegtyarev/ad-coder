@@ -27,6 +27,7 @@ import {
   RUN_STEP_TOOL_NAME,
   startOrchestrator,
 } from "../src/orchestration/orchestrator";
+import { SUBMIT_PLAN_TOOL_NAME } from "../src/orchestration/plan";
 import { createWorkflowSession } from "../src/orchestration/session";
 import { DriveError } from "../src/orchestration/transition-guard";
 import type {
@@ -172,11 +173,38 @@ test("startOrchestrator preserves the resolved seed thinking level", async () =>
 /** Script a plan -> code -> review(approved) run: one faux queue, in phase order. */
 function approveScenario(fx: Fixture, verdict: Verdict): void {
   fx.faux.setResponses([
-    fauxAssistantMessage("plan: do X"),
+    ...governedPlanTurn(),
     fauxAssistantMessage("coded X"),
     fauxAssistantMessage(fauxToolCall(SUBMIT_VERDICT_TOOL_NAME, verdict)),
     fauxAssistantMessage("review complete"),
   ]);
+}
+
+function governedPlanTurn() {
+  return [
+    fauxAssistantMessage(
+      fauxToolCall(SUBMIT_PLAN_TOOL_NAME, {
+        complexity: "medium",
+        securitySurface: "none",
+        summary: "plan: do X",
+        contractRequirements: [],
+        surfaceAnalysis: {
+          projectType: "test fixture",
+          surfaces: [{ id: "core", name: "core", rationale: "exercise orchestration" }],
+          coverage: [
+            {
+              surfaceId: "core",
+              status: "not_applicable",
+              contractIds: [],
+              evidence: ["fixture changes no product contract surface"],
+              rationale: "orchestrator plumbing only",
+            },
+          ],
+        },
+      }),
+    ),
+    fauxAssistantMessage("plan: do X"),
+  ];
 }
 
 /**
@@ -216,7 +244,7 @@ test("conversational core uses coordinator closeout for captured FollowUps", asy
   const fx = fixture();
   const verdict: Verdict = { status: "approved", issues: [], summary: "looks good" };
   fx.faux.setResponses([
-    fauxAssistantMessage("plan: do X"),
+    ...governedPlanTurn(),
     fauxAssistantMessage(
       fauxToolCall(SUBMIT_FOLLOW_UP_TOOL_NAME, {
         kind: "note",
@@ -248,7 +276,7 @@ test("conversational core uses coordinator closeout for captured FollowUps", asy
 
 test("unoffered transition is rejected at the core with only the kind", async () => {
   const fx = fixture();
-  fx.faux.setResponses([fauxAssistantMessage("plan: do X")]);
+  fx.faux.setResponses(governedPlanTurn());
 
   const core = createOrchestrator({ buildConfig: fx.buildConfig, ledgerSink: fx.sink });
   core.beginStepping("implement X");
@@ -270,7 +298,7 @@ test("unoffered transition is rejected at the core with only the kind", async ()
 
 test("unoffered transition is rejected via the choose_transition tool", async () => {
   const fx = fixture();
-  fx.faux.setResponses([fauxAssistantMessage("plan: do X")]);
+  fx.faux.setResponses(governedPlanTurn());
 
   const core = createOrchestrator({ buildConfig: fx.buildConfig, ledgerSink: fx.sink });
   core.beginStepping("implement X");
@@ -289,7 +317,7 @@ test("unoffered transition is rejected via the choose_transition tool", async ()
 
 test("beginStepping -> stepOnce yields a StepView; chooseTransition advances the phase", async () => {
   const fx = fixture();
-  fx.faux.setResponses([fauxAssistantMessage("plan: do X"), fauxAssistantMessage("coded X")]);
+  fx.faux.setResponses([...governedPlanTurn(), fauxAssistantMessage("coded X")]);
 
   const core = createOrchestrator({ buildConfig: fx.buildConfig, ledgerSink: fx.sink });
   core.beginStepping("implement X");
@@ -320,7 +348,7 @@ test("showCost perStep sums to totalCost", async () => {
 
 test("headless orchestrator shares limits across pipeline and manual workflow work", async () => {
   const fx = fixture();
-  const controller = new SessionLimitController({ maxTurns: 4 });
+  const controller = new SessionLimitController({ maxTurns: 5 });
   const verdict: Verdict = { status: "approved", issues: [], summary: "ok" };
   approveScenario(fx, verdict);
   const core = createOrchestrator({
@@ -330,16 +358,16 @@ test("headless orchestrator shares limits across pipeline and manual workflow wo
   });
 
   await core.runPipeline("first task");
-  expect(controller.snapshot().admittedTurns).toBe(4);
+  expect(controller.snapshot().admittedTurns).toBe(5);
   core.beginStepping("second task");
   await expect(core.stepOnce()).rejects.toBeInstanceOf(SessionLimitError);
-  expect(fx.faux.state.callCount).toBe(4);
-  expect(core.showCost().sessionLimits?.admittedTurns).toBe(4);
+  expect(fx.faux.state.callCount).toBe(5);
+  expect(core.showCost().sessionLimits?.admittedTurns).toBe(5);
 });
 
 test("run_step tool begins a run from a task and reports the offered transitions", async () => {
   const fx = fixture();
-  fx.faux.setResponses([fauxAssistantMessage("plan: do X")]);
+  fx.faux.setResponses(governedPlanTurn());
 
   const core = createOrchestrator({ buildConfig: fx.buildConfig, ledgerSink: fx.sink });
   const tools = buildOrchestratorTools(core);
@@ -487,7 +515,7 @@ test("reconstructed provider-limit resume keeps committed stages and reruns only
   const run = initial.start({ requestKey: "provider-restart", task: "work", mode: "auto" });
   expect((await initial.resume(run.id)).status).toBe("paused");
   expect(initial.report(run.id).stageMetrics.map((metric) => metric.stage)).toEqual(["plan"]);
-  expect(fx.faux.state.callCount).toBe(1);
+  expect(fx.faux.state.callCount).toBe(2);
 
   const reconstructed = createOrchestratorControlPlane({
     ...dependencies,
@@ -499,7 +527,7 @@ test("reconstructed provider-limit resume keeps committed stages and reruns only
     "code:1",
     "review:1",
   ]);
-  expect(fx.faux.state.callCount).toBe(4);
+  expect(fx.faux.state.callCount).toBe(5);
 });
 
 test("automatic provider retries back off and stop at the durable configured ceiling", async () => {

@@ -38,6 +38,12 @@ export interface VerdictIssue {
   what: string;
 }
 
+export interface ReviewCoverage {
+  surfaceId: string;
+  contractIds: string[];
+  evidence: string[];
+}
+
 /**
  * The structured verdict a reviewer submits via the `submit_verdict` tool call
  * and the pipeline strictly re-validates. Structured-and-schema-checked is
@@ -51,6 +57,8 @@ export interface Verdict {
   status: VerdictStatus;
   issues: VerdictIssue[];
   summary: string;
+  /** Exact resolved governance matrix reviewed in this round. */
+  coverage?: ReviewCoverage[];
 }
 
 /**
@@ -77,14 +85,58 @@ export type Complexity = "trivial" | "medium" | "complex";
  */
 export type SecuritySurface = "none" | "low" | "elevated";
 
+export type ContractCoverageStatus = "covered" | "not_applicable" | "research_required";
+
+export interface SurfaceAnalysisEntry {
+  id: string;
+  name: string;
+  rationale: string;
+}
+
+export interface ContractCoverage {
+  surfaceId: string;
+  status: ContractCoverageStatus;
+  contractIds: string[];
+  evidence: string[];
+  rationale: string;
+}
+
+export interface SurfaceAnalysis {
+  projectType: string;
+  surfaces: SurfaceAnalysisEntry[];
+  coverage: ContractCoverage[];
+}
+
+/** Optional stricter limits for untrusted Planner artifacts. Zero disables each user limit. */
+export interface SurfaceAnalysisLimits {
+  maxItems: number;
+  maxTextBytes: number;
+  maxAggregateBytes: number;
+  maxDepth: number;
+}
+
+export interface ResearchProvenance {
+  destination: string;
+  queryId: string;
+  timestamp: string;
+  summary: string;
+  hash: string;
+}
+
+export interface ResearchDispatchIntent {
+  effectId: string;
+  destination: string;
+  queryHash: string;
+  surfaceIds: string[];
+}
+
 /**
  * The structured plan a planner submits via the `submit_plan` tool call and the
  * pipeline strictly re-validates. Structured-and-schema-checked is stronger than
  * parsing the free-text plan: `complexity` must be one of three literals,
- * `securitySurface` one of three literals, and `summary` a string. UNLIKE the
- * verdict, the plan is SOFT -- an absent `submit_plan` call leaves
- * `PipelineResult.complexity` undefined and the run proceeds on the free-text
- * plan; only a MALFORMED submission is a hard failure. The tool's TypeBox
+ * `securitySurface` one of three literals, and `summary` a string. Like the
+ * verdict, the plan is mandatory: an absent or malformed submission is a hard
+ * failure before coding. The tool's TypeBox
  * `parameters` schema is deliberately permissive at the enum leaves so
  * `parsePlan` in `plan.ts` stays the authoritative gate.
  */
@@ -93,7 +145,8 @@ export interface Plan {
   securitySurface: SecuritySurface;
   summary: string;
   /** Exact applicable contract rules, or faithful labeled compression when oversized. */
-  contractRequirements?: string[];
+  contractRequirements: string[];
+  surfaceAnalysis: SurfaceAnalysis;
 }
 
 /**
@@ -118,11 +171,9 @@ export interface RoleSpec {
  * is ABSENT the pipeline is byte-for-byte its prior self: each turn runs on its
  * `RoleSpec.model` over `config.models`.
  *
- * `defaultComplexity` (default `'medium'`) does double duty: it routes the
- * PRE-complexity roles -- the planner, whose model must be chosen before the
- * plan reveals a complexity -- AND it is the fallback for every later role when
- * the planner never submits a complexity (an absent `submit_plan` is a SOFT
- * signal, not an error). A profile's planner (pre-complexity) row should
+ * `defaultComplexity` (default `'medium'`) routes the pre-complexity planner,
+ * whose model must be chosen before the plan reveals a complexity. A profile's
+ * planner row should
  * therefore be kept complexity-INVARIANT: the planner is always resolved on
  * `defaultComplexity`, so varying its per-complexity cells has no effect.
  *
@@ -194,8 +245,12 @@ export interface PipelineConfig {
   models: Models;
   task: string;
   maxRounds: number;
+  /** Optional Planner governance limits; every zero value disables that limit. */
+  surfaceAnalysisLimits?: SurfaceAnalysisLimits;
   roles: {
     planner?: RoleSpec;
+    /** Optional bounded fact-finding role used before Coder for research-required coverage. */
+    researcher?: RoleSpec;
     coder: RoleSpec;
     reviewer: RoleSpec;
     /**
@@ -226,6 +281,8 @@ export interface PipelineConfig {
    * pipeline. See `WorkflowDefaults`.
    */
   defaults?: WorkflowDefaults;
+  /** Secret-free resolved values and their winning precedence tier. */
+  effectiveConfig?: Readonly<Record<string, { value: string | number | boolean; source: string }>>;
   /** Shared generation-call accounting for every role in this workflow session. */
   sessionLimitController?: SessionLimitController;
   /** Retention and byte limits for all durable state created by this run. */
@@ -270,18 +327,15 @@ export interface PipelineResult {
   verdicts: Verdict[];
   runIds: string[];
   /**
-   * The planner's structured complexity tier, when it called `submit_plan`.
-   * `undefined` means there was no planner, or the planner ran but never called
-   * `submit_plan` -- a SOFT signal, absence is not an error (a MALFORMED call,
-   * by contrast, is a thrown `malformed_plan`). Present for a later
+   * The planner's structured complexity tier. `undefined` means there was no
+   * planner; a configured planner that omits `submit_plan` fails the run.
+   * Present for a later
    * complexity-aware routing follow-on; nothing in this unit reads it.
    */
   complexity?: Complexity;
   /**
-   * The planner's structured security surface, when it called `submit_plan`.
-   * `undefined` means there was no planner, or the planner ran but never called
-   * `submit_plan` -- a SOFT signal, absence is not an error (a MALFORMED call,
-   * by contrast, is a thrown `malformed_plan`). `elevated` is what arms the
+   * The planner's structured security surface. `undefined` means there was no
+   * planner; omission by a configured planner is a hard failure. `elevated` arms the
    * conditional Security phase; this field reports the submitted value back to
    * the caller regardless of whether that phase ran.
    */
@@ -313,15 +367,14 @@ export type PipelineOutcome = "approved" | "decomposition_required";
  * - `missing_verdict` / `malformed_verdict`: the reviewer's `submit_verdict`
  *   tool submission was absent (no call) or failed strict validation -- a hard
  *   failure, never a silent pass.
- * - `malformed_plan`: the planner's `submit_plan` submission failed strict
- *   validation (bad `complexity` literal or non-string `summary`) -- a hard
- *   failure. There is deliberately NO `missing_plan`: an ABSENT plan is a SOFT
- *   undefined-complexity, not an error, because complexity is an optimization
- *   signal the run does not need for correctness.
+ * - `missing_plan` / `malformed_plan`: the planner omitted the mandatory
+ *   governance artifact or its submission failed strict validation.
  * - `invalid_max_rounds` / `empty_task`: a caller precondition failed before any
  *   role ran.
  */
 export type OrchestrationErrorCode =
+  | "missing_plan"
+  | "requirements_unresolved"
   | "missing_verdict"
   | "malformed_verdict"
   | "malformed_plan"
@@ -358,7 +411,7 @@ export class OrchestrationError extends Error {
  * read via `toPipelineResult`. This enum is the single source of truth for the
  * step graph that used to live as inline control flow inside `runPipeline`.
  */
-export type WorkflowPhase = "plan" | "security" | "code" | "review" | "done";
+export type WorkflowPhase = "plan" | "research" | "security" | "code" | "review" | "done";
 
 /**
  * The kind of edge a driver can take out of a completed step.
@@ -411,6 +464,12 @@ export interface WorkflowState {
   planSummary: string;
   /** Applicable contract rules from the structured planner submission. */
   contractRequirements: string[];
+  /** Planner governance artifact retained across code/review and durable resume. */
+  surfaceAnalysis?: SurfaceAnalysis;
+  /** Normalized, bounded research metadata; provider payloads are never retained. */
+  researchProvenance?: ResearchProvenance[];
+  /** Present only while a coordinator-owned research effect is in flight. */
+  researchIntent?: ResearchDispatchIntent;
   /** The most recent coder output, fed to the reviewer that follows it. */
   changeSummary: string;
   /** The planner's structured complexity tier, when it submitted one. */

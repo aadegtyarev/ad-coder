@@ -8,6 +8,7 @@ import type { Api, Model, Models, TextContent } from "@earendil-works/pi-ai";
 import { closeOpenAICodexWebSocketSessions } from "@earendil-works/pi-ai/api/openai-codex-responses";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { assertCredentialPathOutsideProject, FileCredentialStore } from "./auth/credential-store";
+import { resolveBuildInfo } from "./build-info";
 import { runAuthCommand } from "./cli/auth";
 import { runConsole } from "./cli/console";
 import { driveWorkflow, silentNoopWarning } from "./cli/drive";
@@ -1214,8 +1215,7 @@ async function consoleCommand(
   json: boolean,
 ): Promise<void> {
   if (positionals[1] !== undefined) fail("the console command accepts no positional arguments");
-  const targetDirArg = flags["--target-dir"];
-  if (targetDirArg === undefined) fail("--target-dir is required for the console command");
+  const targetDirArg = flags["--target-dir"] ?? process.cwd();
   const maxInputBytes = parseMaxInputBytesFlag(flags["--max-input-bytes"]);
   const sessionLimits = parseSessionLimits(flags);
   const session = await startOrchestrator({
@@ -1366,6 +1366,22 @@ const PIPELINE_OPTIONS: CommandDefinition["options"] = [
 
 const COMMANDS: readonly CommandDefinition[] = [
   {
+    name: "about",
+    description: "Show package version, source revision, and linked-development state.",
+    positionals: [],
+    options: [{ name: "--json", description: "Emit stable JSON." }],
+    run: async ({ positionals, booleans }) => {
+      if (positionals[1] !== undefined) fail("the about command accepts no positional arguments");
+      const info = resolveBuildInfo();
+      process.stdout.write(
+        booleans["--json"] === true
+          ? `${JSON.stringify(info)}\n`
+          : `ad-coder ${info.version}\nrevision: ${info.revision ?? "unknown"}\nlinked development: ${info.linkedDevelopment ? "yes" : "no"}\n`,
+      );
+      await Promise.resolve();
+    },
+  },
+  {
     name: "auth",
     description: "Manage persistent OpenAI Codex authentication.",
     positionals: [{ name: "<status|login|logout>", description: "Authentication action." }],
@@ -1403,6 +1419,34 @@ const COMMANDS: readonly CommandDefinition[] = [
         json: booleans["--json"] === true,
         ...(method !== undefined && { method }),
       });
+    },
+  },
+  {
+    name: "config",
+    description: "Show effective secret-free configuration and precedence sources.",
+    positionals: [{ name: "<show>", description: "Show resolved configuration." }],
+    options: [
+      ...PIPELINE_OPTIONS.map((option) =>
+        option.name === "--target-dir" ? { ...option, required: false } : option,
+      ),
+      { name: "--json", description: "Emit stable JSON." },
+    ],
+    run: async ({ positionals, flags, booleans }) => {
+      if (positionals[1] !== "show" || positionals[2] !== undefined)
+        fail("config requires exactly: config show");
+      const target = flags["--target-dir"] ?? process.cwd();
+      const config = resolvePipelineConfig({
+        ...buildConfigOptions(target, flags),
+        task: "config show",
+      });
+      const effective = config.effectiveConfig ?? {};
+      if (booleans["--json"] === true) {
+        process.stdout.write(`${JSON.stringify(effective)}\n`);
+      } else {
+        for (const [name, entry] of Object.entries(effective))
+          process.stdout.write(`${name}=${entry.value} (${entry.source})\n`);
+      }
+      await Promise.resolve();
     },
   },
   {
@@ -1485,7 +1529,16 @@ const COMMANDS: readonly CommandDefinition[] = [
     description: "Chat with the persistent orchestrator session.",
     positionals: [],
     options: [
-      ...PIPELINE_OPTIONS,
+      ...PIPELINE_OPTIONS.map((option) =>
+        option.name === "--target-dir"
+          ? {
+              ...option,
+              required: false,
+              description:
+                "Project directory; defaults to invocation cwd; ~/ is user-home relative.",
+            }
+          : option,
+      ),
       { name: "--json", description: "Write one JSON record per completed turn." },
       {
         name: "--max-input-bytes",

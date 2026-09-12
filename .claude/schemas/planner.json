@@ -1,0 +1,79 @@
+{
+  "type": "object",
+  "properties": {
+    "complexity": { "type": "string", "enum": ["trivial", "medium", "complex"] },
+    "security_surface": { "type": "string", "enum": ["none", "low", "elevated"] },
+    "summary": { "type": "string" },
+    "surface_analysis": {
+      "type": "object",
+      "properties": {
+        "project_type": { "type": "string" },
+        "surfaces": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$" },
+              "name": { "type": "string" },
+              "change": { "type": "string" },
+              "contracts": { "type": "array", "maxItems": 10, "items": { "type": "string", "maxLength": 500 } },
+              "principles": { "type": "array", "maxItems": 10, "items": { "type": "string", "maxLength": 500 } },
+              "coverage": { "type": "string", "enum": ["covered", "not_applicable", "research_required", "contract_candidate", "resolved"] },
+              "evidence": { "type": "array", "minItems": 1, "maxItems": 10, "items": { "type": "string", "maxLength": 700 } },
+              "resolution": { "type": "string" }
+            },
+            "required": ["id", "name", "change", "contracts", "principles", "coverage", "evidence", "resolution"],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": ["project_type", "surfaces"],
+      "additionalProperties": false
+    },
+    "steps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "what": { "type": "string" },
+          "files": { "type": "array", "items": { "type": "string" } },
+          "acceptance": { "type": "string" },
+          "user_facing": { "type": "boolean" }
+        },
+        "required": ["what", "files", "acceptance", "user_facing"],
+        "additionalProperties": false
+      }
+    },
+    "risks": { "type": "array", "items": { "type": "string" } },
+    "conflicts": { "type": "array", "items": { "type": "string" } },
+    "codebase_context": {
+      "type": "object",
+      "properties": {
+        "stack": { "type": "string" },
+        "conventions": { "type": "string" },
+        "relevant_files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": { "type": "string" },
+              "role": { "type": "string" },
+              "note": { "type": "string" }
+            },
+            "required": ["path", "role", "note"],
+            "additionalProperties": false
+          }
+        },
+        "test_command": { "type": "string" },
+        "test_command_scoped": { "type": ["string", "null"] },
+        "run_command": { "type": "string" }
+      },
+      "required": ["stack", "conventions", "relevant_files", "test_command", "test_command_scoped", "run_command"],
+      "additionalProperties": false
+    }
+  },
+  "required": ["complexity", "security_surface", "summary", "surface_analysis", "steps", "risks", "conflicts", "codebase_context"],
+  "additionalProperties": false
+}

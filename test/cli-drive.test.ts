@@ -235,7 +235,7 @@ test("auto:true reproduces runPipeline's approved/rounds/verdicts on the same sc
   }
 });
 
-test("a silent no-op turn writes the warning to the error stream", async () => {
+test("a silent no-op turn fails with an actionable typed error", async () => {
   const fx = fixture();
   const coder = fx.role("coder", "You code.");
   const reviewer = reviewerRole(fx);
@@ -248,16 +248,18 @@ test("a silent no-op turn writes the warning to the error stream", async () => {
   const output = new Capture();
   const error = new Capture();
 
-  await driveWorkflow({
-    session,
-    ledgerSink,
-    auto: true,
-    input: Readable.from(""),
-    output,
-    error,
-  });
+  await expect(
+    driveWorkflow({
+      session,
+      ledgerSink,
+      auto: true,
+      input: Readable.from(""),
+      output,
+      error,
+    }),
+  ).rejects.toMatchObject({ code: "empty_turn" });
 
-  expect(error.text()).toContain("no assistant text");
+  expect(error.text()).toContain("empty_turn");
   expect(error.text()).toContain("codex login");
 });
 

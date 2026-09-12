@@ -9,6 +9,8 @@ Security decisions the operator declared for ad-coder. A violation is always blo
 - 2026-09-12: Ordinary use of already-authorized tools is accepted existing
   authority and does not alone elevate Security; newly introduced input,
   persistence, credential, permission, execution, or outbound surfaces do.
+- 2026-09-12: Research sends only bounded questions and non-secret facts through
+  explicitly configured tools; destinations and provenance are visible and persisted.
 
 ## Accepted risks
 

@@ -1,4 +1,5 @@
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 
 /** Why a targetDir was rejected. A discriminant the caller can branch on. */
@@ -10,6 +11,16 @@ export type RunnerErrorCode =
   | "unsafe_ledger_dir"
   | "tool_name_collision"
   | "diff_metric_failed";
+
+/** A provider settled a failed turn without usable assistant output. */
+export class EmptyTurnError extends Error {
+  override readonly name = "EmptyTurnError";
+  readonly code = "empty_turn" as const;
+
+  constructor(readonly runId: string) {
+    super("the provider returned a failed empty turn; verify authentication and retry");
+  }
+}
 
 /**
  * Raised when a runner precondition fails before any harness is built. Carries
@@ -150,7 +161,11 @@ export function resolveTargetDir(input: string | undefined): string {
   if (input === undefined || input.trim() === "") {
     throw new RunnerError("missing", String(input ?? ""), "targetDir must be a non-empty path");
   }
-  const resolved = path.resolve(input);
+  const expanded =
+    input === "~" || input.startsWith(`~${path.sep}`)
+      ? path.join(os.homedir(), input.slice(1))
+      : input;
+  const resolved = path.resolve(expanded);
   let real: string;
   try {
     real = fs.realpathSync(resolved);

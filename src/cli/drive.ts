@@ -6,6 +6,7 @@ import { assertTransitionOffered } from "../orchestration/transition-guard";
 import type { AvailableTransition, PipelineResult } from "../orchestration/types";
 import { ProjectOperationsError } from "../project-operations/errors";
 import { RunCoordinator, type RunCoordinatorOptions } from "../project-operations/run-coordinator";
+import { EmptyTurnError } from "../runner/errors";
 
 export type { DriveErrorCode } from "../orchestration/transition-guard";
 // The transition guard (DriveError/DriveErrorCode/assertTransitionOffered) lives
@@ -24,8 +25,8 @@ export { assertTransitionOffered, DriveError } from "../orchestration/transition
 export function silentNoopWarning(text: string, cost: number): string | undefined {
   if (text.trim() === "" && cost === 0) {
     return (
-      "ad-coder: warning: the turn produced no assistant text and cost nothing; " +
-      "the provider may need authentication (e.g. codex login) or the model returned nothing\n"
+      "ad-coder: empty_turn: the provider returned no usable output; " +
+      "verify authentication (for example, codex login) and retry\n"
     );
   }
   return undefined;
@@ -225,6 +226,7 @@ export async function driveWorkflow(params: DriveWorkflowParams): Promise<Pipeli
         const warning = silentNoopWarning(result.text, stepCost);
         if (warning !== undefined) {
           error.write(warning);
+          throw new EmptyTurnError(result.runId);
         }
         costBefore = ledgerSink.records().length;
       },

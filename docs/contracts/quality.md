@@ -11,3 +11,10 @@ Rules for the project's own code quality. A violation is always blocking.
   `config.md`): tune `biome.json` — including a scoped `overrides` entry with a
   stated reason — rather than sprinkling inline `biome-ignore` suppressions. A
   suppression that must be inline carries a one-line reason.
+- 2026-09-12: Install and release claims require a bounded temporary smoke of
+  the produced artifact, with integrity checked and no global installation mutation.
+
+## Sources
+
+The install smoke runs without lifecycle scripts or ambient release credentials,
+uses locked inputs and restricted network access, and cleans its temporary state.
