@@ -23,6 +23,8 @@ import { Ledger, MemoryLedgerSink } from "./ledger/ledger";
 import {
   createOrchestratorControlPlane,
   type DecisionRequest,
+  MAX_AUTOMATIC_RETRY_ATTEMPTS,
+  MAX_RETRY_DELAY_MS,
   type StartRunInput,
   triageControlPlaneTask,
 } from "./orchestration/control-plane";
@@ -529,6 +531,8 @@ function parseProjectStoreConfig(value: string | undefined): ProjectStoreConfig 
         "maxActiveRootRuns",
         "maxProjectTurns",
         "maxProjectCostUsd",
+        "retryIntervalMs",
+        "maxAutomaticRetryAttempts",
       ]);
       if (Object.keys(controlObject).some((key) => !controlAllowed.has(key)))
         fail("--project-store-config contains an unknown projectOperations.controlPlane setting");
@@ -545,11 +549,27 @@ function parseProjectStoreConfig(value: string | undefined): ProjectStoreConfig 
         "maxQueuedRootRuns",
         "maxActiveRootRuns",
         "maxProjectTurns",
+        "retryIntervalMs",
+        "maxAutomaticRetryAttempts",
       ] as const) {
         const setting = controlObject[key];
         if (setting !== undefined && (!Number.isSafeInteger(setting) || (setting as number) < 0))
           fail(`invalid --project-store-config setting: projectOperations.controlPlane.${key}`);
       }
+      if (
+        controlObject.retryIntervalMs !== undefined &&
+        (controlObject.retryIntervalMs as number) > MAX_RETRY_DELAY_MS
+      )
+        fail(
+          "invalid --project-store-config setting: projectOperations.controlPlane.retryIntervalMs",
+        );
+      if (
+        controlObject.maxAutomaticRetryAttempts !== undefined &&
+        (controlObject.maxAutomaticRetryAttempts as number) > MAX_AUTOMATIC_RETRY_ATTEMPTS
+      )
+        fail(
+          "invalid --project-store-config setting: projectOperations.controlPlane.maxAutomaticRetryAttempts",
+        );
       const projectCost = controlObject.maxProjectCostUsd;
       if (
         projectCost !== undefined &&
@@ -781,6 +801,7 @@ async function operationsCommand(
           ...buildConfigOptions(targetArg, flags),
         });
         pipeline.sessionLimitController = limits;
+        pipeline.coordinator = { ...pipeline.coordinator, runId: record.id };
         const result = await runPipeline(pipeline);
         const changed = Bun.spawnSync(["git", "diff", "--name-only", "HEAD"], {
           cwd: targetDir,
@@ -800,7 +821,7 @@ async function operationsCommand(
           operations: {
             filesChanged: reviewedPaths,
             checks: [],
-            checkpointPath: path.join(store.layout.runs, `control-${record.id}.json`),
+            checkpointPath: path.join(store.layout.runs, `coordinator-${record.id}.json`),
             backlog: { destination: "skipped", count: 0 },
           },
         };

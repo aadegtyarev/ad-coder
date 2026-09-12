@@ -8,7 +8,8 @@ export type RunnerErrorCode =
   | "not_a_directory"
   | "invalid_run_id"
   | "unsafe_ledger_dir"
-  | "tool_name_collision";
+  | "tool_name_collision"
+  | "diff_metric_failed";
 
 /**
  * Raised when a runner precondition fails before any harness is built. Carries
@@ -27,6 +28,65 @@ export class RunnerError extends Error {
     this.code = code;
     this.path = offending;
   }
+}
+
+/** Safe, bounded provider-capacity signal used by durable orchestration. */
+export class ProviderLimitError extends Error {
+  override readonly name = "ProviderLimitError";
+  readonly code = "provider_limit" as const;
+
+  constructor(readonly retryAfterMs?: number) {
+    super("provider capacity is temporarily exhausted");
+  }
+}
+
+export const MAX_PROVIDER_RETRY_HINT_MS = 86_400_000;
+
+const PROVIDER_LIMIT_CODES = new Set([
+  "rate_limit_exceeded",
+  "rate_limit",
+  "quota_exceeded",
+  "insufficient_quota",
+  "resource_exhausted",
+]);
+
+/** Convert only bounded structured provider fields; raw messages and bodies are ignored. */
+export function providerLimitFrom(
+  error: unknown,
+  nowMs = Date.now(),
+): ProviderLimitError | undefined {
+  if (error instanceof ProviderLimitError) return error;
+  if (error === null || typeof error !== "object") return undefined;
+  const value = error as Record<string, unknown>;
+  const status = value.status ?? value.statusCode;
+  const rawCode = value.code;
+  if (status !== 429 && !(typeof rawCode === "string" && PROVIDER_LIMIT_CODES.has(rawCode))) {
+    return undefined;
+  }
+  const millisecondHint = value.retryAfterMs ?? value.retry_after_ms;
+  const secondHint = value.retryAfterSeconds ?? value.retry_after;
+  const resetAtMs = value.resetAtMs ?? value.reset_at_ms;
+  let retryAfterMs: number | undefined;
+  if (
+    typeof millisecondHint === "number" &&
+    Number.isSafeInteger(millisecondHint) &&
+    millisecondHint > 0 &&
+    millisecondHint <= MAX_PROVIDER_RETRY_HINT_MS
+  ) {
+    retryAfterMs = millisecondHint;
+  } else if (typeof secondHint === "number" && Number.isFinite(secondHint) && secondHint > 0) {
+    const converted = Math.ceil(secondHint * 1_000);
+    if (Number.isSafeInteger(converted) && converted <= MAX_PROVIDER_RETRY_HINT_MS)
+      retryAfterMs = converted;
+  } else if (
+    typeof resetAtMs === "number" &&
+    Number.isSafeInteger(resetAtMs) &&
+    resetAtMs > nowMs &&
+    resetAtMs - nowMs <= MAX_PROVIDER_RETRY_HINT_MS
+  ) {
+    retryAfterMs = resetAtMs - nowMs;
+  }
+  return new ProviderLimitError(retryAfterMs);
 }
 
 /**

@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -45,7 +46,12 @@ interface Fixture {
   models: ReturnType<typeof createModels>;
   model: Model<Api>;
   targetDir: string;
-  role(name: string, systemPrompt: string, activeToolNames?: string[]): RoleSpec;
+  role(
+    name: string,
+    systemPrompt: string,
+    activeToolNames?: string[],
+    cacheRetention?: "none" | "short" | "long",
+  ): RoleSpec;
 }
 
 /** A fresh faux provider + models + temp targetDir; one queue serves every role. */
@@ -63,7 +69,12 @@ function fixture(): Fixture {
     models,
     model,
     targetDir,
-    role(name, systemPrompt, activeToolNames = ["bash", "read", "write", "edit"]) {
+    role(
+      name,
+      systemPrompt,
+      activeToolNames = ["bash", "read", "write", "edit"],
+      cacheRetention = "none",
+    ) {
       const role: Role = defineRole(
         {
           name,
@@ -71,7 +82,7 @@ function fixture(): Fixture {
           modelId: model.id,
           systemPrompt,
           activeToolNames,
-          cacheRetention: "none",
+          cacheRetention,
           contextBudget: { ...BUDGET },
         },
         model,
@@ -189,6 +200,25 @@ function reviewerTurn(args: Verdict | Record<string, unknown>): FauxResponseStep
     fauxAssistantMessage(fauxToolCall(SUBMIT_VERDICT_TOOL_NAME, args)),
     fauxAssistantMessage("review complete"),
   ];
+}
+
+function responseWithUsage(
+  response: ReturnType<typeof fauxAssistantMessage>,
+  freshInput: number,
+  cachedInput: number,
+  output: number,
+): ReturnType<typeof fauxAssistantMessage> {
+  return {
+    ...response,
+    usage: {
+      input: freshInput,
+      output,
+      cacheRead: cachedInput,
+      cacheWrite: 0,
+      totalTokens: freshInput + cachedInput + output,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+  };
 }
 
 test("parseVerdict accepts a well-formed verdict", () => {
@@ -384,6 +414,117 @@ test("one round approve returns approved:true rounds:1", async () => {
   expect(result.rounds).toBe(1);
   expect(result.verdicts).toHaveLength(1);
   expect(result.verdicts[0]?.status).toBe("approved");
+  expect(result.stageMetrics?.map((metric) => metric.stage)).toEqual([
+    "plan",
+    "code:1",
+    "review:1",
+  ]);
+  for (const metric of result.stageMetrics ?? []) {
+    expect(metric.input).toBe(metric.freshInput + metric.cachedInput);
+    expect(metric.readFiles).toEqual([]);
+    expect(metric.contextStrategy).toBe("auto");
+  }
+});
+
+test("pipeline aggregates exact multi-response stage observations in stable order", async () => {
+  const fx = fixture();
+  execFileSync("git", ["init", "-q"], { cwd: fx.targetDir });
+  execFileSync("git", ["config", "user.name", "Test"], { cwd: fx.targetDir });
+  execFileSync("git", ["config", "user.email", "test@example.invalid"], {
+    cwd: fx.targetDir,
+  });
+  fs.writeFileSync(path.join(fx.targetDir, "tracked.txt"), "base\n");
+  execFileSync("git", ["add", "tracked.txt"], { cwd: fx.targetDir });
+  execFileSync("git", ["commit", "-qm", "base"], { cwd: fx.targetDir });
+  const plan = { complexity: "medium", securitySurface: "none", summary: "plan" } as const;
+  const verdict: Verdict = { status: "approved", issues: [], summary: "ok" };
+  fx.faux.setResponses([
+    responseWithUsage(
+      fauxAssistantMessage([
+        fauxToolCall("read", { path: "tracked.txt" }, { id: "plan-read-1" }),
+        fauxToolCall("read", { path: "tracked.txt" }, { id: "plan-read-2" }),
+        fauxToolCall(SUBMIT_PLAN_TOOL_NAME, plan, { id: "plan-submit" }),
+      ]),
+      10,
+      3,
+      2,
+    ),
+    responseWithUsage(fauxAssistantMessage("planned"), 4, 5, 6),
+    responseWithUsage(
+      fauxAssistantMessage(
+        fauxToolCall("write", { path: "tracked.txt", content: "changed\n" }, { id: "write" }),
+      ),
+      7,
+      11,
+      13,
+    ),
+    responseWithUsage(fauxAssistantMessage("coded"), 17, 19, 23),
+    responseWithUsage(
+      fauxAssistantMessage([
+        fauxToolCall("read", { path: "tracked.txt" }, { id: "review-read" }),
+        fauxToolCall(SUBMIT_VERDICT_TOOL_NAME, verdict, { id: "review-submit" }),
+      ]),
+      29,
+      31,
+      37,
+    ),
+    responseWithUsage(fauxAssistantMessage("reviewed"), 41, 43, 47),
+  ]);
+
+  const result = await runPipeline({
+    targetDir: fx.targetDir,
+    models: fx.models,
+    task: "implement metrics",
+    maxRounds: 1,
+    compaction: { mode: "disabled-then-halt" },
+    roles: {
+      planner: fx.role("planner", "You plan.", ["read", SUBMIT_PLAN_TOOL_NAME], "short"),
+      coder: fx.role("coder", "You code.", ["read", "write"], "short"),
+      reviewer: fx.role("reviewer", "You review.", ["read", SUBMIT_VERDICT_TOOL_NAME], "short"),
+    },
+  });
+  const cumulativeDiff = execFileSync("git", ["diff", "--no-ext-diff", "--no-textconv"], {
+    cwd: fx.targetDir,
+  }).byteLength;
+
+  expect(result.stageMetrics).toEqual([
+    {
+      stage: "plan",
+      input: 903,
+      cachedInput: 164,
+      freshInput: 739,
+      output: 36,
+      readFiles: ["tracked.txt"],
+      readFilesTotal: 1,
+      readFilesTruncated: 0,
+      diffBytes: 0,
+      contextStrategy: "disabled-then-halt",
+    },
+    {
+      stage: "code:1",
+      input: 585,
+      cachedInput: 13,
+      freshInput: 572,
+      output: 15,
+      readFiles: [],
+      readFilesTotal: 0,
+      readFilesTruncated: 0,
+      diffBytes: cumulativeDiff,
+      contextStrategy: "disabled-then-halt",
+    },
+    {
+      stage: "review:1",
+      input: 791,
+      cachedInput: 118,
+      freshInput: 673,
+      output: 25,
+      readFiles: ["tracked.txt"],
+      readFilesTotal: 1,
+      readFilesTruncated: 0,
+      diffBytes: cumulativeDiff,
+      contextStrategy: "disabled-then-halt",
+    },
+  ]);
 });
 
 test("two rounds: reviewer round-1 issue is threaded into the coder round-2 prompt", async () => {
@@ -485,6 +626,29 @@ test("a shared ledger sink carries distinct role/step records per round", async 
   expect(seen).toContain("coder/code:2");
   expect(seen).toContain("reviewer/review:1");
   expect(seen).toContain("reviewer/review:2");
+  expect(result.stageMetrics.map((metric) => metric.stage)).toEqual([
+    "plan",
+    "code:1",
+    "review:1",
+    "code:2",
+    "review:2",
+  ]);
+  for (const metric of result.stageMetrics) {
+    const records = sink.records().filter((record) => record.step === metric.stage);
+    const freshInput = records.reduce((total, record) => total + record.usage.input, 0);
+    const cachedInput = records.reduce((total, record) => total + record.usage.cacheRead, 0);
+    expect(metric).toMatchObject({
+      freshInput,
+      cachedInput,
+      input: freshInput + cachedInput,
+      output: records.reduce((total, record) => total + record.usage.output, 0),
+      readFiles: [],
+      readFilesTotal: 0,
+      readFilesTruncated: 0,
+      diffBytes: 0,
+      contextStrategy: "auto",
+    });
+  }
 });
 
 test("a reviewer that never calls submit_verdict throws OrchestrationError missing_verdict", async () => {

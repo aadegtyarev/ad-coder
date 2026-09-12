@@ -86,10 +86,12 @@ export type {
   DecisionRequest,
   DurableRunRecord,
   ExternalLimit,
+  LiveRetryCoordinatorOptions,
   PipelineExecution,
   ProviderAvailability,
   PublicationSummary,
   ResumeRunInput,
+  RetryCoordinator,
   RunBreakpoint,
   RunMode,
   RunOperationalSummary,
@@ -105,6 +107,7 @@ export {
   CONTROL_PLANE_TOOL_NAMES,
   createOrchestratorControlPlane,
   DEFAULT_CONTROL_PLANE_CONFIG,
+  LiveRetryCoordinator,
   OrchestratorControlPlane,
   triageControlPlaneTask,
 } from "./orchestration/control-plane";
@@ -149,6 +152,7 @@ export type {
   PipelineOutcome,
   PipelineResult,
   PipelineRouting,
+  PipelineStageMetrics,
   Plan,
   RoleSpec,
   RoundRecord,
@@ -339,11 +343,16 @@ export { DEFAULT_CONTEXT_WINDOW, parseRegistryConfig } from "./registry/validate
 export type { Role, RoleRunDeps } from "./role";
 export { defineRole, resolveRoleModel, toHarnessOptions } from "./role";
 export type { RunnerErrorCode } from "./runner/errors";
-export { RunnerError, resolveTargetDir } from "./runner/errors";
+export {
+  ProviderLimitError,
+  providerLimitFrom,
+  RunnerError,
+  resolveTargetDir,
+} from "./runner/errors";
 export type { RoleRunner, RoleRunnerConfig, RunRoleOptions } from "./runner/role-runner";
 export { createRoleRunner } from "./runner/role-runner";
-export type { RunRoleParams, RunRoleResult } from "./runner/runner";
-export { runRole } from "./runner/runner";
+export type { RoleObservations, RunRoleParams, RunRoleResult } from "./runner/runner";
+export { measureSafeGitDiffBytes, runRole } from "./runner/runner";
 export type { Tool } from "./runner/tool";
 export { defineTool } from "./runner/tool";
 export type {

@@ -645,6 +645,12 @@ workflows — one substrate, swappable drivers.
   exposes it. The initial baseline is 450,913 fresh input tokens for the
   2026-09-12 LDO run, but no fresh-input target is an acceptance criterion until
   comparable runs establish one.
+  The baseline telemetry portion is delivered: each completed stage exposes total,
+  cached and fresh input, output, a bounded safe read-path sample/count, streamed
+  cumulative Git diff bytes, and the resolved context strategy. Provider 429/quota
+  exhaustion now pauses the durable run and resumes its existing coordinator
+  checkpoint. Subscription lookup, fallback providers, context shrinking, and the
+  incremental/fallback strategy itself remain explicitly outside this increment.
 - **TUI — the human surface to everything, built for convenience** (Phase 3, after
   the orchestrator). Not a showcase: it EXPOSES the machinery already built,
   clearly and reachably. Chat with the orchestrator (images paste in later, fed to

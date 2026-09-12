@@ -25,6 +25,7 @@ import type {
   Driver,
   PipelineConfig,
   PipelineResult,
+  PipelineStageMetrics,
   RoleSpec,
   StepResult,
   VerdictIssue,
@@ -90,6 +91,11 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
   if (typeof config.task !== "string" || config.task.trim() === "") {
     throw new OrchestrationError("empty_task", "", "task must be a non-empty string");
   }
+  for (const [name, value] of Object.entries(config.observability ?? {})) {
+    if (!Number.isSafeInteger(value) || (value as number) < 0) {
+      throw new TypeError(`observability.${name} must be a non-negative safe integer`);
+    }
+  }
 
   const { targetDir } = config;
   const projectStore = new ProjectStore(config.targetDir, config.projectStoreConfig);
@@ -140,6 +146,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
           ...(config.projectStoreConfig !== undefined && {
             projectStoreConfig: config.projectStoreConfig,
           }),
+          ...(config.observability !== undefined && { observability: config.observability }),
         })
       : createRoleRunner({
           targetDir,
@@ -151,6 +158,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
           ...(config.projectStoreConfig !== undefined && {
             projectStoreConfig: config.projectStoreConfig,
           }),
+          ...(config.observability !== undefined && { observability: config.observability }),
         });
 
   const defaults: ResolvedDefaults = {
@@ -193,7 +201,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     step: string,
     runId: string,
     tools?: Tool[],
-  ): Promise<{ text: string; followUps: FollowUp[] }> => {
+  ): Promise<{ text: string; followUps: FollowUp[]; metrics: PipelineStageMetrics }> => {
     const { model } = selection;
     // A fresh session per run: each role has its own systemPrompt, so sharing a
     // session would leak one role's history and prompt into another.
@@ -217,7 +225,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
             },
             model,
           );
-    await runner.runRole(role, model, prompt, {
+    const run = await runner.runRole(role, model, prompt, {
       runId,
       step,
       session,
@@ -230,7 +238,25 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     // facade to scan the settled transcript.
     const readable = await projectStore.resumeSession(runId, BACKGROUND_CONTEXT);
     try {
-      return { text: await extractFinalText(readable, BACKGROUND_CONTEXT), followUps: [] };
+      const observed = run.observations;
+      return {
+        text: await extractFinalText(readable, BACKGROUND_CONTEXT),
+        followUps: [],
+        metrics: {
+          stage: step,
+          input: observed?.input ?? 0,
+          cachedInput: observed?.cachedInput ?? 0,
+          freshInput: observed?.freshInput ?? 0,
+          output: observed?.output ?? 0,
+          readFiles: [...(observed?.readFiles ?? [])],
+          readFilesTotal: observed?.readFilesTotal ?? 0,
+          readFilesTruncated: observed?.readFilesTruncated ?? 0,
+          diffBytes: observed?.diffBytes ?? 0,
+          contextStrategy:
+            observed?.contextStrategy ??
+            (config.compaction?.mode === "disabled-then-halt" ? "disabled-then-halt" : "auto"),
+        },
+      };
     } finally {
       await readable.close(BACKGROUND_CONTEXT);
     }
@@ -243,7 +269,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     stepName: string,
     runId: string,
     tools: Tool[] = [],
-  ): Promise<{ text: string; followUps: FollowUp[] }> => {
+  ): Promise<{ text: string; followUps: FollowUp[]; metrics: PipelineStageMetrics }> => {
     const enabled =
       spec.role.activeToolNames === undefined ||
       spec.role.activeToolNames.includes(SUBMIT_FOLLOW_UP_TOOL_NAME);
@@ -263,7 +289,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       [...tools, followUpTool],
     );
     if (capture.error !== undefined) throw capture.error;
-    return { text: turn.text, followUps: capture.followUps };
+    return { text: turn.text, followUps: capture.followUps, metrics: turn.metrics };
   };
 
   const initialState = (): WorkflowState => ({
@@ -278,6 +304,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     effective: defaults.preComplexity,
     verdicts: [],
     runIds: [],
+    stageMetrics: [],
     done: false,
     approved: false,
   });
@@ -294,9 +321,14 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     const submitPlanTool = buildSubmitPlanTool(capture, runId);
     const prompt = `${config.task}\n\n${formatPlannerInstruction()}`;
     const selection = pickSelection("planner", planner, state.preComplexity);
-    const { text, followUps } = await runWorkflowTurn(planner, selection, prompt, "plan", runId, [
-      submitPlanTool,
-    ]);
+    const { text, followUps, metrics } = await runWorkflowTurn(
+      planner,
+      selection,
+      prompt,
+      "plan",
+      runId,
+      [submitPlanTool],
+    );
     const runIds = [...state.runIds, runId];
     // A captured error is parsePlan's OrchestrationError, swallowed by the
     // harness into an error tool-result and re-thrown here (HARD malformed_plan).
@@ -328,6 +360,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       planSummary: text,
       contractRequirements,
       runIds,
+      stageMetrics: [...(state.stageMetrics ?? []), metrics],
       effective,
       ...(complexity !== undefined && { complexity }),
       ...(securitySurface !== undefined && { securitySurface }),
@@ -365,7 +398,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       appendContractRequirements(state.planSummary, state.contractRequirements),
     );
     const selection = pickSelection("security", security, state.effective);
-    const { text, followUps } = await runWorkflowTurn(
+    const { text, followUps, metrics } = await runWorkflowTurn(
       security,
       selection,
       prompt,
@@ -376,6 +409,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       ...state,
       securityNotes: text,
       runIds: [...state.runIds, runId],
+      stageMetrics: [...(state.stageMetrics ?? []), metrics],
     };
     const transitions: AvailableTransition[] = [
       { kind: "advance", isDefault: defaults.autoAdvance, toPhase: "code", toRound: state.round },
@@ -401,7 +435,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       appendContractRequirements(handoff, state.contractRequirements),
     );
     const selection = pickSelection("coder", config.roles.coder, state.effective);
-    const { text, followUps } = await runWorkflowTurn(
+    const { text, followUps, metrics } = await runWorkflowTurn(
       config.roles.coder,
       selection,
       context,
@@ -412,6 +446,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       ...state,
       changeSummary: text,
       runIds: [...state.runIds, runId],
+      stageMetrics: [...(state.stageMetrics ?? []), metrics],
     };
     const transitions: AvailableTransition[] = [
       { kind: "advance", isDefault: defaults.autoAdvance, toPhase: "review", toRound: round },
@@ -437,7 +472,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       state.contractRequirements,
     );
     const selection = pickSelection("reviewer", config.roles.reviewer, state.effective);
-    const { text, followUps } = await runWorkflowTurn(
+    const { text, followUps, metrics } = await runWorkflowTurn(
       config.roles.reviewer,
       selection,
       prompt,
@@ -461,6 +496,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       ...state,
       verdicts: [...state.verdicts, verdict],
       runIds: [...state.runIds, runId],
+      stageMetrics: [...(state.stageMetrics ?? []), metrics],
     };
 
     let transitions: AvailableTransition[];
@@ -566,6 +602,7 @@ export function toPipelineResult(state: WorkflowState): PipelineResult {
     rounds: state.verdicts.length,
     verdicts: state.verdicts,
     runIds: state.runIds,
+    stageMetrics: structuredClone(state.stageMetrics ?? []),
     ...(state.complexity !== undefined && { complexity: state.complexity }),
     ...(state.securitySurface !== undefined && { securitySurface: state.securitySurface }),
     ...(state.contractRequirements.length > 0 && {

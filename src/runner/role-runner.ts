@@ -50,6 +50,7 @@ export interface RoleRunnerConfig {
   session?: Session;
   projectStoreConfig?: ProjectStoreConfig;
   sessionLimitController?: SessionLimitController;
+  observability?: { maxReadPaths?: number; maxReadPathBytes?: number };
 }
 
 /**
@@ -78,6 +79,7 @@ export function createRoleRunner(config: RoleRunnerConfig): RoleRunner {
         ...(config.projectStoreConfig !== undefined && {
           projectStoreConfig: config.projectStoreConfig,
         }),
+        ...(config.observability !== undefined && { observability: config.observability }),
         ...(session !== undefined && { session }),
         ...(opts?.runId !== undefined && { runId: opts.runId }),
         ...(opts?.step !== undefined && { step: opts.step }),

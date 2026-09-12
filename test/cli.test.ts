@@ -4,6 +4,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { AuthInteraction, Models } from "@earendil-works/pi-ai";
 import { renderAuthEvent, runAuthCommand } from "../src/cli/auth";
+import type { DurableRunRecord } from "../src/orchestration/control-plane";
+import { ProjectStore } from "../src/project-store/project-store";
 
 const REPO_ROOT = path.resolve(import.meta.dir, "..");
 const CLI = path.join(REPO_ROOT, "src/cli.ts");
@@ -443,6 +445,122 @@ test("operations exposes all LDO actions as one-result JSON commands", () => {
   ]);
   expect(invalid.code).not.toBe(0);
   expect(invalid.stderr).not.toContain("secret payload");
+});
+
+test("operations validates retry policy and emits stage metrics in control reports", () => {
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-control-cli-"));
+  const config = path.join(target, "config.json");
+  const input = path.join(target, "input.json");
+  fs.writeFileSync(
+    input,
+    JSON.stringify({ requestKey: "cli-retry", task: "work", mode: "manual" }),
+  );
+  const writeConfig = (controlPlane: Record<string, number>) => {
+    fs.writeFileSync(config, JSON.stringify({ projectOperations: { controlPlane } }), {
+      mode: 0o600,
+    });
+  };
+  const start = () =>
+    runCli([
+      "operations",
+      "control-start",
+      "--target-dir",
+      target,
+      "--project-store-config",
+      config,
+      "--input",
+      input,
+      "--json",
+    ]);
+
+  writeConfig({ retryIntervalMs: 0, maxAutomaticRetryAttempts: 0 });
+  const disabled = start();
+  expect(disabled.code).toBe(0);
+  const runId = JSON.parse(disabled.stdout).id as string;
+  const store = new ProjectStore(target);
+  const recordPath = path.join(store.layout.runs, `control-${runId}.json`);
+  const persisted = store.readVersionedJson<DurableRunRecord>(recordPath);
+  const stageMetrics = [
+    {
+      stage: "code:1",
+      input: 13,
+      cachedInput: 5,
+      freshInput: 8,
+      output: 3,
+      readFiles: ["src/operator-visible.ts"],
+      readFilesTotal: 1,
+      readFilesTruncated: 0,
+      diffBytes: 42,
+      contextStrategy: "auto" as const,
+    },
+  ];
+  store.writeVersionedJson(
+    recordPath,
+    {
+      ...persisted.value,
+      status: "paused",
+      externalLimit: {
+        source: "provider",
+        state: "exhausted",
+        resumable: true,
+        retryAfterMs: 2_500,
+      },
+      result: {
+        outcome: "approved",
+        approved: true,
+        rounds: 1,
+        verdicts: [],
+        runIds: [],
+        stageMetrics,
+      },
+    },
+    persisted.version,
+  );
+  const report = runCli([
+    "operations",
+    "control-report",
+    "--target-dir",
+    target,
+    "--project-store-config",
+    config,
+    "--id",
+    runId,
+    "--json",
+  ]);
+  expect(report.code).toBe(0);
+  expect(JSON.parse(report.stdout)).toMatchObject({
+    stageMetrics,
+    run: {
+      externalLimit: {
+        source: "provider",
+        state: "exhausted",
+        resumable: true,
+        retryAfterMs: 2_500,
+      },
+    },
+  });
+
+  writeConfig({ retryIntervalMs: 1_000, maxAutomaticRetryAttempts: 3 });
+  expect(
+    runCli([
+      "operations",
+      "control-list",
+      "--target-dir",
+      target,
+      "--project-store-config",
+      config,
+      "--json",
+    ]).code,
+  ).toBe(0);
+  for (const invalid of [
+    { retryIntervalMs: -1 },
+    { retryIntervalMs: 1.5 },
+    { retryIntervalMs: 86_400_001 },
+    { maxAutomaticRetryAttempts: 101 },
+  ]) {
+    writeConfig(invalid);
+    expect(start().code).toBe(2);
+  }
 });
 
 test("console help is registry-derived and invalid input limits fail before provider access", () => {
