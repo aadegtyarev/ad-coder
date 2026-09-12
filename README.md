@@ -60,6 +60,26 @@ The **CLI** picks a provider by env-var PRESENCE, in precedence order
 `DEEPSEEK_API_KEY` → `OPENROUTER_API_KEY` → OpenAI-Codex OAuth (override with
 `--provider`). OpenAI Codex uses OAuth, not an environment key.
 
+Authenticate a ChatGPT Plus/Pro account once with either OAuth flow:
+
+```sh
+ad-coder auth status
+ad-coder auth login --method browser
+ad-coder auth login --method device_code
+ad-coder auth logout --json
+```
+
+Credentials persist at `$XDG_CONFIG_HOME/ad-coder/credentials.json` when that
+variable is absolute, otherwise at `~/.config/ad-coder/credentials.json`.
+Directories and files are owner-only (0700/0600), with cross-process locking
+and atomic writes. Status and JSON expose only non-secret metadata. Credentials
+never enter the target project, `.ad-coder` runtime state, or Git. An absolute
+`--credential-path` may override the default; project, Git-metadata, relative,
+and symlink-aliased project paths are rejected.
+
+Missing authentication or a failed expired-token refresh stops before model
+generation with a nonzero error directing the operator to `ad-coder auth login`.
+
 Native OpenAI and native Anthropic are **not** auto-selected by the CLI from
 `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`. Reach them through the **library**
 presets `openaiCompatiblePreset` / `anthropicCompatiblePreset`, where you supply
@@ -196,7 +216,8 @@ The provider is resolved from the environment by env-var PRESENCE — precedence
 provider and model are echoed to stderr (names only, never the key) before the
 turn runs. Pass `--provider <deepseek|openrouter|openai-codex>` to choose
 explicitly, `--strong-model`/`--mid-model`/`--cheap-model` to override the tier
-models, and `--max-rounds`/`--default-complexity` to set the routing defaults.
+models, `--credential-path` to select another private user-local store, and
+`--max-rounds`/`--default-complexity` to set the routing defaults.
 The role runs with real `read`/`write`/`edit`/`bash` tool access rooted at
 `--target-dir`; that directory is **not** a sandbox (a bash turn can `cd` out of
 it and read any file the invoking user can), exactly as the `run` command
@@ -208,9 +229,17 @@ of the offered transitions to take (`advance`/`rework`/`stop`, empty for the
 default). Pass `--auto` for the autonomous/machine path — the auto-driver walks
 the graph exactly as `runPipeline` does, reading no input. The drive loop lives
 in a library module (`driveWorkflow`) driven through injected input/output/error
-streams, so it is scriptable with no TTY. Both `role` and `drive` now emit a
-clear stderr warning when a turn produces empty text at zero cost (the provider
-may need authentication, e.g. `codex login`) instead of two blank-looking lines.
+streams, so it is scriptable with no TTY. Both `role` and `drive` retain the
+empty-text/zero-cost warning as a defense-in-depth diagnostic; missing or
+expired Codex authentication is rejected earlier.
+
+After login, use this operator-authenticated live dogfood sequence:
+
+```sh
+ad-coder role planner "Summarize this repository" --provider openai-codex --target-dir .
+ad-coder console --provider openai-codex --target-dir .
+ad-coder drive "Run a small reviewed maintenance change" --provider openai-codex --target-dir . --auto
+```
 
 `ad-coder console --target-dir <dir>` is the minimal dogfood console over the
 headless `startOrchestrator` core. Each nonblank line is another turn on the same

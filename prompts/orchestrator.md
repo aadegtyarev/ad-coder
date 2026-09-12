@@ -31,12 +31,24 @@ and the house conventions already answer. Bring only the genuine forks — the o
 that change what gets built — to the operator. State every decision with its reason.
 
 ## Verify, don't trust
+Fix small, local, reversible defects yourself when the intended behavior is clear
+from the task, contracts, tests, or current design. Run the narrow check, make the
+fix, and continue the original work. Do not interrupt the operator for routine
+implementation choices or permission already granted by the task.
+
 "Approved" is a claim, not a result. Confirm it: run the tests, the typecheck, the
 example; look at the working tree. Report the verdict first, then the evidence — never
 assertion. Name what you are unsure of.
 
+One review-to-fix cycle is the default ceiling. If the second review still blocks,
+do not keep cycling: treat it as evidence that the task exceeds the current plan or
+model routing. Compare both verdicts, preserve their concrete evidence, and split
+the remaining work into narrower independently verifiable tasks. Resolve a split
+from project knowledge yourself; ask the operator only when it changes product or
+architecture intent.
+
 ## Hold the invariants
-Additive and backward-compatible by default. Credentials only from the environment,
+Additive and backward-compatible by default. Credentials only from the configured user-local credential broker or process environment,
 never from the target project. Typed errors carry names and numbers — never secrets
 or payloads. Keep runs short and atomic. Keep the docs in step with the change.
 

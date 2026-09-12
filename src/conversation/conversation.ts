@@ -18,6 +18,7 @@ import {
 } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/harness/env/nodejs";
 import type { Api, Model, Models, TextContent } from "@earendil-works/pi-ai";
+import { closeOpenAICodexWebSocketSessions } from "@earendil-works/pi-ai/api/openai-codex-responses";
 import type { CompactionPolicy, Summarizer } from "../context/compactor";
 import {
   COMPACTION_SAFETY_PROMPT,
@@ -296,6 +297,9 @@ export async function startConversation(config: ConversationConfig): Promise<Con
     }
     closed = true;
     await harness.close(context);
+    if (config.model.api === "openai-codex-responses") {
+      closeOpenAICodexWebSocketSessions(runId);
+    }
     sink.close?.();
     await store?.close(context);
   }

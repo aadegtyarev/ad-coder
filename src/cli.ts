@@ -5,7 +5,10 @@ import { pathToFileURL } from "node:url";
 import type { Context, Session } from "@earendil-works/pi-agent-core";
 import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
 import type { Api, Model, Models, TextContent } from "@earendil-works/pi-ai";
+import { closeOpenAICodexWebSocketSessions } from "@earendil-works/pi-ai/api/openai-codex-responses";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
+import { assertCredentialPathOutsideProject, FileCredentialStore } from "./auth/credential-store";
+import { runAuthCommand } from "./cli/auth";
 import { runConsole } from "./cli/console";
 import { driveWorkflow, silentNoopWarning } from "./cli/drive";
 import type {
@@ -53,6 +56,7 @@ import type { ProjectStoreConfig } from "./project-store/types";
 import { ProjectStoreError } from "./project-store/types";
 import { parseRegistryConfig } from "./registry/validate";
 import type { Role } from "./role";
+import { defineRole } from "./role";
 import { resolveTargetDir } from "./runner/errors";
 import { createRoleRunner } from "./runner/role-runner";
 import type { SessionLimits } from "./session-limits";
@@ -809,9 +813,14 @@ function buildConfigOptions(
     roleBudgetPercents = raw as Partial<Record<ConfigurableRole, BudgetPercents>>;
   }
   warnCwdInsideTarget(targetDir);
+  const credentialPath = flags["--credential-path"];
+  if (credentialPath !== undefined) assertCredentialPathOutsideProject(credentialPath, targetDir);
   return {
     targetDir,
     env: (name: string) => process.env[name],
+    ...(credentialPath !== undefined && {
+      credentials: new FileCredentialStore({ path: credentialPath }),
+    }),
     ...(provider !== undefined && { provider }),
     ...(flags["--strong-model"] !== undefined && { strongModel: flags["--strong-model"] }),
     ...(flags["--mid-model"] !== undefined && { midModel: flags["--mid-model"] }),
@@ -863,8 +872,18 @@ async function roleCommand(
 
   const spec = roleSpecFor(config, name as RoleName);
   const ledgerSink = new MemoryLedgerSink();
+  const standaloneRole = defineRole(
+    {
+      ...spec.role,
+      systemPrompt: `${spec.role.systemPrompt}\n\nThis is a standalone role invocation. Return the complete result as assistant text; structured pipeline submission tools are unavailable.`,
+      activeToolNames: (spec.role.activeToolNames ?? []).filter((tool) =>
+        ["bash", "read", "write", "edit"].includes(tool),
+      ),
+    },
+    spec.model,
+  );
   const { text, cost } = await runRoleStandalone({
-    role: spec.role,
+    role: standaloneRole,
     model: spec.model,
     models: config.models,
     targetDir: configOptions.targetDir,
@@ -989,6 +1008,11 @@ async function runCommand(
 
 const PIPELINE_OPTIONS: CommandDefinition["options"] = [
   {
+    name: "--credential-path",
+    value: "<absolute-path>",
+    description: "Override the private user-local OAuth credential file.",
+  },
+  {
     name: "--target-dir",
     value: "<dir>",
     description: "Directory containing the project to operate on.",
@@ -1074,6 +1098,46 @@ const PIPELINE_OPTIONS: CommandDefinition["options"] = [
 ];
 
 const COMMANDS: readonly CommandDefinition[] = [
+  {
+    name: "auth",
+    description: "Manage persistent OpenAI Codex authentication.",
+    positionals: [{ name: "<status|login|logout>", description: "Authentication action." }],
+    options: [
+      {
+        name: "--credential-path",
+        value: "<absolute-path>",
+        description: "Override the user-local credential file.",
+      },
+      {
+        name: "--target-dir",
+        value: "<dir>",
+        description: "Project boundary credentials must remain outside.",
+      },
+      {
+        name: "--method",
+        value: "<browser|device_code>",
+        description: "Select the OAuth login flow.",
+      },
+      { name: "--json", description: "Emit a stable non-secret JSON result." },
+    ],
+    run: async ({ positionals, flags, booleans }) => {
+      const action = positionals[1];
+      if (action === undefined || positionals[2] !== undefined)
+        fail("auth requires exactly one action");
+      const method = flags["--method"];
+      if (method !== undefined && method !== "browser" && method !== "device_code")
+        fail("--method must be browser or device_code");
+      await runAuthCommand({
+        action,
+        ...(flags["--credential-path"] !== undefined && {
+          credentialPath: flags["--credential-path"],
+        }),
+        targetDir: resolveTargetDir(flags["--target-dir"] ?? process.cwd()),
+        json: booleans["--json"] === true,
+        ...(method !== undefined && { method }),
+      });
+    },
+  },
   {
     name: "operations",
     description: "Run a project-operations action and emit JSON.",
@@ -1239,5 +1303,7 @@ if (import.meta.main) {
       process.stderr.write(`ad-coder: ${errorMessage(error)}\n`);
     }
     process.exit(1);
+  } finally {
+    closeOpenAICodexWebSocketSessions();
   }
 }
