@@ -2,6 +2,11 @@ import type { Api, Model, Models } from "@earendil-works/pi-ai";
 import type { ContextBudgetPercents } from "../context/budget";
 import type { CompactionPolicy } from "../context/compactor";
 import type { LedgerSink } from "../ledger/ledger";
+import type {
+  ToolActivityChannel,
+  ToolActivityConfig,
+  ToolActivityConsumer,
+} from "../observability/tool-activity";
 import type { Profile, ProfileRole, SpawnOverride } from "../profiles/types";
 import type { RunCoordinatorOptions } from "../project-operations/run-coordinator";
 import type { FollowUp } from "../project-operations/types";
@@ -296,6 +301,9 @@ export interface PipelineConfig {
   projectStoreConfig?: ProjectStoreConfig;
   /** Durable coordinator identity; supply runId to resume an interrupted run. */
   coordinator?: RunCoordinatorOptions;
+  activityChannel?: ToolActivityChannel;
+  activityConsumer?: ToolActivityConsumer;
+  toolActivity?: Partial<ToolActivityConfig>;
   observability?: {
     /** Maximum retained read-path sample; zero disables the limit. */
     maxReadPaths?: number;
@@ -355,10 +363,19 @@ export interface PipelineResult {
 
 export interface PipelineStageMetrics {
   stage: string;
+  /** Canonical public labels; `unknown` when an identifier is unsafe or unavailable. */
+  provider?: string;
+  model?: string;
+  thinkingLevel?: string;
+  durationMs?: number;
   input: number;
   cachedInput: number;
   freshInput: number;
   output: number;
+  /** Provider-reported subset of output; never estimated. */
+  reasoning?: number;
+  /** Provider-reported total; never recomputed. */
+  costUsd?: number;
   readFiles: string[];
   readFilesTotal: number;
   readFilesTruncated: number;

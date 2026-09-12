@@ -98,6 +98,35 @@ describe("web plugin tools", () => {
     });
   });
 
+  test("DNS rebinding to mapped private space is denied before transport", async () => {
+    let lookups = 0;
+    let fetched = false;
+    const tool = buildWebTools(
+      {},
+      {
+        lookup: (async () => {
+          lookups++;
+          return [
+            lookups === 1
+              ? { address: "93.184.216.34", family: 4 }
+              : { address: "::ffff:ac10:1", family: 6 },
+          ];
+        }) as never,
+        fetch: (async () => {
+          fetched = true;
+          return new Response("no");
+        }) as never,
+      },
+    )[1];
+    if (tool === undefined) throw new Error("missing web_read");
+    const result = await execute(tool, { url: "https://rebind.example/" });
+    expect(fetched).toBe(false);
+    expect(result?.content[0]).toEqual({
+      type: "text",
+      text: "web request failed: private_network_denied",
+    });
+  });
+
   test("text-only role routes local image through configured vision model", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "ad-coder-image-"));
     try {

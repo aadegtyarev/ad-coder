@@ -520,13 +520,20 @@ test("pipeline aggregates exact multi-response stage observations in stable orde
     cwd: fx.targetDir,
   }).byteLength;
 
-  expect(result.stageMetrics).toEqual([
+  expect(result.stageMetrics.every(({ durationMs }) => (durationMs ?? -1) >= 0)).toBe(true);
+  expect(result.stageMetrics.map((metric) => ({ ...metric, durationMs: 0 }))).toEqual([
     {
       stage: "plan",
+      provider: "faux",
+      model: "faux-1",
+      thinkingLevel: "unknown",
+      durationMs: 0,
       input: 1194,
       cachedInput: 255,
       freshInput: 939,
       output: 124,
+      reasoning: 0,
+      costUsd: 0,
       readFiles: ["tracked.txt"],
       readFilesTotal: 1,
       readFilesTruncated: 0,
@@ -535,10 +542,16 @@ test("pipeline aggregates exact multi-response stage observations in stable orde
     },
     {
       stage: "code:1",
+      provider: "faux",
+      model: "faux-1",
+      thinkingLevel: "unknown",
+      durationMs: 0,
       input: 585,
       cachedInput: 13,
       freshInput: 572,
       output: 15,
+      reasoning: 0,
+      costUsd: 0,
       readFiles: [],
       readFilesTotal: 0,
       readFilesTruncated: 0,
@@ -547,10 +560,16 @@ test("pipeline aggregates exact multi-response stage observations in stable orde
     },
     {
       stage: "review:1",
+      provider: "faux",
+      model: "faux-1",
+      thinkingLevel: "unknown",
+      durationMs: 0,
       input: 921,
       cachedInput: 118,
       freshInput: 803,
       output: 25,
+      reasoning: 0,
+      costUsd: 0,
       readFiles: ["tracked.txt"],
       readFilesTotal: 1,
       readFilesTruncated: 0,

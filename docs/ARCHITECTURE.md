@@ -30,6 +30,7 @@ work lives in `docs/BACKLOG.md`.
 | Runner | `src/runner/` | Execute one role turn with tools rooted at the target directory. |
 | Context | `src/context/` | Enforce context budgets and optional ad-coder-owned compaction. |
 | Ledger | `src/ledger/` | Record usage, cost, role, step, and tool-call counts without content. |
+| Activity observability | `src/observability/tool-activity.ts`, `src/cli/tool-activity.ts` | Project harness lifecycle into a bounded headless stream; group or transport it at the CLI boundary. |
 | Workflow core | `src/orchestration/` | Run the plan, research, security, code, and review graph. |
 | Durable coordination | `src/project-operations/`, `src/project-store/` | Checkpoint runs, coordinate resume, and manage follow-ups and publication. |
 | Quality and exploration | `src/gates/`, `src/project-tools/` | Run bounded checks and Git-ignore-aware structural reconnaissance. |
@@ -42,6 +43,19 @@ work lives in `docs/BACKLOG.md`.
 `runRole` validates the target directory and role, creates tools and a ledger,
 builds an agent harness, drives one model turn, and closes resources. The target
 directory is a starting working directory, not a security sandbox.
+
+### Tool activity flow
+
+Runner and conversation adapters attach to harness events before a turn starts.
+The observability core assigns semantic categories, correlation and sequence,
+omits unsafe arguments, then publishes through bounded replay and subscriber
+queues. Activity remains ephemeral; only its drop count and safe aggregate stage
+metrics cross result or checkpoint boundaries.
+
+Console rendering subscribes to that same channel. Human mode groups repeated
+semantic activity, while JSON mode transports schema-v1 records as NDJSON on
+stderr. Backpressure is bounded and visible. Neither renderer infers lifecycle
+state, and result stdout does not carry progress.
 
 ### Built-in pipeline
 
@@ -85,7 +99,9 @@ and decomposition signals, never file contents. Web tools are plugin-shaped and
 replaceable. `web_read` preserves normalized page and content-image links.
 `inspect_image` returns pixels directly to an image-capable active model; for a
 text-only model it makes a bounded one-shot call to the configured vision model
-and returns the description as text.
+and returns the description as text. Default web transport pins each request to
+its validated DNS address, checks the connected peer, and repeats validation for
+redirects; private-network access remains an explicit trusted override.
 
 ### Durable control plane
 
@@ -118,8 +134,11 @@ permissions, and updated atomically without following symlinks.
 ### Persistent content
 
 Ledgers contain identifiers and numeric usage, not prompts, responses, tool
-arguments, or headers. Workflow checkpoints persist validated state and bounded
-normalized research provenance. Conversation transcripts may contain user and
+arguments, or headers. Tool-activity projections enter no ledger or checkpoint;
+every externally sourced event string and complete record is bounded before
+retention or delivery. Workflow checkpoints persist validated state, bounded
+normalized research provenance, and safe per-stage provider/model labels,
+duration, token categories, provider-reported cost, and context strategy. Conversation transcripts may contain user and
 assistant content and must be treated as sensitive local runtime data; they are
 ignored by Git.
 

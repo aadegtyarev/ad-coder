@@ -80,6 +80,9 @@ export const CONTRACT_INDEX = Object.freeze({
   "compatibility:public-surfaces": "docs/contracts/compatibility.md",
   "compatibility:semver-release": "docs/contracts/compatibility.md",
   "security:trusted-project-prompts": "docs/contracts/security.md",
+  "tool-observability:headless-stream": "docs/contracts/tool-observability.md",
+  "tool-observability:safe-projection": "docs/contracts/tool-observability.md",
+  "tool-observability:truthful-lifecycle": "docs/contracts/tool-observability.md",
 } as const);
 
 function nonEmptyBounded(value: unknown, maxTextBytes: number): value is string {

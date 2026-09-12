@@ -22,6 +22,11 @@ import { resolvePipelineConfig } from "./cli/resolve-config";
 import type { CompactionPolicy } from "./context/compactor";
 import { Ledger, MemoryLedgerSink } from "./ledger/ledger";
 import {
+  DEFAULT_TOOL_ACTIVITY_CONFIG,
+  resolveToolActivityConfig,
+  type ToolActivityConfig,
+} from "./observability/tool-activity";
+import {
   createOrchestratorControlPlane,
   type DecisionRequest,
   MAX_AUTOMATIC_RETRY_ATTEMPTS,
@@ -241,6 +246,7 @@ export async function runRoleStandalone(params: {
   ledgerSink: MemoryLedgerSink;
   compaction?: CompactionPolicy;
   projectStoreConfig?: ProjectStoreConfig;
+  toolActivity?: Partial<ToolActivityConfig>;
 }): Promise<{ text: string; cost: number }> {
   const runId = crypto.randomUUID();
   const store = new ProjectStore(params.targetDir, params.projectStoreConfig);
@@ -252,6 +258,7 @@ export async function runRoleStandalone(params: {
     ...(params.projectStoreConfig !== undefined && {
       projectStoreConfig: params.projectStoreConfig,
     }),
+    ...(params.toolActivity !== undefined && { toolActivity: params.toolActivity }),
   }).runRole(params.role, params.model, params.task, {
     runId,
     session,
@@ -1075,6 +1082,29 @@ function buildConfigOptions(
   );
   const targetDir = resolveTargetDir(targetDirArg);
   const projectStoreConfig = parseProjectStoreConfig(flags["--project-store-config"]);
+  const toolActivityEntries = [
+    ["replayCapacity", "--tool-activity-replay"],
+    ["subscriberPendingCapacity", "--tool-activity-pending"],
+    ["projectionBytes", "--tool-activity-projection-bytes"],
+    ["maxEventBytes", "--tool-activity-event-bytes"],
+    ["groupingRefreshMs", "--tool-activity-grouping-ms"],
+    ["humanGroupCount", "--tool-activity-groups"],
+    ["renderedLineBytes", "--tool-activity-line-bytes"],
+    ["renderQueueCount", "--tool-activity-render-queue"],
+    ["renderQueueBytes", "--tool-activity-render-bytes"],
+    ["closeDrainMs", "--tool-activity-close-drain-ms"],
+  ] as const;
+  const toolActivity = Object.fromEntries(
+    toolActivityEntries.flatMap(([key, flag]) => {
+      const value = parseNonNegativeIntegerFlag(flag, flags[flag]);
+      return value === undefined ? [] : [[key, value]];
+    }),
+  );
+  try {
+    resolveToolActivityConfig(toolActivity);
+  } catch (error) {
+    fail(error instanceof RangeError ? error.message : "invalid tool activity configuration");
+  }
   const registryConfig =
     flags["--registry-config"] === undefined
       ? undefined
@@ -1168,6 +1198,7 @@ function buildConfigOptions(
     ...(maxRounds !== undefined && { maxRounds }),
     ...(defaultComplexity !== undefined && { defaultComplexity }),
     ...(projectStoreConfig !== undefined && { projectStoreConfig }),
+    ...(Object.keys(toolActivity).length > 0 && { toolActivity }),
   };
 }
 
@@ -1215,6 +1246,7 @@ async function roleCommand(
     ...(config.projectStoreConfig !== undefined && {
       projectStoreConfig: config.projectStoreConfig,
     }),
+    ...(config.toolActivity !== undefined && { toolActivity: config.toolActivity }),
   });
 
   // The extracted assistant text IS this subcommand's result value, so it is
@@ -1286,8 +1318,9 @@ async function consoleCommand(
           .split(",")
           .map((name) => name.trim())
           .filter(Boolean);
+  const configOptions = buildConfigOptions(targetDirArg, flags);
   const session = await startOrchestrator({
-    ...buildConfigOptions(targetDirArg, flags),
+    ...configOptions,
     sessionLimits,
     workflowModules: [BUILT_IN_PIPELINE_WORKFLOW],
     enabledWorkflows,
@@ -1300,6 +1333,9 @@ async function consoleCommand(
     mode: json ? "json" : "formatted",
     ...(maxInputBytes !== undefined && { maxInputBytes }),
     heartbeatMs,
+    ...(configOptions.toolActivity !== undefined && {
+      toolActivity: configOptions.toolActivity,
+    }),
   });
   if (result.reason !== "eof" && result.reason !== "exit") process.exitCode = 1;
 }
@@ -1400,6 +1436,56 @@ const PIPELINE_OPTIONS: CommandDefinition["options"] = [
     name: "--heartbeat-ms",
     value: "<n>",
     description: "CLI progress interval; defaults to 10000, 0 disables.",
+  },
+  {
+    name: "--tool-activity-replay",
+    value: "<n>",
+    description: "Retained activity replay records; 0 disables replay.",
+  },
+  {
+    name: "--tool-activity-pending",
+    value: "<n>",
+    description: "Maximum pending records per activity subscriber.",
+  },
+  {
+    name: "--tool-activity-projection-bytes",
+    value: "<n>",
+    description: "Maximum bytes in a safe activity projection.",
+  },
+  {
+    name: "--tool-activity-event-bytes",
+    value: "<n>",
+    description: "Mandatory maximum bytes per structured activity event.",
+  },
+  {
+    name: "--tool-activity-grouping-ms",
+    value: "<n>",
+    description: "Human activity grouping refresh; 0 flushes immediately.",
+  },
+  {
+    name: "--tool-activity-groups",
+    value: "<n>",
+    description: "Maximum semantic groups in one human refresh.",
+  },
+  {
+    name: "--tool-activity-line-bytes",
+    value: "<n>",
+    description: "Mandatory maximum bytes per rendered progress line.",
+  },
+  {
+    name: "--tool-activity-render-queue",
+    value: "<n>",
+    description: "Maximum queued progress lines under stderr backpressure.",
+  },
+  {
+    name: "--tool-activity-render-bytes",
+    value: "<n>",
+    description: "Maximum queued progress bytes under stderr backpressure.",
+  },
+  {
+    name: "--tool-activity-close-drain-ms",
+    value: "<n>",
+    description: "Finite activity consumer close drain budget; 0 skips draining.",
   },
   {
     name: "--orchestrator-thinking-level",
@@ -1535,6 +1621,20 @@ const COMMANDS: readonly CommandDefinition[] = [
       });
       const effective = {
         ...(config.effectiveConfig ?? {}),
+        ...Object.fromEntries(
+          Object.entries({ ...DEFAULT_TOOL_ACTIVITY_CONFIG, ...config.toolActivity }).map(
+            ([name, value]) => [
+              `toolActivity.${name}`,
+              {
+                value,
+                source:
+                  config.toolActivity?.[name as keyof typeof config.toolActivity] !== undefined
+                    ? "cli"
+                    : "built-in-default",
+              },
+            ],
+          ),
+        ),
         heartbeatMs: {
           value:
             parseNonNegativeIntegerFlag("--heartbeat-ms", flags["--heartbeat-ms"]) ??

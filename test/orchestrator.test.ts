@@ -1004,10 +1004,16 @@ test("stage metrics survive reconstruction and model reports expose counts, not 
     stageMetrics: [
       {
         stage: "code:1",
+        provider: "faux",
+        model: "faux-1",
+        thinkingLevel: "low",
+        durationMs: 123,
         input: 13,
         cachedInput: 5,
         freshInput: 8,
         output: 3,
+        reasoning: 2,
+        costUsd: 0.012,
         readFiles: ["src/private-name.ts"],
         readFilesTotal: 1,
         readFilesTruncated: 0,
@@ -1039,6 +1045,10 @@ test("stage metrics survive reconstruction and model reports expose counts, not 
   );
   const safeReport = await callTool(reportTool as Tool, { id: run.id });
   expect(safeReport).toContain('"readFilesTotal":1');
+  expect(safeReport).toContain('"model":"faux-1"');
+  expect(safeReport).toContain('"durationMs":123');
+  expect(safeReport).toContain('"reasoning":2');
+  expect(safeReport).toContain('"costUsd":0.012');
   expect(safeReport).not.toContain("private-name");
 });
 

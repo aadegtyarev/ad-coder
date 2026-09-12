@@ -3,8 +3,10 @@ import type {
   ConversationToolCall,
   ConversationTurnResult,
 } from "../conversation/conversation";
+import type { ToolActivityConfig } from "../observability/tool-activity";
 import { EmptyTurnError } from "../runner/errors";
 import { SessionLimitError } from "../session-limits";
+import { ToolActivityRenderer } from "./tool-activity";
 
 export const DEFAULT_CONSOLE_MAX_INPUT_BYTES = 65_536;
 
@@ -27,6 +29,7 @@ export interface RunConsoleParams {
   maxInputBytes?: number;
   /** Progress interval for an in-flight turn; zero/omitted disables progress. */
   heartbeatMs?: number;
+  toolActivity?: Partial<ToolActivityConfig>;
 }
 
 export interface ConsoleRunResult {
@@ -101,6 +104,9 @@ function sanitizeTurn(result: ConversationTurnResult): ConversationTurnResult {
     assistantText: sanitizeTerminalText(result.assistantText),
     toolCalls,
     droppedRecords: result.droppedRecords,
+    ...(result.droppedActivityEvents !== undefined && {
+      droppedActivityEvents: result.droppedActivityEvents,
+    }),
   };
 }
 
@@ -146,6 +152,7 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
     }
     try {
       const started = Date.now();
+      let lastActivity = started;
       const progress = (event: "started" | "heartbeat") => {
         const elapsedSeconds = Math.floor((Date.now() - started) / 1000);
         params.error.write(
@@ -154,14 +161,33 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
             : `ad-coder: console turn ${event === "started" ? "started" : "still running"} (${elapsedSeconds}s)\n`,
         );
       };
+      const renderer = new ToolActivityRenderer(
+        params.error,
+        mode === "json" ? "json" : "human",
+        params.toolActivity,
+      );
+      const unsubscribe = params.session.subscribeToolActivity?.((event) => {
+        lastActivity = Date.now();
+        renderer.consume(event);
+      });
       progress("started");
       const timer =
-        heartbeatMs > 0 ? setInterval(() => progress("heartbeat"), heartbeatMs) : undefined;
+        heartbeatMs > 0
+          ? setInterval(() => {
+              const now = Date.now();
+              if (now - lastActivity >= heartbeatMs) {
+                progress("heartbeat");
+                lastActivity = now;
+              }
+            }, heartbeatMs)
+          : undefined;
       let rawResult: ConversationTurnResult;
       try {
         rawResult = await params.session.step(line);
       } finally {
         if (timer !== undefined) clearInterval(timer);
+        unsubscribe?.();
+        renderer.close();
       }
       const result = sanitizeTurn(rawResult);
       completedTurns++;
@@ -171,15 +197,25 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
       if (mode === "formatted") params.output.write("ad-coder> ");
     } catch (error) {
       if (error instanceof SessionLimitError) {
-        params.error.write(SESSION_LIMIT_MESSAGE);
+        params.error.write(
+          mode === "json"
+            ? `${JSON.stringify({ type: "console_error", code: "session_limit" })}\n`
+            : SESSION_LIMIT_MESSAGE,
+        );
         reason = "session_limit";
       } else if (error instanceof EmptyTurnError) {
         params.error.write(
-          "ad-coder: provider returned a failed empty turn; verify authentication and retry\n",
+          mode === "json"
+            ? `${JSON.stringify({ type: "console_error", code: "empty_turn" })}\n`
+            : "ad-coder: provider returned a failed empty turn; verify authentication and retry\n",
         );
         reason = "turn_failed";
       } else {
-        params.error.write(TURN_FAILED_MESSAGE);
+        params.error.write(
+          mode === "json"
+            ? `${JSON.stringify({ type: "console_error", code: "turn_failed" })}\n`
+            : TURN_FAILED_MESSAGE,
+        );
         reason = "turn_failed";
       }
       stopped = true;

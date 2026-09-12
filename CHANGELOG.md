@@ -6,6 +6,20 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Added a bounded headless semantic tool-activity lifecycle stream, optional
+  subscriptions, compact console grouping, and schema-v1 NDJSON progress on
+  stderr with visible backpressure and subscriber drops.
+- Added safe per-stage provider/model, thinking, duration, reasoning-token, cost,
+  and context-strategy metrics to pipeline results and durable reports.
+
+### Security
+
+- Hardened activity projection against argument, identifier, terminal-control,
+  custom-tool-name, and oversized-record disclosure; default web transport now
+  pins validated public addresses and revalidates redirects.
+
 ## [0.2.1] - 2026-09-12
 
 ### Changed

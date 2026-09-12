@@ -587,6 +587,8 @@ test("console help is registry-derived and invalid input limits fail before prov
     "--planner-model <name>",
     "--orchestrator-model <name>",
     "--orchestrator-thinking-level <level>",
+    "--tool-activity-event-bytes <n>",
+    "--tool-activity-grouping-ms <n>",
     "--summarizer-model <name>",
     "--role-budget-percents <file.json>",
     "--max-rounds <n>",
@@ -597,6 +599,16 @@ test("console help is registry-derived and invalid input limits fail before prov
 
   expect(runCli(["console", "--max-input-bytes", "0"]).stderr).toContain(
     "invalid --max-input-bytes: 0 (expected a positive integer)",
+  );
+  const unsafeActivityLimit = runCli([
+    "console",
+    "--target-dir",
+    ".",
+    "--tool-activity-event-bytes=0",
+  ]);
+  expect(unsafeActivityLimit.code).toBe(2);
+  expect(unsafeActivityLimit.stderr).toContain(
+    "maxEventBytes is outside its safe configured range",
   );
   for (const value of ["0", "-1", "1.5", "", "nope"]) {
     const result = runCli(["console", "--target-dir", ".", `--max-input-bytes=${value}`]);

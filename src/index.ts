@@ -45,6 +45,8 @@ export {
   resolveOrchestratorSeed,
   resolvePipelineConfig,
 } from "./cli/resolve-config";
+export type { ToolActivityRenderMode } from "./cli/tool-activity";
+export { ToolActivityRenderer } from "./cli/tool-activity";
 export type { ContextBudget, ContextBudgetPercents } from "./context/budget";
 export {
   ContextBudgetError,
@@ -83,6 +85,28 @@ export type { LedgerOptions, LedgerSink } from "./ledger/ledger";
 export { FileLedgerSink, LEDGER_BASE_DIR, Ledger, MemoryLedgerSink } from "./ledger/ledger";
 export type { LedgerRecord, UsageAmounts, UsageDelta } from "./ledger/types";
 export { diffUsage, toolCallCounts, UsageDeltaTracker, usageAmounts } from "./ledger/usage";
+export type {
+  AttachToolActivityOptions,
+  ToolActivityConfig,
+  ToolActivityConsumer,
+  ToolActivityDropNotice,
+  ToolActivityErrorCode,
+  ToolActivityEvent,
+  ToolActivityKind,
+  ToolActivityLifecycle,
+  ToolActivityProjection,
+  ToolActivityRecord,
+  ToolActivitySnapshot,
+} from "./observability/tool-activity";
+export {
+  attachToolActivity,
+  boundToolActivityText,
+  DEFAULT_TOOL_ACTIVITY_CONFIG,
+  markTrustedToolOutcome,
+  resolveToolActivityConfig,
+  ToolActivityChannel,
+  ToolActivityError,
+} from "./observability/tool-activity";
 export type {
   ChildPipelineSpec,
   ContentBinding,

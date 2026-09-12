@@ -159,6 +159,28 @@ workflow под двумя профилями → **сравнить два JSON
 записывать проверенное в `docs/` по ходу, а не «потом». Этот файл — пример;
 `docs/pi-capabilities.md` — второй.
 
+## Tool-activity implementation dogfood (2026-09-12)
+
+The checkpointed built-in pipeline run started on 2026-09-12 and ended on
+2026-09-13 after 40m52s. It stopped in Coder before review because optional
+follow-up metadata failed semantic validation. Exact resumable state and the
+per-stage table are recorded in
+[`reviews/2026-09-13-tool-observability-dogfood.md`](reviews/2026-09-13-tool-observability-dogfood.md).
+The run consumed 21,987,720 total tokens (660,313 fresh input, 21,256,064 cache
+read, 71,343 output), cost $16.069887, and produced no accepted result. Coder
+alone accounted for $13.698824 and 20,224,128 cache-read tokens. This replaces
+the earlier lack of checkpointed telemetry; review evidence remains unresolved.
+
+This Coder stage ran through a worker API that did not expose a pipeline
+checkpoint or provider usage envelope to the role. The safe run identifier,
+provider/model, effective thinking level, monotonic duration, input/cache/output
+and reasoning tokens, provider-reported cost, review rounds, context strategy,
+and accepted-result total are therefore **unavailable**; none are estimated.
+There is no checkpoint link to publish honestly. Runtime support added by this
+change records these fields for subsequent checkpointed pipeline runs, which can
+supply the missing profile-efficiency evidence without copying checkpoint,
+ledger, prompt, or activity contents into documentation.
+
 The 2026-09-12 minimal-console planning pass consumed 454,696 input tokens,
 323,840 cached tokens, and 8,889 output tokens (planner: 279,041 / 187,392 /
 5,811; security: 175,655 / 136,448 / 3,078). It was plan-only, so it produced
