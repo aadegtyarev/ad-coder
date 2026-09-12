@@ -621,8 +621,9 @@ workflows — one substrate, swappable drivers.
   maximum window reachable through routing cells, overrides, or orchestrator.
 - **Incremental pipeline context (decided 2026-09-12)** — default to scoped
   handoffs between pipeline rounds instead of replaying a repository-wide working
-  set. Planner starts from project orientation/docs and a cheap file index, then
-  opens only relevant modules; broader reconnaissance remains available for
+  set. Planner starts from project orientation/docs and an incrementally maintained
+  repository index, then opens only relevant modules; rebuilding that index on
+  every plan is not an optimization. Broader reconnaissance remains available for
   architectural or poorly localized work. A Coder fix turn receives the original
   task, applicable plan excerpt and contracts, Reviewer findings, cumulative diff,
   and changed-file list, and reads other files on demand. A repeated Reviewer
@@ -636,6 +637,14 @@ workflows — one substrate, swappable drivers.
   visible in the run report and never silently weakens review. Per-stage telemetry
   records fresh input, cached input, output, selected/read files, diff size,
   strategy, and fallback reason so savings can be measured rather than assumed.
+  Do not treat fresh input alone as paid usage: cached input can still have a
+  discounted cost, and removing repeated context usually removes cached prefix
+  tokens first while the new task/findings/diff tail remains fresh. Evaluate the
+  optimization by provider-weighted input cost, total input, latency, and unchanged
+  review quality; measure subscription-quota impact separately when the provider
+  exposes it. The initial baseline is 450,913 fresh input tokens for the
+  2026-09-12 LDO run, but no fresh-input target is an acceptance criterion until
+  comparable runs establish one.
 - **TUI — the human surface to everything, built for convenience** (Phase 3, after
   the orchestrator). Not a showcase: it EXPOSES the machinery already built,
   clearly and reachably. Chat with the orchestrator (images paste in later, fed to
