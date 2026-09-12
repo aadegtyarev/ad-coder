@@ -1,5 +1,7 @@
 # Changelog
 
+- Added structured FollowUps, validated documentation proposals, and selectable file/GitHub backlog authorities with leased lifecycle claims.
+- Added the machine-readable `operations` CLI and made backlog persistence unconditionally metadata-only; expired leases now revoke holder operations.
 - Added the target-rooted ProjectStore with durable sessions, private runtime paths, atomic state, cleanup limits, and attachment lifecycle APIs.
 
 All notable changes to ad-coder are recorded here. The format follows
@@ -13,6 +15,12 @@ The working core of the harness. Built on `@earendil-works/pi-agent-core` and
 network (pi-ai's fauxProvider) and demonstrated live on DeepSeek.
 
 ### Added
+
+- **Project operations Increment 3** — strict, provenance-preserving FollowUps;
+  proposal-only documentation routing; and one configured BacklogStore authority
+  with file or opt-in GitHub issue persistence, lifecycle/lease claims, a
+  read-only capability probe, and one-time migration advice. GitHub payloads use
+  stdin and persist only a structural metadata projection.
 
 - **Trusted target role prompts and contract-aware roles** — pipeline and
   conversational orchestration now activate `.ad-coder/prompts/<role>.md`

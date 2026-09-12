@@ -62,6 +62,13 @@ test("threads ProjectStore policy into the resolved pipeline config", () => {
   const projectStoreConfig = {
     retention: { sessions: 0, tmp: 7 },
     byteLimits: { attachment: 0, state: 1024, jsonlRecord: 2048 },
+    projectOperations: {
+      backlogBackend: "github" as const,
+      evidenceLimit: 0,
+      aggregationLimit: 12,
+      claimLeaseMs: 30_000,
+      github: { repository: "owner/repository" },
+    },
   };
   const config = resolvePipelineConfig({
     task: "x",

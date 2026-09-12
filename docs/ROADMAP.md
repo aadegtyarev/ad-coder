@@ -482,14 +482,21 @@ workflows — one substrate, swappable drivers.
   spike runs inside the jail). Keying (decide when built): per-run
   (`.ad-coder/scratch/<runId>/`, symmetric with the ledger) vs per-session (chat
   attachments outlive a run) — likely both, same runId key as ledger/session.
+- **Structured FollowUps + pluggable backlog — DELIVERED (Increment 3)** — one
+  validated union now carries contract, note, design-doc-drift, and backlog
+  candidates with deterministic provenance aggregation. Documentation routing
+  returns safe fixed-template proposals. Exactly one BacklogStore is selected:
+  ProjectStore-backed files by default or opt-in GitHub issues. Both persist only
+  a structural metadata projection of candidate prose. A machine JSON CLI covers
+  the same APIs, including the read-only capability probe and one-time migration
+  advice. Shared-store claim serialization is supported; multi-host claiming without a shared
+  ProjectStore is explicitly unsupported. RunCoordinator, LDO import, and
+  repository publishing remain later increments.
 - **Multi-user + pluggable backlog** — multi-user is the SAME conflict-avoidance
   as project memory (per-file records) + worktree isolation, under more writers;
-  the ledger gains an actor/user dimension. Backlog becomes a pluggable
-  BacklogStore seam (like the ledger sink): file-backed (default, offline, solo)
-  and issues-backed (opt-in, multi-user, via `gh` — dodges the merge conflict a
-  shared BACKLOG.md has with many writers). The auditor emits candidates to
-  whichever is configured; also answers "where do dev notes go". Depends on:
-  memory.
+  the ledger gains an actor/user dimension. The delivered BacklogStore remains
+  single-host/shared-store for claims; a future distributed coordination design
+  is required before advertising multi-host issue claiming.
 - **Self-hosting** — move ad-coder's own development onto ad-coder (CLI-only, no
   TUI). Three rungs: (1) touches its own code (runner done + a live provider turn
   on a scratch change); (2) does a feature supervised — **DELIVERED**: `src/orchestration/`

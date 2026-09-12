@@ -3,16 +3,13 @@
 ## Current priority
 
 - [next] Complete the remaining reviewed project-operations increments:
-  structured FollowUps and backlog backends,
   RunCoordinator closeout, then non-destructive LDO import/operator commands.
   The TUI remains unresolved but follows this work.
 
 ## 2026-09-12
 
 - [high] LDO import paths: reuse the delivered ProjectStore containment and regular-file boundaries so future imports cannot escape the target project (CWE-59).
-- [high] FollowUp and backlog publication: redact secrets and bound persisted evidence, failing closed before file or GitHub writes to prevent sensitive data exposure (CWE-200).
-- [medium] Automatic document routing: render through fixed provenance-aware templates and reject directive/marker injection so model prose cannot become durable instructions (CWE-74).
-- [medium] Runtime coordination and GitHub migration: add locking or versioned compare-and-swap plus migration leases to prevent duplicate claims, closeout, or issues (CWE-362).
+- [medium] Provide a built-in distributed `GitHubClaimCoordinator`; the headless backend currently requires callers to inject a shared coordinator and rejects mutations when none is supplied (CWE-362).
 
 ## Provider reliability
 

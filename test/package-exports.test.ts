@@ -6,6 +6,9 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
 import type {
   ApiKind,
   AvailableTransition,
+  BacklogItem,
+  BacklogState,
+  BacklogStore,
   BudgetPercents,
   Complexity,
   ConsoleExitReason,
@@ -23,7 +26,9 @@ import type {
   DriveErrorCode,
   Driver,
   DriveWorkflowParams,
+  FollowUp,
   GateReport,
+  GitHubCommandExecutor,
   IssueSeverity,
   ModelConfig,
   OrchestrationErrorCode,
@@ -40,6 +45,7 @@ import type {
   ProfileEntry,
   ProfileErrorCode,
   ProfileRole,
+  ProjectOperationsConfig,
   ProjectStoreConfig,
   ProjectStoreLayout,
   PromptErrorCode,
@@ -81,11 +87,13 @@ import type {
   WorkflowState,
 } from "ad-coder";
 import {
+  aggregateFollowUps,
   anthropicCompatiblePreset,
   applyTransition,
   assertContextFitsBudget,
   assertTurnFitsBudget,
   autoDriver,
+  BACKLOG_STATES,
   buildDefaultProfile,
   buildOrchestratorTools,
   buildSubmitPlanTool,
@@ -94,19 +102,24 @@ import {
   ContextBudgetError,
   ContextCompactor,
   copyProjectAttachment,
+  createBacklogStore,
   createOrchestrator,
   createProjectStore,
   createRoleRunner,
   createSummarizer,
   createWorkflowSession,
   DEFAULT_CONSOLE_MAX_INPUT_BYTES,
+  DEFAULT_PROJECT_OPERATIONS_CONFIG,
+  DocumentationRouter,
   DriveError,
   deepseekPreset,
   defineTool,
   deleteProjectSession,
   diffUsage,
   driveWorkflow,
+  FileBacklogStore,
   GateRunner,
+  GitHubBacklogStore,
   isWorkflowModule,
   Ledger,
   listProjectSessions,
@@ -116,11 +129,15 @@ import {
   openaiCompatiblePreset,
   openrouterPreset,
   ProfileError,
+  ProjectOperationsError,
   ProjectStore,
   ProjectStoreError,
   PromptError,
   parseProfile,
   parseRegistryConfig,
+  probeBacklogMigration,
+  probeGitHubBacklogCapability,
+  projectBacklogFollowUp,
   RegistryError,
   RUN_PIPELINE_TOOL_NAME,
   RUN_STEP_TOOL_NAME,
@@ -131,6 +148,7 @@ import {
   resolveRegistry,
   resolveTargetDir,
   resumeProjectSession,
+  routeDocumentationFollowUp,
   runConsole,
   runPipeline,
   runRole,
@@ -143,8 +161,10 @@ import {
   silentNoopWarning,
   startConversation,
   startOrchestrator,
+  suggestBacklogMigrationOnce,
   toolCallCounts,
   UsageDeltaTracker,
+  validateFollowUp,
 } from "ad-coder";
 
 // The README documents `from "ad-coder"` as the public surface, which only
@@ -173,6 +193,20 @@ test("the package is importable by its published name", () => {
   expect(typeof runRole).toBe("function");
   expect(typeof ProjectStore).toBe("function");
   expect(typeof ProjectStoreError).toBe("function");
+  expect(typeof ProjectOperationsError).toBe("function");
+  expect(typeof validateFollowUp).toBe("function");
+  expect(typeof aggregateFollowUps).toBe("function");
+  expect(typeof projectBacklogFollowUp).toBe("function");
+  expect(typeof routeDocumentationFollowUp).toBe("function");
+  expect(typeof FileBacklogStore).toBe("function");
+  expect(typeof createBacklogStore).toBe("function");
+  expect(Array.isArray(BACKLOG_STATES)).toBe(true);
+  expect(DEFAULT_PROJECT_OPERATIONS_CONFIG.backlogBackend).toBe("files");
+  expect(typeof DocumentationRouter).toBe("function");
+  expect(typeof GitHubBacklogStore).toBe("function");
+  expect(typeof probeGitHubBacklogCapability).toBe("function");
+  expect(typeof probeBacklogMigration).toBe("function");
+  expect(typeof suggestBacklogMigrationOnce).toBe("function");
   expect(typeof createProjectStore).toBe("function");
   expect(typeof startConversation).toBe("function");
   expect(typeof createRoleRunner).toBe("function");
@@ -223,11 +257,23 @@ test("the package is importable by its published name", () => {
   const _resolveConfigOpts: ResolvePipelineConfigOptions | undefined = undefined;
   const _storeConfig: ProjectStoreConfig | undefined = undefined;
   const _storeLayout: ProjectStoreLayout | undefined = undefined;
+  const _operationsConfig: ProjectOperationsConfig | undefined = undefined;
+  const _followUp: FollowUp | undefined = undefined;
+  const _backlogItem: BacklogItem | undefined = undefined;
+  const _backlogState: BacklogState | undefined = undefined;
+  const _backlogStore: BacklogStore | undefined = undefined;
+  const _githubExecutor: GitHubCommandExecutor | undefined = undefined;
   expect(_budgetPercents).toBeUndefined();
   expect(_resolvableProvider).toBeUndefined();
   expect(_resolveConfigOpts).toBeUndefined();
   expect(_storeConfig).toBeUndefined();
   expect(_storeLayout).toBeUndefined();
+  expect(_operationsConfig).toBeUndefined();
+  expect(_followUp).toBeUndefined();
+  expect(_backlogItem).toBeUndefined();
+  expect(_backlogState).toBeUndefined();
+  expect(_backlogStore).toBeUndefined();
+  expect(_githubExecutor).toBeUndefined();
   // Type-only imports are erased; reference them so the imports are not unused.
   const _budget: ContextBudget | undefined = undefined;
   const _summarizer: Summarizer | undefined = undefined;
