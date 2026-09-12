@@ -501,8 +501,19 @@ workflows — one substrate, swappable drivers.
   contract and ambiguous product choices stop on durable operator decisions.
   Accepted one-line contracts are written exactly once and force a reviewer-only
   pass over the current implementation before approval can close. Numeric
-  coordinator limits default to `0` (disabled). LDO import, repository publishing,
-  and distributed GitHub coordination remain later increments.
+  coordinator limits default to `0` (disabled).
+- **Existing-LDO project adoption — DELIVERED (Increment 5)** — headless and
+  machine-JSON operations detect the established `.codex/ldo` and documentation
+  taxonomy without migration or scaffolding, preview without writes, and import
+  version-1 plan/run artifacts as immutable digest revisions. Exact source bytes,
+  observed provenance, artifact-claimed provenance, explicit digest trust, and a
+  versioned manifest survive ProjectStore reconstruction. No source LDO artifact
+  or project document is overwritten. Resume translates only supported stage
+  combinations into the native workflow/RunCoordinator and rejects untrusted,
+  changed, malformed, unsafe, oversized, or unsupported inputs. Numeric limits
+  default to `0` disabled; trusted prompt overrides and the accepted no-sandbox
+  MVP stance are unchanged. Repository publishing policy is the next increment;
+  distributed GitHub coordination remains later work.
 - **Multi-user + pluggable backlog** — multi-user is the SAME conflict-avoidance
   as project memory (per-file records) + worktree isolation, under more writers;
   the ledger gains an actor/user dimension. The delivered BacklogStore remains

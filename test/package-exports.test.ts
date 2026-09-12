@@ -29,7 +29,10 @@ import type {
   FollowUp,
   GateReport,
   GitHubCommandExecutor,
+  ImportedLdoResumeResult,
   IssueSeverity,
+  LdoImportManifest,
+  LdoProjectDetection,
   ModelConfig,
   OrchestrationErrorCode,
   Orchestrator,
@@ -115,11 +118,14 @@ import {
   deepseekPreset,
   defineTool,
   deleteProjectSession,
+  detectLdoProject,
   diffUsage,
   driveWorkflow,
   FileBacklogStore,
   GateRunner,
   GitHubBacklogStore,
+  importLdoArtifacts,
+  inspectImportedLdoWork,
   isWorkflowModule,
   Ledger,
   listProjectSessions,
@@ -135,6 +141,7 @@ import {
   PromptError,
   parseProfile,
   parseRegistryConfig,
+  previewLdoImport,
   probeBacklogMigration,
   probeGitHubBacklogCapability,
   projectBacklogFollowUp,
@@ -147,6 +154,7 @@ import {
   resolvePrompt,
   resolveRegistry,
   resolveTargetDir,
+  resumeImportedLdoWork,
   resumeProjectSession,
   routeDocumentationFollowUp,
   runConsole,
@@ -194,6 +202,11 @@ test("the package is importable by its published name", () => {
   expect(typeof ProjectStore).toBe("function");
   expect(typeof ProjectStoreError).toBe("function");
   expect(typeof ProjectOperationsError).toBe("function");
+  expect(typeof detectLdoProject).toBe("function");
+  expect(typeof previewLdoImport).toBe("function");
+  expect(typeof importLdoArtifacts).toBe("function");
+  expect(typeof inspectImportedLdoWork).toBe("function");
+  expect(typeof resumeImportedLdoWork).toBe("function");
   expect(typeof validateFollowUp).toBe("function");
   expect(typeof aggregateFollowUps).toBe("function");
   expect(typeof projectBacklogFollowUp).toBe("function");
@@ -324,6 +337,9 @@ test("the package is importable by its published name", () => {
   const _workflowPhase: WorkflowPhase | undefined = undefined;
   const _workflowDefaults: WorkflowDefaults | undefined = undefined;
   const _driver: Driver | undefined = undefined;
+  const _ldoManifest: LdoImportManifest | undefined = undefined;
+  const _ldoDetection: LdoProjectDetection | undefined = undefined;
+  const _ldoResume: ImportedLdoResumeResult | undefined = undefined;
   const _driveErrorCode: DriveErrorCode | undefined = undefined;
   const _driveParams: DriveWorkflowParams | undefined = undefined;
   expect(_driveErrorCode).toBeUndefined();
@@ -335,6 +351,9 @@ test("the package is importable by its published name", () => {
   expect(_workflowPhase).toBeUndefined();
   expect(_workflowDefaults).toBeUndefined();
   expect(_driver).toBeUndefined();
+  expect(_ldoManifest).toBeUndefined();
+  expect(_ldoDetection).toBeUndefined();
+  expect(_ldoResume).toBeUndefined();
   const _orchCode: OrchestrationErrorCode | undefined = undefined;
   const _orchestrator: Orchestrator | undefined = undefined;
   const _orchestratorDeps: OrchestratorDeps | undefined = undefined;

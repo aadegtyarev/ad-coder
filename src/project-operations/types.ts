@@ -52,11 +52,17 @@ export interface FollowUpValidationOptions {
 export const DEFAULT_PROJECT_OPERATIONS_CONFIG: Required<
   Pick<
     ProjectOperationsConfig,
-    "backlogBackend" | "evidenceLimit" | "aggregationLimit" | "claimLeaseMs"
+    "backlogBackend" | "evidenceLimit" | "aggregationLimit" | "claimLeaseMs" | "ldo"
   >
 > = {
   backlogBackend: "files",
   evidenceLimit: 0,
   aggregationLimit: 0,
   claimLeaseMs: 0,
+  ldo: {
+    root: ".codex/ldo",
+    artifactCountLimit: 0,
+    perFileByteLimit: 0,
+    aggregateByteLimit: 0,
+  },
 };

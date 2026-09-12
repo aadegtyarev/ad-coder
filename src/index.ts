@@ -166,6 +166,27 @@ export {
   suggestBacklogMigrationOnce,
 } from "./project-operations/github-backlog";
 export type {
+  ImportedLdoInspection,
+  ImportedLdoResumeResult,
+  LdoArtifactKind,
+  LdoDocumentationLayout,
+  LdoImportManifest,
+  LdoImportPreview,
+  LdoImportProvenance,
+  LdoImportRecord,
+  LdoImportResult,
+  LdoManifestEntry,
+  LdoPreviewItem,
+  LdoProjectDetection,
+} from "./project-operations/ldo-import";
+export {
+  detectLdoProject,
+  importLdoArtifacts,
+  inspectImportedLdoWork,
+  previewLdoImport,
+  resumeImportedLdoWork,
+} from "./project-operations/ldo-import";
+export type {
   ContractReviewRecord,
   CoordinatorCloseout,
   CoordinatorDriver,

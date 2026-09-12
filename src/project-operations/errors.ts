@@ -11,7 +11,12 @@ export type ProjectOperationsErrorCode =
   | "checkpoint_conflict"
   | "pending_decision"
   | "unauthorized_resolution"
-  | "unresolved_review";
+  | "unresolved_review"
+  | "malformed_import"
+  | "unsupported_import"
+  | "unsafe_import"
+  | "stale_import"
+  | "untrusted_import";
 
 export class ProjectOperationsError extends Error {
   override readonly name = "ProjectOperationsError";
