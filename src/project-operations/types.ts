@@ -19,6 +19,13 @@ interface FollowUpBase {
   provenance: FollowUpProvenance[];
 }
 
+/** Model-submitted shape. Provenance is always added by the harness. */
+export type FollowUpCandidate =
+  | Omit<ContractFollowUp, "provenance">
+  | Omit<NoteFollowUp, "provenance">
+  | Omit<DesignDocDriftFollowUp, "provenance">
+  | Omit<BacklogFollowUp, "provenance">;
+
 export interface ContractFollowUp extends FollowUpBase {
   kind: "contract";
   contract?: string;

@@ -2,9 +2,18 @@
 
 ## Current priority
 
-- [next] Complete the remaining reviewed project-operations increments:
-  RunCoordinator closeout, then non-destructive LDO import/operator commands.
-  The TUI remains unresolved but follows this work.
+- [next] Implement non-destructive LDO import and operator commands using the
+  delivered ProjectStore/RunCoordinator boundaries. Repository publishing policy
+  and the TUI remain unresolved later work.
+
+## Future control plane and plugins
+
+- [planned] Add a headless multi-project `SessionManager`, per-session worktrees,
+  serialized command queues, daemon lifecycle and event stream. Let the TUI drive
+  several independent sessions in parallel.
+- [planned] Add a minimal trusted plugin registry for local/npm packages over the
+  existing tool/workflow/driver seams, followed by a Telegram driver that binds
+  chats or topics to durable sessions.
 
 ## 2026-09-12
 

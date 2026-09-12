@@ -1,6 +1,7 @@
 import type { ContextBudget } from "../context/budget";
 import type { CompactionMode } from "../context/compactor";
 import { MemoryLedgerSink } from "../ledger/ledger";
+import { SUBMIT_FOLLOW_UP_TOOL_NAME } from "../orchestration/follow-up";
 import { SUBMIT_PLAN_TOOL_NAME } from "../orchestration/plan";
 import type { Complexity, PipelineConfig, RoleSpec } from "../orchestration/types";
 import { SUBMIT_VERDICT_TOOL_NAME } from "../orchestration/verdict";
@@ -212,10 +213,20 @@ export function resolvePipelineConfig(options: ResolvePipelineConfigOptions): Pi
   };
 
   const roles = {
-    planner: buildRole("planner", ["read", "bash", SUBMIT_PLAN_TOOL_NAME]),
-    security: buildRole("security", ["read", "bash"]),
-    coder: buildRole("coder", ["read", "write", "edit", "bash"]),
-    reviewer: buildRole("reviewer", ["read", "bash", SUBMIT_VERDICT_TOOL_NAME]),
+    planner: buildRole("planner", [
+      "read",
+      "bash",
+      SUBMIT_PLAN_TOOL_NAME,
+      SUBMIT_FOLLOW_UP_TOOL_NAME,
+    ]),
+    security: buildRole("security", ["read", "bash", SUBMIT_FOLLOW_UP_TOOL_NAME]),
+    coder: buildRole("coder", ["read", "write", "edit", "bash", SUBMIT_FOLLOW_UP_TOOL_NAME]),
+    reviewer: buildRole("reviewer", [
+      "read",
+      "bash",
+      SUBMIT_VERDICT_TOOL_NAME,
+      SUBMIT_FOLLOW_UP_TOOL_NAME,
+    ]),
   };
 
   return {

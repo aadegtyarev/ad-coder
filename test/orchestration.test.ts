@@ -15,6 +15,7 @@ import type {
   FauxResponseStep,
 } from "@earendil-works/pi-ai/providers/faux";
 import { MemoryLedgerSink } from "../src/ledger/ledger";
+import { SUBMIT_FOLLOW_UP_TOOL_NAME } from "../src/orchestration/follow-up";
 import { runPipeline } from "../src/orchestration/pipeline";
 import { parsePlan, SUBMIT_PLAN_TOOL_NAME } from "../src/orchestration/plan";
 import { applyTransition, autoDriver, createWorkflowSession } from "../src/orchestration/session";
@@ -190,6 +191,142 @@ test("parseVerdict rejects a bad status, non-array issues, a missing what, and a
     expect(caught).toBeInstanceOf(OrchestrationError);
     expect((caught as OrchestrationError).code).toBe("malformed_verdict");
   }
+});
+
+test("direct pipeline captures FollowUps with engine provenance and closes them without orchestrator", async () => {
+  const fx = fixture();
+  const coder = fx.role("coder", "Trusted coder prompt bytes.", [SUBMIT_FOLLOW_UP_TOOL_NAME]);
+  const reviewer = reviewerRole(fx);
+  fx.faux.setResponses([
+    fauxAssistantMessage(
+      fauxToolCall(SUBMIT_FOLLOW_UP_TOOL_NAME, {
+        kind: "note",
+        title: "Remember the discovered constraint",
+        evidence: [{ summary: "Observed in the implementation", path: "src/a.ts", line: 1 }],
+      }),
+    ),
+    fauxAssistantMessage("coded"),
+    ...reviewerTurn({ status: "approved", issues: [], summary: "good" }),
+  ]);
+
+  const result = await runPipeline({
+    targetDir: fx.targetDir,
+    models: fx.models,
+    task: "implement",
+    maxRounds: 1,
+    roles: { coder, reviewer },
+    projectStoreConfig: { projectOperations: { branch: "feature/coordinator" } },
+    coordinator: { runId: "direct-follow-up" },
+  });
+  const checkpoint = JSON.parse(
+    fs.readFileSync(
+      path.join(fx.targetDir, ".ad-coder", "runs", "coordinator-direct-follow-up.json"),
+      "utf8",
+    ),
+  ).value;
+  expect(result.approved).toBe(true);
+  expect(checkpoint.followUps).toHaveLength(1);
+  expect(checkpoint.followUps[0].provenance).toEqual([
+    { producer: "coder", runId: result.runIds[0], branch: "feature/coordinator" },
+  ]);
+  expect(
+    fs.readFileSync(path.join(fx.targetDir, "docs", "notes", "candidates.md"), "utf8"),
+  ).toContain("<!-- ad-coder:");
+});
+
+test("every workflow producer and repeated reviewer rounds receive engine-authored FollowUp provenance", async () => {
+  const fx = fixture();
+  const tools = ["bash", "read", SUBMIT_FOLLOW_UP_TOOL_NAME];
+  const planner = fx.role("planner", "planner bytes\t", [...tools, SUBMIT_PLAN_TOOL_NAME]);
+  const security = fx.role("security", "security bytes\t", tools);
+  const coder = fx.role("coder", "coder bytes\t", tools);
+  const reviewer = fx.role("reviewer", "reviewer bytes\t", [...tools, SUBMIT_VERDICT_TOOL_NAME]);
+  const followUp = (title: string) =>
+    fauxAssistantMessage(
+      fauxToolCall(SUBMIT_FOLLOW_UP_TOOL_NAME, {
+        kind: "note",
+        title,
+        evidence: [{ summary: "structural observation", path: "src/a.ts", line: 1 }],
+      }),
+    );
+  fx.faux.setResponses([
+    followUp("planner note"),
+    ...plannerTurn({ complexity: "medium", securitySurface: "elevated", summary: "plan" }),
+    followUp("security note"),
+    fauxAssistantMessage("security"),
+    followUp("coder one note"),
+    fauxAssistantMessage("code one"),
+    followUp("review one note"),
+    ...reviewerTurn({
+      status: "changes_requested",
+      issues: [{ severity: "major", what: "adjust" }],
+      summary: "retry",
+    }),
+    followUp("coder two note"),
+    fauxAssistantMessage("code two"),
+    followUp("review two note"),
+    ...reviewerTurn({ status: "approved", issues: [], summary: "done" }),
+  ]);
+
+  const session = createWorkflowSession({
+    targetDir: fx.targetDir,
+    models: fx.models,
+    task: "implement",
+    maxRounds: 2,
+    roles: { planner, security, coder, reviewer },
+    projectStoreConfig: { projectOperations: { branch: "feature/matrix" } },
+  });
+  let state = session.initialState();
+  const captured: Array<{ phase: string; producer: string; branch?: string }> = [];
+  while (!state.done) {
+    const stepped = await session.step(state);
+    for (const item of stepped.result.followUps ?? []) {
+      const provenance = item.provenance[0];
+      if (provenance !== undefined)
+        captured.push({
+          phase: stepped.result.phase,
+          producer: provenance.producer,
+          ...(provenance.branch !== undefined && { branch: provenance.branch }),
+        });
+    }
+    state = applyTransition(stepped.state, autoDriver(stepped.transitions));
+  }
+  expect(captured).toEqual([
+    { phase: "plan", producer: "planner", branch: "feature/matrix" },
+    { phase: "security", producer: "security", branch: "feature/matrix" },
+    { phase: "code", producer: "coder", branch: "feature/matrix" },
+    { phase: "review", producer: "reviewer", branch: "feature/matrix" },
+    { phase: "code", producer: "coder", branch: "feature/matrix" },
+    { phase: "review", producer: "reviewer", branch: "feature/matrix" },
+  ]);
+  expect(planner.role.systemPrompt).toBe("planner bytes\t");
+  expect(security.role.systemPrompt).toBe("security bytes\t");
+  expect(coder.role.systemPrompt).toBe("coder bytes\t");
+  expect(reviewer.role.systemPrompt).toBe("reviewer bytes\t");
+});
+
+test("an explicit role tool allow-list does not gain submit_follow_up", async () => {
+  const fx = fixture();
+  fx.faux.setResponses([
+    fauxAssistantMessage(
+      fauxToolCall(SUBMIT_FOLLOW_UP_TOOL_NAME, {
+        kind: "note",
+        title: "must not capture",
+        evidence: [{ summary: "attempt" }],
+      }),
+    ),
+    fauxAssistantMessage("coded without the denied tool"),
+  ]);
+  const session = createWorkflowSession({
+    targetDir: fx.targetDir,
+    models: fx.models,
+    task: "implement",
+    maxRounds: 1,
+    roles: { coder: fx.role("coder", "bytes", []), reviewer: reviewerRole(fx) },
+  });
+  const stepped = await session.step(session.initialState());
+  expect(stepped.result.phase).toBe("code");
+  expect(stepped.result.followUps).toEqual([]);
 });
 
 test("one round approve returns approved:true rounds:1", async () => {

@@ -57,6 +57,12 @@ export type { LedgerOptions, LedgerSink } from "./ledger/ledger";
 export { FileLedgerSink, LEDGER_BASE_DIR, Ledger, MemoryLedgerSink } from "./ledger/ledger";
 export type { LedgerRecord, UsageAmounts, UsageDelta } from "./ledger/types";
 export { diffUsage, toolCallCounts, UsageDeltaTracker, usageAmounts } from "./ledger/usage";
+export type { FollowUpCapture } from "./orchestration/follow-up";
+export {
+  buildSubmitFollowUpTool,
+  formatFollowUpInstruction,
+  SUBMIT_FOLLOW_UP_TOOL_NAME,
+} from "./orchestration/follow-up";
 export type {
   CostReport,
   Orchestrator,
@@ -80,6 +86,7 @@ export {
 export { runPipeline } from "./orchestration/pipeline";
 export type { PlanCapture } from "./orchestration/plan";
 export { buildSubmitPlanTool, SUBMIT_PLAN_TOOL_NAME } from "./orchestration/plan";
+export type { WorkflowSession } from "./orchestration/session";
 export { applyTransition, autoDriver, createWorkflowSession } from "./orchestration/session";
 export type {
   AvailableTransition,
@@ -129,6 +136,7 @@ export type {
 export { BACKLOG_STATES, FileBacklogStore } from "./project-operations/backlog";
 export type { DocumentationProposal } from "./project-operations/documentation";
 export {
+  appendDocumentationProposal,
   DocumentationRouter,
   routeDocumentationFollowUp,
 } from "./project-operations/documentation";
@@ -136,8 +144,10 @@ export type { ProjectOperationsErrorCode } from "./project-operations/errors";
 export { ProjectOperationsError } from "./project-operations/errors";
 export {
   aggregateFollowUps,
+  followUpSemanticId,
   projectBacklogFollowUp,
   validateFollowUp,
+  validateFollowUpCandidate,
 } from "./project-operations/follow-ups";
 export type {
   BacklogMigrationProbe,
@@ -156,10 +166,28 @@ export {
   suggestBacklogMigrationOnce,
 } from "./project-operations/github-backlog";
 export type {
+  ContractReviewRecord,
+  CoordinatorCloseout,
+  CoordinatorDriver,
+  CoordinatorPhase,
+  CoordinatorRunResult,
+  DecisionResolution,
+  DecisionStatus,
+  OperatorDecision,
+  RunCheckpoint,
+  RunCoordinatorOptions,
+} from "./project-operations/run-coordinator";
+export {
+  createRunCoordinator,
+  DEFAULT_RUN_COORDINATOR_OPTIONS,
+  RunCoordinator,
+} from "./project-operations/run-coordinator";
+export type {
   BacklogFollowUp,
   ContractFollowUp,
   DesignDocDriftFollowUp,
   FollowUp,
+  FollowUpCandidate,
   FollowUpEvidence,
   FollowUpProvenance,
   FollowUpValidationOptions,

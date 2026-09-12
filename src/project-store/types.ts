@@ -31,11 +31,14 @@ export interface ProjectStoreConfig {
 }
 
 export interface ProjectOperationsConfig {
+  /** Optional trusted branch label added to engine-authored FollowUp provenance. */
+  branch?: string;
   backlogBackend?: "files" | "github";
   evidenceLimit?: number;
   aggregationLimit?: number;
   claimLeaseMs?: number;
   documentation?: {
+    root?: string;
     contracts?: string;
     notes?: string;
   };

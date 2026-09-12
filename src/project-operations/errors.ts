@@ -7,7 +7,11 @@ export type ProjectOperationsErrorCode =
   | "not_claim_holder"
   | "not_found"
   | "github_unavailable"
-  | "invalid_config";
+  | "invalid_config"
+  | "checkpoint_conflict"
+  | "pending_decision"
+  | "unauthorized_resolution"
+  | "unresolved_review";
 
 export class ProjectOperationsError extends Error {
   override readonly name = "ProjectOperationsError";

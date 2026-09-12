@@ -18,6 +18,7 @@ import {
   silentNoopWarning,
 } from "../src/cli/drive";
 import { MemoryLedgerSink } from "../src/ledger/ledger";
+import { SUBMIT_FOLLOW_UP_TOOL_NAME } from "../src/orchestration/follow-up";
 import { runPipeline } from "../src/orchestration/pipeline";
 import { createWorkflowSession } from "../src/orchestration/session";
 import type {
@@ -171,7 +172,7 @@ test("a scripted rework choice re-runs the coder without a review in between", a
 
 test("auto:true reproduces runPipeline's approved/rounds/verdicts on the same scenario", async () => {
   const fx = fixture();
-  const coder = fx.role("coder", "You code.");
+  const coder = fx.role("coder", "You code.", [SUBMIT_FOLLOW_UP_TOOL_NAME]);
   const reviewer = reviewerRole(fx);
   const changes: Verdict = {
     status: "changes_requested",
@@ -180,6 +181,13 @@ test("auto:true reproduces runPipeline's approved/rounds/verdicts on the same sc
   };
   const approve: Verdict = { status: "approved", issues: [], summary: "fixed" };
   const script: FauxResponseStep[] = [
+    fauxAssistantMessage(
+      fauxToolCall(SUBMIT_FOLLOW_UP_TOOL_NAME, {
+        kind: "note",
+        title: "Shared coordinator scenario",
+        evidence: [{ summary: "All drivers observed the same follow-up" }],
+      }),
+    ),
     fauxAssistantMessage("code r1"),
     ...reviewerTurn(changes),
     fauxAssistantMessage("code r2"),
@@ -212,6 +220,19 @@ test("auto:true reproduces runPipeline's approved/rounds/verdicts on the same sc
   expect(driveResult.verdicts.map((v) => v.status)).toEqual(
     pipelineResult.verdicts.map((v) => v.status),
   );
+  const note = fs.readFileSync(path.join(fx.targetDir, "docs", "notes", "candidates.md"), "utf8");
+  expect(note.match(/<!-- ad-coder:/g)).toHaveLength(1);
+  const checkpoints = fs
+    .readdirSync(path.join(fx.targetDir, ".ad-coder", "runs"))
+    .filter((name) => name.startsWith("coordinator-"));
+  expect(checkpoints).toHaveLength(2);
+  for (const checkpoint of checkpoints) {
+    const persisted = JSON.parse(
+      fs.readFileSync(path.join(fx.targetDir, ".ad-coder", "runs", checkpoint), "utf8"),
+    ).value;
+    expect(persisted.phase).toBe("complete");
+    expect(persisted.followUps).toHaveLength(1);
+  }
 });
 
 test("a silent no-op turn writes the warning to the error stream", async () => {

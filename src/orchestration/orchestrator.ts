@@ -5,6 +5,8 @@ import type { ConversationSession } from "../conversation/conversation";
 import { startConversation } from "../conversation/conversation";
 import type { MemoryLedgerSink } from "../ledger/ledger";
 import { MemoryLedgerSink as MemoryLedgerSinkImpl } from "../ledger/ledger";
+import { ProjectOperationsError } from "../project-operations/errors";
+import { RunCoordinator } from "../project-operations/run-coordinator";
 import { resolvePrompt } from "../prompts/prompts";
 import type { Role } from "../role";
 import { defineRole } from "../role";
@@ -13,7 +15,7 @@ import { defineTool } from "../runner/tool";
 import type { SessionLimitSnapshot, SessionLimits } from "../session-limits";
 import { SessionLimitController } from "../session-limits";
 import type { WorkflowSession } from "./session";
-import { applyTransition, autoDriver, createWorkflowSession, toPipelineResult } from "./session";
+import { autoDriver, createWorkflowSession } from "./session";
 import { assertTransitionOffered, DriveError } from "./transition-guard";
 import type {
   AvailableTransition,
@@ -174,6 +176,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
   let session: WorkflowSession | undefined;
   let state: WorkflowState | undefined;
   let pending: AvailableTransition[] | undefined;
+  let coordinator: RunCoordinator | undefined;
 
   /** Enforce the shared sink on every config the core builds. */
   const buildConfig = (task: string): PipelineConfig => ({
@@ -198,26 +201,31 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
   };
 
   const runPipeline = async (task: string): Promise<RunPipelineResult> => {
-    const wf = createWorkflowSession(buildConfig(task));
-    let s = wf.initialState();
+    const config = buildConfig(task);
+    const wf = createWorkflowSession(config);
+    const runCoordinator = new RunCoordinator(wf, wf.projectStore, config.coordinator);
     const perStep: StepCost[] = [];
-    while (!s.done) {
-      const before = sink.records().length;
-      const stepResult = await wf.step(s);
+    let costCursor = sink.records().length;
+    const completed = await runCoordinator.run(autoDriver, ({ result }) => {
       const after = sink.records().length;
-      perStep.push(recordStep(stepResult.result.phase, before, after));
-      const chosen = autoDriver(stepResult.transitions);
-      // Validate even the engine's own default before committing: the invariant
-      // is that NO edge reaches applyTransition unchecked.
-      assertTransitionOffered(chosen, stepResult.transitions);
-      s = applyTransition(stepResult.state, chosen);
+      perStep.push(recordStep(result.phase, costCursor, after));
+      costCursor = after;
+    });
+    if (completed.result === undefined) {
+      const decision = completed.checkpoint.decisions.find((item) => item.status === "pending");
+      throw new ProjectOperationsError(
+        "pending_decision",
+        decision?.id ?? completed.checkpoint.runId,
+      );
     }
     const totalCost = perStep.reduce((sum, e) => sum + e.cost, 0);
-    return { result: toPipelineResult(s), perStep, totalCost };
+    return { result: completed.result, perStep, totalCost };
   };
 
   const beginStepping = (task: string): void => {
-    session = createWorkflowSession(buildConfig(task));
+    const config = buildConfig(task);
+    session = createWorkflowSession(config);
+    coordinator = new RunCoordinator(session, session.projectStore, config.coordinator);
     state = session.initialState();
     pending = undefined;
   };
@@ -247,7 +255,10 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       );
     }
     const before = sink.records().length;
-    const stepResult = await session.step(state);
+    const stepResult = await (coordinator as RunCoordinator).prepareStep();
+    if (stepResult === undefined) {
+      throw new OrchestratorError("no_active_session", "done", "the stepping run has settled");
+    }
     const after = sink.records().length;
     recordStep(stepResult.result.phase, before, after);
     state = stepResult.state;
@@ -283,7 +294,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       );
     }
     assertTransitionOffered(resolved, pending);
-    state = applyTransition(state, resolved);
+    state = (coordinator as RunCoordinator).commitTransition(resolved);
     pending = undefined;
     return state.phase;
   };
