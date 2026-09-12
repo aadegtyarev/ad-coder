@@ -11,6 +11,42 @@ export interface ContextBudget {
   keepRecentTokens: number;
 }
 
+export interface ContextBudgetPercents {
+  maxTokensPercent?: number;
+  reserveTokensPercent?: number;
+  keepRecentTokensPercent?: number;
+}
+
+export const DEFAULT_CONTEXT_BUDGET_PERCENTS = {
+  maxTokensPercent: 0.9,
+  reserveTokensPercent: 0.1,
+  keepRecentTokensPercent: 0.25,
+} as const;
+
+/** Validate and derive a portable budget from one effective model window. */
+export function deriveContextBudget(
+  contextWindow: number,
+  percents?: ContextBudgetPercents,
+): ContextBudget {
+  const resolved = { ...DEFAULT_CONTEXT_BUDGET_PERCENTS, ...(percents ?? {}) };
+  for (const [name, value] of Object.entries(resolved)) {
+    if (typeof value !== "number" || !Number.isFinite(value) || value <= 0 || value >= 1) {
+      throw new Error(`${name} must be a finite number between 0 and 1`);
+    }
+  }
+  const budget = {
+    maxTokens: Math.floor(contextWindow * resolved.maxTokensPercent),
+    reserveTokens: Math.floor(contextWindow * resolved.reserveTokensPercent),
+    keepRecentTokens: Math.floor(contextWindow * resolved.keepRecentTokensPercent),
+  };
+  if (budget.reserveTokens + budget.keepRecentTokens >= budget.maxTokens) {
+    throw new Error(
+      "reserveTokensPercent + keepRecentTokensPercent must be below maxTokensPercent",
+    );
+  }
+  return budget;
+}
+
 function isPositiveInteger(value: number): boolean {
   return Number.isInteger(value) && value > 0;
 }

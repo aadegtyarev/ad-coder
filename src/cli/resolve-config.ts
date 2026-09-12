@@ -1,5 +1,7 @@
-import type { ContextBudget } from "../context/budget";
+import type { Api, Model } from "@earendil-works/pi-ai";
+import { type ContextBudgetPercents, deriveContextBudget } from "../context/budget";
 import type { CompactionMode } from "../context/compactor";
+import { assertSummarizerWindow } from "../context/compactor";
 import { MemoryLedgerSink } from "../ledger/ledger";
 import { SUBMIT_FOLLOW_UP_TOOL_NAME } from "../orchestration/follow-up";
 import { SUBMIT_PLAN_TOOL_NAME } from "../orchestration/plan";
@@ -8,6 +10,7 @@ import { SUBMIT_VERDICT_TOOL_NAME } from "../orchestration/verdict";
 import { buildDefaultProfile } from "../profiles/default-profile";
 import { resolveProfile } from "../profiles/resolve";
 import type { Profile, ProfileRole } from "../profiles/types";
+import { parseProfile } from "../profiles/validate";
 import type { ProjectStoreConfig } from "../project-store/types";
 import { resolvePrompt } from "../prompts/prompts";
 import { deepseekPreset, openaiCodexPreset, openrouterPreset } from "../registry/presets";
@@ -35,22 +38,38 @@ export type ResolvableProvider = "deepseek" | "openrouter" | "openai-codex";
  * never evicts. `reserve + keepRecent` must stay below `maxTokens` (enforced by
  * `defineRole`), which the defaults satisfy (0.10 + 0.25 < 0.90).
  */
-export interface BudgetPercents {
-  maxTokensPercent?: number;
-  reserveTokensPercent?: number;
-  keepRecentTokensPercent?: number;
-}
-
-const DEFAULT_BUDGET_PERCENTS = {
-  maxTokensPercent: 0.9,
-  reserveTokensPercent: 0.1,
-  keepRecentTokensPercent: 0.25,
-} as const;
+export type BudgetPercents = ContextBudgetPercents;
+export type ConfigurableRole = "planner" | "security" | "coder" | "reviewer" | "orchestrator";
 
 /** maxRounds default when the caller does not override it. */
 const DEFAULT_MAX_ROUNDS = 3;
 /** The complexity every pre-plan role and later fallback routes on by default. */
 const DEFAULT_COMPLEXITY: Complexity = "medium";
+const CONFIGURABLE_ROLES: readonly ConfigurableRole[] = [
+  "planner",
+  "security",
+  "coder",
+  "reviewer",
+  "orchestrator",
+];
+
+function validateRoleBudgetPercents(
+  value: Partial<Record<ConfigurableRole, BudgetPercents>> | undefined,
+): void {
+  if (value === undefined) return;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("roleBudgetPercents must be an object");
+  }
+  for (const [role, percents] of Object.entries(value)) {
+    if (!CONFIGURABLE_ROLES.includes(role as ConfigurableRole)) {
+      throw new Error(`roleBudgetPercents contains unknown role ${role}`);
+    }
+    if (typeof percents !== "object" || percents === null || Array.isArray(percents)) {
+      throw new Error(`roleBudgetPercents.${role} must be an object`);
+    }
+    deriveContextBudget(1000, percents);
+  }
+}
 
 /**
  * Everything `resolvePipelineConfig` needs to build a runnable `PipelineConfig`
@@ -72,12 +91,22 @@ export interface ResolvePipelineConfigOptions {
   strongModel?: string;
   midModel?: string;
   cheapModel?: string;
+  /** Explicit operator-authored registry data; never discovered from targetDir. */
+  registryConfig?: RegistryConfig;
+  profile?: Profile;
+  overrides?: Partial<Record<ProfileRole, import("../profiles/types").SpawnOverride>>;
+  plannerModel?: string;
+  securityModel?: string;
+  coderModel?: string;
+  reviewerModel?: string;
+  orchestratorModel?: string;
   compactionMode?: CompactionMode;
   summarizerModel?: string;
   allowCrossProviderSummarization?: boolean;
   maxRounds?: number;
   defaultComplexity?: Complexity;
   budgetPercents?: BudgetPercents;
+  roleBudgetPercents?: Partial<Record<ConfigurableRole, BudgetPercents>>;
   warn?: (message: string) => void;
   projectStoreConfig?: ProjectStoreConfig;
 }
@@ -130,20 +159,6 @@ function selectProvider(
 }
 
 /**
- * Derive a single `ContextBudget` valid for every role from the SMALLEST window
- * among the chosen tier models, so the one budget validates whichever model a
- * role routes to. Expressed as percents of that window per the config contract.
- */
-function deriveBudget(minWindow: number, percents: BudgetPercents | undefined): ContextBudget {
-  const p = { ...DEFAULT_BUDGET_PERCENTS, ...(percents ?? {}) };
-  return {
-    maxTokens: Math.floor(minWindow * p.maxTokensPercent),
-    reserveTokens: Math.floor(minWindow * p.reserveTokensPercent),
-    keepRecentTokens: Math.floor(minWindow * p.keepRecentTokensPercent),
-  };
-}
-
-/**
  * Resolve a runnable `PipelineConfig` from the environment: select a provider,
  * build its registry from the shipped preset, route strong/mid/cheap NAMES
  * through the default profile, derive a window-relative budget, and build the
@@ -156,11 +171,24 @@ function deriveBudget(minWindow: number, percents: BudgetPercents | undefined): 
  * it. The codex fallback is OAuth-only and never throws `missing_credential`.
  */
 export function resolvePipelineConfig(options: ResolvePipelineConfigOptions): PipelineConfig {
+  validateRoleBudgetPercents(options.roleBudgetPercents);
+  if (options.registryConfig !== undefined && options.provider !== undefined) {
+    throw new Error("provider cannot be combined with registryConfig");
+  }
   const env = options.env ?? ((name: string) => process.env[name]);
   const warn = options.warn ?? ((message: string) => void process.stderr.write(message));
 
-  const provider = selectProvider(env, options.provider, warn);
-  const { preset, defaultModel } = PROVIDER_PRESETS[provider];
+  const provider =
+    options.registryConfig === undefined ? selectProvider(env, options.provider, warn) : undefined;
+  const presetSelection = provider === undefined ? undefined : PROVIDER_PRESETS[provider];
+  let registryConfig: RegistryConfig;
+  if (options.registryConfig !== undefined) registryConfig = options.registryConfig;
+  else if (presetSelection !== undefined)
+    registryConfig = { providers: [presetSelection.preset()] };
+  else throw new Error("provider preset could not be selected");
+  const defaultModel =
+    presetSelection?.defaultModel ?? registryConfig.providers[0]?.models[0]?.name;
+  if (defaultModel === undefined) throw new Error("registryConfig must declare at least one model");
 
   const strong = options.strongModel ?? defaultModel;
   const mid = options.midModel ?? defaultModel;
@@ -173,30 +201,58 @@ export function resolvePipelineConfig(options: ResolvePipelineConfigOptions): Pi
     throw new Error(`unknown context compaction mode "${String(compactionMode)}"`);
   }
 
-  const registryConfig: RegistryConfig = { providers: [preset()] };
   const registry: ResolvedRegistry = resolveRegistry(registryConfig, { env });
-  const summarizerModelName = options.summarizerModel ?? cheap;
-  const summarizerModel = registry.getModel(summarizerModelName);
-
-  const profile: Profile = buildDefaultProfile({ strong, mid, cheap });
+  for (const configuredProvider of registryConfig.providers) {
+    const credentialName =
+      configuredProvider.credential.kind === "env-var"
+        ? configuredProvider.credential.envVar
+        : "oauth";
+    const firstModel = configuredProvider.models[0];
+    if (firstModel === undefined) throw new Error("provider must declare a model");
+    const resolvedModel = registry.getModel(firstModel.name);
+    warn(
+      `ad-coder: provider destination "${resolvedModel.provider}" host "${new URL(resolvedModel.baseUrl).host}" credential "${credentialName}"\n`,
+    );
+  }
+  const profile: Profile = parseProfile(
+    options.profile ?? buildDefaultProfile({ strong, mid, cheap }),
+  );
   const defaultComplexity = options.defaultComplexity ?? DEFAULT_COMPLEXITY;
   const maxRounds = options.maxRounds ?? DEFAULT_MAX_ROUNDS;
+  const summarizerModel =
+    options.summarizerModel !== undefined
+      ? registry.getModel(options.summarizerModel)
+      : resolveProfile(
+          profile,
+          registry,
+          "recorder",
+          defaultComplexity,
+          options.overrides?.recorder,
+        ).model;
 
-  // The budget must validate against EVERY role's model, so derive it from the
-  // smallest window among the tier models a role can route to.
-  const minWindow = Math.min(
-    registry.getModel(strong).contextWindow,
-    registry.getModel(mid).contextWindow,
-    registry.getModel(cheap).contextWindow,
+  const explicitModels: Partial<Record<ProfileRole, string>> = {
+    ...(options.plannerModel !== undefined && { planner: options.plannerModel }),
+    ...(options.securityModel !== undefined && { security: options.securityModel }),
+    ...(options.coderModel !== undefined && { coder: options.coderModel }),
+    ...(options.reviewerModel !== undefined && { reviewer: options.reviewerModel }),
+  };
+  const overrides = { ...options.overrides };
+  for (const [role, model] of Object.entries(explicitModels)) {
+    overrides[role as ProfileRole] = { model };
+  }
+
+  warn(
+    `ad-coder: provider "${provider ?? "custom"}" | strong "${strong}" mid "${mid}" cheap "${cheap}"\n`,
   );
-  const budget = deriveBudget(minWindow, options.budgetPercents);
-
-  warn(`ad-coder: provider "${provider}" | strong "${strong}" mid "${mid}" cheap "${cheap}"\n`);
 
   const buildRole = (name: ProfileRole, tools: string[]): RoleSpec => {
     // The role's live model is whatever the default profile routes it to at
     // defaultComplexity; the budget is validated against that same model.
-    const model = resolveProfile(profile, registry, name, defaultComplexity).model;
+    const model = resolveProfile(profile, registry, name, defaultComplexity, overrides[name]).model;
+    const budget = deriveContextBudget(
+      model.contextWindow,
+      options.roleBudgetPercents?.[name as ConfigurableRole] ?? options.budgetPercents,
+    );
     const role: Role = defineRole(
       {
         name,
@@ -229,12 +285,52 @@ export function resolvePipelineConfig(options: ResolvePipelineConfigOptions): Pi
     ]),
   };
 
+  const orchestratorModel =
+    options.orchestratorModel !== undefined
+      ? registry.getModel(options.orchestratorModel)
+      : resolveProfile(profile, registry, "coder", defaultComplexity, overrides.coder).model;
+  const orchestrator = buildNamedRole("orchestrator", orchestratorModel, ["read", "bash"]);
+
+  if (compactionMode !== "disabled-then-halt") {
+    const reachable = profile.entries
+      .filter((entry) => entry.role !== "recorder")
+      .map((entry) => registry.getModel(entry.model));
+    for (const [role, override] of Object.entries(overrides)) {
+      if (role !== "recorder" && override !== undefined)
+        reachable.push(registry.getModel(override.model));
+    }
+    reachable.push(orchestratorModel);
+    assertSummarizerWindow(summarizerModel, reachable);
+  }
+
+  function buildNamedRole(name: ConfigurableRole, model: Model<Api>, tools: string[]): RoleSpec {
+    const budget = deriveContextBudget(
+      model.contextWindow,
+      options.roleBudgetPercents?.[name] ?? options.budgetPercents,
+    );
+    return {
+      model,
+      role: defineRole(
+        {
+          name,
+          provider: model.provider,
+          modelId: model.id,
+          systemPrompt: resolvePrompt(name, { projectDir: options.targetDir }),
+          activeToolNames: tools,
+          cacheRetention: "short",
+          contextBudget: budget,
+        },
+        model,
+      ),
+    };
+  }
+
   return {
     targetDir: options.targetDir,
     models: registry.models,
     task: options.task,
     maxRounds,
-    roles,
+    roles: { ...roles, orchestrator },
     ledgerSink: new MemoryLedgerSink(),
     compaction:
       compactionMode === "disabled-then-halt"
@@ -246,7 +342,18 @@ export function resolvePipelineConfig(options: ResolvePipelineConfigOptions): Pi
               allowCrossProviderSummarization: true,
             }),
           },
-    routing: { profile, registry, defaultComplexity },
+    routing: {
+      profile,
+      registry,
+      defaultComplexity,
+      ...(Object.keys(overrides).length > 0 && { overrides }),
+      budgetPercents: {
+        planner: options.roleBudgetPercents?.planner ?? options.budgetPercents ?? {},
+        security: options.roleBudgetPercents?.security ?? options.budgetPercents ?? {},
+        coder: options.roleBudgetPercents?.coder ?? options.budgetPercents ?? {},
+        reviewer: options.roleBudgetPercents?.reviewer ?? options.budgetPercents ?? {},
+      },
+    },
     defaults: { maxRounds, defaultComplexity },
     ...(options.projectStoreConfig !== undefined && {
       projectStoreConfig: options.projectStoreConfig,

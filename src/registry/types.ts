@@ -34,7 +34,8 @@ export type ApiKind = "openai-completions" | "anthropic-messages" | "openai-code
 export interface ModelConfig {
   name: string;
   modelId: string;
-  contextWindow: number;
+  /** Defaults to 200000 when omitted; explicit values override provider catalogs. */
+  contextWindow?: number;
   maxTokens: number;
   reasoning?: boolean;
   cost: {

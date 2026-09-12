@@ -107,6 +107,42 @@ called; there is not yet a public manual recovery command. `cache-aware` is an
 accepted policy name but deliberately throws as unsupported rather than silently
 changing behavior.
 
+Each declared model may omit `contextWindow`; the registry then uses 200000
+tokens. An explicit value always wins, including for delegated OAuth catalog
+models, so both smaller and larger self-hosted windows are supported. Planner,
+security, coder, reviewer, orchestrator, and summarizer selections are
+independent. Role budgets are derived from each turn's effective model window
+using `maxTokensPercent`, `reserveTokensPercent`, and
+`keepRecentTokensPercent`; `roleBudgetPercents` can override those fractions per
+role.
+
+Automatic compaction remains enabled by default. Because summarization is one
+shot in this release, configuration is rejected before any model call when the
+summarizer window is smaller than the largest model reachable through any
+complexity route, role override, or orchestrator selection. Chunked and
+recursive summarization are not implemented.
+
+For a self-hosted mixed-window setup, explicitly select trusted data-only JSON
+files (they are never discovered from the target repository):
+
+```sh
+ad-coder console --target-dir ./project \
+  --registry-config ~/.config/ad-coder/models.json \
+  --profile-config ~/.config/ad-coder/profile.json \
+  --planner-model local-200k --security-model local-200k \
+  --coder-model local-32k --reviewer-model local-200k \
+  --orchestrator-model local-32k --summarizer-model local-200k \
+  --max-tokens-percent 0.9 --reserve-tokens-percent 0.1 \
+  --keep-recent-tokens-percent 0.25
+```
+
+Registry files are trusted operator configuration: they bind an HTTPS provider
+host to a credential environment-variable name. The CLI reports the selected
+provider class and model names but never automatically discovers configuration
+from `targetDir`; explicitly selected paths may point there. It never prints
+credential values. Cross-provider summarization still requires the separate
+`--allow-cross-provider-summarization true` opt-in.
+
 ## Run
 
 ### Usage at a glance

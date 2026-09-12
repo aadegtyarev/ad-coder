@@ -527,10 +527,11 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
 
   // A placeholder task only seeds the config that yields the orchestrator's own
   // conversation model + window budget; the real per-run task arrives through
-  // the tools. Reusing the coder's resolved model/budget keeps every credential
-  // on the single resolvePipelineConfig surface.
+  // the tools. Its independent role selection still shares the registry and
+  // credential boundary with the pipeline.
   const seed = buildConfig("orchestrate");
-  const orchestratorModel = seed.roles.coder.model;
+  const orchestratorSpec = seed.roles.orchestrator ?? seed.roles.coder;
+  const orchestratorModel = orchestratorSpec.model;
   const orchestratorRole: Role = defineRole(
     {
       name: "orchestrator",
@@ -546,7 +547,7 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
         SHOW_COST_TOOL_NAME,
       ],
       cacheRetention: "short",
-      contextBudget: seed.roles.coder.role.contextBudget,
+      contextBudget: orchestratorSpec.role.contextBudget,
     },
     orchestratorModel,
   );

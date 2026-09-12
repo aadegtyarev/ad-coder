@@ -3,7 +3,11 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { resolvePipelineConfig } from "../src/cli/resolve-config";
+import { deriveContextBudget } from "../src/context/budget";
+import { buildDefaultProfile } from "../src/profiles/default-profile";
+import { resolveProfile } from "../src/profiles/resolve";
 import { RegistryError } from "../src/registry/errors";
+import type { RegistryConfig } from "../src/registry/types";
 
 /** A fake env accessor over a plain record; nothing touches the real process.env. */
 function fakeEnv(vars: Record<string, string>): (name: string) => string | undefined {
@@ -12,6 +16,126 @@ function fakeEnv(vars: Record<string, string>): (name: string) => string | undef
 
 /** Swallow the resolver's stderr notices so tests stay quiet. */
 const silent = () => {};
+
+function mixedRegistry(): RegistryConfig {
+  const make = (name: string, contextWindow: number) => ({
+    name,
+    modelId: name,
+    contextWindow,
+    maxTokens: 4096,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+  });
+  return {
+    providers: [
+      {
+        id: "local",
+        api: "openai-completions",
+        baseUrl: "https://localhost.example/v1",
+        credential: { kind: "env-var", envVar: "LOCAL_KEY" },
+        models: [make("small", 32000), make("large", 200000)],
+      },
+    ],
+  };
+}
+
+for (const [modelName, window, expectedBudget] of [
+  ["small", 32_000, 28_800],
+  ["large", 200_000, 180_000],
+] as const) {
+  test(`homogeneous ${window}-token configuration derives role-local budgets`, () => {
+    const config = resolvePipelineConfig({
+      task: "x",
+      targetDir: "/tmp/target",
+      registryConfig: mixedRegistry(),
+      profile: buildDefaultProfile({ strong: modelName, mid: modelName, cheap: modelName }),
+      summarizerModel: modelName,
+      env: fakeEnv({ LOCAL_KEY: "k" }),
+      warn: silent,
+    });
+    expect(config.roles.planner?.role.contextBudget.maxTokens).toBe(expectedBudget);
+    expect(config.roles.coder.role.contextBudget.maxTokens).toBe(expectedBudget);
+    expect(config.compaction?.mode).toBe("auto");
+  });
+}
+
+test("mixed-window roles select independently and derive independent budgets", () => {
+  const config = resolvePipelineConfig({
+    task: "x",
+    targetDir: "/tmp/target",
+    registryConfig: mixedRegistry(),
+    profile: buildDefaultProfile({ strong: "large", mid: "small", cheap: "small" }),
+    plannerModel: "small",
+    securityModel: "large",
+    coderModel: "small",
+    reviewerModel: "large",
+    orchestratorModel: "small",
+    summarizerModel: "large",
+    env: fakeEnv({ LOCAL_KEY: "k" }),
+    warn: silent,
+  });
+  expect(config.roles.planner?.model.contextWindow).toBe(32000);
+  expect(config.roles.security?.model.contextWindow).toBe(200000);
+  expect(config.roles.coder.role.contextBudget.maxTokens).toBe(28800);
+  expect(config.roles.reviewer.role.contextBudget.maxTokens).toBe(180000);
+  expect(config.roles.orchestrator?.model.contextWindow).toBe(32000);
+});
+
+test("every complexity route and override derives from its dispatched model window", () => {
+  const config = resolvePipelineConfig({
+    task: "x",
+    targetDir: "/tmp/target",
+    registryConfig: mixedRegistry(),
+    profile: buildDefaultProfile({ strong: "large", mid: "small", cheap: "small" }),
+    summarizerModel: "large",
+    overrides: { reviewer: { model: "large" } },
+    env: fakeEnv({ LOCAL_KEY: "k" }),
+    warn: silent,
+  });
+  const routing = config.routing!;
+  for (const complexity of ["trivial", "medium", "complex"] as const) {
+    for (const role of ["planner", "security", "coder", "reviewer"] as const) {
+      const model = resolveProfile(
+        routing.profile,
+        routing.registry,
+        role,
+        complexity,
+        routing.overrides?.[role],
+      ).model;
+      const budget = deriveContextBudget(model.contextWindow, routing.budgetPercents?.[role]);
+      expect(budget.maxTokens).toBe(model.contextWindow === 200000 ? 180000 : 28800);
+    }
+  }
+});
+
+test("undersized summarizer rejects every reachable routing cell and override", () => {
+  expect(() =>
+    resolvePipelineConfig({
+      task: "x",
+      targetDir: "/tmp/target",
+      registryConfig: mixedRegistry(),
+      profile: buildDefaultProfile({ strong: "large", mid: "small", cheap: "small" }),
+      coderModel: "large",
+      summarizerModel: "small",
+      env: fakeEnv({ LOCAL_KEY: "k" }),
+      warn: silent,
+    }),
+  ).toThrow("summarizer context window 32000 is below reachable maximum 200000");
+});
+
+test("budget percentages validate centrally", () => {
+  expect(() =>
+    resolvePipelineConfig({
+      task: "x",
+      targetDir: "/tmp/target",
+      registryConfig: mixedRegistry(),
+      profile: buildDefaultProfile({ strong: "small", mid: "small", cheap: "small" }),
+      summarizerModel: "small",
+      budgetPercents: { maxTokensPercent: 1 },
+      env: fakeEnv({ LOCAL_KEY: "k" }),
+      warn: silent,
+    }),
+  ).toThrow("maxTokensPercent");
+});
 
 test("all pipeline roles automatically use byte-verbatim target prompt overrides", () => {
   const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-role-prompts-"));

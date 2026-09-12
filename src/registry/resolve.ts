@@ -69,12 +69,12 @@ export function resolveRegistry(
   });
 
   // name -> the pi (providerId, modelId) pair getModel resolves against.
-  const index = new Map<string, { providerId: string; modelId: string }>();
+  const index = new Map<string, { providerId: string; modelId: string; config: ModelConfig }>();
 
   for (const provider of validated.providers) {
     const registeredId = registerProvider(provider, models, readEnv);
     for (const model of provider.models) {
-      index.set(model.name, { providerId: registeredId, modelId: model.modelId });
+      index.set(model.name, { providerId: registeredId, modelId: model.modelId, config: model });
     }
   }
 
@@ -91,7 +91,13 @@ export function resolveRegistry(
         `model "${name}" maps to provider "${entry.providerId}" model "${entry.modelId}", which the provider does not expose`,
       );
     }
-    return model;
+    // Declared registry data is authoritative even for delegated OAuth catalogs.
+    // A fresh object avoids mutating pi-ai's shared provider catalog.
+    return {
+      ...model,
+      contextWindow: entry.config.contextWindow ?? 200_000,
+      maxTokens: entry.config.maxTokens,
+    };
   };
 
   return {
@@ -156,7 +162,7 @@ function toPiModel(model: ModelConfig, provider: ProviderConfig): Model<Api> {
       cacheRead: model.cost.cacheRead,
       cacheWrite: model.cost.cacheWrite,
     },
-    contextWindow: model.contextWindow,
+    contextWindow: model.contextWindow ?? 200_000,
     maxTokens: model.maxTokens,
   };
 }

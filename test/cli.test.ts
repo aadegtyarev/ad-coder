@@ -340,6 +340,11 @@ test("console help is registry-derived and invalid input limits fail before prov
     "--max-session-cost-usd <amount>",
     "--provider <provider>",
     "--strong-model <name>",
+    "--registry-config <file.json>",
+    "--planner-model <name>",
+    "--orchestrator-model <name>",
+    "--summarizer-model <name>",
+    "--role-budget-percents <file.json>",
     "--max-rounds <n>",
     "--default-complexity <complexity>",
   ]) {

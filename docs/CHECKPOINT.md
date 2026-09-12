@@ -1,5 +1,21 @@
 # Checkpoint
 
+## 2026-09-12 — Self-hosting model and context configuration
+
+Every active model is independently selectable, including Orchestrator and
+Summarizer. Model context windows default to 200000 when omitted and explicit
+registry values may narrow or expand them. Context budgets derive independently
+from each selected model using configurable percentages. Automatic compaction
+remains the default. Configuration fails before provider dispatch unless the
+Summarizer window covers the largest reachable pipeline, override, or Orchestrator
+window; chunked summarization is intentionally deferred under this invariant.
+Registry/profile files are explicitly selected JSON data and are never executed.
+
+Verification: focused model/config/orchestration/CLI/export coverage passed 99 tests
+with 675 assertions. The full suite passed 287 tests with 1,467 assertions;
+TypeScript, Biome, and `git diff --check` pass. Persistent Codex OAuth and live
+self-hosting dogfood are next.
+
 ## 2026-09-12 — Project operations Increment 6
 
 Repository publishing now has a headless core and registry-derived JSON

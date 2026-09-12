@@ -613,6 +613,12 @@ workflows — one substrate, swappable drivers.
   a 200k and a 32k model, keeping reserveTokens (room for the reply) as its own
   knob. Default to the most efficient mode. Recon first: verify pi's request
   assembly order (system -> tools -> messages) so the cache boundary is placed right.
+  Self-hosting configuration now supports independent planner, security, coder,
+  reviewer, orchestrator, and summarizer models. Model windows default to 200000
+  but are overridable in either direction; each role derives its own percentage
+  budget from its effective routed model. Until chunked/recursive summarization
+  exists, auto mode rejects configurations whose summarizer window is below the
+  maximum window reachable through routing cells, overrides, or orchestrator.
 - **TUI — the human surface to everything, built for convenience** (Phase 3, after
   the orchestrator). Not a showcase: it EXPOSES the machinery already built,
   clearly and reachably. Chat with the orchestrator (images paste in later, fed to

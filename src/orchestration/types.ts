@@ -1,4 +1,5 @@
 import type { Api, Model, Models } from "@earendil-works/pi-ai";
+import type { ContextBudgetPercents } from "../context/budget";
 import type { CompactionPolicy } from "../context/compactor";
 import type { LedgerSink } from "../ledger/ledger";
 import type { Profile, ProfileRole, SpawnOverride } from "../profiles/types";
@@ -139,6 +140,8 @@ export interface PipelineRouting {
   registry: ResolvedRegistry;
   defaultComplexity?: Complexity;
   overrides?: Partial<Record<ProfileRole, SpawnOverride>>;
+  /** Portable per-role budgets, re-derived after each effective routing decision. */
+  budgetPercents?: Partial<Record<ProfileRole, ContextBudgetPercents>>;
 }
 
 /**
@@ -202,6 +205,8 @@ export interface PipelineConfig {
      * the run proceeds. It reads the plan/tree only -- no write/edit/submit.
      */
     security?: RoleSpec;
+    /** Conversation-front role; ignored by the pipeline graph itself. */
+    orchestrator?: RoleSpec;
   };
   ledgerSink?: LedgerSink;
   /** Resolved context policy; absent callers receive the core's auto default. */

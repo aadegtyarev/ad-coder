@@ -21,14 +21,20 @@ export type { DriveErrorCode, DriveWorkflowParams } from "./cli/drive";
 export { DriveError, driveWorkflow, silentNoopWarning } from "./cli/drive";
 export type {
   BudgetPercents,
+  ConfigurableRole,
   ResolvableProvider,
   ResolvePipelineConfigOptions,
 } from "./cli/resolve-config";
 export { resolvePipelineConfig } from "./cli/resolve-config";
-export type { ContextBudget } from "./context/budget";
-export { ContextBudgetError } from "./context/budget";
+export type { ContextBudget, ContextBudgetPercents } from "./context/budget";
+export {
+  ContextBudgetError,
+  DEFAULT_CONTEXT_BUDGET_PERCENTS,
+  deriveContextBudget,
+} from "./context/budget";
 export type { CompactionMode, CompactionPolicy, Summarizer } from "./context/compactor";
 export {
+  assertSummarizerWindow,
   COMPACTION_SAFETY_PROMPT,
   ContextCompactor,
   createSummarizer,
@@ -283,7 +289,7 @@ export type {
   RegistryConfig,
   ResolvedRegistry,
 } from "./registry/types";
-export { parseRegistryConfig } from "./registry/validate";
+export { DEFAULT_CONTEXT_WINDOW, parseRegistryConfig } from "./registry/validate";
 export type { Role, RoleRunDeps } from "./role";
 export { defineRole, resolveRoleModel, toHarnessOptions } from "./role";
 export type { RunnerErrorCode } from "./runner/errors";

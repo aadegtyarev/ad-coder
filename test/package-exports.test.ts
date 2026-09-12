@@ -11,10 +11,12 @@ import type {
   BacklogStore,
   BudgetPercents,
   Complexity,
+  ConfigurableRole,
   ConsoleExitReason,
   ConsoleOutputMode,
   ConsoleRunResult,
   ContextBudget,
+  ContextBudgetPercents,
   ConversationConfig,
   ConversationSession,
   ConversationStepOptions,
@@ -99,6 +101,7 @@ import {
   anthropicCompatiblePreset,
   applyTransition,
   assertContextFitsBudget,
+  assertSummarizerWindow,
   assertTurnFitsBudget,
   autoDriver,
   BACKLOG_STATES,
@@ -118,6 +121,8 @@ import {
   createSummarizer,
   createWorkflowSession,
   DEFAULT_CONSOLE_MAX_INPUT_BYTES,
+  DEFAULT_CONTEXT_BUDGET_PERCENTS,
+  DEFAULT_CONTEXT_WINDOW,
   DEFAULT_PROJECT_OPERATIONS_CONFIG,
   DEFAULT_REPOSITORY_PUBLISHING_CONFIG,
   DocumentationRouter,
@@ -125,6 +130,7 @@ import {
   deepseekPreset,
   defineTool,
   deleteProjectSession,
+  deriveContextBudget,
   detectLdoProject,
   diffUsage,
   driveWorkflow,
@@ -282,7 +288,13 @@ test("the package is importable by its published name", () => {
   expect(typeof RUN_STEP_TOOL_NAME).toBe("string");
   expect(typeof CHOOSE_TRANSITION_TOOL_NAME).toBe("string");
   expect(typeof SHOW_COST_TOOL_NAME).toBe("string");
+  expect(DEFAULT_CONTEXT_WINDOW).toBe(200_000);
+  expect(DEFAULT_CONTEXT_BUDGET_PERCENTS.maxTokensPercent).toBe(0.9);
+  expect(typeof deriveContextBudget).toBe("function");
+  expect(typeof assertSummarizerWindow).toBe("function");
   const _budgetPercents: BudgetPercents | undefined = undefined;
+  const _contextBudgetPercents: ContextBudgetPercents | undefined = undefined;
+  const _configurableRole: ConfigurableRole | undefined = undefined;
   const _resolvableProvider: ResolvableProvider | undefined = undefined;
   const _resolveConfigOpts: ResolvePipelineConfigOptions | undefined = undefined;
   const _storeConfig: ProjectStoreConfig | undefined = undefined;
@@ -299,6 +311,8 @@ test("the package is importable by its published name", () => {
   const _publishingConfig: RepositoryPublishingConfig | undefined = undefined;
   const _publishingPreflight: RepositoryPublishingPreflight | undefined = undefined;
   expect(_budgetPercents).toBeUndefined();
+  expect(_contextBudgetPercents).toBeUndefined();
+  expect(_configurableRole).toBeUndefined();
   expect(_resolvableProvider).toBeUndefined();
   expect(_resolveConfigOpts).toBeUndefined();
   expect(_storeConfig).toBeUndefined();

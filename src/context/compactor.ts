@@ -26,6 +26,20 @@ export interface CompactionPolicy {
   allowCrossProviderSummarization?: boolean;
 }
 
+/** Enforce the accepted one-shot summarization boundary for a configured run. */
+export function assertSummarizerWindow(
+  summarizerModel: Model<Api>,
+  reachableModels: Iterable<Model<Api>>,
+): void {
+  let maximum = 0;
+  for (const model of reachableModels) maximum = Math.max(maximum, model.contextWindow);
+  if (summarizerModel.contextWindow < maximum) {
+    throw new Error(
+      `summarizer context window ${summarizerModel.contextWindow} is below reachable maximum ${maximum}`,
+    );
+  }
+}
+
 /**
  * ad-coder's own summarization system prompt. Deliberately NOT Pi's
  * `SUMMARIZATION_SYSTEM_PROMPT` (a hardcoded upstream constant) and never
