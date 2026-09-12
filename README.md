@@ -1,384 +1,180 @@
 # ad-coder
 
-A small, explicit **multi-provider agent harness**. It builds on
-[`@earendil-works/pi-agent-core`](https://www.npmjs.com/package/@earendil-works/pi-agent-core)
-and puts context-window management, per-role/step cost accounting, and a
-plan → [security] → code ⇄ review pipeline under your own control — so you can
-run the same work on an expensive model where it pays off and a cheap one where
-it doesn't.
+ad-coder is a Bun/TypeScript harness for a reviewed coding pipeline:
+plan → optional security review → code ⇄ review. It also offers standalone roles,
+an interactive pipeline driver, a conversational orchestrator, and a daemon-free
+durable control plane. The headless library is the core; the CLI is a thin front.
 
-Roles are presets over the harness (model + verbatim prompt + tool allow-list +
-context budget). The allow-list is default-open: omit it and a role gets every
-registered tool, set `[]` to deny all, or name an exact set. A role's system
-prompt can be referenced by name via `resolvePrompt("coder", { projectDir })`.
-The built-in pipeline and conversational orchestrator automatically use each
-target project's `.ad-coder/prompts/<role>.md` when present, overriding the
-shipped prompt byte-verbatim. These files are trusted operator configuration:
-there is intentionally no opt-in, size, symlink, permission, or content cage in
-this MVP. A ledger attributes real token cost — and which tools each response
-requested — to each role, step and run.
-The pipeline sequences roles with structured tool-call handoffs (the reviewer
-submits a verdict; the planner a complexity and security surface). For chat-style
-work there is a multi-turn substrate — `startConversation(config)` builds one
-harness once and re-drives it turn after turn, keeping history on the durable
-session branch with a per-turn ledger row. Context compaction is active end to
-end: `auto` summarizes evictable history with the resolved cheap-tier model,
-while `disabled-then-halt` refuses an over-budget turn without sending history
-to a summarizer. `cache-aware` is reserved but fails loudly until its request-
-assembly design is verified. `runRole` stays
-the single-turn primitive. Built on Bun + TypeScript, proven with
-no network (a faux provider) and demonstrated live on DeepSeek — a full feature
-for a fraction of a cent.
+The MVP deliberately runs tools on the invoking host. Treat target projects and
+their prompts as trusted unless you restrict tools or provide an external sandbox.
 
-> Status: the core harness and conversational orchestrator work end to end.
-> The TUI and further operator tooling are on the [roadmap](docs/ROADMAP.md).
+## Requirements and installation
 
-## Install
-
-Requires **Bun 1.3+** (everything runs through Bun; the pi packages need
-`node >= 22.19.0`, so do not use an older `node`).
+Use Bun 1.3+ (the pi packages also require Node 22.19+). The private repository
+is installed through SSH-authenticated GitHub access:
 
 ```sh
-bun install -g git+ssh://git@github.com/aadegtyarev/ad-coder.git  # install
-bun update  -g ad-coder                                             # update
+bun install -g git+ssh://git@github.com/aadegtyarev/ad-coder.git
+ad-coder --help
 ```
 
-The repository is private; the install command uses your SSH-authenticated Git
-access. For local harness development, run `bun link` in this checkout instead.
+Update an existing global install with `bun update -g ad-coder`. For local
+development, clone the repository, then run `bun install` and `bun link`.
 
-## Configure providers
+The registry is the authoritative CLI reference: use `ad-coder --help` and
+`ad-coder <command> --help` for the exact commands and flags.
 
-Credentials come from your **environment** (never from the project ad-coder is
-working on). Set the key for the provider(s) you use, e.g.:
+## Provider and Codex OAuth setup
+
+The automatic provider precedence is **DeepSeek → OpenRouter → Codex OAuth**.
+Set an API-key provider, or authenticate Codex when neither key is present:
 
 ```sh
-export DEEPSEEK_API_KEY=...      # DeepSeek   — the CLI selects it on key presence
-export OPENROUTER_API_KEY=...    # OpenRouter — the CLI selects it on key presence
+export DEEPSEEK_API_KEY=...
+export OPENROUTER_API_KEY=...
 ```
 
-The **CLI** picks a provider by env-var PRESENCE, in precedence order
-`DEEPSEEK_API_KEY` → `OPENROUTER_API_KEY` → OpenAI-Codex OAuth (override with
-`--provider`). OpenAI Codex uses OAuth, not an environment key.
+Pass `--provider deepseek|openrouter|openai-codex` to override selection. Native
+OpenAI and Anthropic keys are not selected automatically by the CLI; library
+callers can use the compatible provider presets.
 
-With the OpenAI Codex OAuth default profile, coder uses `gpt-5.6-sol` at every
-complexity with `thinkingLevel: "medium"`; the conversational orchestrator uses
-the same model with `"low"`. A profile routing cell or spawn override can set
-`thinkingLevel` to `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`.
-Use `--orchestrator-thinking-level <level>` to override the conversational
-orchestrator without changing its model.
-
-Authenticate a ChatGPT Plus/Pro account once with either OAuth flow:
+Codex uses OAuth, not `OPENAI_API_KEY`. Sign in once:
 
 ```sh
 ad-coder auth status
 ad-coder auth login --method browser
+# For a headless host:
 ad-coder auth login --method device_code
-ad-coder auth logout --json
+ad-coder auth status --json
 ```
 
-Credentials persist at `$XDG_CONFIG_HOME/ad-coder/credentials.json` when that
-variable is absolute, otherwise at `~/.config/ad-coder/credentials.json`.
-Directories and files are owner-only (0700/0600), with cross-process locking
-and atomic writes. Status and JSON expose only non-secret metadata. Credentials
-never enter the target project, `.ad-coder` runtime state, or Git. An absolute
-`--credential-path` may override the default; project, Git-metadata, relative,
-and symlink-aliased project paths are rejected.
+Credentials are held outside the project at
+`$XDG_CONFIG_HOME/ad-coder/credentials.json` when that variable is absolute,
+otherwise at `~/.config/ad-coder/credentials.json`. The store is owner-only,
+locked, and atomically updated; status never returns a token. An absolute
+`--credential-path` selects another private user-local file. Relative,
+project, Git-metadata, and project-aliasing symlink paths are rejected.
 
-Missing authentication or a failed expired-token refresh stops before model
-generation with a nonzero error directing the operator to `ad-coder auth login`.
+Use `ad-coder auth logout` to remove the stored login. Missing or expired
+credentials fail before a model request and direct you to `auth login`.
 
-Native OpenAI and native Anthropic are **not** auto-selected by the CLI from
-`OPENAI_API_KEY` / `ANTHROPIC_API_KEY`. Reach them through the **library**
-presets `openaiCompatiblePreset` / `anthropicCompatiblePreset`, where you supply
-the `baseUrl` and the credential env-var name yourself (see below).
+## First run
 
-The registry (`src/registry/`) ships exactly **five** provider presets:
+Choose an existing target project. `--target-dir` is required for the
+role/pipeline/orchestrator commands and is realpath-resolved. It is a starting
+working directory, **not a sandbox**: a role with `bash` can leave it, read
+files available to you, and use the network. Credentials remain outside the
+target project; do not run untrusted tasks with unrestricted tools.
 
-- **`deepseekPreset`** — DeepSeek, key from `DEEPSEEK_API_KEY`.
-- **`openrouterPreset`** — OpenRouter (dual-api; a model may override its own
-  `api`), key from `OPENROUTER_API_KEY`.
-- **`openaiCompatiblePreset`** — any OpenAI-compatible endpoint (LM Studio,
-  vLLM, self-hosted). Caller supplies `id`, `baseUrl`, and the credential
-  env-var name.
-- **`anthropicCompatiblePreset`** — any Anthropic-compatible endpoint. Caller
-  supplies `id`, `baseUrl`, and the credential env-var name.
-- **`openaiCodexPreset`** — OpenAI Codex. **OAuth-based, not an env-var key**;
-  the resolver delegates to pi-ai's shipped `openaiCodexProvider()`.
-
-There is deliberately **no** separate native-OpenAI or native-Anthropic preset.
-Reach **native OpenAI** through `openaiCompatiblePreset` with
-`baseUrl: "https://api.openai.com/v1"`, and **native Anthropic** through
-`anthropicCompatiblePreset` with `baseUrl: "https://api.anthropic.com"` — native
-Anthropic this way gives full `cacheRetention` control (the project's
-cache-control thesis). Every preset's base URL must be an absolute **https** URL.
-
-See [docs/pi-capabilities.md](docs/pi-capabilities.md) for the per-provider
-cache/cost facts.
-
-### Context compaction
-
-`resolvePipelineConfig` accepts `compactionMode`, `summarizerModel`, and
-`allowCrossProviderSummarization`. The default is `auto`, with
-`summarizerModel` defaulting to the cheap profile tier. The summarizer makes one
-no-tool `Models.completeSimple` request through the same caller-supplied
-credential registry; evicted prompts, code, and tool results are therefore sent
-to that model. A different provider is rejected unless
-`allowCrossProviderSummarization: true` is explicit.
-Because this one-shot call bypasses harness hooks, its usage is not currently
-included in the role ledger; the selected destination is nevertheless explicit
-in the resolved policy.
-
-Choose `disabled-then-halt` when history must never be summarized automatically.
-An oversized turn then throws `ContextBudgetError` before the role provider is
-called; there is not yet a public manual recovery command. `cache-aware` is an
-accepted policy name but deliberately throws as unsupported rather than silently
-changing behavior.
-
-Each declared model may omit `contextWindow`; the registry then uses 200000
-tokens. An explicit value always wins, including for delegated OAuth catalog
-models, so both smaller and larger self-hosted windows are supported. Planner,
-security, coder, reviewer, orchestrator, and summarizer selections are
-independent. Role budgets are derived from each turn's effective model window
-using `maxTokensPercent`, `reserveTokensPercent`, and
-`keepRecentTokensPercent`; `roleBudgetPercents` can override those fractions per
-role.
-
-Automatic compaction remains enabled by default. Because summarization is one
-shot in this release, configuration is rejected before any model call when the
-summarizer window is smaller than the largest model reachable through any
-complexity route, role override, or orchestrator selection. Chunked and
-recursive summarization are not implemented.
-
-For a self-hosted mixed-window setup, explicitly select trusted data-only JSON
-files (they are never discovered from the target repository):
+First run one role:
 
 ```sh
-ad-coder console --target-dir ./project \
-  --registry-config ~/.config/ad-coder/models.json \
-  --profile-config ~/.config/ad-coder/profile.json \
-  --planner-model local-200k --security-model local-200k \
-  --coder-model local-32k --reviewer-model local-200k \
-  --orchestrator-model local-32k --summarizer-model local-200k \
-  --max-tokens-percent 0.9 --reserve-tokens-percent 0.1 \
-  --keep-recent-tokens-percent 0.25
+ad-coder role planner "Summarize this repository" \
+  --provider openai-codex --target-dir ./my-project
 ```
 
-Registry files are trusted operator configuration: they bind an HTTPS provider
-host to a credential environment-variable name. The CLI reports the selected
-provider class and model names but never automatically discovers configuration
-from `targetDir`; explicitly selected paths may point there. It never prints
-credential values. Cross-provider summarization still requires the separate
-`--allow-cross-provider-summarization true` opt-in.
-
-## Run
-
-### Usage at a glance
+Then run the built-in reviewed pipeline. `--auto` takes default transitions and
+is the non-interactive/scripted mode:
 
 ```sh
-ad-coder run   <script.ts>                                --target-dir <dir>
-ad-coder role  <planner|coder|reviewer|security> "<task>" --target-dir <dir>
-ad-coder drive "<task>"                                   --target-dir <dir> [--auto]
-ad-coder console                                          --target-dir <dir> [--json]
+ad-coder drive "Make a small reviewed maintenance change" \
+  --provider openai-codex --target-dir ./my-project --auto
 ```
 
-Shared options for `role`, `drive`, and `console`:
-`--provider <deepseek|openrouter|openai-codex>`,
-`--strong-model`/`--mid-model`/`--cheap-model <name>`,
-`--max-rounds <n>`, `--default-complexity <trivial|medium|complex>`.
+Without `--auto`, `drive` pauses after every role for a transition choice. A
+standalone `role` is single-turn: its accepted `--max-rounds` has no effect,
+while it limits pipeline review rounds.
 
-**Seeing usage / help.** Run `ad-coder --help` (or `ad-coder -h`) for the
-registry-derived command list, and `ad-coder <command> --help` (or `-h`) for a
-command's arguments and options. Running `ad-coder` with no command — or an
-unknown command or flag — prints the same root usage to stderr and exits
-non-zero.
-
-
-The canonical demo drives a real plan → [security] → code ⇄ review pipeline on a
-clean throwaway directory:
+Start a persistent conversational orchestrator with:
 
 ```sh
-DEEPSEEK_API_KEY=... bun run examples/pipeline.ts \
-  "Create add.js exporting add(a,b) returning a+b (CommonJS). Minimal."
+ad-coder console --provider openai-codex --target-dir ./my-project
 ```
 
-It prints the verdict, the rated complexity and security surface, and the cost
-per phase (plan / security / code / review) from the ledger. Point it at your own
-target directory with a second argument.
+Enter `/exit` or EOF to close it. `--json` writes one JSON record per turn.
+Input defaults to 65,536 bytes per line; use `--max-input-bytes` to change it.
+`--max-session-turns` and `--max-session-cost-usd` set session limits; `0`
+disables either limit.
 
-The `ad-coder run <script.ts> --target-dir <dir>` CLI loads and runs a workflow
-module against a target directory; `examples/pipeline.ts` shows the library
-`runPipeline` API the CLI is a thin front for.
+## Durable runs and operations
 
-Run any built-in role standalone with `ad-coder role <name> "<task>"
---target-dir <dir>`, where `<name>` is `planner`, `coder`, `reviewer` or
-`security`:
+`control` is the JSON front for durable daemon-free pipelines. It starts,
+inspects, resumes, cancels, triages, reports, publishes, resolves decisions, and
+sets `run-until` breakpoints:
 
 ```sh
-DEEPSEEK_API_KEY=... ad-coder role coder "Add a --json flag to the CLI" \
-  --target-dir ./my-project
+ad-coder control start --target-dir ./my-project --input request.json
+ad-coder control list --target-dir ./my-project
+ad-coder control status --target-dir ./my-project --id <run-id>
 ```
 
-The provider is resolved from the environment by env-var PRESENCE — precedence
-`DEEPSEEK_API_KEY` → `OPENROUTER_API_KEY` → OpenAI-Codex OAuth — and the selected
-provider and model are echoed to stderr (names only, never the key) before the
-turn runs. Pass `--provider <deepseek|openrouter|openai-codex>` to choose
-explicitly, `--strong-model`/`--mid-model`/`--cheap-model` to override the tier
-models, `--credential-path` to select another private user-local store, and
-`--max-rounds`/`--default-complexity` to set the routing defaults.
-The role runs with real `read`/`write`/`edit`/`bash` tool access rooted at
-`--target-dir`; that directory is **not** a sandbox (a bash turn can `cd` out of
-it and read any file the invoking user can), exactly as the `run` command
-documents.
+There is no daemon: stopped processes leave state for explicit `control resume`.
+`operations` exposes the same control actions plus backlog, LDO import,
+documentation routing, and repository publishing. Both commands are
+machine-oriented JSON fronts; inspect their help before creating input JSON.
 
-`ad-coder drive "<task>" --target-dir <dir>` drives the same pipeline one phase
-at a time: it prints each turn's output and cost and, at every step, asks which
-of the offered transitions to take (`advance`/`rework`/`stop`, empty for the
-default). Pass `--auto` for the autonomous/machine path — the auto-driver walks
-the graph exactly as `runPipeline` does, reading no input. The drive loop lives
-in a library module (`driveWorkflow`) driven through injected input/output/error
-streams, so it is scriptable with no TTY. Both `role` and `drive` retain the
-empty-text/zero-cost warning as a defense-in-depth diagnostic; missing or
-expired Codex authentication is rejected earlier.
+`run <script.ts> --target-dir <dir>` loads a local workflow module. It refuses
+URLs, symlinks, world-writable files, and files owned by another user.
 
-After login, use this operator-authenticated live dogfood sequence:
+## Configuration
+
+For Codex OAuth, current defaults use `gpt-5.6-sol` with medium thinking for
+Coder and the same model with low thinking for the conversational Orchestrator.
+Explicit profile, spawn, and model overrides take precedence;
+`--orchestrator-thinking-level` changes the console setting.
+
+The shared role/pipeline options include provider/model tier overrides,
+`--registry-config`, `--profile-config`, per-role model overrides,
+context-budget percentages, `--summarizer-model`, `--compaction-mode`, and
+`--project-store-config`. Registry/profile JSON is explicitly selected trusted
+data; the CLI never discovers configuration from `target-dir`.
+
+Context compaction defaults to `auto`. `disabled-then-halt` refuses an
+over-budget turn rather than summarizing it. Cross-provider summarization needs
+`--allow-cross-provider-summarization true`; unsupported `cache-aware`
+configuration fails loudly rather than degrading.
+
+Target-local `.ad-coder/prompts/<role>.md` overrides are trusted operator
+configuration, not an isolation boundary. Runtime state lives in
+`<target-dir>/.ad-coder/` with its own ignore file; ad-coder does not modify a
+target project's root `.gitignore`.
+
+## Diagnose problems
+
+Start with:
 
 ```sh
-ad-coder role planner "Summarize this repository" --provider openai-codex --target-dir .
-ad-coder console --provider openai-codex --target-dir .
-ad-coder drive "Run a small reviewed maintenance change" --provider openai-codex --target-dir . --auto
+ad-coder --help
+ad-coder auth status --json
+ad-coder role --help
+ad-coder control --help
 ```
 
-`ad-coder console --target-dir <dir>` is the minimal dogfood console over the
-headless `startOrchestrator` core. Each nonblank line is another turn on the same
-persistent session; enter `/exit` or send EOF to close it. Human mode prints a
-banner, prompt, and compact turn summary. Machine mode prints exactly one JSON
-record per completed turn and no banner or prompt:
+On a headless host, retry OAuth with `device_code`. If the wrong provider wins,
+remove a higher-precedence key from the process environment or pass `--provider`.
+For rejected model/configuration names, inspect the selected JSON and command
+help. An empty, zero-cost role response warns; missing Codex auth instead fails
+before generation.
+
+Inspect `<target-dir>/.ad-coder/` plus `control status`, `control report`,
+and `control list` for durable-run diagnostics. Never publish credential files
+or environment-variable values.
+
+## Development checks
 
 ```sh
-ad-coder console --target-dir ./my-project
-printf 'show the current cost\n/exit\n' | ad-coder console --json --target-dir ./my-project
+bun test
+bun run typecheck
+bun run check
 ```
-
-Input is limited to 65,536 UTF-8 bytes per line by default; change it with
-`--max-input-bytes <n>`. An oversized line is rejected before it reaches the
-model. Model-derived output has ANSI and other terminal control sequences
-removed in both output modes. Provider credentials still come only from the
-CLI process environment. `--target-dir` fixes the starting working directory,
-but it is not a sandbox: the orchestrator and pipeline host tools are
-unrestricted and can access anything the invoking user can. This unrestricted
-execution is an explicit MVP choice.
-
-Session generation limits are available programmatically as
-`sessionLimits: { maxTurns?, maxCostUsd? }` and in the console as
-`--max-session-turns <n>` and `--max-session-cost-usd <amount>`. Both default to
-`0`, where `0` disables and only a positive value enables a limit. A turn is one
-admitted call through a `Models` generation method, including tool follow-ups,
-harness-visible retries, deferred requests/polls, and built-in compaction.
-Provider-internal HTTP retries below that boundary are not separate turns.
-
-Cost is the unrounded sum of settled assistant messages'
-`usage.cost.total`. A positive threshold blocks the next admission when observed
-cost is already equal to or above it; the admitted request that crosses it may
-overshoot because its cost is not known in advance. Only one cost-unknown call
-may be in flight, so overshoot is bounded to that request. A call that settles
-without valid finite non-negative usage makes accounting terminal and blocks
-later admissions. Consequently this is a pre-request threshold, not an absolute
-spend cap. Custom opaque summarizers are rejected while either limit is enabled.
-`show_cost` reports this authoritative session snapshot separately from the
-existing per-step ledger totals.
-
-Per-role model selection is optionally complexity-driven: pass a `routing`
-({ profile, registry, defaultComplexity?, overrides? }) to `runPipeline` and each
-role's model is chosen from the planner-rated complexity. Routing is optional —
-omit it and each role runs on its configured `RoleSpec.model` exactly as before.
-Each profile cell may also specify optional `thinkingLevel` using the supported
-levels above; when omitted, pi-agent-core selects its own default.
-
-Project operations are available as a headless API. `validateFollowUp` and
-`aggregateFollowUps` produce one strict union of contract, note, design-doc
-drift, and backlog candidates with deterministic provenance. Documentation
-routing remains available for inspection; `RunCoordinator` applies authorized
-note/design-doc proposals with generated metadata-only content and stable
-idempotency markers. `createBacklogStore`
-selects exactly one authority: the target-local file backend by default, or the
-GitHub issues backend when `projectOperations.backlogBackend` is `github` and an
-argv-style executor plus repository mapping are supplied. Backlog claims carry
-owner, run, branch, and lease timestamps through the queued → claimed →
-in_progress → review/blocked → done lifecycle. Backlog persistence always
-projects candidate prose to structural metadata. All new numeric limits default
-to `0` (disabled).
-
-Existing LDO-organized projects require no migration. `detectLdoProject`,
-`previewLdoImport`, `importLdoArtifacts`, `inspectImportedLdoWork`, and
-`resumeImportedLdoWork` discover `.codex/ldo/{plans,runs}` plus the existing
-README/AGENTS/docs layout, preserve exact source bytes with observed and claimed
-provenance, and import immutable digest revisions behind a durable manifest.
-Detection and preview do not scaffold documentation or managed state; import
-never edits `.codex/ldo` or project documentation. Imported model-authored text
-is untrusted: resume requires an explicit trust decision for the exact SHA-256
-digest, and a changed or missing source fails stale. Importer count, per-file,
-and aggregate byte limits are configurable under `projectOperations.ldo`; each
-defaults to `0` (disabled). Set positive limits before inspecting less-trusted
-repositories.
-
-`RunCoordinator` is the shared non-model lifecycle owner behind direct
-`runPipeline`, `driveWorkflow`, and conversational orchestration. Pass
-`coordinator: { runId }` in `PipelineConfig` to reopen an interrupted run; its
-ProjectStore checkpoint resumes a prepared step, follow-up processing, operator
-decision, contract re-review, or closeout without repeating completed effects.
-Contract and ambiguous product decisions stop loudly for operator resolution.
-Only a trusted programmatic/UI call to `resolveDecision` with `source:
-"operator"` can commit a resolution; accepting a contract also requires exact
-one-line rule text and triggers a reviewer-only pass before approval.
-
-The non-interactive `ad-coder operations <action> --target-dir <dir> [--json]`
-front exposes `publish-preflight`, `publish-start`, `publish-finish`,
-`ldo-detect`, `ldo-preview`, `ldo-import`, `ldo-inspect`, and
-`ldo-resume`, FollowUp validation/aggregation, documentation routing, every
-backlog lifecycle operation, and GitHub capability/migration probes as JSON.
-Pass candidate JSON with `--input <file>` or `--input -`; claim actions also use
-`--owner`, `--run-id`, and `--branch`. LDO inspect/resume identifiers are
-`plan:<ldo-id>` or `run:<ldo-id>`; import accepts
-`{"trustDigests":["<sha256>"]}` only when the operator intends those exact
-revisions to become executable.
-
-Repository publishing defaults to the `local` gate (`bun test`). Preflight
-discovers remote HEAD then `main`/`master`, captures its OID, and reports dirty
-paths without initializing project state; start requires HEAD at that selected
-base and creates a feature branch; finish commits only explicit paths via an
-isolated index, pushes an explicit refspec, creates a structured PR, and squash
-merges. Other gates are `ci`, `local-and-ci`, and `manual`. Empty/pending CI and
-changed PR heads fail closed. `multiDeveloper: true` requires approval on the
-exact head by someone other than the author and is unavailable for local-only
-repositories. Local Git instead advances the unchanged base with one squash
-commit while leaving HEAD and user files on the feature branch. Remote, bases,
-protected branches, feature prefix, mode, gate, argv test command, approval
-mode, and the output-retention limit are configurable. Its `0` default disables
-truncation; a positive value retains at most that many bytes per output stream. Failures
-leave recovery guidance.
-
-`runPipeline` is the autonomous coordinator driver over a STEPPED engine you can
-also drive yourself. `createWorkflowSession(config)` exposes the same plan → [security] →
-code ⇄ review graph as an explicit `WorkflowState`: `step(state)` runs the one
-pending role turn and hands back the available transitions (`advance`, `rework`,
-`stop`) without committing one, and the pure `applyTransition(state, chosen)`
-gives the next state — so a human-stepped UI or the conversational orchestrator
-can decide each transition. `runPipeline` just takes the default transition
-every step (`autoDriver`). Transition policy is a setting, not a constant: an
-optional `WorkflowDefaults` (`onChangesRequested`, `autoAdvance`) defaults to the
-autonomous behavior.
 
 ## Documentation
 
-- [Agent and operator instructions](AGENTS.md) — durable working conventions and handoff routing
-- [Architecture](docs/ARCHITECTURE.md) — components and how they connect
-- [Roadmap & design decisions](docs/ROADMAP.md) — durable decisions, delivery status, and forward design
-- [Backlog](docs/BACKLOG.md) — current priority and unresolved work
-- [Contracts](docs/contracts/) — enforced project-wide rules
-- [Reviews & incident receipts](docs/reviews/) — exceptional incident evidence and historical receipts
-- [Cost economics](docs/cost-economics.md) — the pricing/optimization thesis, measured
-- [pi capabilities](docs/pi-capabilities.md) — verified facts about the pi SDK this rests on
-- [Changelog](CHANGELOG.md)
+- [Architecture](docs/ARCHITECTURE.md) — current system map
+- [Roadmap](docs/ROADMAP.md) — decisions and future work
+- [Backlog](docs/BACKLOG.md) — unresolved work
+- [Contracts](docs/contracts/) — enforceable rules
+- [Changelog](CHANGELOG.md) — shipped history
 
 ## License
 
