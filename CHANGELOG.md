@@ -16,6 +16,11 @@ network (pi-ai's fauxProvider) and demonstrated live on DeepSeek.
 
 ### Added
 
+- **Project operations Increment 6** — configurable headless repository
+  publishing with JSON preflight/start/finish operations, isolated explicit-path
+  commits, local/CI/manual gates, exact-head approval, GitHub and local squash
+  flows, dirty-work preservation, and base-movement recovery.
+
 - **Project operations Increment 5** — migration-free LDO layout detection,
   non-destructive digest/provenance imports with explicit execution trust,
   durable inspection/resume, and detect/preview/import/inspect/resume JSON CLI

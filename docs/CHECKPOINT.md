@@ -1,5 +1,27 @@
 # Checkpoint
 
+## 2026-09-12 — Project operations Increment 6
+
+Repository publishing now has a headless core and registry-derived JSON
+preflight/start/finish operations. Remote HEAD then configured main/master
+candidates select an exact base OID. Publishing creates a feature branch,
+constructs commits from explicit paths in an isolated index, runs the selected
+local/CI/combined/manual gate, pushes an explicit refspec, creates a structured
+PR through stdin, and squash-merges only the checked head. Multi-developer mode
+requires server-enforced approval by another developer on that exact commit.
+
+Local repositories use a controlled single-parent squash update without
+checking out base. Protected-base operations, initially dirty paths without
+individual authorization, moving bases, empty/pending CI, and changed PR heads
+fail closed. User files remain untouched, HEAD stays on the feature branch, and
+results include recovery guidance. All policy choices are configurable; local
+tests are default and numeric limits default to `0` disabled. Trusted project
+prompt overrides and the no-sandbox/no-permission-cage stance are unchanged.
+
+Verification: focused publishing/CLI/export coverage passed 48 tests with 561 assertions; the full suite passed 278 tests with 1,426 assertions across 23 files, including a linked-worktree publishing lifecycle. `bun run
+typecheck`, `bun run check`, and `git diff --check` passed using the cached Bun
+executable through `npm exec --offline -- bun`.
+
 ## 2026-09-12 — Project operations Increment 5
 
 Existing LDO projects are adopted without migration. Headless and JSON CLI
