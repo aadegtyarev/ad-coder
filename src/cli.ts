@@ -25,6 +25,13 @@ import {
   probeBacklogMigration,
   probeGitHubBacklogCapability,
 } from "./project-operations/github-backlog";
+import {
+  detectLdoProject,
+  importLdoArtifacts,
+  inspectImportedLdoWork,
+  previewLdoImport,
+  resumeImportedLdoWork,
+} from "./project-operations/ldo-import";
 import { ProjectStore } from "./project-store/project-store";
 import type { ProjectStoreConfig } from "./project-store/types";
 import { ProjectStoreError } from "./project-store/types";
@@ -365,6 +372,7 @@ function parseProjectStoreConfig(value: string | undefined): ProjectStoreConfig 
       "aggregationLimit",
       "claimLeaseMs",
       "documentation",
+      "ldo",
       "github",
     ]);
     if (Object.keys(operationObject).some((key) => !allowed.has(key)))
@@ -384,9 +392,36 @@ function parseProjectStoreConfig(value: string | undefined): ProjectStoreConfig 
     if (documentation !== undefined)
       validateStringObject(
         documentation,
-        ["contracts", "notes"],
+        ["root", "contracts", "notes"],
         "projectOperations.documentation",
       );
+    const ldo = operationObject.ldo;
+    if (ldo !== undefined) {
+      if (typeof ldo !== "object" || ldo === null || Array.isArray(ldo))
+        fail("invalid --project-store-config setting: projectOperations.ldo");
+      const ldoObject = ldo as Record<string, unknown>;
+      const allowedLdo = new Set([
+        "root",
+        "plans",
+        "runs",
+        "artifactCountLimit",
+        "perFileByteLimit",
+        "aggregateByteLimit",
+      ]);
+      if (Object.keys(ldoObject).some((key) => !allowedLdo.has(key)))
+        fail("--project-store-config contains an unknown projectOperations.ldo setting");
+      for (const key of ["root", "plans", "runs"] as const)
+        if (
+          ldoObject[key] !== undefined &&
+          (typeof ldoObject[key] !== "string" || ldoObject[key] === "")
+        )
+          fail(`invalid --project-store-config setting: projectOperations.ldo.${key}`);
+      for (const key of ["artifactCountLimit", "perFileByteLimit", "aggregateByteLimit"] as const) {
+        const setting = ldoObject[key];
+        if (setting !== undefined && (!Number.isSafeInteger(setting) || (setting as number) < 0))
+          fail(`invalid --project-store-config setting: projectOperations.ldo.${key}`);
+      }
+    }
     const github = operationObject.github;
     if (github !== undefined) {
       if (typeof github !== "object" || github === null || Array.isArray(github))
@@ -479,11 +514,43 @@ async function operationsCommand(
   if (targetArg === undefined) fail("--target-dir is required for the operations command");
   const targetDir = resolveTargetDir(targetArg);
   const projectConfig = parseProjectStoreConfig(flags["--project-store-config"]);
+  if (action === "ldo-detect") {
+    process.stdout.write(
+      `${JSON.stringify(detectLdoProject(targetDir, projectConfig?.projectOperations))}\n`,
+    );
+    return;
+  }
+  if (action === "ldo-preview") {
+    process.stdout.write(
+      `${JSON.stringify(previewLdoImport(targetDir, projectConfig?.projectOperations))}\n`,
+    );
+    return;
+  }
   const store = new ProjectStore(targetDir, projectConfig);
   const config = store.projectOperations;
   const input = () => readJsonInput(flags["--input"]);
   let result: unknown;
-  if (action === "followup-validate") {
+  if (action === "ldo-import") {
+    const supplied = flags["--input"] === undefined ? {} : input();
+    if (typeof supplied !== "object" || supplied === null || Array.isArray(supplied))
+      fail("ldo-import input must be an object");
+    if (Object.keys(supplied).some((key) => key !== "trustDigests"))
+      fail("ldo-import input contains an unknown setting");
+    result = importLdoArtifacts(store, supplied as { trustDigests?: string[] });
+  } else if (action === "ldo-inspect") {
+    const id = flags["--id"];
+    if (id === undefined) fail("--id is required for this operations action");
+    result = inspectImportedLdoWork(store, id);
+  } else if (action === "ldo-resume") {
+    const id = flags["--id"];
+    if (id === undefined) fail("--id is required for this operations action");
+    const inspection = inspectImportedLdoWork(store, id);
+    const pipelineConfig = resolvePipelineConfig({
+      task: inspection.task,
+      ...buildConfigOptions(targetArg, flags),
+    });
+    result = await resumeImportedLdoWork(store, id, pipelineConfig);
+  } else if (action === "followup-validate") {
     result = validateFollowUp(input(), { evidenceLimit: config.evidenceLimit ?? 0 });
   } else if (action === "followup-aggregate") {
     const candidates = input();
@@ -728,22 +795,16 @@ const COMMANDS: readonly CommandDefinition[] = [
     name: "operations",
     description: "Run a project-operations action and emit JSON.",
     positionals: [
-      { name: "<action>", description: "FollowUp, documentation, backlog, or probe action." },
+      {
+        name: "<action>",
+        description:
+          "Action including ldo-detect, ldo-preview, ldo-import, ldo-inspect, or ldo-resume.",
+      },
     ],
     options: [
-      {
-        name: "--target-dir",
-        value: "<dir>",
-        description: "Directory containing the project to operate on.",
-        required: true,
-      },
-      {
-        name: "--project-store-config",
-        value: "<file.json>",
-        description: "Load project-operations and ProjectStore configuration.",
-      },
+      ...PIPELINE_OPTIONS,
       { name: "--input", value: "<file|->", description: "Read JSON input from a file or stdin." },
-      { name: "--id", value: "<id>", description: "Backlog item identifier." },
+      { name: "--id", value: "<id>", description: "Backlog or imported-work identifier." },
       { name: "--state", value: "<state>", description: "Backlog lifecycle destination." },
       { name: "--owner", value: "<owner>", description: "Claim owner." },
       { name: "--run-id", value: "<run-id>", description: "Claiming run identifier." },

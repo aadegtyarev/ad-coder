@@ -2,6 +2,13 @@ import { expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import type { Api, Model } from "@earendil-works/pi-ai";
+import {
+  createModels,
+  fauxAssistantMessage,
+  fauxProvider,
+  fauxToolCall,
+} from "@earendil-works/pi-ai";
 import type {
   BacklogFollowUp,
   FollowUp,
@@ -14,16 +21,377 @@ import {
   aggregateFollowUps,
   appendDocumentationProposal,
   createBacklogStore,
+  detectLdoProject,
   FileBacklogStore,
   GitHubBacklogStore,
+  importLdoArtifacts,
+  inspectImportedLdoWork,
   ProjectOperationsError,
   ProjectStore,
+  previewLdoImport,
   probeGitHubBacklogCapability,
   RunCoordinator,
+  resumeImportedLdoWork,
   routeDocumentationFollowUp,
   suggestBacklogMigrationOnce,
   validateFollowUp,
 } from "../src";
+import { SUBMIT_VERDICT_TOOL_NAME } from "../src/orchestration/verdict";
+import { defineRole } from "../src/role";
+
+function ldoPlan(id: string): Record<string, unknown> {
+  return {
+    version: 1,
+    id,
+    root: "/historical/project",
+    baseHead: "abc123",
+    createdAt: "2026-09-12T00:00:00.000Z",
+    task: "Implement safe import",
+    plan: {
+      complexity: "medium",
+      security_surface: "low",
+      summary: "A saved plan",
+      steps: [{ what: "code", files: ["src/a.ts"], acceptance: "passes", user_facing: true }],
+      risks: [],
+      codebase_context: {
+        stack: "TypeScript",
+        conventions: "strict",
+        relevant_files: [],
+        test_command: "bun test",
+        test_command_scoped: null,
+        run_command: "bun test",
+      },
+    },
+    security: null,
+    usage: [],
+  };
+}
+
+function ldoCoder(summary = "coded"): Record<string, unknown> {
+  return {
+    summary,
+    files_changed: ["src/a.ts"],
+    tests: { result: "passed", command: "bun test" },
+    docs_updated: [],
+    deviations: [],
+  };
+}
+
+function ldoReview(status: "approved" | "changes_requested"): Record<string, unknown> {
+  return {
+    status,
+    summary: status,
+    issues:
+      status === "approved"
+        ? []
+        : [{ file: "src/a.ts", severity: "major", what: "fix it", suggestion: "correct it" }],
+    verification: { verdict: "verified", criteria: [], blockers: [] },
+    attacks: [],
+  };
+}
+
+function ldoRun(
+  id: string,
+  completed: Record<string, unknown>,
+  status: "running" | "completed" = "running",
+): Record<string, unknown> {
+  const plan = ldoPlan(id);
+  return {
+    version: 1,
+    id,
+    root: plan.root,
+    baseHead: plan.baseHead,
+    task: plan.task,
+    plan: plan.plan,
+    security: null,
+    status,
+    startedAt: "2026-09-12T00:00:00.000Z",
+    usage: [],
+    completed,
+    tokenUsage: {
+      status: "unavailable",
+      input_tokens: null,
+      cache_creation_input_tokens: null,
+      cached_input_tokens: null,
+      output_tokens: null,
+      total_tokens: null,
+      stages: [],
+    },
+    ...(status === "completed"
+      ? {
+          completedAt: "2026-09-12T00:01:00.000Z",
+          approved: true,
+          backlog: { destination: "none", file: null, count: 0 },
+        }
+      : {}),
+  };
+}
+
+test("LDO detection and preview are non-mutating; import is durable and idempotent", () => {
+  const target = root();
+  fs.mkdirSync(path.join(target, ".codex", "ldo", "plans"), { recursive: true });
+  fs.mkdirSync(path.join(target, "docs", "contracts"), { recursive: true });
+  fs.writeFileSync(path.join(target, "docs", "NOTES.md"), "notes\n");
+  const source = path.join(target, ".codex", "ldo", "plans", "saved-plan.json");
+  fs.writeFileSync(source, `${JSON.stringify(ldoPlan("saved-plan"), null, 2)}\n`);
+  const original = fs.readFileSync(source);
+
+  const detection = detectLdoProject(target);
+  expect(detection.detected).toBe(true);
+  expect(detection.documentation.notes).toBe("docs/NOTES.md");
+  expect(previewLdoImport(target).items[0]?.status).toBe("importable");
+  expect(fs.existsSync(path.join(target, ".ad-coder"))).toBe(false);
+
+  const store = new ProjectStore(target);
+  const first = importLdoArtifacts(store, {
+    trustDigests: [previewLdoImport(store).items[0]!.sha256!],
+  });
+  expect(first.imported).toHaveLength(1);
+  const identity = first.imported[0]!.identity;
+  const persistedRecord = store.readVersionedJson<{ sourceBytesBase64: string }>(
+    path.join(store.layout.root, first.imported[0]!.recordPath),
+  ).value;
+  expect(Buffer.from(persistedRecord.sourceBytesBase64, "base64")).toEqual(original);
+  expect(inspectImportedLdoWork(store, identity).trustedForResume).toBe(true);
+  const beforeManifest = fs.readFileSync(path.join(store.layout.runs, "ldo-import-manifest.json"));
+  expect(importLdoArtifacts(new ProjectStore(target)).skipped).toHaveLength(1);
+  expect(fs.readFileSync(path.join(store.layout.runs, "ldo-import-manifest.json"))).toEqual(
+    beforeManifest,
+  );
+  expect(fs.readFileSync(source)).toEqual(original);
+});
+
+test("LDO detection honors configured existing locations and rejects unsafe layout candidates", () => {
+  const target = root();
+  fs.mkdirSync(path.join(target, "existing", "plans"), { recursive: true });
+  fs.mkdirSync(path.join(target, "project-docs"), { recursive: true });
+  fs.writeFileSync(path.join(target, "project-docs", "operator.md"), "notes\n");
+  const detected = detectLdoProject(target, {
+    ldo: { root: "existing", plans: "existing/plans", runs: "existing/runs" },
+    documentation: { root: "project-docs", notes: "project-docs/operator.md" },
+  });
+  expect(detected).toMatchObject({ plans: "existing/plans", runs: null });
+  expect(detected.documentation).toMatchObject({
+    root: "project-docs",
+    notes: "project-docs/operator.md",
+    backlog: null,
+  });
+  expect(() => detectLdoProject(target, { ldo: { root: "../outside" } })).toThrow(
+    ProjectOperationsError,
+  );
+  fs.symlinkSync(os.tmpdir(), path.join(target, "linked-docs"));
+  expect(() => detectLdoProject(target, { documentation: { root: "linked-docs" } })).toThrow(
+    ProjectOperationsError,
+  );
+});
+
+test("LDO preview reports malformed records and import rejects before persistence", () => {
+  const target = root();
+  fs.mkdirSync(path.join(target, ".codex", "ldo", "plans"), { recursive: true });
+  fs.writeFileSync(path.join(target, ".codex", "ldo", "plans", "bad.json"), "{secret payload");
+  const preview = previewLdoImport(target);
+  expect(preview.items[0]?.status).toBe("rejected");
+  const store = new ProjectStore(target);
+  expect(() => importLdoArtifacts(store)).toThrow(ProjectOperationsError);
+  expect(fs.existsSync(path.join(store.layout.runs, "ldo-import-manifest.json"))).toBe(false);
+});
+
+test("LDO import rejects malformed required envelope fields before persistence", () => {
+  const mutations: Array<[string, (artifact: Record<string, unknown>) => void]> = [
+    ["missing plan createdAt", (artifact) => delete artifact.createdAt],
+    [
+      "malformed plan usage",
+      (artifact) =>
+        (artifact.usage = [{ stage: "planner", model: null, usage: { input_tokens: "secret" } }]),
+    ],
+    ["missing run startedAt", (artifact) => delete artifact.startedAt],
+    ["malformed run tokenUsage", (artifact) => (artifact.tokenUsage = { arbitrary: true })],
+    [
+      "malformed terminal backlog",
+      (artifact) => (artifact.backlog = { destination: "none", count: -1 }),
+    ],
+  ];
+
+  for (const [name, mutate] of mutations) {
+    const target = root();
+    const kind =
+      name.startsWith("missing plan") || name.startsWith("malformed plan") ? "plans" : "runs";
+    const directory = path.join(target, ".codex", "ldo", kind);
+    fs.mkdirSync(directory, { recursive: true });
+    const artifact =
+      kind === "plans"
+        ? ldoPlan("malformed")
+        : ldoRun("malformed", { coder: ldoCoder(), reviewer1: ldoReview("approved") }, "completed");
+    mutate(artifact);
+    fs.writeFileSync(path.join(directory, "malformed.json"), JSON.stringify(artifact));
+
+    expect(previewLdoImport(target).items[0]).toMatchObject({ status: "rejected" });
+    const store = new ProjectStore(target);
+    expect(() => importLdoArtifacts(store)).toThrow(ProjectOperationsError);
+    expect(fs.existsSync(path.join(store.layout.runs, "ldo-import-manifest.json"))).toBe(false);
+  }
+});
+
+test("LDO run imports preserve provenance across reconstruction and resume at code", async () => {
+  const target = root();
+  const runs = path.join(target, ".codex", "ldo", "runs");
+  fs.mkdirSync(runs, { recursive: true });
+  const source = path.join(runs, "needs-fix.json");
+  fs.writeFileSync(
+    source,
+    `${JSON.stringify(
+      ldoRun("needs-fix", { coder: ldoCoder(), reviewer1: ldoReview("changes_requested") }),
+    )}\n`,
+  );
+  const store = new ProjectStore(target);
+  const digest = previewLdoImport(store).items[0]!.sha256!;
+  importLdoArtifacts(store, { trustDigests: [digest] });
+
+  const reconstructed = new ProjectStore(target);
+  expect(inspectImportedLdoWork(reconstructed, "run:needs-fix")).toMatchObject({
+    sourceStatus: "unchanged",
+    completedStages: ["coder", "reviewer1"],
+    firstIncompletePhase: "code",
+    trustedForResume: true,
+  });
+
+  const faux = fauxProvider({
+    provider: "faux",
+    models: [{ id: "faux-1", contextWindow: 200_000 }],
+  });
+  const models = createModels();
+  models.setProvider(faux.provider);
+  const model = faux.getModel() as Model<Api>;
+  const role = (name: string, tools: string[]) => ({
+    role: defineRole(
+      {
+        name,
+        provider: "faux",
+        modelId: model.id,
+        systemPrompt: name,
+        activeToolNames: tools,
+        cacheRetention: "none" as const,
+        contextBudget: { maxTokens: 100_000, reserveTokens: 10_000, keepRecentTokens: 20_000 },
+      },
+      model,
+    ),
+    model,
+  });
+  faux.setResponses([
+    fauxAssistantMessage("corrected"),
+    fauxAssistantMessage(
+      fauxToolCall(SUBMIT_VERDICT_TOOL_NAME, {
+        status: "approved",
+        issues: [],
+        summary: "approved",
+      }),
+    ),
+    fauxAssistantMessage("review complete"),
+  ]);
+  const result = await resumeImportedLdoWork(reconstructed, "run:needs-fix", {
+    targetDir: target,
+    models,
+    task: "Implement safe import",
+    maxRounds: 3,
+    roles: {
+      coder: role("coder", ["bash", "read", "write", "edit"]),
+      reviewer: role("reviewer", [SUBMIT_VERDICT_TOOL_NAME]),
+    },
+  });
+  expect(result.status).toBe("complete");
+  expect(faux.state.callCount).toBe(3);
+  const resumedAgain = await resumeImportedLdoWork(new ProjectStore(target), "run:needs-fix", {
+    targetDir: target,
+    models,
+    task: "Implement safe import",
+    maxRounds: 3,
+    roles: {
+      coder: role("coder", ["bash", "read", "write", "edit"]),
+      reviewer: role("reviewer", [SUBMIT_VERDICT_TOOL_NAME]),
+    },
+  });
+  expect(resumedAgain.status).toBe("complete");
+  expect(faux.state.callCount).toBe(3);
+});
+
+test("LDO completed runs require a final approved review aligned with approved state", () => {
+  const target = root();
+  const runs = path.join(target, ".codex", "ldo", "runs");
+  fs.mkdirSync(runs, { recursive: true });
+  fs.writeFileSync(
+    path.join(runs, "approved.json"),
+    JSON.stringify(
+      ldoRun("approved", { coder: ldoCoder(), reviewer1: ldoReview("approved") }, "completed"),
+    ),
+  );
+  expect(previewLdoImport(target).items[0]).toMatchObject({
+    resumable: false,
+    status: "importable",
+  });
+
+  const stale = ldoRun(
+    "stale",
+    { coder: ldoCoder(), reviewer1: ldoReview("changes_requested") },
+    "completed",
+  );
+  fs.writeFileSync(path.join(runs, "stale.json"), JSON.stringify(stale));
+  expect(previewLdoImport(target).items.find((item) => item.id === "stale")).toMatchObject({
+    status: "rejected",
+    error: { code: "stale_import" },
+  });
+  expect(() => importLdoArtifacts(new ProjectStore(target))).toThrow(ProjectOperationsError);
+});
+
+test("LDO inspection maps plan-only and coder-complete work to native phases", () => {
+  const target = root();
+  const plans = path.join(target, ".codex", "ldo", "plans");
+  const runs = path.join(target, ".codex", "ldo", "runs");
+  fs.mkdirSync(plans, { recursive: true });
+  fs.mkdirSync(runs, { recursive: true });
+  fs.writeFileSync(path.join(plans, "plan-only.json"), JSON.stringify(ldoPlan("plan-only")));
+  fs.writeFileSync(
+    path.join(runs, "coded.json"),
+    JSON.stringify(ldoRun("coded", { coder: ldoCoder() })),
+  );
+  const store = new ProjectStore(target);
+  importLdoArtifacts(store);
+  expect(inspectImportedLdoWork(store, "plan:plan-only").firstIncompletePhase).toBe("code");
+  expect(inspectImportedLdoWork(store, "run:coded").firstIncompletePhase).toBe("review");
+});
+
+test("LDO importer rejects symlinks, hard links, and every enabled numeric limit", () => {
+  const target = root();
+  const plans = path.join(target, ".codex", "ldo", "plans");
+  fs.mkdirSync(plans, { recursive: true });
+  const source = path.join(plans, "limited.json");
+  fs.writeFileSync(source, JSON.stringify(ldoPlan("limited")));
+  fs.writeFileSync(path.join(plans, "second.json"), JSON.stringify(ldoPlan("second")));
+
+  for (const ldo of [
+    { artifactCountLimit: 0, perFileByteLimit: 1, aggregateByteLimit: 0 },
+    { artifactCountLimit: 0, perFileByteLimit: 0, aggregateByteLimit: 1 },
+    { artifactCountLimit: 1, perFileByteLimit: 0, aggregateByteLimit: 0 },
+  ]) {
+    const store = new ProjectStore(target, { projectOperations: { ldo } });
+    expect(() => importLdoArtifacts(store)).toThrow(ProjectOperationsError);
+    expect(fs.existsSync(path.join(store.layout.runs, "ldo-import-manifest.json"))).toBe(false);
+  }
+  expect(() => previewLdoImport(target, { ldo: { artifactCountLimit: -1 } })).toThrow(
+    ProjectOperationsError,
+  );
+
+  fs.linkSync(source, path.join(plans, "linked.json"));
+  expect(previewLdoImport(target).items.find((item) => item.id === "linked")).toMatchObject({
+    status: "rejected",
+    error: { code: "unsafe_import" },
+  });
+  fs.unlinkSync(path.join(plans, "linked.json"));
+  fs.symlinkSync(source, path.join(plans, "symlink.json"));
+  expect(previewLdoImport(target).items.find((item) => item.id === "symlink")).toMatchObject({
+    status: "rejected",
+    error: { code: "unsafe_import" },
+  });
+});
 
 function root(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-operations-"));

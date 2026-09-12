@@ -63,6 +63,13 @@ export class ProjectStore {
       aggregationLimit: 0,
       claimLeaseMs: 0,
       ...config.projectOperations,
+      ldo: {
+        root: ".codex/ldo",
+        artifactCountLimit: 0,
+        perFileByteLimit: 0,
+        aggregateByteLimit: 0,
+        ...config.projectOperations?.ldo,
+      },
     };
     this.validateLimits(this.retention);
     this.validateLimits(this.byteLimits);
@@ -70,6 +77,9 @@ export class ProjectStore {
       evidenceLimit: this.projectOperations.evidenceLimit ?? 0,
       aggregationLimit: this.projectOperations.aggregationLimit ?? 0,
       claimLeaseMs: this.projectOperations.claimLeaseMs ?? 0,
+      artifactCountLimit: this.projectOperations.ldo?.artifactCountLimit ?? 0,
+      perFileByteLimit: this.projectOperations.ldo?.perFileByteLimit ?? 0,
+      aggregateByteLimit: this.projectOperations.ldo?.aggregateByteLimit ?? 0,
     });
     if (!(["files", "github"] as const).includes(this.projectOperations.backlogBackend ?? "files"))
       throw new ProjectStoreError(
@@ -271,6 +281,7 @@ export class ProjectStore {
     expectedVersion?: number,
   ): VersionedState<T> {
     this.assertInside(destination);
+    this.createPrivateDir(path.dirname(destination));
     const release = this.acquireLock(`${destination}.lock`);
     try {
       let current = 0;

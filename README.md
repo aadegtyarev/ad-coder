@@ -234,6 +234,19 @@ in_progress → review/blocked → done lifecycle. Backlog persistence always
 projects candidate prose to structural metadata. All new numeric limits default
 to `0` (disabled).
 
+Existing LDO-organized projects require no migration. `detectLdoProject`,
+`previewLdoImport`, `importLdoArtifacts`, `inspectImportedLdoWork`, and
+`resumeImportedLdoWork` discover `.codex/ldo/{plans,runs}` plus the existing
+README/AGENTS/docs layout, preserve exact source bytes with observed and claimed
+provenance, and import immutable digest revisions behind a durable manifest.
+Detection and preview do not scaffold documentation or managed state; import
+never edits `.codex/ldo` or project documentation. Imported model-authored text
+is untrusted: resume requires an explicit trust decision for the exact SHA-256
+digest, and a changed or missing source fails stale. Importer count, per-file,
+and aggregate byte limits are configurable under `projectOperations.ldo`; each
+defaults to `0` (disabled). Set positive limits before inspecting less-trusted
+repositories.
+
 `RunCoordinator` is the shared non-model lifecycle owner behind direct
 `runPipeline`, `driveWorkflow`, and conversational orchestration. Pass
 `coordinator: { runId }` in `PipelineConfig` to reopen an interrupted run; its
@@ -245,10 +258,14 @@ Only a trusted programmatic/UI call to `resolveDecision` with `source:
 one-line rule text and triggers a reviewer-only pass before approval.
 
 The non-interactive `ad-coder operations <action> --target-dir <dir> [--json]`
-front exposes FollowUp validation/aggregation, documentation routing, every
+front exposes `ldo-detect`, `ldo-preview`, `ldo-import`, `ldo-inspect`, and
+`ldo-resume`, FollowUp validation/aggregation, documentation routing, every
 backlog lifecycle operation, and GitHub capability/migration probes as JSON.
 Pass candidate JSON with `--input <file>` or `--input -`; claim actions also use
-`--owner`, `--run-id`, and `--branch`.
+`--owner`, `--run-id`, and `--branch`. LDO inspect/resume identifiers are
+`plan:<ldo-id>` or `run:<ldo-id>`; import accepts
+`{"trustDigests":["<sha256>"]}` only when the operator intends those exact
+revisions to become executable.
 
 `runPipeline` is the autonomous coordinator driver over a STEPPED engine you can
 also drive yourself. `createWorkflowSession(config)` exposes the same plan → [security] →

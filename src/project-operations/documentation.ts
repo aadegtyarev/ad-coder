@@ -70,13 +70,14 @@ export function routeDocumentationFollowUp(
   } else if (followUp.kind === "note") {
     const existing = path.join(targetDir, "docs", "NOTES.md");
     const configured = config.documentation?.notes;
-    relative = fs.existsSync(existing)
-      ? path.relative(targetDir, existing)
-      : configured === undefined
-        ? path.join("docs", "notes", "candidates.md")
-        : path.extname(configured) === ".md"
+    relative =
+      configured !== undefined
+        ? path.extname(configured) === ".md"
           ? configured
-          : path.join(configured, "candidates.md");
+          : path.join(configured, "candidates.md")
+        : fs.existsSync(existing)
+          ? path.relative(targetDir, existing)
+          : path.join("docs", "notes", "candidates.md");
   } else {
     relative = followUp.document;
   }

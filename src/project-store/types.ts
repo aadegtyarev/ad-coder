@@ -42,6 +42,15 @@ export interface ProjectOperationsConfig {
     contracts?: string;
     notes?: string;
   };
+  ldo?: {
+    /** Project-relative LDO root. Defaults to .codex/ldo. */
+    root?: string;
+    plans?: string;
+    runs?: string;
+    artifactCountLimit?: number;
+    perFileByteLimit?: number;
+    aggregateByteLimit?: number;
+  };
   github?: {
     repository?: string;
     stateLabels?: Partial<

@@ -15,6 +15,78 @@ function runCli(args: string[]): { code: number; stdout: string; stderr: string 
   };
 }
 
+function cliLdoPlan(id: string): Record<string, unknown> {
+  return {
+    version: 1,
+    id,
+    root: "/historical/project",
+    baseHead: "abc123",
+    createdAt: "2026-09-12T00:00:00.000Z",
+    task: "Imported CLI task",
+    plan: {
+      complexity: "medium",
+      security_surface: "low",
+      summary: "saved",
+      steps: [{ what: "code", files: ["src/a.ts"], acceptance: "passes", user_facing: false }],
+      risks: [],
+      codebase_context: {
+        stack: "TypeScript",
+        conventions: "strict",
+        relevant_files: [],
+        test_command: "bun test",
+        test_command_scoped: null,
+        run_command: "bun test",
+      },
+    },
+    security: null,
+    usage: [],
+  };
+}
+
+function cliCompletedRun(id: string): Record<string, unknown> {
+  const source = cliLdoPlan(id);
+  return {
+    version: 1,
+    id,
+    root: source.root,
+    baseHead: source.baseHead,
+    task: source.task,
+    plan: source.plan,
+    security: null,
+    status: "completed",
+    startedAt: "2026-09-12T00:00:00.000Z",
+    usage: [],
+    completed: {
+      coder: {
+        summary: "coded",
+        files_changed: [],
+        tests: { result: "passed", command: "bun test" },
+        docs_updated: [],
+        deviations: [],
+      },
+      reviewer1: {
+        status: "approved",
+        summary: "approved",
+        issues: [],
+        verification: { verdict: "verified", criteria: [], blockers: [] },
+        attacks: [],
+      },
+    },
+    tokenUsage: {
+      status: "unavailable",
+      input_tokens: null,
+      cache_creation_input_tokens: null,
+      cached_input_tokens: null,
+      output_tokens: null,
+      total_tokens: null,
+      stages: [],
+    },
+    completedAt: "2026-09-12T00:01:00.000Z",
+    approved: true,
+    backlog: { destination: "none", file: null, count: 0 },
+  };
+}
+
 test("root help succeeds on stdout and failure usage is registry-derived", () => {
   for (const flag of ["--help", "-h"]) {
     const { code, stdout, stderr } = runCli([flag]);
@@ -38,7 +110,7 @@ test("root help succeeds on stdout and failure usage is registry-derived", () =>
 
 test("each command renders its own help before validating required input", () => {
   const commandHelps: ReadonlyArray<readonly [string, string, string]> = [
-    ["operations", "<action>", "--provider"],
+    ["operations", "ldo-resume", "<script.ts>"],
     ["run", "<script.ts>", "--provider"],
     ["role", "<planner|coder|reviewer|security>", "--auto"],
     ["drive", "--auto", "<planner|coder|reviewer|security>"],
@@ -133,6 +205,75 @@ test("operations exposes FollowUp, documentation, and backlog APIs as JSON", () 
       detail: "--owner, --run-id, and --branch are required for this operations action",
     },
   });
+});
+
+test("operations exposes all LDO actions as one-result JSON commands", () => {
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-ldo-cli-"));
+  const runs = path.join(target, ".codex", "ldo", "runs");
+  fs.mkdirSync(runs, { recursive: true });
+  fs.writeFileSync(path.join(runs, "cli-run.json"), JSON.stringify(cliCompletedRun("cli-run")));
+
+  const detect = runCli(["operations", "ldo-detect", "--target-dir", target, "--json"]);
+  expect(detect.code).toBe(0);
+  expect(JSON.parse(detect.stdout)).toMatchObject({ detected: true, runs: ".codex/ldo/runs" });
+
+  const preview = runCli(["operations", "ldo-preview", "--target-dir", target, "--json"]);
+  expect(preview.code).toBe(0);
+  const previewValue = JSON.parse(preview.stdout);
+  expect(previewValue).toMatchObject({ writes: false, items: [{ status: "importable" }] });
+  expect(fs.existsSync(path.join(target, ".ad-coder"))).toBe(false);
+
+  const trustInput = path.join(target, "trust.json");
+  fs.writeFileSync(trustInput, JSON.stringify({ trustDigests: [previewValue.items[0].sha256] }));
+  const imported = runCli([
+    "operations",
+    "ldo-import",
+    "--target-dir",
+    target,
+    "--input",
+    trustInput,
+    "--json",
+  ]);
+  expect(imported.code).toBe(0);
+  expect(JSON.parse(imported.stdout).imported).toHaveLength(1);
+
+  const inspect = runCli([
+    "operations",
+    "ldo-inspect",
+    "--target-dir",
+    target,
+    "--id",
+    "run:cli-run",
+    "--json",
+  ]);
+  expect(inspect.code).toBe(0);
+  expect(JSON.parse(inspect.stdout)).toMatchObject({ terminal: true, approved: true });
+
+  const resumed = runCli([
+    "operations",
+    "ldo-resume",
+    "--target-dir",
+    target,
+    "--id",
+    "run:cli-run",
+    "--provider",
+    "openai-codex",
+    "--json",
+  ]);
+  expect(resumed.code).toBe(0);
+  expect(JSON.parse(resumed.stdout)).toMatchObject({ status: "complete" });
+
+  const invalid = runCli([
+    "operations",
+    "ldo-inspect",
+    "--target-dir",
+    target,
+    "--id",
+    "../secret payload",
+    "--json",
+  ]);
+  expect(invalid.code).not.toBe(0);
+  expect(invalid.stderr).not.toContain("secret payload");
 });
 
 test("console help is registry-derived and invalid input limits fail before provider access", () => {

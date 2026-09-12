@@ -2,9 +2,9 @@
 
 ## Current priority
 
-- [next] Implement non-destructive LDO import and operator commands using the
-  delivered ProjectStore/RunCoordinator boundaries. Repository publishing policy
-  and the TUI remain unresolved later work.
+- [next] Define and implement repository publishing policy as a separate
+  increment: gates, branch/remote authority, push/PR behavior, credentials,
+  failure recovery, and a headless machine-mode surface. The TUI remains later.
 
 ## Future control plane and plugins
 
@@ -17,7 +17,6 @@
 
 ## 2026-09-12
 
-- [high] LDO import paths: reuse the delivered ProjectStore containment and regular-file boundaries so future imports cannot escape the target project (CWE-59).
 - [medium] Provide a built-in distributed `GitHubClaimCoordinator`; the headless backend currently requires callers to inject a shared coordinator and rejects mutations when none is supplied (CWE-362).
 
 ## Provider reliability

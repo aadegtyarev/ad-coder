@@ -16,6 +16,12 @@ network (pi-ai's fauxProvider) and demonstrated live on DeepSeek.
 
 ### Added
 
+- **Project operations Increment 5** — migration-free LDO layout detection,
+  non-destructive digest/provenance imports with explicit execution trust,
+  durable inspection/resume, and detect/preview/import/inspect/resume JSON CLI
+  actions. Enabled importer limits reject unsafe or oversized source artifacts
+  before persistence; zero keeps each numeric limit disabled.
+
 - **Project operations Increment 4** — a durable non-model RunCoordinator,
   structured per-turn FollowUps, operator decisions, accepted-contract re-review,
   idempotent closeout, and resume parity across all workflow drivers.
