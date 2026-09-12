@@ -20,6 +20,12 @@
 - [planned] Add a minimal trusted plugin registry for local/npm packages over the
   existing tool/workflow/driver seams, followed by a Telegram driver that binds
   chats or topics to durable sessions.
+- [planned] Add a headless Codex subscription-status adapter over the installed
+  Codex app-server protocol (`account/rateLimits/read` plus
+  `account/rateLimits/updated`). Expose plan type, ordinary-usage availability,
+  primary/secondary used percentages and reset times, credit/spend-control state,
+  and reset-credit count to CLI/TUI; omit account identifiers and degrade to an
+  explicit `unavailable` state when the Codex CLI/protocol is absent.
 
 ## 2026-09-12
 

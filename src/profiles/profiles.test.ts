@@ -56,6 +56,26 @@ test("parseProfile accepts a well-formed profile and returns it", () => {
   });
 });
 
+test("parseProfile accepts every thinking level and rejects unknown levels with a names-only detail", () => {
+  for (const thinkingLevel of ["off", "minimal", "low", "medium", "high", "xhigh", "max"]) {
+    expect(
+      parseProfile({
+        entries: [{ role: "coder", complexity: "medium", model: "mid", thinkingLevel }],
+      }).entries[0]?.thinkingLevel,
+    ).toBe(thinkingLevel as "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max");
+  }
+  try {
+    parseProfile({
+      entries: [{ role: "coder", complexity: "medium", model: "mid", thinkingLevel: "deep" }],
+    });
+    throw new Error("expected invalid_config");
+  } catch (error) {
+    expect(error).toBeInstanceOf(ProfileError);
+    expect((error as ProfileError).code).toBe("invalid_config");
+    expect((error as ProfileError).detail).toBe("coder:medium.thinkingLevel");
+  }
+});
+
 test("parseProfile rejects a non-object", () => {
   try {
     parseProfile(null);
@@ -195,6 +215,20 @@ test("resolveProfile rethrows an unknown model as ProfileError('unknown_model'),
     expect((err as ProfileError).code).toBe("unknown_model");
     expect((err as ProfileError).detail).toBe("big");
   }
+});
+
+test("resolveProfile carries entry thinkingLevel and lets a complete override win", () => {
+  const profile: Profile = {
+    entries: [{ role: "coder", complexity: "medium", model: "mid", thinkingLevel: "high" }],
+  };
+  const registry = stubRegistry(["mid", "pinned"]);
+  expect(resolveProfile(profile, registry, "coder", "medium").thinkingLevel).toBe("high");
+  const override = resolveProfile(profile, registry, "coder", "medium", {
+    model: "pinned",
+    thinkingLevel: "low",
+  });
+  expect(override.model.id).toBe("pinned");
+  expect(override.thinkingLevel).toBe("low");
 });
 
 test("resolveProfile throws missing_mapping for a (role, complexity) with no entry", () => {

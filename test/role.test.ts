@@ -35,6 +35,9 @@ test("defineRole throws on each malformed field", () => {
   expect(() =>
     defineRole({ ...valid, activeToolNames: "read_file" as unknown as string[] }, model),
   ).toThrow(/must be an array/);
+  expect(() => defineRole({ ...valid, thinkingLevel: "deep" as never }, model)).toThrow(
+    /thinkingLevel/,
+  );
 });
 
 test("defineRole rejects a malformed or over-window context budget", () => {
@@ -93,6 +96,17 @@ test("toHarnessOptions passes the system prompt through verbatim and disables co
   expect(opts.streamOptions?.cacheRetention).toBe(valid.cacheRetention);
   expect(opts.model).toBe(runModel);
   expect(opts.models).toBe(models);
+});
+
+test("toHarnessOptions preserves a configured thinking level and omits an absent one", () => {
+  const { model: runModel, models } = resolveRoleModel(valid);
+  const configured = defineRole({ ...valid, thinkingLevel: "medium" }, runModel);
+  expect(
+    toHarnessOptions(configured, { session: {} as Session, models, model: runModel }).thinkingLevel,
+  ).toBe("medium");
+  expect(
+    "thinkingLevel" in toHarnessOptions(valid, { session: {} as Session, models, model: runModel }),
+  ).toBe(false);
 });
 
 test("an absent allow-list omits activeToolNames so the harness grants every tool", () => {

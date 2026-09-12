@@ -60,6 +60,13 @@ The **CLI** picks a provider by env-var PRESENCE, in precedence order
 `DEEPSEEK_API_KEY` → `OPENROUTER_API_KEY` → OpenAI-Codex OAuth (override with
 `--provider`). OpenAI Codex uses OAuth, not an environment key.
 
+With the OpenAI Codex OAuth default profile, coder uses `gpt-5.6-sol` at every
+complexity with `thinkingLevel: "medium"`; the conversational orchestrator uses
+the same model with `"low"`. A profile routing cell or spawn override can set
+`thinkingLevel` to `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`.
+Use `--orchestrator-thinking-level <level>` to override the conversational
+orchestrator without changing its model.
+
 Authenticate a ChatGPT Plus/Pro account once with either OAuth flow:
 
 ```sh
@@ -284,6 +291,8 @@ Per-role model selection is optionally complexity-driven: pass a `routing`
 ({ profile, registry, defaultComplexity?, overrides? }) to `runPipeline` and each
 role's model is chosen from the planner-rated complexity. Routing is optional —
 omit it and each role runs on its configured `RoleSpec.model` exactly as before.
+Each profile cell may also specify optional `thinkingLevel` using the supported
+levels above; when omitted, pi-agent-core selects its own default.
 
 Project operations are available as a headless API. `validateFollowUp` and
 `aggregateFollowUps` produce one strict union of contract, note, design-doc

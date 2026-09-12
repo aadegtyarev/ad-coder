@@ -4,7 +4,7 @@ import type { Api, Model, TextContent } from "@earendil-works/pi-ai";
 import { deriveContextBudget } from "../context/budget";
 import { assertSummarizerWindow } from "../context/compactor";
 import { resolveProfile } from "../profiles/resolve";
-import type { ProfileRole } from "../profiles/types";
+import type { ProfileRole, ResolvedSelection } from "../profiles/types";
 import { parseProfile } from "../profiles/validate";
 import type { FollowUp } from "../project-operations/types";
 import { ProjectStore } from "../project-store/project-store";
@@ -168,9 +168,13 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
   // The ONE place a role's model is chosen. Routing absent -> the spec's own
   // model (prior behavior); present -> the profile's (role, complexity) cell,
   // with a per-role override winning over the cell (resolveProfile precedence).
-  const pickModel = (role: ProfileRole, spec: RoleSpec, complexity: Complexity): Model<Api> => {
+  const pickSelection = (
+    role: ProfileRole,
+    spec: RoleSpec,
+    complexity: Complexity,
+  ): ResolvedSelection => {
     if (routing === undefined) {
-      return spec.model;
+      return { model: spec.model };
     }
     return resolveProfile(
       routing.profile,
@@ -178,33 +182,38 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       role,
       complexity,
       routing.overrides?.[role],
-    ).model;
+    );
   };
 
   /** Drive one role turn on a fresh session and return its final assistant text. */
   const runTurn = async (
     spec: RoleSpec,
-    model: Model<Api>,
+    selection: ResolvedSelection,
     prompt: string,
     step: string,
     runId: string,
     tools?: Tool[],
   ): Promise<{ text: string; followUps: FollowUp[] }> => {
+    const { model } = selection;
     // A fresh session per run: each role has its own systemPrompt, so sharing a
     // session would leak one role's history and prompt into another.
     const session = await projectStore.createSession(runId, BACKGROUND_CONTEXT);
+    const budgetPercents = routing?.budgetPercents?.[spec.role.name as ProfileRole];
+    const { thinkingLevel: _seedThinkingLevel, ...roleWithoutThinkingLevel } = spec.role;
     const role =
-      routing?.budgetPercents?.[spec.role.name as ProfileRole] === undefined
+      routing === undefined
         ? spec.role
         : defineRole(
             {
-              ...spec.role,
+              ...roleWithoutThinkingLevel,
               provider: model.provider,
               modelId: model.id,
-              contextBudget: deriveContextBudget(
-                model.contextWindow,
-                routing.budgetPercents[spec.role.name as ProfileRole],
-              ),
+              ...(selection.thinkingLevel !== undefined && {
+                thinkingLevel: selection.thinkingLevel,
+              }),
+              ...(budgetPercents !== undefined && {
+                contextBudget: deriveContextBudget(model.contextWindow, budgetPercents),
+              }),
             },
             model,
           );
@@ -229,7 +238,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
 
   const runWorkflowTurn = async (
     spec: RoleSpec,
-    model: Model<Api>,
+    selection: ResolvedSelection,
     prompt: string,
     stepName: string,
     runId: string,
@@ -247,7 +256,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     });
     const turn = await runTurn(
       spec,
-      model,
+      selection,
       enabled ? `${prompt}\n\n${formatFollowUpInstruction()}` : prompt,
       stepName,
       runId,
@@ -284,8 +293,8 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     const capture: PlanCapture = {};
     const submitPlanTool = buildSubmitPlanTool(capture, runId);
     const prompt = `${config.task}\n\n${formatPlannerInstruction()}`;
-    const model = pickModel("planner", planner, state.preComplexity);
-    const { text, followUps } = await runWorkflowTurn(planner, model, prompt, "plan", runId, [
+    const selection = pickSelection("planner", planner, state.preComplexity);
+    const { text, followUps } = await runWorkflowTurn(planner, selection, prompt, "plan", runId, [
       submitPlanTool,
     ]);
     const runIds = [...state.runIds, runId];
@@ -355,8 +364,14 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       config.task,
       appendContractRequirements(state.planSummary, state.contractRequirements),
     );
-    const model = pickModel("security", security, state.effective);
-    const { text, followUps } = await runWorkflowTurn(security, model, prompt, "security", runId);
+    const selection = pickSelection("security", security, state.effective);
+    const { text, followUps } = await runWorkflowTurn(
+      security,
+      selection,
+      prompt,
+      "security",
+      runId,
+    );
     const nextState: WorkflowState = {
       ...state,
       securityNotes: text,
@@ -385,10 +400,10 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       config.task,
       appendContractRequirements(handoff, state.contractRequirements),
     );
-    const model = pickModel("coder", config.roles.coder, state.effective);
+    const selection = pickSelection("coder", config.roles.coder, state.effective);
     const { text, followUps } = await runWorkflowTurn(
       config.roles.coder,
-      model,
+      selection,
       context,
       `code:${round}`,
       runId,
@@ -421,10 +436,10 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       state.securityNotes,
       state.contractRequirements,
     );
-    const model = pickModel("reviewer", config.roles.reviewer, state.effective);
+    const selection = pickSelection("reviewer", config.roles.reviewer, state.effective);
     const { text, followUps } = await runWorkflowTurn(
       config.roles.reviewer,
-      model,
+      selection,
       prompt,
       `review:${round}`,
       runId,

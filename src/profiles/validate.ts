@@ -1,3 +1,4 @@
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { CacheRetention } from "@earendil-works/pi-ai";
 import type { Complexity } from "../orchestration/types";
 import { ProfileError } from "./errors";
@@ -14,6 +15,15 @@ const PROFILE_ROLES: readonly ProfileRole[] = [
 const COMPLEXITIES: readonly Complexity[] = ["trivial", "medium", "complex"];
 
 const CACHE_RETENTIONS: readonly CacheRetention[] = ["none", "short", "long"];
+const THINKING_LEVELS: readonly ThinkingLevel[] = [
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+];
 
 /**
  * Strictly validate untrusted, plain-data input into a `Profile`.
@@ -116,6 +126,17 @@ function parseEntry(value: unknown, bad: Bad, seenKeys: Set<string>): ProfileEnt
       `entry.cacheRetention must be one of ${CACHE_RETENTIONS.join(", ")} when present`,
     );
   }
+  if (
+    record.thinkingLevel !== undefined &&
+    (typeof record.thinkingLevel !== "string" ||
+      !THINKING_LEVELS.includes(record.thinkingLevel as ThinkingLevel))
+  ) {
+    bad(
+      "invalid_config",
+      `${key}.thinkingLevel`,
+      `entry.thinkingLevel must be one of ${THINKING_LEVELS.join(", ")} when present`,
+    );
+  }
 
   return {
     role: profileRole,
@@ -124,6 +145,9 @@ function parseEntry(value: unknown, bad: Bad, seenKeys: Set<string>): ProfileEnt
     ...(record.maxOutput !== undefined ? { maxOutput: record.maxOutput as number } : {}),
     ...(record.cacheRetention !== undefined
       ? { cacheRetention: record.cacheRetention as CacheRetention }
+      : {}),
+    ...(record.thinkingLevel !== undefined
+      ? { thinkingLevel: record.thinkingLevel as ThinkingLevel }
       : {}),
   };
 }

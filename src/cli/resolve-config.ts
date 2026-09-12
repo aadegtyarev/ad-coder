@@ -1,3 +1,4 @@
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Api, CredentialStore, Model } from "@earendil-works/pi-ai";
 import { assertCredentialPathOutsideProject, FileCredentialStore } from "../auth/credential-store";
 import { type ContextBudgetPercents, deriveContextBudget } from "../context/budget";
@@ -10,7 +11,7 @@ import type { Complexity, PipelineConfig, RoleSpec } from "../orchestration/type
 import { SUBMIT_VERDICT_TOOL_NAME } from "../orchestration/verdict";
 import { buildDefaultProfile } from "../profiles/default-profile";
 import { resolveProfile } from "../profiles/resolve";
-import type { Profile, ProfileRole } from "../profiles/types";
+import type { Profile, ProfileRole, ResolvedSelection } from "../profiles/types";
 import { parseProfile } from "../profiles/validate";
 import type { ProjectStoreConfig } from "../project-store/types";
 import { resolvePrompt } from "../prompts/prompts";
@@ -46,6 +47,15 @@ export type ConfigurableRole = "planner" | "security" | "coder" | "reviewer" | "
 const DEFAULT_MAX_ROUNDS = 2;
 /** The complexity every pre-plan role and later fallback routes on by default. */
 const DEFAULT_COMPLEXITY: Complexity = "medium";
+const THINKING_LEVELS: readonly ThinkingLevel[] = [
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+];
 const CONFIGURABLE_ROLES: readonly ConfigurableRole[] = [
   "planner",
   "security",
@@ -101,6 +111,7 @@ export interface ResolvePipelineConfigOptions {
   coderModel?: string;
   reviewerModel?: string;
   orchestratorModel?: string;
+  orchestratorThinkingLevel?: ThinkingLevel;
   compactionMode?: CompactionMode;
   summarizerModel?: string;
   allowCrossProviderSummarization?: boolean;
@@ -179,6 +190,12 @@ export function resolvePipelineConfig(options: ResolvePipelineConfigOptions): Pi
     throw new Error("provider cannot be combined with registryConfig");
   }
   const env = options.env ?? ((name: string) => process.env[name]);
+  if (
+    options.orchestratorThinkingLevel !== undefined &&
+    !THINKING_LEVELS.includes(options.orchestratorThinkingLevel)
+  ) {
+    throw new Error(`orchestratorThinkingLevel must be one of ${THINKING_LEVELS.join(", ")}`);
+  }
   const warn = options.warn ?? ((message: string) => void process.stderr.write(message));
 
   const provider =
@@ -224,8 +241,24 @@ export function resolvePipelineConfig(options: ResolvePipelineConfigOptions): Pi
       `ad-coder: provider destination "${resolvedModel.provider}" host "${new URL(resolvedModel.baseUrl).host}" credential "${credentialName}"\n`,
     );
   }
+  const defaultProfile = buildDefaultProfile({ strong, mid, cheap });
+  const useCodexOAuthDefaults =
+    provider === "openai-codex" &&
+    options.profile === undefined &&
+    options.strongModel === undefined &&
+    options.midModel === undefined &&
+    options.cheapModel === undefined;
   const profile: Profile = parseProfile(
-    options.profile ?? buildDefaultProfile({ strong, mid, cheap }),
+    options.profile ??
+      (useCodexOAuthDefaults
+        ? {
+            entries: defaultProfile.entries.map((entry) =>
+              entry.role === "coder"
+                ? { ...entry, model: "codex-sol", thinkingLevel: "medium" as ThinkingLevel }
+                : entry,
+            ),
+          }
+        : defaultProfile),
   );
   const defaultComplexity = options.defaultComplexity ?? DEFAULT_COMPLEXITY;
   const maxRounds = options.maxRounds ?? DEFAULT_MAX_ROUNDS;
@@ -258,7 +291,8 @@ export function resolvePipelineConfig(options: ResolvePipelineConfigOptions): Pi
   const buildRole = (name: ProfileRole, tools: string[]): RoleSpec => {
     // The role's live model is whatever the default profile routes it to at
     // defaultComplexity; the budget is validated against that same model.
-    const model = resolveProfile(profile, registry, name, defaultComplexity, overrides[name]).model;
+    const selection = resolveProfile(profile, registry, name, defaultComplexity, overrides[name]);
+    const model = selection.model;
     const budget = deriveContextBudget(
       model.contextWindow,
       options.roleBudgetPercents?.[name as ConfigurableRole] ?? options.budgetPercents,
@@ -272,6 +306,7 @@ export function resolvePipelineConfig(options: ResolvePipelineConfigOptions): Pi
         activeToolNames: tools,
         cacheRetention: "short",
         contextBudget: budget,
+        ...(selection.thinkingLevel !== undefined && { thinkingLevel: selection.thinkingLevel }),
       },
       model,
     );
@@ -295,13 +330,18 @@ export function resolvePipelineConfig(options: ResolvePipelineConfigOptions): Pi
     ]),
   };
 
-  const orchestratorModel =
+  const orchestratorSelection: ResolvedSelection =
     options.orchestratorModel !== undefined
-      ? registry.getModel(options.orchestratorModel)
-      : provider === "openai-codex"
-        ? registry.getModel("codex-astra")
-        : resolveProfile(profile, registry, "coder", defaultComplexity, overrides.coder).model;
-  const orchestrator = buildNamedRole("orchestrator", orchestratorModel, ["read", "bash"]);
+      ? { model: registry.getModel(options.orchestratorModel) }
+      : useCodexOAuthDefaults
+        ? { model: registry.getModel("codex-sol"), thinkingLevel: "low" }
+        : resolveProfile(profile, registry, "coder", defaultComplexity, overrides.coder);
+  const orchestrator = buildNamedRole(
+    "orchestrator",
+    orchestratorSelection.model,
+    ["read", "bash"],
+    options.orchestratorThinkingLevel ?? orchestratorSelection.thinkingLevel,
+  );
 
   if (compactionMode !== "disabled-then-halt") {
     const reachable = profile.entries
@@ -311,11 +351,16 @@ export function resolvePipelineConfig(options: ResolvePipelineConfigOptions): Pi
       if (role !== "recorder" && override !== undefined)
         reachable.push(registry.getModel(override.model));
     }
-    reachable.push(orchestratorModel);
+    reachable.push(orchestratorSelection.model);
     assertSummarizerWindow(summarizerModel, reachable);
   }
 
-  function buildNamedRole(name: ConfigurableRole, model: Model<Api>, tools: string[]): RoleSpec {
+  function buildNamedRole(
+    name: ConfigurableRole,
+    model: Model<Api>,
+    tools: string[],
+    thinkingLevel?: ThinkingLevel,
+  ): RoleSpec {
     const budget = deriveContextBudget(
       model.contextWindow,
       options.roleBudgetPercents?.[name] ?? options.budgetPercents,
@@ -331,6 +376,7 @@ export function resolvePipelineConfig(options: ResolvePipelineConfigOptions): Pi
           activeToolNames: tools,
           cacheRetention: "short",
           contextBudget: budget,
+          ...(thinkingLevel !== undefined && { thinkingLevel }),
         },
         model,
       ),

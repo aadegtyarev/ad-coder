@@ -1,3 +1,4 @@
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Api, CacheRetention, Model } from "@earendil-works/pi-ai";
 import type { Complexity } from "../orchestration/types";
 
@@ -18,7 +19,7 @@ export type ProfileRole = "planner" | "coder" | "reviewer" | "security" | "recor
 
 /**
  * One `(role, complexity)` routing cell: which registry model NAME to use, plus
- * ADVISORY shaping hints.
+ * advisory shaping hints and an optional harness thinking level.
  *
  * `model` is a stable registry lookup key (resolved through `ResolvedRegistry`),
  * never a provider-native id and never a credential. `maxOutput` and
@@ -26,6 +27,7 @@ export type ProfileRole = "planner" | "coder" | "reviewer" | "security" | "recor
  * `ResolvedSelection` but has NO sink for them today. The wiring follow-on maps
  * `maxOutput` onto pi `StreamOptions.maxTokens` and `cacheRetention` onto the
  * role's stream options; until then they are inert declared data.
+ * `thinkingLevel` is consumed when routed roles are created.
  *
  * `cacheRetention` reuses pi-ai's `CacheRetention` verbatim (`none|short|long`)
  * the same type `Role` uses never redefined here.
@@ -36,6 +38,7 @@ export interface ProfileEntry {
   model: string;
   maxOutput?: number;
   cacheRetention?: CacheRetention;
+  thinkingLevel?: ThinkingLevel;
 }
 
 /** A whole profile: the set of `(role, complexity)` routing cells. Keyed uniquely on `role:complexity`. */
@@ -46,8 +49,8 @@ export interface Profile {
 /**
  * A per-spawn override that takes precedence over the `(role, complexity)` cell.
  *
- * When present, `resolveProfile` uses this override's `model` and advisory
- * `maxOutput`/`cacheRetention` INSTEAD OF looking up a profile entry so a
+ * When present, `resolveProfile` uses this override's `model`, `thinkingLevel`,
+ * and advisory `maxOutput`/`cacheRetention` INSTEAD OF looking up a profile entry so a
  * caller can pin one spawn to a specific model without editing the profile.
  * `model` is a registry NAME, resolved the same way; the same advisory caveat
  * applies to `maxOutput`/`cacheRetention` (no sink today).
@@ -56,11 +59,13 @@ export interface SpawnOverride {
   model: string;
   maxOutput?: number;
   cacheRetention?: CacheRetention;
+  thinkingLevel?: ThinkingLevel;
 }
 
 /**
  * The result of resolving a `(role, complexity)` (or an override) against a
- * `ResolvedRegistry`: the live pi `Model<Api>` plus the ADVISORY shaping hints.
+ * `ResolvedRegistry`: the live pi `Model<Api>`, optional thinking level, and
+ * advisory shaping hints.
  *
  * `maxOutput`/`cacheRetention` are produced here but have NO consumer in this
  * unit the wiring follow-on maps `maxOutput` onto pi `StreamOptions.maxTokens`.
@@ -70,4 +75,5 @@ export interface ResolvedSelection {
   model: Model<Api>;
   maxOutput?: number;
   cacheRetention?: CacheRetention;
+  thinkingLevel?: ThinkingLevel;
 }

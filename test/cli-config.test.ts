@@ -280,11 +280,69 @@ test("falls back to codex OAuth when no env-var key is present", () => {
   });
   expect(config.roles.planner?.model.id).toBe("gpt-5.6-sol");
   expect(config.roles.security?.model.id).toBe("gpt-5.6-sol");
-  expect(config.roles.coder.model.id).toBe("gpt-5.6-terra");
+  expect(config.roles.coder.model.id).toBe("gpt-5.6-sol");
+  expect(config.roles.coder.role.thinkingLevel).toBe("medium");
   expect(config.roles.reviewer.model.id).toBe("gpt-5.6-terra");
-  expect(config.roles.orchestrator?.model.id).toBe("gpt-6-astra");
+  expect(config.roles.orchestrator?.model.id).toBe("gpt-5.6-sol");
+  expect(config.roles.orchestrator?.role.thinkingLevel).toBe("low");
+  expect(
+    config.routing?.profile.entries
+      .filter((entry) => entry.role === "coder")
+      .map((entry) => [entry.complexity, entry.model, entry.thinkingLevel]),
+  ).toEqual([
+    ["trivial", "codex-sol", "medium"],
+    ["medium", "codex-sol", "medium"],
+    ["complex", "codex-sol", "medium"],
+  ]);
   expect(config.compaction?.summarizerModel?.id).toBe("gpt-5.6-luna");
   expect(config.routing?.registry.getModel("codex-gpt-5.5")).toBeDefined();
+});
+
+test("explicit profile and spawn override keep precedence over provider defaults", () => {
+  const profile = buildDefaultProfile({
+    strong: "codex-astra",
+    mid: "codex-terra",
+    cheap: "codex-luna",
+  });
+  profile.entries = profile.entries.map((entry) =>
+    entry.role === "coder" ? { ...entry, thinkingLevel: "minimal" as const } : entry,
+  );
+  const config = resolvePipelineConfig({
+    task: "x",
+    targetDir: "/tmp/target",
+    provider: "openai-codex",
+    profile,
+    overrides: { coder: { model: "codex-sol", thinkingLevel: "high" } },
+    env: fakeEnv({}),
+    warn: silent,
+  });
+  expect(config.roles.coder.model.id).toBe("gpt-5.6-sol");
+  expect(config.roles.coder.role.thinkingLevel).toBe("high");
+});
+
+test("non-Codex provider retains generic profile defaults without a thinking level", () => {
+  const config = resolvePipelineConfig({
+    task: "x",
+    targetDir: "/tmp/target",
+    registryConfig: mixedRegistry(),
+    profile: buildDefaultProfile({ strong: "large", mid: "small", cheap: "small" }),
+    summarizerModel: "large",
+    env: fakeEnv({ LOCAL_KEY: "k" }),
+    warn: silent,
+  });
+  expect(config.roles.coder.role.thinkingLevel).toBeUndefined();
+  expect(config.roles.orchestrator?.role.thinkingLevel).toBeUndefined();
+});
+
+test("orchestrator thinking override wins over the Codex OAuth default", () => {
+  const config = resolvePipelineConfig({
+    task: "x",
+    targetDir: "/tmp/target",
+    env: fakeEnv({}),
+    orchestratorThinkingLevel: "high",
+    warn: silent,
+  });
+  expect(config.roles.orchestrator?.role.thinkingLevel).toBe("high");
 });
 
 test("resolvePipelineConfig gives its Models the injected CredentialStore", async () => {
