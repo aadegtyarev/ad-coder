@@ -199,7 +199,7 @@ export function resolvePipelineConfig(options: ResolvePipelineConfigOptions): Pi
         name,
         provider: model.provider,
         modelId: model.id,
-        systemPrompt: resolvePrompt(name),
+        systemPrompt: resolvePrompt(name, { projectDir: options.targetDir }),
         activeToolNames: tools,
         cacheRetention: "short",
         contextBudget: budget,

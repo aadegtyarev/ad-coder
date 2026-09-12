@@ -31,7 +31,8 @@ export interface PlanCapture {
  * This is a pure, self-contained, hand-written validator (no `eval`, no schema
  * library): `value` must be an object; `complexity` one of the three allowed
  * literals; `securitySurface` one of the three allowed literals; `summary` a
- * string. Any deviation throws
+ * string; and optional `contractRequirements` an array of non-empty strings.
+ * Any deviation throws
  * `OrchestrationError('malformed_plan')` -- never a silent coercion, never a
  * default. `summary` is checked for type only and is NOT interpolated into any
  * shell/SQL/path/prompt sink in this unit (the coder still receives the
@@ -67,10 +68,22 @@ export function parsePlan(value: unknown, detail: string): Plan {
     return bad("plan.summary must be a string");
   }
 
+  const contractRequirements =
+    record.contractRequirements === undefined ? [] : record.contractRequirements;
+  if (
+    !Array.isArray(contractRequirements) ||
+    contractRequirements.some(
+      (requirement) => typeof requirement !== "string" || requirement.trim() === "",
+    )
+  ) {
+    return bad("plan.contractRequirements must be an array of non-empty strings");
+  }
+
   return {
     complexity: complexity as Complexity,
     securitySurface: securitySurface as SecuritySurface,
     summary: record.summary,
+    contractRequirements: contractRequirements as string[],
   };
 }
 
@@ -93,12 +106,13 @@ export function parsePlan(value: unknown, detail: string): Plan {
 export function buildSubmitPlanTool(capture: PlanCapture, detail: string): Tool {
   return defineTool({
     name: SUBMIT_PLAN_TOOL_NAME,
-    description: "Record the plan's complexity and summary.",
+    description: "Record the plan's complexity, security surface, contract rules, and summary.",
     label: "submit plan",
     parameters: Type.Object({
       complexity: Type.String(),
       securitySurface: Type.String(),
       summary: Type.String(),
+      contractRequirements: Type.Optional(Type.Array(Type.String())),
     }),
     async execute(_toolCallId, params) {
       try {
@@ -132,7 +146,7 @@ export function formatPlannerInstruction(): string {
   return [
     `When your plan is ready, record it by calling the ${SUBMIT_PLAN_TOOL_NAME} tool.`,
     "Call it with this shape:",
-    '{ "complexity": "trivial" | "medium" | "complex", "securitySurface": "none" | "low" | "elevated", "summary": "<short summary>" }',
+    '{ "complexity": "trivial" | "medium" | "complex", "securitySurface": "none" | "low" | "elevated", "summary": "<short summary>", "contractRequirements": ["<exact applicable short rule or labeled faithful compression>"] }',
     'Choose "trivial" for a one-liner, "medium" for a routine multi-file change, "complex" for a cross-cutting or high-risk one.',
     'Choose "none" when the task touches no attack surface, "low" for incidental exposure, "elevated" when it touches auth, secrets, user input, crypto, or an external boundary.',
   ].join("\n");

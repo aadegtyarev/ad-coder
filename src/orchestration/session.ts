@@ -175,6 +175,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     phase: config.roles.planner !== undefined ? "plan" : "code",
     round: 1,
     planSummary: "",
+    contractRequirements: [],
     changeSummary: "",
     securityNotes: "",
     preComplexity: defaults.preComplexity,
@@ -209,6 +210,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     }
     const complexity = capture.plan?.complexity;
     const securitySurface = capture.plan?.securitySurface;
+    const contractRequirements = capture.plan?.contractRequirements ?? [];
     const effective: Complexity = complexity ?? state.preComplexity;
 
     // The plan->security edge is armed ONLY when the planner flagged an elevated
@@ -226,6 +228,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     const nextState: WorkflowState = {
       ...state,
       planSummary: text,
+      contractRequirements,
       runIds,
       effective,
       ...(complexity !== undefined && { complexity }),
@@ -258,7 +261,10 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       throw new OrchestrationError("empty_task", "", "security phase requires a security role");
     }
     const runId = crypto.randomUUID();
-    const prompt = composeSecurityPrompt(config.task, state.planSummary);
+    const prompt = composeSecurityPrompt(
+      config.task,
+      appendContractRequirements(state.planSummary, state.contractRequirements),
+    );
     const model = pickModel("security", security, state.effective);
     const text = await runTurn(security, model, prompt, "security", runId);
     const nextState: WorkflowState = {
@@ -281,13 +287,14 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     // requirements. Round 2+ carry the reviewer's issues instead; unmet
     // mitigations return via those issues, so securityNotes is NOT re-injected
     // every round (that would double-count them).
-    const context =
+    const handoff =
       round === 1
-        ? composeCoderPrompt(
-            config.task,
-            appendSecurityNotes(state.planSummary, state.securityNotes),
-          )
-        : composeCoderPrompt(config.task, formatIssues(previousVerdict?.issues ?? []));
+        ? appendSecurityNotes(state.planSummary, state.securityNotes)
+        : formatIssues(previousVerdict?.issues ?? []);
+    const context = composeCoderPrompt(
+      config.task,
+      appendContractRequirements(handoff, state.contractRequirements),
+    );
     const model = pickModel("coder", config.roles.coder, state.effective);
     const text = await runTurn(config.roles.coder, model, context, `code:${round}`, runId);
     const nextState: WorkflowState = {
@@ -316,6 +323,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       state.changeSummary,
       formatReviewerInstruction(),
       state.securityNotes,
+      state.contractRequirements,
     );
     const model = pickModel("reviewer", config.roles.reviewer, state.effective);
     const text = await runTurn(config.roles.reviewer, model, prompt, `review:${round}`, runId, [
@@ -442,6 +450,9 @@ export function toPipelineResult(state: WorkflowState): PipelineResult {
     runIds: state.runIds,
     ...(state.complexity !== undefined && { complexity: state.complexity }),
     ...(state.securitySurface !== undefined && { securitySurface: state.securitySurface }),
+    ...(state.contractRequirements.length > 0 && {
+      contractRequirements: [...state.contractRequirements],
+    }),
   };
 }
 
@@ -457,6 +468,7 @@ function composeReviewerPrompt(
   changeSummary: string,
   instruction: string,
   securityNotes: string,
+  contractRequirements: string[],
 ): string {
   const parts = [task];
   if (changeSummary.trim() !== "") {
@@ -464,6 +476,9 @@ function composeReviewerPrompt(
   }
   if (securityNotes.trim() !== "") {
     parts.push(formatSecurityNotes(securityNotes));
+  }
+  if (contractRequirements.length > 0) {
+    parts.push(formatContractRequirements(contractRequirements));
   }
   parts.push(instruction);
   return parts.join("\n\n");
@@ -485,6 +500,20 @@ function appendSecurityNotes(context: string, securityNotes: string): string {
     return context;
   }
   const framed = formatSecurityNotes(securityNotes);
+  return context.trim() === "" ? framed : `${context}\n\n${framed}`;
+}
+
+function formatContractRequirements(requirements: string[]): string {
+  return `Applicable project contracts (blocking requirements):\n${requirements
+    .map((requirement) => `- ${requirement}`)
+    .join("\n")}`;
+}
+
+function appendContractRequirements(context: string, requirements: string[]): string {
+  if (requirements.length === 0) {
+    return context;
+  }
+  const framed = formatContractRequirements(requirements);
   return context.trim() === "" ? framed : `${context}\n\n${framed}`;
 }
 

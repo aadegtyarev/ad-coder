@@ -17,7 +17,8 @@ NOT cross GitHub to another machine, so it is lost the moment you switch hardwar
 - A working convention or operator preference → this file.
 - Architecture / how a module works → `docs/ARCHITECTURE.md`.
 - An unresolved item and the current product priority → `docs/BACKLOG.md`.
-- Verification, review, and incident evidence → a dated file in `docs/reviews/`.
+- Exceptional incident evidence → a dated file in `docs/reviews/`; routine
+  verification belongs in durable run state, not a committed receipt.
 - Measured provider or SDK research → the relevant `docs/*-economics.md` or
   `docs/*-capabilities.md` research note.
 - A tool-local memory may hold at most lightweight pointers to the above and
@@ -108,7 +109,8 @@ Reviewer blocking on a non-clean run).
 ## Step closeout
 
 After every material implementation step, persist the handoff before stopping:
-write a dated `docs/reviews/` receipt with the verdict and command evidence;
+record verdict and command evidence in durable run state; create a dated
+`docs/reviews/` receipt only when an exceptional incident needs durable evidence;
 update `docs/ARCHITECTURE.md` only when the current system map changed; and
 update `docs/BACKLOG.md` only for unresolved work and the current priority. Put
 decisions in `docs/ROADMAP.md` and research in its relevant research note.
@@ -136,6 +138,8 @@ chat transcript or ignored harness runtime state.
 
 
 
+
+
 <!-- BEGIN ldo-codex -->
 ## LDO orchestration
 
@@ -146,12 +150,7 @@ node .codex/ldo/scripts/ldo-run.mjs --runtime codex "<the user request>"
 ```
 
 LDO saves every plan locally. In `review-plan=auto` (default), it pauses for discussion only when Planner rates the task `complex` or `elevated`; use `--review-plan always` or `never` to override. When paused, show the plan and wait for explicit approval; then run `node .codex/ldo/scripts/ldo-run.mjs --runtime codex --continue-plan latest`. If a pipeline later crashes, run `node .codex/ldo/scripts/ldo-run.mjs --runtime codex --resume-run latest` to continue from its first incomplete phase. If the user changes scope, create a new plan-only artifact instead. Use `--research` when current external facts are required and `--no-record` for fast, disposable iterations. Do not add `--isolate` in a normal `workspace-write` Codex session: Git worktree creation writes shared `.git/refs`, which that sandbox may forbid. Use `--isolate` only when the host explicitly permits Git metadata writes (for example, an externally sandboxed bypass session). Run independent tasks sequentially in the normal Codex path.
-Planner runs once on Sol; there is no automatic refinement pass. Trivial Reviewers use a compact verification prompt. These policies are Codex-only.
-
-LDO pipelines normally take several minutes. Start one long-lived watcher or wait
-for completion instead of polling repeatedly. Use waits measured in minutes and
-send a progress update only when the pipeline produces a material result or needs
-operator input; do not spend tokens on unchanged status checks.
+Planner runs once on Sol; do not add a preliminary classifier or second refinement pass. Trivial Reviewers use a compact verification prompt. These policies are Codex-only.
 
 After every completed pipeline, always print a concise operator report in normal prose; raw pipeline JSON is not the report. Include the task outcome and verdict, changed files, tests, unresolved issues, token totals and per-stage usage, `runCheckpoint` path, and Recorder's `backlog.destination`, `backlog.file`, and `backlog.count`. The Recorder must update `docs/BACKLOG.md` when unresolved items exist. Never silently finish without the operator report or without confirming the terminal checkpoint and backlog outcome. A deliberate `--no-record` run or a trivial run may report that backlog recording was skipped.
 

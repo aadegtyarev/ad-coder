@@ -492,7 +492,7 @@ export type OrchestratorConfig = Omit<ResolvePipelineConfigOptions, "task"> & {
  *
  * Wires `resolvePipelineConfig` (the per-task `buildConfig` factory and the SOLE
  * credential surface -- keys resolve only through its injected `env` accessor,
- * never `targetDir/.env`), `resolvePrompt('orchestrator')`, and
+ * never `targetDir/.env`), the target-aware `resolvePrompt('orchestrator')`, and
  * `startConversation` with the four orchestrator tools, all sharing ONE
  * `MemoryLedgerSink` so `show_cost` reads every turn's cost. The orchestrator's
  * own conversation model, window budget, and `Models` come from that same
@@ -525,7 +525,7 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
       name: "orchestrator",
       provider: orchestratorModel.provider,
       modelId: orchestratorModel.id,
-      systemPrompt: resolvePrompt("orchestrator"),
+      systemPrompt: resolvePrompt("orchestrator", { projectDir: config.targetDir }),
       activeToolNames: [
         "read",
         "bash",

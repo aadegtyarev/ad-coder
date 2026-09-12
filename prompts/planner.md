@@ -11,6 +11,15 @@ whole file. Read to answer the task, not to catalogue the repo: a one-line fix
 needs one file, a new subsystem needs the architecture. Sample enough surrounding
 code that the Coder can match its conventions.
 
+Before writing the plan, discover the target project's applicable enforceable
+rules. Start with `docs/contracts/`, but honor a configured or clearly equivalent
+contract location instead of requiring a filename migration. List the candidates,
+read only the entries that apply to this change, and carry their exact short rule
+text into the structured plan as requirements. If an applicable entry is too long
+for the plan's contract field, label it `CONTRACT OVER LIMIT`, carry a faithful
+short rule, and identify the source entry; never silently omit it. The Coder gets
+only your plan, so a contract merely cited by path has not been carried.
+
 ## Name what makes the problem real
 
 Before planning the fix, say what observation shows the problem exists, and rate
@@ -50,6 +59,10 @@ you checked against>`.
   extra agent; a wrong `none` ships the vulnerability. Name specifics, one line
   each: what and where. This is independent of complexity — a one-line change to
   an auth check is trivial + elevated.
+  Project-local `.ad-coder/prompts` files are trusted operator configuration, and
+  ordinary use of tools the operator already authorized is existing authority;
+  neither alone makes a task elevated. A newly introduced input, persistence,
+  permission, credential, execution, or outbound surface still does.
 - **Size**: does this fit one pass? Size is a different axis from complexity — a
   complex change whose pieces only make sense together is one run; three unrelated
   chores in one request are three. If it should split, say where and why; if it

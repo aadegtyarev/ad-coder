@@ -2,9 +2,18 @@
 
 ## Current priority
 
-- [next] Build the TUI over the headless conversation and orchestration
-  surfaces. Breakpoint control and composable isolation remain designed
-  requirements in `docs/ROADMAP.md`; they are not ahead of this priority.
+- [next] Complete the remaining reviewed project-operations increments:
+  ProjectStore/runtime sessions, structured FollowUps and backlog backends,
+  RunCoordinator closeout, then non-destructive LDO import/operator commands.
+  The TUI remains unresolved but follows this work.
+
+## 2026-09-12
+
+- [high] ProjectStore/runtime and LDO import paths: enforce symlink-safe containment and regular-file checks so durable writes and imports cannot escape the target project (CWE-59).
+- [high] FollowUp and backlog publication: redact secrets and bound persisted evidence, failing closed before file or GitHub writes to prevent sensitive data exposure (CWE-200).
+- [medium] Automatic document routing: render through fixed provenance-aware templates and reject directive/marker injection so model prose cannot become durable instructions (CWE-74).
+- [medium] Runtime coordination and GitHub migration: add locking or versioned compare-and-swap plus migration leases to prevent duplicate claims, closeout, or issues (CWE-362).
+- [medium] Runtime storage: create and replace sessions, artifacts, downloads, cache, ledger, and tmp with owner-only permissions rather than relying on umask (CWE-732).
 
 ## Provider reliability
 

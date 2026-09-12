@@ -28,6 +28,21 @@ test("a project prompt shadows the built-in of the same name", () => {
   expect(resolved).not.toBe(builtin);
 });
 
+test("resolution is read-only and imposes no size or symlink cage on trusted overrides", () => {
+  const projectDir = tmpDir();
+  const promptDir = path.join(projectDir, ".ad-coder", "prompts");
+  const sourceDir = tmpDir();
+  fs.mkdirSync(promptDir, { recursive: true });
+  const largeTrustedPrompt = `${"trusted configuration\n".repeat(20_000)}tail \t\n`;
+  const source = path.join(sourceDir, "trusted.md");
+  fs.writeFileSync(source, largeTrustedPrompt, "utf8");
+  fs.symlinkSync(source, path.join(promptDir, "coder.md"));
+  const before = fs.readdirSync(projectDir, { recursive: true }).sort();
+
+  expect(resolvePrompt("coder", { projectDir })).toBe(largeTrustedPrompt);
+  expect(fs.readdirSync(projectDir, { recursive: true }).sort()).toEqual(before);
+});
+
 test("an unresolvable name throws not_found carrying no file contents", () => {
   const projectDir = tmpDir();
   let thrown: unknown;

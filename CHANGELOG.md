@@ -12,6 +12,12 @@ network (pi-ai's fauxProvider) and demonstrated live on DeepSeek.
 
 ### Added
 
+- **Trusted target role prompts and contract-aware roles** — pipeline and
+  conversational orchestration now activate `.ad-coder/prompts/<role>.md`
+  overrides automatically and byte-verbatim. Planner, Coder, and Reviewer roles
+  discover, carry, obey, and independently enforce applicable target-project
+  contracts without requiring ad-coder's documentation filenames.
+
 - **Session generation limits** — headless conversations and orchestrators accept
   zero-disabled turn and USD thresholds enforced across all Models generation
   paths, including nested workflow roles and built-in compaction. Console flags

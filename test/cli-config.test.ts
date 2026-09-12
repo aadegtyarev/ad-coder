@@ -1,4 +1,7 @@
 import { expect, test } from "bun:test";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { resolvePipelineConfig } from "../src/cli/resolve-config";
 import { RegistryError } from "../src/registry/errors";
 
@@ -9,6 +12,27 @@ function fakeEnv(vars: Record<string, string>): (name: string) => string | undef
 
 /** Swallow the resolver's stderr notices so tests stay quiet. */
 const silent = () => {};
+
+test("all pipeline roles automatically use byte-verbatim target prompt overrides", () => {
+  const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-role-prompts-"));
+  const promptDir = path.join(targetDir, ".ad-coder", "prompts");
+  fs.mkdirSync(promptDir, { recursive: true });
+  const names = ["planner", "security", "coder", "reviewer"] as const;
+  for (const name of names) {
+    fs.writeFileSync(path.join(promptDir, `${name}.md`), `target ${name} \t\n`, "utf8");
+  }
+
+  const config = resolvePipelineConfig({
+    task: "x",
+    targetDir,
+    env: fakeEnv({ DEEPSEEK_API_KEY: "k" }),
+    warn: silent,
+  });
+
+  for (const name of names) {
+    expect(config.roles[name]?.role.systemPrompt).toBe(`target ${name} \t\n`);
+  }
+});
 
 test("selects deepseek by env presence and builds a valid PipelineConfig", () => {
   const config = resolvePipelineConfig({
