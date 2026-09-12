@@ -1,20 +1,23 @@
 # Changelog
 
-- Added structured FollowUps, validated documentation proposals, and selectable file/GitHub backlog authorities with leased lifecycle claims.
-- Added the machine-readable `operations` CLI and made backlog persistence unconditionally metadata-only; expired leases now revoke holder operations.
-- Added the target-rooted ProjectStore with durable sessions, private runtime paths, atomic state, cleanup limits, and attachment lifecycle APIs.
-
 All notable changes to ad-coder are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project aims at
 [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-12
+
 The working core of the harness. Built on `@earendil-works/pi-agent-core` and
 `@earendil-works/pi-ai` 0.85.1, Bun + TypeScript, provable end to end with no
 network (pi-ai's fauxProvider) and demonstrated live on DeepSeek.
 
 ### Added
+
+- **Public release discipline** — package version `0.2.0`, enforced SemVer and
+  dated-changelog consistency, artifact version verification, public-clone
+  installation guidance, and an explicit no-recursive-orchestration guard for
+  every built-in role.
 
 - **Durable Orchestrator control-plane foundation** — queued daemon-free starts,
   atomic request-key admission, reconstruction, safe status/list/tool views,

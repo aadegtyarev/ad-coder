@@ -15,7 +15,7 @@ reviewable clone so dependency resolution stays frozen and no global package
 installation is mutated:
 
 ```sh
-git clone git@github.com:aadegtyarev/ad-coder.git
+git clone https://github.com/aadegtyarev/ad-coder.git
 cd ad-coder
 bun install --frozen-lockfile --ignore-scripts
 bun link
@@ -23,8 +23,19 @@ ad-coder --help
 ad-coder about
 ```
 
-To update, inspect and pull the clone, repeat the frozen script-disabled install,
-then refresh its local `bun link`. `ad-coder about --json` reports package
+To update, inspect the clone and run:
+
+```sh
+git pull --ff-only
+bun install --frozen-lockfile --ignore-scripts
+bun link
+hash -r
+ad-coder about
+```
+
+This deliberately avoids `bun install -g <git-url>`: Bun 1.3 may reuse a stale
+Git snapshot and its progress display can remain at `2/2` while resolving the
+provider dependency tree. `ad-coder about --json` reports package
 semver, source revision when Git metadata is available, and linked-development
 state. The project does not claim or test a global install/update workflow.
 

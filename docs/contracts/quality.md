@@ -13,6 +13,11 @@ Rules for the project's own code quality. A violation is always blocking.
   suppression that must be inline carries a one-line reason.
 - 2026-09-12: Install and release claims require a bounded temporary smoke of
   the produced artifact, with integrity checked and no global installation mutation.
+- 2026-09-12: Every user-visible change updates `CHANGELOG.md`. Every shipped
+  release or installable release candidate increments `package.json` according
+  to Semantic Versioning; its exact version has a dated changelog heading, passes
+  `bun run check:release`, and is the version reported by `ad-coder about`. A
+  version already merged as an install target is never silently reused.
 
 ## Sources
 
