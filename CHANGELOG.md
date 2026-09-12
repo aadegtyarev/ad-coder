@@ -1,5 +1,7 @@
 # Changelog
 
+- Added the target-rooted ProjectStore with durable sessions, private runtime paths, atomic state, cleanup limits, and attachment lifecycle APIs.
+
 All notable changes to ad-coder are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project aims at
 [Semantic Versioning](https://semver.org/).

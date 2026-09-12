@@ -13,6 +13,7 @@ import {
 import { ContextBudgetError } from "../src/context/budget";
 import type { Summarizer } from "../src/context/compactor";
 import { LEDGER_BASE_DIR } from "../src/ledger/ledger";
+import { ProjectStore } from "../src/project-store/project-store";
 import type { Role } from "../src/role";
 import { defineRole } from "../src/role";
 import { RunnerError, resolveTargetDir } from "../src/runner/errors";
@@ -120,6 +121,12 @@ test("runRole drives one turn to a settled result and lands the ledger under tar
   expect(typeof record.runId).toBe("string");
   expect(record.role).toBe("coder");
   expect(record.step).toBe("run");
+
+  const store = new ProjectStore(targetDir);
+  const metadata = (await store.listSessions()).find(({ id }) => id === result.runId);
+  expect(metadata).toBeDefined();
+  expect(fs.statSync(metadata?.path as string).mode & 0o777).toBe(0o600);
+  expect(fs.statSync(result.ledgerPath as string).mode & 0o777).toBe(0o600);
 
   const underCwd = path.join(process.cwd(), LEDGER_BASE_DIR, `${result.runId}.jsonl`);
   expect(fs.existsSync(underCwd)).toBe(false);

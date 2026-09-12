@@ -42,7 +42,12 @@ export class FileLedgerSink implements LedgerSink {
   private readonly dirPath: string;
   private fd: number | undefined;
 
-  constructor(filePath: string) {
+  constructor(
+    filePath: string,
+    private readonly maxRecordBytes = 0,
+  ) {
+    if (!Number.isSafeInteger(maxRecordBytes) || maxRecordBytes < 0)
+      throw new TypeError("maxRecordBytes must be a non-negative integer");
     this.filePath = filePath;
     this.dirPath = path.dirname(filePath);
   }
@@ -50,7 +55,10 @@ export class FileLedgerSink implements LedgerSink {
   write(record: LedgerRecord): void {
     // One JSON.stringify of the whole record, never a hand-built line: a value
     // holding a newline would otherwise forge extra ledger entries.
-    fs.writeSync(this.open(), `${JSON.stringify(record)}\n`);
+    const line = `${JSON.stringify(record)}\n`;
+    if (this.maxRecordBytes > 0 && Buffer.byteLength(line) > this.maxRecordBytes)
+      throw new Error("ledger record exceeds configured byte limit");
+    fs.writeSync(this.open(), line);
   }
 
   close(): void {
@@ -62,7 +70,9 @@ export class FileLedgerSink implements LedgerSink {
   private open(): number {
     if (this.fd !== undefined) return this.fd;
 
+    assertDirectoryChainSafe(this.dirPath);
     fs.mkdirSync(this.dirPath, { recursive: true, mode: 0o700 });
+    assertDirectoryChainSafe(this.dirPath);
     fs.chmodSync(this.dirPath, 0o700);
 
     const fd = fs.openSync(
@@ -90,6 +100,25 @@ export class FileLedgerSink implements LedgerSink {
     }
     this.fd = fd;
     return fd;
+  }
+}
+
+function assertDirectoryChainSafe(directory: string): void {
+  const absolute = path.resolve(directory);
+  const root = path.parse(absolute).root;
+  let current = root;
+  for (const component of path.relative(root, absolute).split(path.sep)) {
+    if (!component) continue;
+    current = path.join(current, component);
+    try {
+      const stat = fs.lstatSync(current);
+      if (stat.isSymbolicLink() || !stat.isDirectory()) {
+        throw new Error(`ledger directory component is unsafe: ${current}`);
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw error;
+    }
   }
 }
 

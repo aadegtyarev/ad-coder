@@ -15,7 +15,6 @@ import {
   createReadTool,
   createWriteTool,
   getOrThrow,
-  MemorySessionRepo,
 } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/harness/env/nodejs";
 import type { Api, Model, Models } from "@earendil-works/pi-ai";
@@ -27,16 +26,13 @@ import {
 } from "../context/compactor";
 import { assertContextFitsBudget, assertTurnFitsBudget } from "../context/preflight";
 import type { LedgerSink } from "../ledger/ledger";
-import { FileLedgerSink, LEDGER_BASE_DIR, Ledger } from "../ledger/ledger";
+import { FileLedgerSink, Ledger } from "../ledger/ledger";
+import { ProjectStore } from "../project-store/project-store";
+import type { ProjectStoreConfig } from "../project-store/types";
 import type { Role } from "../role";
 import { toHarnessOptions } from "../role";
 import type { SessionLimitController } from "../session-limits";
-import {
-  assertLedgerDirWithinTarget,
-  assertRunId,
-  assertUniqueToolNames,
-  resolveTargetDir,
-} from "./errors";
+import { assertRunId, assertUniqueToolNames, resolveTargetDir } from "./errors";
 import type { Tool } from "./tool";
 
 /**
@@ -64,8 +60,10 @@ export interface RunRoleParams {
   step?: string;
   /** Lane to drive. Defaults to "main" (there is no exported default-lane constant). */
   laneName?: string;
-  /** Reuse an existing session; a fresh in-memory session is created otherwise. */
+  /** Reuse an existing session; a target-rooted durable session is created otherwise. */
   session?: Session;
+  /** Runtime-store retention and byte limits. Zero/omitted disables each limit. */
+  projectStoreConfig?: ProjectStoreConfig;
   /** Legacy summarizer injection seam; absent policy still defaults to auto compaction. */
   summarizer?: Summarizer;
   /** Context policy. Absent defaults to efficient auto compaction. */
@@ -148,8 +146,6 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
   const tools = [...builtin, ...(params.tools ?? [])];
   assertUniqueToolNames(tools);
 
-  const session = params.session ?? (await new MemorySessionRepo().create({}, context));
-
   const controller = params.sessionLimitController;
   const models = controller?.wrap(params.models) ?? params.models;
   const explicitPolicy =
@@ -163,6 +159,13 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
     throw new TypeError("custom summarizer cannot be used with positive session limits");
   }
   const compaction = resolveCompactionPolicy(explicitPolicy, models, params.model);
+
+  const store =
+    params.session === undefined
+      ? new ProjectStore(absTargetDir, params.projectStoreConfig)
+      : undefined;
+  const session = params.session ?? (await store?.openOrCreateSession(runId, context));
+  if (session === undefined) throw new Error("runRole: failed to acquire session");
 
   const base = toHarnessOptions(params.role, {
     session,
@@ -183,9 +186,9 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
   if (params.ledgerSink !== undefined) {
     sink = params.ledgerSink;
   } else {
-    assertLedgerDirWithinTarget(absTargetDir, LEDGER_BASE_DIR);
-    ledgerPath = path.join(absTargetDir, LEDGER_BASE_DIR, `${runId}.jsonl`);
-    sink = new FileLedgerSink(ledgerPath);
+    const projectStore = store ?? new ProjectStore(absTargetDir, params.projectStoreConfig);
+    ledgerPath = path.join(projectStore.layout.ledger, `${runId}.jsonl`);
+    sink = new FileLedgerSink(ledgerPath, projectStore.byteLimits.jsonlRecord);
   }
 
   const ledger = new Ledger({
@@ -203,7 +206,14 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
         })
       : undefined;
 
-  const { harness } = await AgentHarness.create<ExecutionToolContext>(options, context);
+  let harness: Awaited<ReturnType<typeof AgentHarness.create<ExecutionToolContext>>>["harness"];
+  try {
+    ({ harness } = await AgentHarness.create<ExecutionToolContext>(options, context));
+  } catch (error) {
+    if (store !== undefined) await session.close(context);
+    await store?.close(context);
+    throw error;
+  }
   ledger.attach(harness.hooks);
   compactor?.attach(harness.hooks);
 
@@ -249,5 +259,6 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
   } finally {
     await harness.close(context);
     ledger.close();
+    await store?.close(context);
   }
 }

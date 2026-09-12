@@ -347,6 +347,14 @@ test("a pre-existing group-readable record file is refused", () => {
   expect(() => sink.write(record())).toThrow(/beyond its owner/);
 });
 
+test("a configured record limit rejects an oversized ledger line before publication", () => {
+  const dir = scratchDir("record-limit");
+  const filePath = path.join(dir, "run1.jsonl");
+  const sink = new FileLedgerSink(filePath, 8);
+  expect(() => sink.write(record())).toThrow(/byte limit/);
+  expect(fs.existsSync(filePath)).toBe(false);
+});
+
 test("a value holding a newline cannot forge an extra ledger line", async () => {
   const dir = scratchDir("inject");
   const filePath = path.join(dir, "run1.jsonl");

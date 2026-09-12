@@ -1,0 +1,72 @@
+import type { JsonlSessionMetadata } from "@earendil-works/pi-agent-core";
+
+export type ProjectStoreArea =
+  | "sessions"
+  | "runs"
+  | "scratch"
+  | "attachments"
+  | "downloads"
+  | "cache"
+  | "ledger"
+  | "tmp";
+
+export interface ProjectStoreLayout extends Record<ProjectStoreArea, string> {
+  readonly targetDir: string;
+  readonly root: string;
+  readonly gitignore: string;
+}
+
+export type ProjectStoreRetention = Record<ProjectStoreArea, number>;
+
+export interface ProjectStoreByteLimits {
+  attachment: number;
+  state: number;
+  jsonlRecord: number;
+}
+
+export interface ProjectStoreConfig {
+  retention?: Partial<ProjectStoreRetention>;
+  byteLimits?: Partial<ProjectStoreByteLimits>;
+}
+
+export interface VersionedState<T> {
+  version: number;
+  value: T;
+}
+
+export interface AttachmentMetadata {
+  id: string;
+  name: string;
+  path: string;
+  size: number;
+  sha256: string;
+  createdAt: number;
+}
+
+export interface ProjectSessionMetadata extends JsonlSessionMetadata {}
+
+export interface CleanupResult {
+  area: ProjectStoreArea;
+  removed: string[];
+}
+
+export type ProjectStoreErrorCode =
+  | "invalid_config"
+  | "invalid_id"
+  | "not_found"
+  | "already_exists"
+  | "unsafe_path"
+  | "unsafe_object"
+  | "version_conflict"
+  | "resource_limit";
+
+export class ProjectStoreError extends Error {
+  override readonly name = "ProjectStoreError";
+  constructor(
+    readonly code: ProjectStoreErrorCode,
+    readonly path: string,
+    message: string,
+  ) {
+    super(message);
+  }
+}

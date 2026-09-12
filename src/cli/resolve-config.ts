@@ -7,6 +7,7 @@ import { SUBMIT_VERDICT_TOOL_NAME } from "../orchestration/verdict";
 import { buildDefaultProfile } from "../profiles/default-profile";
 import { resolveProfile } from "../profiles/resolve";
 import type { Profile, ProfileRole } from "../profiles/types";
+import type { ProjectStoreConfig } from "../project-store/types";
 import { resolvePrompt } from "../prompts/prompts";
 import { deepseekPreset, openaiCodexPreset, openrouterPreset } from "../registry/presets";
 import { resolveRegistry } from "../registry/resolve";
@@ -77,6 +78,7 @@ export interface ResolvePipelineConfigOptions {
   defaultComplexity?: Complexity;
   budgetPercents?: BudgetPercents;
   warn?: (message: string) => void;
+  projectStoreConfig?: ProjectStoreConfig;
 }
 
 /** Env-var names whose PRESENCE selects a provider, in precedence order. */
@@ -235,5 +237,8 @@ export function resolvePipelineConfig(options: ResolvePipelineConfigOptions): Pi
           },
     routing: { profile, registry, defaultComplexity },
     defaults: { maxRounds, defaultComplexity },
+    ...(options.projectStoreConfig !== undefined && {
+      projectStoreConfig: options.projectStoreConfig,
+    }),
   };
 }

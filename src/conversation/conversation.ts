@@ -15,7 +15,6 @@ import {
   createReadTool,
   createWriteTool,
   getOrThrow,
-  MemorySessionRepo,
 } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/harness/env/nodejs";
 import type { Api, Model, Models, TextContent } from "@earendil-works/pi-ai";
@@ -27,15 +26,12 @@ import {
 } from "../context/compactor";
 import { assertContextFitsBudget, assertTurnFitsBudget } from "../context/preflight";
 import type { LedgerSink } from "../ledger/ledger";
-import { FileLedgerSink, LEDGER_BASE_DIR, Ledger } from "../ledger/ledger";
+import { FileLedgerSink, Ledger } from "../ledger/ledger";
+import { ProjectStore } from "../project-store/project-store";
+import type { ProjectStoreConfig } from "../project-store/types";
 import type { Role } from "../role";
 import { toHarnessOptions } from "../role";
-import {
-  assertLedgerDirWithinTarget,
-  assertRunId,
-  assertUniqueToolNames,
-  resolveTargetDir,
-} from "../runner/errors";
+import { assertRunId, assertUniqueToolNames, resolveTargetDir } from "../runner/errors";
 import type { Tool } from "../runner/tool";
 import type { SessionLimits } from "../session-limits";
 import { SessionLimitController } from "../session-limits";
@@ -61,8 +57,10 @@ export interface ConversationConfig {
   runId?: string;
   /** Lane to drive. Defaults to "main". */
   laneName?: string;
-  /** Reuse an existing session; a fresh in-memory session is created otherwise. */
+  /** Reuse an existing session; otherwise create or resume the durable session named by runId. */
   session?: Session;
+  /** Runtime-store retention and byte limits. Zero/omitted disables each limit. */
+  projectStoreConfig?: ProjectStoreConfig;
   /** Legacy summarizer injection seam; absent policy still defaults to auto compaction. */
   summarizer?: Summarizer;
   /** Context policy. Absent defaults to efficient auto compaction. */
@@ -157,7 +155,6 @@ export async function startConversation(config: ConversationConfig): Promise<Con
   const tools = [...builtin, ...(config.tools ?? [])];
   assertUniqueToolNames(tools);
 
-  const session = config.session ?? (await new MemorySessionRepo().create({}, context));
   const controller =
     config.sessionLimitController ?? new SessionLimitController(config.sessionLimits);
   const limitedModels = controller.wrap(config.models);
@@ -169,6 +166,15 @@ export async function startConversation(config: ConversationConfig): Promise<Con
     throw new TypeError("custom summarizer cannot be used with positive session limits");
   }
   const compaction = resolveCompactionPolicy(explicitPolicy, limitedModels, config.model);
+
+  const store =
+    config.session === undefined
+      ? new ProjectStore(absTargetDir, config.projectStoreConfig)
+      : undefined;
+  const acquiredSession = config.session ?? (await store?.openOrCreateSession(runId, context));
+  if (acquiredSession === undefined)
+    throw new Error("startConversation: failed to acquire session");
+  const session: Session = acquiredSession;
 
   const base = toHarnessOptions(config.role, {
     session,
@@ -189,12 +195,19 @@ export async function startConversation(config: ConversationConfig): Promise<Con
   if (config.ledgerSink !== undefined) {
     sink = config.ledgerSink;
   } else {
-    assertLedgerDirWithinTarget(absTargetDir, LEDGER_BASE_DIR);
-    ledgerPath = path.join(absTargetDir, LEDGER_BASE_DIR, `${runId}.jsonl`);
-    sink = new FileLedgerSink(ledgerPath);
+    const projectStore = store ?? new ProjectStore(absTargetDir, config.projectStoreConfig);
+    ledgerPath = path.join(projectStore.layout.ledger, `${runId}.jsonl`);
+    sink = new FileLedgerSink(ledgerPath, projectStore.byteLimits.jsonlRecord);
   }
 
-  const { harness } = await AgentHarness.create<ExecutionToolContext>(options, context);
+  let harness: Awaited<ReturnType<typeof AgentHarness.create<ExecutionToolContext>>>["harness"];
+  try {
+    ({ harness } = await AgentHarness.create<ExecutionToolContext>(options, context));
+  } catch (error) {
+    if (store !== undefined) await session.close(context);
+    await store?.close(context);
+    throw error;
+  }
 
   // The compactor is a transform_context handler; attaching it per turn would
   // compound handlers the same way a per-turn ledger attach would compound
@@ -284,6 +297,7 @@ export async function startConversation(config: ConversationConfig): Promise<Con
     closed = true;
     await harness.close(context);
     sink.close?.();
+    await store?.close(context);
   }
 
   return {

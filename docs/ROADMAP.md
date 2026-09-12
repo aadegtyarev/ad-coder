@@ -460,15 +460,15 @@ workflows — one substrate, swappable drivers.
   implies, as human-confirmed candidates. NOT a new mechanism: gates + auditor +
   matrix + taxonomy in discovery mode on a target tree. Depends on: gates (done),
   matrix (done), auditor.
-- **Session persistence** — a policy on the runner's existing seam
-  (`session = params.session ?? MemorySessionRepo`). Swap to JsonlSessionRepo
+- **Session persistence — DELIVERED (Increment 2)** — the runner's injected
+  Session seam now defaults to ProjectStore-backed JsonlSessionRepo
   under <targetDir>/.ad-coder/sessions/ for durable, inspectable, forkable
   sessions; session identity = runId (= ledger key), so session + ledger +
   checkpoint = one addressable unit. Durable reload from disk IS possible (unlike
   LDO's in-process resume cache). The session is where compaction's effect lives.
   Small extension of the runner seam.
 
-- **In-project scratch (working files + attachments)** — a gitignored working-files
+- **In-project scratch (working files + attachments) — FOUNDATION DELIVERED (Increment 2)** — a gitignored working-files
   area INSIDE the project (not external — knowledge and working material both stay
   in the project), for: agent drops/downloads a file, TUI-pasted images (fed to a
   vision model by path), and throwaway TEST SCRIPTS / SPIKES the agent writes AND

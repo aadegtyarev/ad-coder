@@ -16,6 +16,7 @@ import type { Summarizer } from "../src/context/compactor";
 import { SUMMARIZATION_PROMPT } from "../src/context/compactor";
 import { startConversation } from "../src/conversation/conversation";
 import { MemoryLedgerSink } from "../src/ledger/ledger";
+import { ProjectStore } from "../src/project-store/project-store";
 import type { Role } from "../src/role";
 import { defineRole } from "../src/role";
 import { defineTool } from "../src/runner/tool";
@@ -95,6 +96,26 @@ test("a two-turn conversation retains history on the live session branch", async
   } finally {
     await conversation.close();
   }
+});
+
+test("a default conversation resumes durable history after reconstruction", async () => {
+  const { faux, models, model, role } = harnessFixture();
+  const runId = `resume_${Date.now()}`;
+  faux.setResponses([fauxAssistantMessage("first reply"), fauxAssistantMessage("second reply")]);
+
+  const first = await startConversation({ role, targetDir, models, model, runId });
+  expect((await first.step("first question")).assistantText).toBe("first reply");
+  await first.close();
+
+  const second = await startConversation({ role, targetDir, models, model, runId });
+  expect((await second.step("second question")).assistantText).toBe("second reply");
+  await second.close();
+
+  const store = new ProjectStore(targetDir);
+  const durable = await store.resumeSession(runId);
+  const messages = await durable.findEntries({ type: "message" }, BACKGROUND_CONTEXT);
+  expect(messages.filter((entry) => entry.type === "message")).toHaveLength(4);
+  await durable.close(BACKGROUND_CONTEXT);
 });
 
 test("exactly one ledger row per turn (per-turn attach/unsubscribe, no duplication)", async () => {

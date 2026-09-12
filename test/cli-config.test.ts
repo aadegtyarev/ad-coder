@@ -58,6 +58,21 @@ test("selects deepseek by env presence and builds a valid PipelineConfig", () =>
   expect(config.compaction?.summarizer).toBeUndefined();
 });
 
+test("threads ProjectStore policy into the resolved pipeline config", () => {
+  const projectStoreConfig = {
+    retention: { sessions: 0, tmp: 7 },
+    byteLimits: { attachment: 0, state: 1024, jsonlRecord: 2048 },
+  };
+  const config = resolvePipelineConfig({
+    task: "x",
+    targetDir: "/tmp/target",
+    env: fakeEnv({ DEEPSEEK_API_KEY: "k" }),
+    warn: silent,
+    projectStoreConfig,
+  });
+  expect(config.projectStoreConfig).toBe(projectStoreConfig);
+});
+
 test("compaction resolution carries its model but defers construction to limited Models", () => {
   const auto = resolvePipelineConfig({
     task: "x",

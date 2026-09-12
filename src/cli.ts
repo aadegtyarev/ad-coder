@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Context, Session } from "@earendil-works/pi-agent-core";
-import { BACKGROUND_CONTEXT, MemorySessionRepo } from "@earendil-works/pi-agent-core";
+import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
 import type { Api, Model, Models, TextContent } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { runConsole } from "./cli/console";
@@ -15,6 +15,8 @@ import { Ledger, MemoryLedgerSink } from "./ledger/ledger";
 import { startOrchestrator } from "./orchestration/orchestrator";
 import { createWorkflowSession } from "./orchestration/session";
 import type { Complexity, PipelineConfig, RoleSpec } from "./orchestration/types";
+import { ProjectStore } from "./project-store/project-store";
+import type { ProjectStoreConfig } from "./project-store/types";
 import type { Role } from "./role";
 import { resolveTargetDir } from "./runner/errors";
 import { createRoleRunner } from "./runner/role-runner";
@@ -178,17 +180,26 @@ export async function runRoleStandalone(params: {
   task: string;
   ledgerSink: MemoryLedgerSink;
   compaction?: CompactionPolicy;
+  projectStoreConfig?: ProjectStoreConfig;
 }): Promise<{ text: string; cost: number }> {
-  const repo = new MemorySessionRepo();
-  const session = await repo.create({}, BACKGROUND_CONTEXT);
+  const runId = crypto.randomUUID();
+  const store = new ProjectStore(params.targetDir, params.projectStoreConfig);
+  const session = await store.createSession(runId, BACKGROUND_CONTEXT);
   await createRoleRunner({
     targetDir: params.targetDir,
     models: params.models,
     ...(params.compaction !== undefined && { compaction: params.compaction }),
-  }).runRole(params.role, params.model, params.task, { session, ledgerSink: params.ledgerSink });
+    ...(params.projectStoreConfig !== undefined && {
+      projectStoreConfig: params.projectStoreConfig,
+    }),
+  }).runRole(params.role, params.model, params.task, {
+    runId,
+    session,
+    ledgerSink: params.ledgerSink,
+  });
   // runRole closes the session facade it was handed; reopen a fresh readable
-  // facade from the same repo to scan the settled transcript.
-  const readable = await repo.open(session.metadata, BACKGROUND_CONTEXT);
+  // facade from the durable store to scan the settled transcript.
+  const readable = await store.resumeSession(runId, BACKGROUND_CONTEXT);
   let text: string;
   try {
     text = await extractFinalText(readable, BACKGROUND_CONTEXT);
@@ -278,6 +289,59 @@ function parseSessionLimits(flags: Record<string, string | undefined>): SessionL
   return { maxTurns, maxCostUsd };
 }
 
+function parseProjectStoreConfig(value: string | undefined): ProjectStoreConfig | undefined {
+  if (value === undefined) return undefined;
+  const resolved = resolveScriptPath(value);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(fs.readFileSync(resolved, "utf8"));
+  } catch (error) {
+    fail(`cannot parse --project-store-config ${resolved}: ${errorMessage(error)}`);
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    fail("--project-store-config must contain a JSON object");
+  }
+  const object = parsed as Record<string, unknown>;
+  const allowedTop = new Set(["retention", "byteLimits"]);
+  if (Object.keys(object).some((key) => !allowedTop.has(key))) {
+    fail("--project-store-config contains an unknown setting");
+  }
+  const groups = [
+    [
+      "retention",
+      new Set([
+        "sessions",
+        "runs",
+        "scratch",
+        "attachments",
+        "downloads",
+        "cache",
+        "ledger",
+        "tmp",
+      ]),
+    ],
+    ["byteLimits", new Set(["attachment", "state", "jsonlRecord"])],
+  ] as const;
+  for (const [groupName, allowed] of groups) {
+    const group = object[groupName];
+    if (group === undefined) continue;
+    if (typeof group !== "object" || group === null || Array.isArray(group)) {
+      fail(`--project-store-config ${groupName} must be an object`);
+    }
+    for (const [key, setting] of Object.entries(group)) {
+      if (
+        !allowed.has(key) ||
+        typeof setting !== "number" ||
+        !Number.isFinite(setting) ||
+        setting < 0
+      ) {
+        fail(`invalid --project-store-config setting: ${groupName}.${key}`);
+      }
+    }
+  }
+  return object as ProjectStoreConfig;
+}
+
 function buildConfigOptions(
   targetDirArg: string,
   flags: Record<string, string | undefined>,
@@ -286,6 +350,7 @@ function buildConfigOptions(
   const maxRounds = parseMaxRoundsFlag(flags["--max-rounds"]);
   const defaultComplexity = parseComplexityFlag(flags["--default-complexity"]);
   const targetDir = resolveTargetDir(targetDirArg);
+  const projectStoreConfig = parseProjectStoreConfig(flags["--project-store-config"]);
   warnCwdInsideTarget(targetDir);
   return {
     targetDir,
@@ -296,6 +361,7 @@ function buildConfigOptions(
     ...(flags["--cheap-model"] !== undefined && { cheapModel: flags["--cheap-model"] }),
     ...(maxRounds !== undefined && { maxRounds }),
     ...(defaultComplexity !== undefined && { defaultComplexity }),
+    ...(projectStoreConfig !== undefined && { projectStoreConfig }),
   };
 }
 
@@ -330,6 +396,9 @@ async function roleCommand(
     task,
     ledgerSink,
     ...(config.compaction !== undefined && { compaction: config.compaction }),
+    ...(config.projectStoreConfig !== undefined && {
+      projectStoreConfig: config.projectStoreConfig,
+    }),
   });
 
   // The extracted assistant text IS this subcommand's result value, so it is
@@ -467,6 +536,11 @@ const PIPELINE_OPTIONS: CommandDefinition["options"] = [
     name: "--default-complexity",
     value: "<complexity>",
     description: "Set trivial, medium, or complex as the default.",
+  },
+  {
+    name: "--project-store-config",
+    value: "<file.json>",
+    description: "Load ProjectStore retention and byte limits; numeric 0 disables a limit.",
   },
 ];
 

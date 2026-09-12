@@ -1,9 +1,10 @@
 import type { Context, Session } from "@earendil-works/pi-agent-core";
-import { BACKGROUND_CONTEXT, MemorySessionRepo } from "@earendil-works/pi-agent-core";
+import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
 import type { Api, Model, TextContent } from "@earendil-works/pi-ai";
 import { resolveProfile } from "../profiles/resolve";
 import type { ProfileRole } from "../profiles/types";
 import { parseProfile } from "../profiles/validate";
+import { ProjectStore } from "../project-store/project-store";
 import { createRoleRunner } from "../runner/role-runner";
 import type { Tool } from "../runner/tool";
 import type { PlanCapture } from "./plan";
@@ -100,6 +101,9 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
           ...(config.sessionLimitController !== undefined && {
             sessionLimitController: config.sessionLimitController,
           }),
+          ...(config.projectStoreConfig !== undefined && {
+            projectStoreConfig: config.projectStoreConfig,
+          }),
         })
       : createRoleRunner({
           targetDir,
@@ -107,6 +111,9 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
           ...(config.compaction !== undefined && { compaction: config.compaction }),
           ...(config.sessionLimitController !== undefined && {
             sessionLimitController: config.sessionLimitController,
+          }),
+          ...(config.projectStoreConfig !== undefined && {
+            projectStoreConfig: config.projectStoreConfig,
           }),
         });
 
@@ -149,8 +156,8 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
   ): Promise<string> => {
     // A fresh session per run: each role has its own systemPrompt, so sharing a
     // session would leak one role's history and prompt into another.
-    const repo = new MemorySessionRepo();
-    const session = await repo.create({}, BACKGROUND_CONTEXT);
+    const store = new ProjectStore(config.targetDir, config.projectStoreConfig);
+    const session = await store.createSession(runId, BACKGROUND_CONTEXT);
     await runner.runRole(spec.role, model, prompt, {
       runId,
       step,
@@ -160,9 +167,9 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       ...(tools !== undefined && { tools }),
     });
     // runRole closes the session facade it was handed (harness.close ->
-    // session.close), but the MemoryStorage behind it survives. Reopen a fresh
-    // readable facade from the same repo to scan the settled transcript.
-    const readable = await repo.open(session.metadata, BACKGROUND_CONTEXT);
+    // session.close), while the durable store survives. Reopen a fresh readable
+    // facade to scan the settled transcript.
+    const readable = await store.resumeSession(runId, BACKGROUND_CONTEXT);
     try {
       return await extractFinalText(readable, BACKGROUND_CONTEXT);
     } finally {
