@@ -4,6 +4,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 const root = path.resolve(import.meta.dir, "..");
+const expectedVersion = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"))
+  .version as string;
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-artifact-smoke-"));
 const isolatedBun = path.join(scratch, "bun-home");
 const readOnlyCache = path.join(os.homedir(), ".bun", "install", "cache");
@@ -53,7 +55,8 @@ try {
   const about = JSON.parse(await run([binary, "about", "--json"], consumer)) as {
     version?: string;
   };
-  if (about.version !== "0.1.0") throw new Error("artifact about returned the wrong semver");
+  if (about.version !== expectedVersion)
+    throw new Error("artifact about returned the wrong semver");
   const help = await run([binary, "--help"], consumer);
   if (!help.includes("ad-coder")) throw new Error("artifact help did not execute");
   process.stdout.write(`artifact smoke passed sha256=${digest}\n`);

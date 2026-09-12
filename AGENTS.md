@@ -160,5 +160,10 @@ After every completed pipeline, always print a concise operator report in normal
 
 If the prompt begins with `You are LDO's` or says `You are an LDO subagent`, you are already a pipeline worker: do not invoke LDO again. Perform only the assigned role and return the requested JSON.
 
+A Planner, Researcher, Security, Coder, Reviewer, or Orchestrator launched by
+ad-coder itself is likewise already a pipeline worker, even when its prompt does
+not use LDO's wording. Such a role must never invoke LDO recursively; it performs
+only its assigned role inside the current workflow.
+
 For a one-file mechanical edit, a direct factual answer, or a request explicitly asking not to orchestrate, work normally without LDO.
 <!-- END ldo-codex -->
