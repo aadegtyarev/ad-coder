@@ -6,6 +6,11 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Made `submit_follow_up` advertise discriminated variants and prevented invalid
+  optional follow-up metadata from discarding a completed primary role result.
+
 ## [0.2.1] - 2026-09-12
 
 ### Changed

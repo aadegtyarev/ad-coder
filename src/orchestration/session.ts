@@ -403,7 +403,6 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       [...tools, followUpTool],
       durable,
     );
-    if (capture.error !== undefined) throw capture.error;
     return { text: turn.text, followUps: capture.followUps, metrics: turn.metrics };
   };
 
