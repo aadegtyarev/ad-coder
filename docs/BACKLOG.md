@@ -6,19 +6,22 @@ Only unresolved work belongs here. Current behavior is in
 
 ## Current priority
 
-- [high] **Recover and review the interrupted tool-observability dogfood run**
-  (`docs/reviews/2026-09-13-tool-observability-dogfood.md`): Coder changes are
-  checkpointed on `feat/tool-observability-dogfood`, but malformed optional
-  follow-up metadata stopped the pipeline before Reviewer. Verify the preserved
-  implementation, fix it in bounded slices, run all gates and an independent
-  Reviewer, then open a PR. Do not repeat the completed Planner/Security spend.
-
 - [high] **Make auxiliary role output non-fatal and schema-honest**
   (`src/orchestration/follow-up.ts`): the `submit_follow_up` JSON schema permits
   variant-only fields together, while semantic validation rejects them; one bad
   optional follow-up currently fails the entire role after useful work. Expose a
   discriminated schema and quarantine/report rejected auxiliary records without
   discarding the primary role result.
+
+- [high] **Persist standalone role usage and explain its active work**: `role`
+  currently loses its in-memory token ledger at process exit, while two
+  Reviewer dogfood runs showed only heartbeat for 213s and 156s. Persist a safe
+  usage envelope and ensure semantic activity reaches this front.
+
+- [high] **Remove target `.env` from the provider credential boundary**: the
+  standalone Reviewer warned that running inside `targetDir` auto-loaded the
+  project's `.env`. Provider credentials must come only from the explicit
+  operator credential boundary.
 
 - [high] **Bound whole pipeline stages, not only provider requests**
   (`src/orchestration/`, `src/runner/`): add configurable wall-clock, model-turn,
@@ -73,7 +76,8 @@ Only unresolved work belongs here. Current behavior is in
 - [medium] **Complete activity-stream dogfood evidence**
   (`docs/cost-economics.md`): the interrupted run now has exact checkpoint,
   stage, token, duration, and cost evidence. Add Reviewer rounds and an accepted
-  result only after the preserved implementation passes gates and review.
+  result after an independent review; do not estimate unavailable continuation
+  worker usage.
 - [medium] **Distributed GitHub claims** (`src/project-operations/`): provide a
   built-in shared `GitHubClaimCoordinator`; mutations currently require an
   injected coordinator and fail closed without one.

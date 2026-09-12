@@ -1086,6 +1086,7 @@ function buildConfigOptions(
     ["replayCapacity", "--tool-activity-replay"],
     ["subscriberPendingCapacity", "--tool-activity-pending"],
     ["projectionBytes", "--tool-activity-projection-bytes"],
+    ["maxStringBytes", "--tool-activity-string-bytes"],
     ["maxEventBytes", "--tool-activity-event-bytes"],
     ["groupingRefreshMs", "--tool-activity-grouping-ms"],
     ["humanGroupCount", "--tool-activity-groups"],
@@ -1451,6 +1452,11 @@ const PIPELINE_OPTIONS: CommandDefinition["options"] = [
     name: "--tool-activity-projection-bytes",
     value: "<n>",
     description: "Maximum bytes in a safe activity projection.",
+  },
+  {
+    name: "--tool-activity-string-bytes",
+    value: "<n>",
+    description: "Maximum bytes per external activity identifier.",
   },
   {
     name: "--tool-activity-event-bytes",

@@ -244,6 +244,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     ...(config.activityChannel !== undefined && { activityChannel: config.activityChannel }),
     ...(config.activityConsumer !== undefined && { activityConsumer: config.activityConsumer }),
     ...(config.toolActivity !== undefined && { toolActivity: config.toolActivity }),
+    ...(config.monotonicNow !== undefined && { monotonicNow: config.monotonicNow }),
   };
   const runner = createRoleRunner({
     ...commonRunnerConfig,

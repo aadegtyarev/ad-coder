@@ -102,7 +102,6 @@ export {
   attachToolActivity,
   boundToolActivityText,
   DEFAULT_TOOL_ACTIVITY_CONFIG,
-  markTrustedToolOutcome,
   resolveToolActivityConfig,
   ToolActivityChannel,
   ToolActivityError,

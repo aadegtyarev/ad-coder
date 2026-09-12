@@ -304,6 +304,8 @@ export interface PipelineConfig {
   activityChannel?: ToolActivityChannel;
   activityConsumer?: ToolActivityConsumer;
   toolActivity?: Partial<ToolActivityConfig>;
+  /** Monotonic milliseconds seam for deterministic per-stage durations. */
+  monotonicNow?: () => number;
   observability?: {
     /** Maximum retained read-path sample; zero disables the limit. */
     maxReadPaths?: number;

@@ -4,7 +4,9 @@ import type { Events } from "@earendil-works/pi-agent-core";
 import { ToolActivityRenderer } from "../src/cli/tool-activity";
 import {
   attachToolActivity,
+  boundToolActivityText,
   markTrustedToolOutcome,
+  resolveToolActivityConfig,
   ToolActivityChannel,
   type ToolActivityRecord,
 } from "../src/observability/tool-activity";
@@ -21,6 +23,20 @@ class MemoryWritable extends Writable {
   }
   text(): string {
     return Buffer.concat(this.chunks).toString("utf8");
+  }
+}
+
+class BackpressuredWritable {
+  readonly lines: string[] = [];
+  write(chunk: string | Uint8Array): boolean {
+    this.lines.push(String(chunk));
+    return false;
+  }
+  on(): this {
+    return this;
+  }
+  off(): this {
+    return this;
   }
 }
 
@@ -160,6 +176,94 @@ describe("tool activity core", () => {
     expect(records.every((record) => Buffer.byteLength(JSON.stringify(record)) <= 2048)).toBe(true);
   });
 
+  test("projects every argument category as category-only and bounds hostile identifiers", () => {
+    const channel = new ToolActivityChannel({ maxStringBytes: 16 });
+    const records: ToolActivityRecord[] = [];
+    channel.subscribe((record) => {
+      records.push(record);
+    });
+    const fake = new FakeEvents();
+    const detach = attachToolActivity({
+      channel,
+      events: fake as unknown as Events,
+      targetDir: process.cwd(),
+      role: "coder\u202esecret-role",
+      runId: "run-with-a-token-value",
+      step: "step\nforged",
+    });
+    // Assemble the credential-shaped fixture at runtime so the artifact scanner
+    // still rejects accidentally committed literal keys.
+    const secret = ["sk", "projectable-secret-123456"].join("-");
+    const calls = [
+      ["read", { path: `src/${secret}.ts` }],
+      ["write", { path: `src/${secret}.ts`, content: secret }],
+      ["edit", { path: `src/${secret}.ts`, oldText: secret, newText: secret }],
+      ["bash", { command: secret }],
+      ["explore_project", { focus: secret }],
+      ["web_search", { query: secret, body: secret }],
+      ["web_read", { url: `https://example.test/${secret}` }],
+      ["inspect_image", { source: `images/${secret}.png`, question: secret }],
+      [`custom-${secret}`, { anything: secret }],
+    ] as const;
+    for (const [index, [name, args]] of calls.entries())
+      fake.emit("message_end", message(`call-${index}-${"x".repeat(100)}`, name, args));
+    detach();
+
+    const serialized = JSON.stringify(records);
+    expect(serialized).not.toContain(secret);
+    expect(serialized).not.toContain("public-run");
+    expect(serialized).not.toContain('"operationId":"operation"');
+    expect(serialized).not.toContain('"turnId":"turn"');
+    expect(serialized).not.toContain('"toolCallId":"never-started"');
+    expect(serialized).not.toContain("projectable");
+    expect(records.every((record) => Buffer.byteLength(JSON.stringify(record)) <= 2048)).toBe(true);
+    for (const record of records) {
+      if (record.type === "tool_activity") expect(record.projection).toBeUndefined();
+    }
+  });
+
+  test("sanitizes Unicode safely and validates mandatory output ceilings", () => {
+    expect(boundToolActivityText("a\u202eb\n😀z", 6)).toBe("ab😀");
+    expect(() => resolveToolActivityConfig({ maxEventBytes: 0 })).toThrow(RangeError);
+    expect(() => resolveToolActivityConfig({ maxStringBytes: 0 })).toThrow(RangeError);
+    expect(
+      resolveToolActivityConfig({ replayCapacity: 0, groupingRefreshMs: 0 }).replayCapacity,
+    ).toBe(0);
+  });
+
+  test("keeps opaque correlation distinct for long identifiers with a shared prefix", () => {
+    const channel = new ToolActivityChannel({ maxStringBytes: 16 });
+    const records: ToolActivityRecord[] = [];
+    channel.subscribe((record) => {
+      records.push(record);
+    });
+    const fake = new FakeEvents();
+    attachToolActivity({
+      channel,
+      events: fake as unknown as Events,
+      targetDir: process.cwd(),
+      role: "coder",
+      runId: "run",
+      step: "step",
+    });
+    const prefix = "x".repeat(16);
+    for (const id of [`${prefix}-first`, `${prefix}-second`])
+      fake.emit("tool_start", {
+        runId: "operation",
+        turnId: "turn",
+        toolCallId: id,
+        toolName: "bash",
+        args: {},
+      });
+    const started = records.filter(
+      (record): record is Extract<ToolActivityRecord, { type: "tool_activity" }> =>
+        record.type === "tool_activity" && record.lifecycle === "started",
+    );
+    expect(started).toHaveLength(2);
+    expect(started[0]?.toolCallId).not.toBe(started[1]?.toolCallId);
+    expect(JSON.stringify(started)).not.toContain(prefix);
+  });
+
   test("bounds subscriber queues and makes loss visible when delivery resumes", async () => {
     const channel = new ToolActivityChannel({ subscriberPendingCapacity: 1, replayCapacity: 0 });
     const records: ToolActivityRecord[] = [];
@@ -229,5 +333,31 @@ describe("tool activity renderer", () => {
     json.consume(event);
     json.close();
     expect(JSON.parse(jsonOutput.text())).toEqual(event);
+  });
+
+  test("reports renderer backpressure loss as valid JSON instead of prose", () => {
+    const output = new BackpressuredWritable();
+    const renderer = new ToolActivityRenderer(output as unknown as NodeJS.WritableStream, "json", {
+      renderQueueCount: 1,
+    });
+    renderer.consume(lifecycleEvent());
+    renderer.consume(lifecycleEvent({ sequence: 2 }));
+    renderer.consume(lifecycleEvent({ sequence: 3 }));
+    renderer.close();
+
+    const records = output.lines.flatMap((chunk) =>
+      chunk
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as Record<string, unknown>),
+    );
+    expect(records[0]?.type).toBe("tool_activity");
+    expect(records.at(-1)).toEqual({
+      schemaVersion: 1,
+      type: "tool_activity_render_drop",
+      dropped: 2,
+      final: true,
+    });
   });
 });

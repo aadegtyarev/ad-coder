@@ -56,13 +56,31 @@ and security was `auto`; the failed checkpoint did not persist a Coder strategy.
 
 ## Cold-session continuation
 
-1. Read this file, the coordinator checkpoint, and the diff; do not rerun
-   Planner or Security.
-2. Diagnose and preserve the Coder implementation. Run focused tests, then
-   `bun run check`, the full test suite, typecheck, docs checks, release checks,
-   and artifact smoke as defined by project scripts.
-3. Correct failures in small slices. Do not silently weaken the proposed
-   contract or security mitigations.
-4. Run the independent Reviewer after the gates pass. Record its verdict,
-   usage, cost, and any rounds here or in a successor exceptional receipt.
-5. Keep this feature on its branch and open a PR; the operator merges.
+The preserved implementation was resumed directly rather than repeating Planner
+or Security. The continuation tightened category-only argument projection,
+identifier and aggregate-metric bounds, deterministic duration injection,
+machine-mode backpressure records, configuration coverage, and core/runner/
+conversation/package tests. This continuation Coder worker did not expose a
+provider usage envelope or pipeline checkpoint, so its model, thinking level,
+duration, token categories, provider cost, context strategy, and accepted-result
+total remain unavailable and are not estimated.
+
+Two standalone independent Reviewer passes ran on `openai-codex` / `codex-terra`.
+The first took about 213 seconds, cost $0.30563720, and requested changes for raw
+correlation identifiers, a public trusted-outcome marker, and missing close-race
+coverage. The second took about 156 seconds, cost $0.24370560, and found a
+shared-prefix collision caused by bounding identifiers before opaque mapping.
+The implementation now hashes source identity before assigning bounded opaque
+IDs, keeps the trusted marker outside the package API, and covers concurrent
+steps, repeated close, close during an active tool, exactly-once cancellation,
+and a non-settling subscriber. The second compatibility finding did not apply:
+the marker never existed on `origin/main` and was removed before this feature's
+first release.
+
+Standalone role invocations use an in-memory ledger, so their token categories
+and reasoning usage were unavailable after exit and are not estimated. Both
+runs also showed heartbeat-only progress for their full duration and warned
+that running inside `targetDir` auto-loaded its `.env`; these remain pipeline
+observability and credential-boundary follow-ups. Final verification passed 383
+tests with 1,917 assertions, TypeScript, Biome, documentation and release checks,
+artifact smoke, and `git diff --check`.

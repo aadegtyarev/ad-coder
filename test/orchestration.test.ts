@@ -509,6 +509,10 @@ test("pipeline aggregates exact multi-response stage observations in stable orde
     models: fx.models,
     task: "implement metrics",
     maxRounds: 1,
+    monotonicNow: (() => {
+      let time = 0;
+      return () => (time += 100);
+    })(),
     compaction: { mode: "disabled-then-halt" },
     roles: {
       planner: fx.role("planner", "You plan.", ["read", SUBMIT_PLAN_TOOL_NAME], "short"),
@@ -520,14 +524,13 @@ test("pipeline aggregates exact multi-response stage observations in stable orde
     cwd: fx.targetDir,
   }).byteLength;
 
-  expect(result.stageMetrics.every(({ durationMs }) => (durationMs ?? -1) >= 0)).toBe(true);
-  expect(result.stageMetrics.map((metric) => ({ ...metric, durationMs: 0 }))).toEqual([
+  expect(result.stageMetrics).toEqual([
     {
       stage: "plan",
       provider: "faux",
       model: "faux-1",
       thinkingLevel: "unknown",
-      durationMs: 0,
+      durationMs: 100,
       input: 1194,
       cachedInput: 255,
       freshInput: 939,
@@ -545,7 +548,7 @@ test("pipeline aggregates exact multi-response stage observations in stable orde
       provider: "faux",
       model: "faux-1",
       thinkingLevel: "unknown",
-      durationMs: 0,
+      durationMs: 100,
       input: 585,
       cachedInput: 13,
       freshInput: 572,
@@ -563,7 +566,7 @@ test("pipeline aggregates exact multi-response stage observations in stable orde
       provider: "faux",
       model: "faux-1",
       thinkingLevel: "unknown",
-      durationMs: 0,
+      durationMs: 100,
       input: 921,
       cachedInput: 118,
       freshInput: 803,

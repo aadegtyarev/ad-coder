@@ -140,10 +140,12 @@ interval. `--heartbeat-ms 0` disables heartbeat without disabling activity.
 With `--json`, final turn records remain the only stdout output. Progress is
 schema-v1 NDJSON on stderr: `tool_activity` records carry lifecycle, sequence,
 role/run/operation/turn/tool-call correlation and safe bounded metadata;
-`tool_activity_drop` reports consumer or queue loss. A nonzero `droppedCount`
-means the view is incomplete, so slow consumers should reconnect with replay or
-increase the documented `--tool-activity-*` limits. Commands, queries, URLs,
-prompts, contents, credentials, and arbitrary custom-tool names are omitted.
+`tool_activity_drop` reports core consumer or queue loss, while
+`tool_activity_render_drop` reports bounded stderr transport loss. A nonzero
+`droppedCount` means the view is incomplete, so slow consumers should reconnect
+with replay or increase the documented `--tool-activity-*` limits.
+Argument-derived labels are category-only by default. Commands, paths, queries,
+URLs, prompts, contents, credentials, and arbitrary custom-tool names are omitted.
 Expected console failures are stable `console_error` stderr records in JSON mode.
 
 Library callers can pass a `ToolActivityChannel` to `runRole`, pipeline, or

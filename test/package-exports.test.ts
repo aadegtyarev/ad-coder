@@ -88,6 +88,9 @@ import type {
   StepView,
   Summarizer,
   Tool,
+  ToolActivityConfig,
+  ToolActivityEvent,
+  ToolActivityRecord,
   TransitionKind,
   Verdict,
   VerdictCapture,
@@ -127,6 +130,7 @@ import {
   DEFAULT_CONTEXT_WINDOW,
   DEFAULT_PROJECT_OPERATIONS_CONFIG,
   DEFAULT_REPOSITORY_PUBLISHING_CONFIG,
+  DEFAULT_TOOL_ACTIVITY_CONFIG,
   DocumentationRouter,
   DriveError,
   deepseekPreset,
@@ -191,6 +195,7 @@ import {
   startOrchestrator,
   startRepositoryPublishing,
   suggestBacklogMigrationOnce,
+  ToolActivityChannel,
   toolCallCounts,
   UsageDeltaTracker,
   validateFollowUp,
@@ -212,6 +217,8 @@ test("the package is importable by its published name", () => {
   expect(typeof toolCallCounts).toBe("function");
   expect(typeof UsageDeltaTracker).toBe("function");
   expect(typeof Ledger).toBe("function");
+  expect(typeof ToolActivityChannel).toBe("function");
+  expect(DEFAULT_TOOL_ACTIVITY_CONFIG.maxEventBytes).toBeGreaterThan(0);
   expect(typeof ContextCompactor).toBe("function");
   expect(typeof ContextBudgetError).toBe("function");
   expect(typeof assertTurnFitsBudget).toBe("function");
@@ -318,6 +325,9 @@ test("the package is importable by its published name", () => {
   const _publishingPreflight: RepositoryPublishingPreflight | undefined = undefined;
   const _stageMetrics: PipelineStageMetrics | undefined = undefined;
   const _roleObservations: RoleObservations | undefined = undefined;
+  const _toolActivityConfig: ToolActivityConfig | undefined = undefined;
+  const _toolActivityEvent: ToolActivityEvent | undefined = undefined;
+  const _toolActivityRecord: ToolActivityRecord | undefined = undefined;
   expect(_budgetPercents).toBeUndefined();
   expect(_contextBudgetPercents).toBeUndefined();
   expect(_configurableRole).toBeUndefined();
@@ -338,6 +348,9 @@ test("the package is importable by its published name", () => {
   expect(_publishingPreflight).toBeUndefined();
   expect(_stageMetrics).toBeUndefined();
   expect(_roleObservations).toBeUndefined();
+  expect(_toolActivityConfig).toBeUndefined();
+  expect(_toolActivityEvent).toBeUndefined();
+  expect(_toolActivityRecord).toBeUndefined();
   // Type-only imports are erased; reference them so the imports are not unused.
   const _budget: ContextBudget | undefined = undefined;
   const _summarizer: Summarizer | undefined = undefined;

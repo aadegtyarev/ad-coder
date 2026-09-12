@@ -588,6 +588,7 @@ test("console help is registry-derived and invalid input limits fail before prov
     "--orchestrator-model <name>",
     "--orchestrator-thinking-level <level>",
     "--tool-activity-event-bytes <n>",
+    "--tool-activity-string-bytes <n>",
     "--tool-activity-grouping-ms <n>",
     "--summarizer-model <name>",
     "--role-budget-percents <file.json>",

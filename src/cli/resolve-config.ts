@@ -160,6 +160,8 @@ export interface ResolvePipelineConfigOptions {
   activityChannel?: ToolActivityChannel;
   activityConsumer?: ToolActivityConsumer;
   toolActivity?: Partial<ToolActivityConfig>;
+  /** Monotonic milliseconds seam for deterministic stage metrics. */
+  monotonicNow?: () => number;
 }
 
 /** Env-var names whose PRESENCE selects a provider, in precedence order. */
@@ -520,6 +522,7 @@ function resolveConfig(
     ...(options.activityChannel !== undefined && { activityChannel: options.activityChannel }),
     ...(options.activityConsumer !== undefined && { activityConsumer: options.activityConsumer }),
     ...(options.toolActivity !== undefined && { toolActivity: options.toolActivity }),
+    ...(options.monotonicNow !== undefined && { monotonicNow: options.monotonicNow }),
     roles:
       pipelineRoles === undefined
         ? { coder: orchestrator, reviewer: orchestrator, orchestrator }

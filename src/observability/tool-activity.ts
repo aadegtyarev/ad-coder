@@ -1,5 +1,4 @@
-import * as fs from "node:fs";
-import * as path from "node:path";
+import * as crypto from "node:crypto";
 import type { Events } from "@earendil-works/pi-agent-core";
 
 export type ToolActivityLifecycle =
@@ -137,29 +136,29 @@ export function resolveToolActivityConfig(
   return result;
 }
 
-function clean(value: string): string {
-  let output = "";
-  for (const character of value.normalize("NFC")) {
-    const point = character.codePointAt(0) ?? 0;
-    if (
-      point >= 0x20 &&
-      point !== 0x7f &&
-      point !== 0x9b &&
-      !(point >= 0xd800 && point <= 0xdfff) &&
-      !/\p{Cf}/u.test(character)
-    )
-      output += character;
-  }
-  return output;
-}
-
 /** UTF-8-safe bounding: never cuts a code point or emits invalid Unicode. */
 export function boundToolActivityText(value: unknown, maxBytes: number): string {
-  if (typeof value !== "string") return "";
+  if (typeof value !== "string" || !Number.isSafeInteger(maxBytes) || maxBytes < 1) return "";
   let output = "";
-  for (const character of clean(value)) {
-    if (Buffer.byteLength(output) + Buffer.byteLength(character) > maxBytes) break;
+  let bytes = 0;
+  let inspectedCodeUnits = 0;
+  const inspectionLimit = maxBytes * 8;
+  for (const character of value) {
+    inspectedCodeUnits += character.length;
+    if (inspectedCodeUnits > inspectionLimit) break;
+    const point = character.codePointAt(0) ?? 0;
+    if (
+      point < 0x20 ||
+      point === 0x7f ||
+      point === 0x9b ||
+      (point >= 0xd800 && point <= 0xdfff) ||
+      /\p{Cf}/u.test(character)
+    )
+      continue;
+    const characterBytes = Buffer.byteLength(character);
+    if (bytes + characterBytes > maxBytes) break;
     output += character;
+    bytes += characterBytes;
   }
   return output;
 }
@@ -181,37 +180,23 @@ function classifyTool(name: string): { activity: ToolActivityKind; publicName: s
 
 const SENSITIVE_TEXT =
   /(secret|token|credential|password|passwd|api[_-]?key|private[_-]?key|\.env)/iu;
-const SENSITIVE_PATH =
-  /(?:^|[._-])(secret|token|credential|password|passwd|api[_-]?key|private[_-]?key|\.env)(?:[._-]|$)/iu;
-
-const verifiedProjections = new WeakSet<object>();
-
-function safeRelativePath(
-  targetDir: string,
-  args: unknown,
-  config: ToolActivityConfig,
-): ToolActivityProjection | undefined {
-  if (args === null || typeof args !== "object" || Array.isArray(args)) return undefined;
-  const candidate = (args as Record<string, unknown>).path;
-  if (typeof candidate !== "string" || candidate.includes("\0") || SENSITIVE_PATH.test(candidate))
-    return undefined;
-  try {
-    const root = fs.realpathSync(targetDir);
-    const absolute = fs.realpathSync(path.resolve(root, candidate));
-    const relative = path.relative(root, absolute);
-    if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) return undefined;
-    const normalized = relative.split(path.sep).join("/");
-    if (!/^[\p{L}\p{N} ./_@+-]+$/u.test(normalized)) return undefined;
-    const bounded = boundToolActivityText(normalized, config.projectionBytes);
-    if (bounded !== normalized) return undefined;
-    const projection = { path: normalized };
-    verifiedProjections.add(projection);
-    return projection;
-  } catch {
-    // Missing, virtual, and racing paths cannot be established as target-contained, so omit them.
-    return undefined;
-  }
-}
+const TOOL_ACTIVITY_LIFECYCLES = new Set<ToolActivityLifecycle>([
+  "requested",
+  "started",
+  "completed",
+  "failed",
+  "cancelled",
+  "timed_out",
+]);
+const TOOL_ACTIVITY_KINDS = new Set<ToolActivityKind>([
+  "Read",
+  "Search",
+  "Edit",
+  "Run",
+  "Web",
+  "Inspect image",
+  "Tool",
+]);
 
 const trustedOutcomes = new WeakMap<object, "timed_out" | "cancelled" | "failed">();
 
@@ -245,6 +230,8 @@ export class ToolActivityChannel {
   private closed = false;
   private readonly retained: ToolActivityRecord[] = [];
   private readonly subscribers = new Set<SubscriberState>();
+  private readonly correlationIds = new Map<string, string>();
+  private nextCorrelationId = 0;
 
   constructor(config: Partial<ToolActivityConfig> = {}) {
     this.config = resolveToolActivityConfig(config);
@@ -278,11 +265,24 @@ export class ToolActivityChannel {
     >,
   ): void {
     if (this.closed) return;
+    if (!TOOL_ACTIVITY_LIFECYCLES.has(record.lifecycle))
+      throw new TypeError("invalid tool activity lifecycle");
+    if (!TOOL_ACTIVITY_KINDS.has(record.activity))
+      throw new TypeError("invalid semantic tool activity");
     const safeIdentifier = (value: string) => {
       const bounded = boundToolActivityText(value, this.config.maxStringBytes);
       return bounded === "" || SENSITIVE_TEXT.test(bounded) || bounded.includes("://")
         ? "unknown"
         : bounded;
+    };
+    const opaqueIdentifier = (kind: string, value: string) => {
+      const digest = crypto.createHash("sha256").update(value).digest("base64url");
+      const key = `${kind}:${digest}`;
+      const existing = this.correlationIds.get(key);
+      if (existing !== undefined) return existing;
+      const identifier = `${kind}-${++this.nextCorrelationId}`;
+      this.correlationIds.set(key, identifier);
+      return identifier;
     };
     const publicToolName = Object.values(KNOWN_TOOLS).some(
       ({ publicName }) => publicName === record.toolName,
@@ -297,16 +297,19 @@ export class ToolActivityChannel {
       lifecycle: record.lifecycle,
       activity: record.activity,
       role: safeIdentifier(record.role),
-      runId: safeIdentifier(record.runId),
-      operationId: safeIdentifier(record.operationId),
-      turnId: safeIdentifier(record.turnId),
-      toolCallId: safeIdentifier(record.toolCallId),
+      runId: opaqueIdentifier("run", record.runId),
+      operationId: opaqueIdentifier("operation", record.operationId),
+      turnId: opaqueIdentifier("turn", record.turnId),
+      toolCallId: opaqueIdentifier("call", record.toolCallId),
       parentOperation: safeIdentifier(record.parentOperation),
       toolName: publicToolName,
       droppedCount: this.dropped,
-      ...(record.projection !== undefined &&
-        verifiedProjections.has(record.projection) && { projection: record.projection }),
-      ...(record.durationMs !== undefined && { durationMs: record.durationMs }),
+      ...(record.durationMs !== undefined &&
+        Number.isFinite(record.durationMs) &&
+        record.durationMs >= 0 &&
+        record.durationMs <= CONFIG_MAX.closeDrainMs * 1_000_000 && {
+          durationMs: Math.round(record.durationMs),
+        }),
     };
     if (!this.fits(event)) {
       this.noteDrop(1);
@@ -426,8 +429,13 @@ export interface AttachToolActivityOptions {
   now?: () => number;
 }
 
+export interface ToolActivityAttachment {
+  (): void;
+  cancelActive(): void;
+}
+
 /** Attach the sole harness-to-domain adapter. The returned cleanup is idempotent. */
-export function attachToolActivity(options: AttachToolActivityOptions): () => void {
+export function attachToolActivity(options: AttachToolActivityOptions): ToolActivityAttachment {
   const now = options.now ?? Date.now;
   const started = new Map<
     string,
@@ -443,24 +451,18 @@ export function attachToolActivity(options: AttachToolActivityOptions): () => vo
     args?: unknown;
   }) => {
     const classification = classifyTool(event.toolName);
-    const projection =
-      (event.toolName === "read" || event.toolName === "write" || event.toolName === "edit") &&
-      event.args !== undefined
-        ? safeRelativePath(options.targetDir, event.args, options.channel.config)
-        : undefined;
     return {
       activity: classification.activity,
       role: boundToolActivityText(options.role, options.channel.config.maxStringBytes),
       runId: boundToolActivityText(options.runId, options.channel.config.maxStringBytes),
-      operationId: boundToolActivityText(event.runId ?? "", options.channel.config.maxStringBytes),
-      turnId: boundToolActivityText(event.turnId ?? "", options.channel.config.maxStringBytes),
-      toolCallId: boundToolActivityText(event.toolCallId, options.channel.config.maxStringBytes),
+      operationId: event.runId ?? "",
+      turnId: event.turnId ?? "",
+      toolCallId: event.toolCallId,
       parentOperation: boundToolActivityText(
         options.parentOperation ?? options.step,
         options.channel.config.maxStringBytes,
       ),
       toolName: classification.publicName,
-      ...(projection !== undefined && { projection }),
     };
   };
   const offMessage = options.events.on("message_end", (event) => {
@@ -520,8 +522,25 @@ export function attachToolActivity(options: AttachToolActivityOptions): () => vo
     }
     started.clear();
   });
+  const cancelActive = () => {
+    for (const [toolCallId, began] of started) {
+      if (terminal.has(toolCallId)) continue;
+      terminal.add(toolCallId);
+      options.channel.publish({
+        ...base({
+          toolCallId,
+          toolName: began.toolName,
+          runId: began.runId,
+          turnId: began.turnId,
+        }),
+        lifecycle: "cancelled",
+        durationMs: Math.max(0, now() - began.at),
+      });
+    }
+    started.clear();
+  };
   let attached = true;
-  return () => {
+  const cleanup: ToolActivityAttachment = () => {
     if (!attached) return;
     attached = false;
     offMessage();
@@ -529,4 +548,6 @@ export function attachToolActivity(options: AttachToolActivityOptions): () => vo
     offEnd();
     offRunEnd();
   };
+  cleanup.cancelActive = cancelActive;
+  return cleanup;
 }

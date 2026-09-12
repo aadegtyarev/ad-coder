@@ -94,7 +94,7 @@ export class ToolActivityRenderer {
     this.dropped = 0;
     if (lostOnClose > 0) {
       // One final bounded write is the finite shutdown policy; it cannot grow with event volume.
-      this.output.write(`Activity: ${lostOnClose} rendered event(s) dropped before close\n`);
+      this.output.write(this.dropLine(lostOnClose, true));
     }
     this.closed = true;
     this.output.off("drain", this.onDrain);
@@ -105,7 +105,7 @@ export class ToolActivityRenderer {
     if (this.dropped > 0) {
       const dropped = this.dropped;
       this.dropped = 0;
-      this.write(`Activity: ${dropped} rendered event(s) dropped\n`);
+      this.write(this.dropLine(dropped, false));
     }
     while (!this.blocked && this.queue.length > 0) {
       const line = this.queue.shift() as string;
@@ -113,6 +113,12 @@ export class ToolActivityRenderer {
       this.blocked = !this.output.write(line);
     }
   };
+
+  private dropLine(dropped: number, final: boolean): string {
+    return this.mode === "json"
+      ? `${JSON.stringify({ schemaVersion: 1, type: "tool_activity_render_drop", dropped, final })}\n`
+      : `Activity: ${dropped} rendered event(s) dropped${final ? " before close" : ""}\n`;
+  }
 
   private write(raw: string): void {
     const line = boundToolActivityText(raw, this.config.renderedLineBytes);

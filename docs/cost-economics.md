@@ -169,17 +169,25 @@ per-stage table are recorded in
 The run consumed 21,987,720 total tokens (660,313 fresh input, 21,256,064 cache
 read, 71,343 output), cost $16.069887, and produced no accepted result. Coder
 alone accounted for $13.698824 and 20,224,128 cache-read tokens. This replaces
-the earlier lack of checkpointed telemetry; review evidence remains unresolved.
+the earlier lack of checkpointed telemetry.
 
-This Coder stage ran through a worker API that did not expose a pipeline
-checkpoint or provider usage envelope to the role. The safe run identifier,
-provider/model, effective thinking level, monotonic duration, input/cache/output
+The later continuation Coder stage ran through a worker API that did not expose a
+pipeline checkpoint or provider usage envelope to the role. The safe run
+identifier, provider/model, effective thinking level, monotonic duration,
+input/cache/output
 and reasoning tokens, provider-reported cost, review rounds, context strategy,
 and accepted-result total are therefore **unavailable**; none are estimated.
 There is no checkpoint link to publish honestly. Runtime support added by this
 change records these fields for subsequent checkpointed pipeline runs, which can
 supply the missing profile-efficiency evidence without copying checkpoint,
 ledger, prompt, or activity contents into documentation.
+
+Two later standalone Reviewer passes cost $0.30563720 and $0.24370560 and took
+about 213 and 156 seconds. Their in-memory ledgers did not survive process exit,
+so token categories are unavailable and not estimated. Both emitted only the
+10-second heartbeat while working; no semantic tool activity appeared. This is
+direct evidence that standalone role usage persistence and activity coverage
+still need improvement even though the reviewed activity core passed its gates.
 
 The 2026-09-12 minimal-console planning pass consumed 454,696 input tokens,
 323,840 cached tokens, and 8,889 output tokens (planner: 279,041 / 187,392 /

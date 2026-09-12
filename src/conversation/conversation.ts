@@ -30,6 +30,7 @@ import type { LedgerSink } from "../ledger/ledger";
 import { FileLedgerSink, Ledger } from "../ledger/ledger";
 import {
   attachToolActivity,
+  type ToolActivityAttachment,
   ToolActivityChannel,
   type ToolActivityConfig,
   type ToolActivityConsumer,
@@ -258,7 +259,9 @@ export async function startConversation(config: ConversationConfig): Promise<Con
   let cumulativeDropped = 0;
   let closed = false;
   let stepping = false;
-  let activeActivityCleanup: (() => void) | undefined;
+  let activeSettled: Promise<void> | undefined;
+  let settleActive: (() => void) | undefined;
+  let activeActivityCleanup: ToolActivityAttachment | undefined;
   let closePromise: Promise<void> | undefined;
 
   async function step(
@@ -269,6 +272,9 @@ export async function startConversation(config: ConversationConfig): Promise<Con
     if (stepping) throw new Error("conversation step already active");
     controller.assertActive();
     stepping = true;
+    activeSettled = new Promise<void>((resolve) => {
+      settleActive = resolve;
+    });
     const n = ++turnCounter;
     const stepName = opts?.step ?? `turn:${n}`;
 
@@ -287,6 +293,9 @@ export async function startConversation(config: ConversationConfig): Promise<Con
       }
     } catch (error) {
       stepping = false;
+      settleActive?.();
+      settleActive = undefined;
+      activeSettled = undefined;
       throw error;
     }
 
@@ -345,6 +354,9 @@ export async function startConversation(config: ConversationConfig): Promise<Con
       offActivity();
       if (activeActivityCleanup === offActivity) activeActivityCleanup = undefined;
       stepping = false;
+      settleActive?.();
+      settleActive = undefined;
+      activeSettled = undefined;
     }
   }
 
@@ -352,16 +364,43 @@ export async function startConversation(config: ConversationConfig): Promise<Con
     if (closePromise !== undefined) return closePromise;
     closed = true;
     closePromise = (async () => {
-      await harness.close(context);
-      activeActivityCleanup?.();
-      activeActivityCleanup = undefined;
-      if (ownsActivityChannel) await activityChannel.close();
-      else offConfiguredConsumer?.();
-      if (config.model.api === "openai-codex-responses") {
-        closeOpenAICodexWebSocketSessions(runId);
+      try {
+        if (stepping) {
+          const settled = activeSettled;
+          const activity = activeActivityCleanup;
+          void lane.abort(context).catch(() => undefined);
+          activity?.cancelActive();
+          if (settled !== undefined && activityChannel.config.closeDrainMs > 0) {
+            await Promise.race([
+              settled,
+              new Promise<void>((resolve) =>
+                setTimeout(resolve, activityChannel.config.closeDrainMs),
+              ),
+            ]);
+          }
+        }
+        const closingHarness = harness.close(context).catch((error) => {
+          if (!stepping) throw error;
+        });
+        if (activityChannel.config.closeDrainMs > 0) {
+          await Promise.race([
+            closingHarness,
+            new Promise<void>((resolve) =>
+              setTimeout(resolve, activityChannel.config.closeDrainMs),
+            ),
+          ]);
+        }
+      } finally {
+        activeActivityCleanup?.();
+        activeActivityCleanup = undefined;
+        if (ownsActivityChannel) await activityChannel.close();
+        else offConfiguredConsumer?.();
+        if (config.model.api === "openai-codex-responses") {
+          closeOpenAICodexWebSocketSessions(runId);
+        }
+        sink.close?.();
+        await store?.close(context);
       }
-      sink.close?.();
-      await store?.close(context);
     })();
     return closePromise;
   }

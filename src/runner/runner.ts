@@ -131,22 +131,23 @@ export interface RunRoleResult {
   /** Non-zero means the audit trail has holes for this run. */
   droppedRecords: number;
   /** Non-zero means one or more ephemeral activity deliveries were lost. */
-  droppedActivityEvents: number;
+  droppedActivityEvents?: number;
   result: OperationResultRecord;
   observations: RoleObservations;
 }
 
 export interface RoleObservations {
-  provider: string;
-  model: string;
-  thinkingLevel: string;
-  durationMs: number;
+  /** Additive safe efficiency fields; runRole always supplies them. */
+  provider?: string;
+  model?: string;
+  thinkingLevel?: string;
+  durationMs?: number;
   input: number;
   cachedInput: number;
   freshInput: number;
   output: number;
-  reasoning: number;
-  costUsd: number;
+  reasoning?: number;
+  costUsd?: number;
   readFiles: string[];
   readFilesTotal: number;
   readFilesTruncated: number;
@@ -168,6 +169,14 @@ function boundedUsageNumber(value: number, field: string): number {
   if (!Number.isFinite(value) || value < 0 || value > MAX_USAGE_NUMBER)
     throw new RangeError(`provider ${field} metric is outside the safe range`);
   return value;
+}
+
+function addUsageInteger(total: number, value: number, field: string): number {
+  return boundedUsageInteger(total + boundedUsageInteger(value, field), field);
+}
+
+function addUsageNumber(total: number, value: number, field: string): number {
+  return boundedUsageNumber(total + boundedUsageNumber(value, field), field);
 }
 
 function publicMetricLabel(value: string): string {
@@ -376,11 +385,11 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
       const reasoning = boundedUsageInteger(event.message.usage.reasoning ?? 0, "reasoning");
       if (reasoning > output) throw new RangeError("provider reasoning usage exceeds output");
       const costUsd = boundedUsageNumber(event.message.usage.cost.total, "cost");
-      usage.freshInput += freshInput;
-      usage.cachedInput += cachedInput;
-      usage.output += output;
-      usage.reasoning += reasoning;
-      usage.costUsd += costUsd;
+      usage.freshInput = addUsageInteger(usage.freshInput, freshInput, "input");
+      usage.cachedInput = addUsageInteger(usage.cachedInput, cachedInput, "cacheRead");
+      usage.output = addUsageInteger(usage.output, output, "output");
+      usage.reasoning = addUsageInteger(usage.reasoning, reasoning, "reasoning");
+      usage.costUsd = addUsageNumber(usage.costUsd, costUsd, "cost");
     } catch (error) {
       usageFailure = error instanceof RangeError ? error : new RangeError("invalid provider usage");
     }
@@ -497,6 +506,7 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
       );
     }
     const diffBytes = await measureSafeGitDiffBytes(absTargetDir);
+    const totalInput = boundedUsageInteger(usage.freshInput + usage.cachedInput, "total input");
     return {
       runId,
       ledgerPath,
@@ -508,7 +518,7 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
         model: publicMetricLabel(params.model.id),
         thinkingLevel: params.role.thinkingLevel ?? "unknown",
         durationMs: boundedUsageNumber(monotonicNow() - roleStartedAt, "duration"),
-        input: usage.freshInput + usage.cachedInput,
+        input: totalInput,
         cachedInput: usage.cachedInput,
         freshInput: usage.freshInput,
         output: usage.output,

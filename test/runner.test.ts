@@ -15,6 +15,7 @@ import {
 import { ContextBudgetError } from "../src/context/budget";
 import type { Summarizer } from "../src/context/compactor";
 import { LEDGER_BASE_DIR } from "../src/ledger/ledger";
+import type { ToolActivityRecord } from "../src/observability/tool-activity";
 import { ProjectStore } from "../src/project-store/project-store";
 import type { Role } from "../src/role";
 import { defineRole } from "../src/role";
@@ -141,6 +142,49 @@ test("runRole drives one turn to a settled result and lands the ledger under tar
 
   const underCwd = path.join(process.cwd(), LEDGER_BASE_DIR, `${result.runId}.jsonl`);
   expect(fs.existsSync(underCwd)).toBe(false);
+});
+
+test("runRole exposes correlated lifecycle events for successful and failed tools", async () => {
+  for (const shouldFail of [false, true]) {
+    const records: ToolActivityRecord[] = [];
+    const { faux, models, model, role } = fixtureWithActiveTools(["observed_tool"]);
+    faux.setResponses([
+      fauxAssistantMessage(fauxToolCall("observed_tool", { secret: "never-publish-me" })),
+      fauxAssistantMessage("done"),
+    ]);
+    const tool = defineTool({
+      name: "observed_tool",
+      description: "Observed lifecycle test tool.",
+      label: "observed",
+      parameters: Type.Object({ secret: Type.String() }),
+      async execute() {
+        if (shouldFail) throw new Error("never-publish-me");
+        return { content: [{ type: "text", text: "ok" }], details: undefined };
+      },
+    });
+
+    await runRole({
+      role,
+      targetDir,
+      models,
+      model,
+      prompt: "use it",
+      tools: [tool],
+      activityConsumer: (record) => {
+        records.push(record);
+      },
+    });
+    const activity = records.filter((record) => record.type === "tool_activity");
+    expect(activity.map(({ lifecycle }) => lifecycle)).toEqual([
+      "requested",
+      "started",
+      shouldFail ? "failed" : "completed",
+    ]);
+    expect(new Set(activity.map(({ runId }) => runId)).size).toBe(1);
+    expect(activity[0]?.runId).toMatch(/^run-[0-9]+$/);
+    expect(activity.every(({ parentOperation }) => parentOperation === "run")).toBe(true);
+    expect(JSON.stringify(activity)).not.toContain("never-publish-me");
+  }
 });
 
 test("provider limit classification uses only structured codes and validated delays", () => {
