@@ -732,6 +732,9 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
       tools: delegatedTools,
       ledgerSink: sink,
       sessionLimitController: controller,
+      ...(config.activityChannel !== undefined && { activityChannel: config.activityChannel }),
+      ...(config.activityConsumer !== undefined && { activityConsumer: config.activityConsumer }),
+      ...(config.toolActivity !== undefined && { toolActivity: config.toolActivity }),
       ...(resolved.compaction !== undefined && { compaction: resolved.compaction }),
       ...(resolved.projectStoreConfig !== undefined && {
         projectStoreConfig: resolved.projectStoreConfig,
@@ -781,6 +784,9 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
     tools,
     ledgerSink: sink,
     sessionLimitController: controller,
+    ...(config.activityChannel !== undefined && { activityChannel: config.activityChannel }),
+    ...(config.activityConsumer !== undefined && { activityConsumer: config.activityConsumer }),
+    ...(config.toolActivity !== undefined && { toolActivity: config.toolActivity }),
     ...(seed.compaction !== undefined && { compaction: seed.compaction }),
   });
 }

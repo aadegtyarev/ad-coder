@@ -6,6 +6,29 @@ Only unresolved work belongs here. Current behavior is in
 
 ## Current priority
 
+- [high] **Make auxiliary role output non-fatal and schema-honest**
+  (`src/orchestration/follow-up.ts`): the `submit_follow_up` JSON schema permits
+  variant-only fields together, while semantic validation rejects them; one bad
+  optional follow-up currently fails the entire role after useful work. Expose a
+  discriminated schema and quarantine/report rejected auxiliary records without
+  discarding the primary role result.
+
+- [high] **Persist standalone role usage and explain its active work**: `role`
+  currently loses its in-memory token ledger at process exit, while two
+  Reviewer dogfood runs showed only heartbeat for 213s and 156s. Persist a safe
+  usage envelope and ensure semantic activity reaches this front.
+
+- [high] **Remove target `.env` from the provider credential boundary**: the
+  standalone Reviewer warned that running inside `targetDir` auto-loaded the
+  project's `.env`. Provider credentials must come only from the explicit
+  operator credential boundary.
+
+- [high] **Bound whole pipeline stages, not only provider requests**
+  (`src/orchestration/`, `src/runner/`): add configurable wall-clock, model-turn,
+  tool-turn, token, and cost budgets with a durable, actionable pause/resume
+  outcome. Dogfood evidence: one Coder stage ran 31m25s, made 167 responses,
+  read 20.2M cached tokens, and cost $13.70 despite a 240s request timeout.
+
 - [high] **Complete workflow-module extraction** (`src/workflows/`,
   `src/orchestration/`, `src/cli/resolve-config.ts`): conversational activation
   and tool removal are delivered, but the built-in pipeline's role/config
@@ -50,18 +73,11 @@ Only unresolved work belongs here. Current behavior is in
 
 ## Reliability and observability
 
-- [next] **Semantic tool-activity stream** (`src/runner/`, `src/conversation/`,
-  `src/cli/`): implement the headless lifecycle-event contract in
-  proposed contract in `docs/proposed-contracts/tool-observability.md`, activate
-  it only when implementation conforms, then render a compact live `Explored` /
-  `Read` / `Search` / `Edit` / `Run` / `Web` / `Inspect image` view in console
-  and stable JSON events for machine clients. Preserve heartbeat as the no-event
-  fallback and expose only bounded allowlisted metadata.
-  Deliver this in a separate branch through ad-coder's own built-in pipeline as
-  a dogfood evaluation. Record per-role model/thinking level, duration,
-  input/cache/output/reasoning tokens, cost, review rounds, escaped defects, and
-  accepted-result total so profile efficiency can be compared from evidence.
-
+- [medium] **Complete activity-stream dogfood evidence**
+  (`docs/cost-economics.md`): the interrupted run now has exact checkpoint,
+  stage, token, duration, and cost evidence. Add Reviewer rounds and an accepted
+  result after an independent review; do not estimate unavailable continuation
+  worker usage.
 - [medium] **Distributed GitHub claims** (`src/project-operations/`): provide a
   built-in shared `GitHubClaimCoordinator`; mutations currently require an
   injected coordinator and fail closed without one.

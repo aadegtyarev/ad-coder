@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
 import { Type } from "@earendil-works/pi-ai";
+import { markTrustedToolOutcome } from "../observability/tool-activity";
 import type { Tool } from "../runner/tool";
 import { defineTool } from "../runner/tool";
 
@@ -195,7 +196,7 @@ export function buildExploreProjectTool(
           error instanceof Error && /^[a-z0-9_]+$/.test(error.message) ? error.message : "failed";
         return {
           content: [{ type: "text", text: `project exploration failed: ${code}` }],
-          details: undefined,
+          details: markTrustedToolOutcome({}, "failed"),
         };
       }
     },

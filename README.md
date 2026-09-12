@@ -132,7 +132,28 @@ Without `--workflows pipeline`, its `run_pipeline`, `decompose_task`, `run_step`
 tool remains available either way and lets the Orchestrator invoke Planner,
 Researcher, Security, Coder, Reviewer, or Auditor independently.
 
-Enter `/exit` or EOF to close it. `--json` writes one JSON record per turn.
+Enter `/exit` or EOF to close it. While a turn runs, semantic `Read`,
+`Search`, `Edit`, `Run`, `Web`, and `Inspect image` summaries appear on stderr.
+Repeated activity is grouped; the heartbeat returns only after an inactive
+interval. `--heartbeat-ms 0` disables heartbeat without disabling activity.
+
+With `--json`, final turn records remain the only stdout output. Progress is
+schema-v1 NDJSON on stderr: `tool_activity` records carry lifecycle, sequence,
+role/run/operation/turn/tool-call correlation and safe bounded metadata;
+`tool_activity_drop` reports core consumer or queue loss, while
+`tool_activity_render_drop` reports bounded stderr transport loss. A nonzero
+`droppedCount` means the view is incomplete, so slow consumers should reconnect
+with replay or increase the documented `--tool-activity-*` limits.
+Argument-derived labels are category-only by default. Commands, paths, queries,
+URLs, prompts, contents, credentials, and arbitrary custom-tool names are omitted.
+Expected console failures are stable `console_error` stderr records in JSON mode.
+
+Library callers can pass a `ToolActivityChannel` to `runRole`, pipeline, or
+conversation configuration, pass an `activityConsumer`, or call
+`ConversationSession.subscribeToolActivity`. Subscribers are optional and
+isolated: rejection and overflow cannot fail a role and are reflected in the
+channel snapshot and turn/run drop count.
+
 Input defaults to 65,536 bytes per line; use `--max-input-bytes` to change it.
 `--max-session-turns` and `--max-session-cost-usd` set session limits; `0`
 disables either limit.
@@ -187,8 +208,12 @@ their own `pluginTools`.
 Model-backed `role` and `drive` commands announce their stage immediately and
 print a heartbeat to stderr every 10 seconds. Change it with `--heartbeat-ms`.
 Provider requests time out after 120 seconds by default; use
-`--request-timeout-ms`. Zero explicitly disables either behavior. Progress never
-pollutes machine-result stdout.
+`--request-timeout-ms`. Zero explicitly disables either behavior. Tool activity
+retention, subscriber queues, grouping, projection, event, line, and renderer
+limits use the registry-derived `--tool-activity-*` options and appear in
+`config show`. Zero disables only replay, grouping delay, close draining, and
+heartbeat; mandatory safety ceilings stay positive. Progress never pollutes
+machine-result stdout.
 
 Context compaction defaults to `auto`. `disabled-then-halt` refuses an
 over-budget turn rather than summarizing it. Cross-provider summarization needs

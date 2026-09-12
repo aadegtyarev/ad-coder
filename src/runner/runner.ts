@@ -31,6 +31,12 @@ import {
 import { assertContextFitsBudget, assertTurnFitsBudget } from "../context/preflight";
 import type { LedgerSink } from "../ledger/ledger";
 import { FileLedgerSink, Ledger } from "../ledger/ledger";
+import {
+  attachToolActivity,
+  ToolActivityChannel,
+  type ToolActivityConfig,
+  type ToolActivityConsumer,
+} from "../observability/tool-activity";
 import { ProjectStore } from "../project-store/project-store";
 import type { ProjectStoreConfig } from "../project-store/types";
 import type { Role } from "../role";
@@ -97,8 +103,16 @@ export interface RunRoleParams {
   tools?: Tool[];
   /** Shared model-call controller for a larger session. */
   sessionLimitController?: SessionLimitController;
-  /** Zero disables each observation limit. */
+  /** Zero disables each legacy read-observation limit. */
   observability?: { maxReadPaths?: number; maxReadPathBytes?: number };
+  /** Optional shared activity channel. A private channel is created when only a consumer is supplied. */
+  activityChannel?: ToolActivityChannel;
+  /** Optional lifecycle consumer; failures are isolated and counted by the channel. */
+  activityConsumer?: ToolActivityConsumer;
+  /** Bounded tool-activity settings used when this call creates its own channel. */
+  toolActivity?: Partial<ToolActivityConfig>;
+  /** Monotonic milliseconds seam for deterministic duration metrics. */
+  monotonicNow?: () => number;
 }
 
 /**
@@ -116,15 +130,24 @@ export interface RunRoleResult {
   ledgerPath: string | undefined;
   /** Non-zero means the audit trail has holes for this run. */
   droppedRecords: number;
+  /** Non-zero means one or more ephemeral activity deliveries were lost. */
+  droppedActivityEvents?: number;
   result: OperationResultRecord;
   observations: RoleObservations;
 }
 
 export interface RoleObservations {
+  /** Additive safe efficiency fields; runRole always supplies them. */
+  provider?: string;
+  model?: string;
+  thinkingLevel?: string;
+  durationMs?: number;
   input: number;
   cachedInput: number;
   freshInput: number;
   output: number;
+  reasoning?: number;
+  costUsd?: number;
   readFiles: string[];
   readFilesTotal: number;
   readFilesTruncated: number;
@@ -133,6 +156,39 @@ export interface RoleObservations {
 }
 
 const SAFE_DIFF_ARGV = ["diff", "--no-ext-diff", "--no-textconv"] as const;
+const MAX_USAGE_INTEGER = 1_000_000_000_000;
+const MAX_USAGE_NUMBER = 1_000_000_000;
+
+function boundedUsageInteger(value: number, field: string): number {
+  if (!Number.isSafeInteger(value) || value < 0 || value > MAX_USAGE_INTEGER)
+    throw new RangeError(`provider ${field} usage is outside the safe range`);
+  return value;
+}
+
+function boundedUsageNumber(value: number, field: string): number {
+  if (!Number.isFinite(value) || value < 0 || value > MAX_USAGE_NUMBER)
+    throw new RangeError(`provider ${field} metric is outside the safe range`);
+  return value;
+}
+
+function addUsageInteger(total: number, value: number, field: string): number {
+  return boundedUsageInteger(total + boundedUsageInteger(value, field), field);
+}
+
+function addUsageNumber(total: number, value: number, field: string): number {
+  return boundedUsageNumber(total + boundedUsageNumber(value, field), field);
+}
+
+function publicMetricLabel(value: string): string {
+  if (
+    Buffer.byteLength(value) > 100 ||
+    !/^[A-Za-z0-9._:/-]+$/.test(value) ||
+    value.includes("://") ||
+    /(?:secret|token|credential|password|api[_-]?key)/i.test(value)
+  )
+    return "unknown";
+  return value;
+}
 
 function safeGitEnvironment(): NodeJS.ProcessEnv {
   const environment = Object.fromEntries(
@@ -208,6 +264,8 @@ export function measureSafeGitDiffBytes(
  * without an out-of-process sandbox.
  */
 export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
+  const monotonicNow = params.monotonicNow ?? (() => performance.now());
+  const roleStartedAt = monotonicNow();
   const absTargetDir = resolveTargetDir(params.targetDir);
   const runId = assertRunId(params.runId ?? crypto.randomUUID());
   const context = params.context ?? BACKGROUND_CONTEXT;
@@ -241,8 +299,9 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
     throw new TypeError("custom summarizer cannot be used with positive session limits");
   }
   const compaction = resolveCompactionPolicy(explicitPolicy, models, params.model);
-  const usage = { freshInput: 0, cachedInput: 0, output: 0 };
+  const usage = { freshInput: 0, cachedInput: 0, output: 0, reasoning: 0, costUsd: 0 };
   let providerLimitObservation: ReturnType<typeof providerLimitFrom>;
+  let usageFailure: RangeError | undefined;
   const readFiles = new Set<string>();
   const seenReadFiles = new Set<string>();
   const maxReadPaths = params.observability?.maxReadPaths ?? 0;
@@ -304,10 +363,36 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
   }
   ledger.attach(harness.hooks);
   compactor?.attach(harness.hooks);
+  const ownsActivityChannel = params.activityChannel === undefined;
+  const activityChannel = params.activityChannel ?? new ToolActivityChannel(params.toolActivity);
+  const offActivityConsumer =
+    params.activityConsumer === undefined
+      ? undefined
+      : activityChannel.subscribe(params.activityConsumer);
+  const offActivity = attachToolActivity({
+    channel: activityChannel,
+    events: harness.events,
+    targetDir: absTargetDir,
+    role: params.role.name,
+    runId,
+    step: params.step ?? "run",
+  });
   harness.hooks.on("after_response", (event) => {
-    usage.freshInput += event.message.usage.input;
-    usage.cachedInput += event.message.usage.cacheRead;
-    usage.output += event.message.usage.output;
+    try {
+      const freshInput = boundedUsageInteger(event.message.usage.input, "input");
+      const cachedInput = boundedUsageInteger(event.message.usage.cacheRead, "cacheRead");
+      const output = boundedUsageInteger(event.message.usage.output, "output");
+      const reasoning = boundedUsageInteger(event.message.usage.reasoning ?? 0, "reasoning");
+      if (reasoning > output) throw new RangeError("provider reasoning usage exceeds output");
+      const costUsd = boundedUsageNumber(event.message.usage.cost.total, "cost");
+      usage.freshInput = addUsageInteger(usage.freshInput, freshInput, "input");
+      usage.cachedInput = addUsageInteger(usage.cachedInput, cachedInput, "cacheRead");
+      usage.output = addUsageInteger(usage.output, output, "output");
+      usage.reasoning = addUsageInteger(usage.reasoning, reasoning, "reasoning");
+      usage.costUsd = addUsageNumber(usage.costUsd, costUsd, "cost");
+    } catch (error) {
+      usageFailure = error instanceof RangeError ? error : new RangeError("invalid provider usage");
+    }
     if (event.status === 429) {
       const retryAfter = Object.entries(event.headers ?? {}).find(
         ([name]) => name.toLowerCase() === "retry-after",
@@ -369,6 +454,7 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
       throw error;
     });
     controller?.assertNoBoundaryFailure();
+    if (usageFailure !== undefined) throw usageFailure;
     if (providerLimitObservation !== undefined) throw providerLimitObservation;
     const result = (() => {
       try {
@@ -420,16 +506,24 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
       );
     }
     const diffBytes = await measureSafeGitDiffBytes(absTargetDir);
+    const totalInput = boundedUsageInteger(usage.freshInput + usage.cachedInput, "total input");
     return {
       runId,
       ledgerPath,
       droppedRecords: ledger.droppedRecords,
+      droppedActivityEvents: activityChannel.droppedCount,
       result,
       observations: {
-        input: usage.freshInput + usage.cachedInput,
+        provider: publicMetricLabel(params.model.provider),
+        model: publicMetricLabel(params.model.id),
+        thinkingLevel: params.role.thinkingLevel ?? "unknown",
+        durationMs: boundedUsageNumber(monotonicNow() - roleStartedAt, "duration"),
+        input: totalInput,
         cachedInput: usage.cachedInput,
         freshInput: usage.freshInput,
         output: usage.output,
+        reasoning: usage.reasoning,
+        costUsd: usage.costUsd,
         readFiles: [...readFiles].sort(),
         readFilesTotal: seenReadFiles.size,
         readFilesTruncated: Math.max(0, seenReadFiles.size - readFiles.size),
@@ -439,6 +533,9 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
     };
   } finally {
     await harness.close(context);
+    offActivity();
+    if (ownsActivityChannel) await activityChannel.close();
+    else offActivityConsumer?.();
     if (params.model.api === "openai-codex-responses") {
       closeOpenAICodexWebSocketSessions(runId);
     }

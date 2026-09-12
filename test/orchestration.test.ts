@@ -509,6 +509,10 @@ test("pipeline aggregates exact multi-response stage observations in stable orde
     models: fx.models,
     task: "implement metrics",
     maxRounds: 1,
+    monotonicNow: (() => {
+      let time = 0;
+      return () => (time += 100);
+    })(),
     compaction: { mode: "disabled-then-halt" },
     roles: {
       planner: fx.role("planner", "You plan.", ["read", SUBMIT_PLAN_TOOL_NAME], "short"),
@@ -523,10 +527,16 @@ test("pipeline aggregates exact multi-response stage observations in stable orde
   expect(result.stageMetrics).toEqual([
     {
       stage: "plan",
+      provider: "faux",
+      model: "faux-1",
+      thinkingLevel: "unknown",
+      durationMs: 100,
       input: 1194,
       cachedInput: 255,
       freshInput: 939,
       output: 124,
+      reasoning: 0,
+      costUsd: 0,
       readFiles: ["tracked.txt"],
       readFilesTotal: 1,
       readFilesTruncated: 0,
@@ -535,10 +545,16 @@ test("pipeline aggregates exact multi-response stage observations in stable orde
     },
     {
       stage: "code:1",
+      provider: "faux",
+      model: "faux-1",
+      thinkingLevel: "unknown",
+      durationMs: 100,
       input: 585,
       cachedInput: 13,
       freshInput: 572,
       output: 15,
+      reasoning: 0,
+      costUsd: 0,
       readFiles: [],
       readFilesTotal: 0,
       readFilesTruncated: 0,
@@ -547,10 +563,16 @@ test("pipeline aggregates exact multi-response stage observations in stable orde
     },
     {
       stage: "review:1",
+      provider: "faux",
+      model: "faux-1",
+      thinkingLevel: "unknown",
+      durationMs: 100,
       input: 921,
       cachedInput: 118,
       freshInput: 803,
       output: 25,
+      reasoning: 0,
+      costUsd: 0,
       readFiles: ["tracked.txt"],
       readFilesTotal: 1,
       readFilesTruncated: 0,

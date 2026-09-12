@@ -16,6 +16,7 @@ import type { Summarizer } from "../src/context/compactor";
 import { SUMMARIZATION_PROMPT } from "../src/context/compactor";
 import { startConversation } from "../src/conversation/conversation";
 import { MemoryLedgerSink } from "../src/ledger/ledger";
+import type { ToolActivityRecord } from "../src/observability/tool-activity";
 import { ProjectStore } from "../src/project-store/project-store";
 import type { Role } from "../src/role";
 import { defineRole } from "../src/role";
@@ -174,6 +175,96 @@ test("a tool invoked in a turn appears in that turn's result.toolCalls", async (
   } finally {
     await conversation.close();
   }
+});
+
+test("conversation activity listeners are turn-scoped and retain step correlation", async () => {
+  const calls: string[] = [];
+  const records: ToolActivityRecord[] = [];
+  const { faux, models, model, role } = harnessFixture(["record_note"]);
+  faux.setResponses([
+    fauxAssistantMessage(fauxToolCall("record_note", { note: "secret-one" })),
+    fauxAssistantMessage("one done"),
+    fauxAssistantMessage(fauxToolCall("record_note", { note: "secret-two" })),
+    fauxAssistantMessage("two done"),
+  ]);
+  const conversation = await startConversation({
+    role,
+    targetDir,
+    models,
+    model,
+    tools: [recordingTool("record_note", calls)],
+  });
+  const unsubscribe = conversation.subscribeToolActivity?.((record) => {
+    records.push(record);
+  });
+  try {
+    await conversation.step("one", { step: "first" });
+    await conversation.step("two", { step: "second" });
+  } finally {
+    unsubscribe?.();
+    await conversation.close();
+    await conversation.close();
+  }
+
+  const events = records.filter((record) => record.type === "tool_activity");
+  expect(events).toHaveLength(6);
+  expect(events.slice(0, 3).every(({ parentOperation }) => parentOperation === "first")).toBe(true);
+  expect(events.slice(3).every(({ parentOperation }) => parentOperation === "second")).toBe(true);
+  expect(JSON.stringify(events)).not.toContain("secret-one");
+  expect(JSON.stringify(events)).not.toContain("secret-two");
+});
+
+test("close during a tool is idempotent, cancels once, rejects overlap, and bounds slow subscribers", async () => {
+  const records: ToolActivityRecord[] = [];
+  const { faux, models, model, role } = harnessFixture(["blocking_tool"]);
+  let signalStarted: (() => void) | undefined;
+  let releaseTool: (() => void) | undefined;
+  const started = new Promise<void>((resolve) => {
+    signalStarted = resolve;
+  });
+  const released = new Promise<void>((resolve) => {
+    releaseTool = resolve;
+  });
+  const tool = defineTool({
+    name: "blocking_tool",
+    description: "Wait until the conversation closes.",
+    label: "blocking",
+    parameters: Type.Object({}),
+    async execute() {
+      signalStarted?.();
+      await released;
+      return { content: [{ type: "text", text: "released" }], details: undefined };
+    },
+  });
+  faux.setResponses([
+    fauxAssistantMessage(fauxToolCall("blocking_tool", {})),
+    fauxAssistantMessage("settled"),
+  ]);
+  const conversation = await startConversation({
+    role,
+    targetDir,
+    models,
+    model,
+    tools: [tool],
+    toolActivity: { closeDrainMs: 5 },
+  });
+  conversation.subscribeToolActivity?.((record) => {
+    records.push(record);
+  });
+  conversation.subscribeToolActivity?.(() => new Promise<void>(() => undefined));
+  const active = conversation.step("block");
+  void active.catch(() => undefined);
+  await started;
+  await expect(conversation.step("overlap")).rejects.toThrow("conversation step already active");
+  const firstClose = conversation.close();
+  const secondClose = conversation.close();
+  expect(firstClose).toBe(secondClose);
+  releaseTool?.();
+  await firstClose;
+  const terminal = records.filter(
+    (record) => record.type === "tool_activity" && record.lifecycle === "cancelled",
+  );
+  expect(terminal).toHaveLength(1);
 });
 
 test("conversation counts tool follow-ups and rethrows a Models-boundary limit", async () => {

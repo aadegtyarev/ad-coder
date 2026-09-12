@@ -178,7 +178,7 @@ test("turn and close failures use fixed messages and close once", async () => {
   expect(result).toEqual({ reason: "turn_failed", completedTurns: 0 });
   expect(session.inputs).toEqual(["hello"]);
   expect(session.closes).toBe(1);
-  expect(error.text()).toContain("console turn failed");
+  expect(error.text()).toContain('"code":"turn_failed"');
   expect(error.text()).toContain("console session close failed");
   expect(error.text()).not.toContain(secret);
 });
@@ -200,7 +200,7 @@ test("typed session exhaustion stops input with no fabricated JSON record", asyn
   expect(output.text()).toBe("");
   expect(error.text()).toBe(
     '{"type":"progress","event":"started","stage":"console-turn","elapsedSeconds":0}\n' +
-      "ad-coder: session resource limit reached\n",
+      '{"type":"console_error","code":"session_limit"}\n',
   );
 });
 
@@ -256,6 +256,58 @@ test("an in-flight console turn reports structured progress on stderr", async ()
     elapsedSeconds: 0,
   });
   expect(progress.some(({ event }) => event === "heartbeat")).toBe(true);
+});
+
+test("semantic activity resets heartbeat inactivity", async () => {
+  const session = fakeSession();
+  let consumer:
+    | Parameters<NonNullable<ConversationSession["subscribeToolActivity"]>>[0]
+    | undefined;
+  session.subscribeToolActivity = (next) => {
+    consumer = next;
+    return () => {
+      consumer = undefined;
+    };
+  };
+  const originalStep = session.step.bind(session);
+  session.step = async (input) => {
+    for (let sequence = 1; sequence <= 4; sequence++) {
+      await new Promise((resolve) => setTimeout(resolve, 4));
+      consumer?.({
+        schemaVersion: 1,
+        type: "tool_activity",
+        sequence,
+        timestamp: "2026-01-01T00:00:00.000Z",
+        lifecycle: "started",
+        activity: "Read",
+        role: "coder",
+        runId: "run",
+        operationId: "op",
+        turnId: "turn",
+        toolCallId: `call-${sequence}`,
+        parentOperation: "step",
+        toolName: "read",
+        droppedCount: 0,
+      });
+    }
+    return originalStep(input);
+  };
+  const error = new Capture();
+  await runConsole({
+    session,
+    input: Readable.from("hello\n/exit\n"),
+    output: new Capture(),
+    error,
+    mode: "json",
+    heartbeatMs: 10,
+  });
+  const records = error
+    .text()
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  expect(records.filter(({ event }) => event === "heartbeat")).toEqual([]);
+  expect(records.filter(({ type }) => type === "tool_activity")).toHaveLength(4);
 });
 
 test("zero heartbeat keeps the immediate stage event and disables only periodic events", async () => {

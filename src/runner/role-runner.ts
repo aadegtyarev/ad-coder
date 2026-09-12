@@ -2,6 +2,11 @@ import type { Context, Session } from "@earendil-works/pi-agent-core";
 import type { Api, Model, Models } from "@earendil-works/pi-ai";
 import type { CompactionPolicy, Summarizer } from "../context/compactor";
 import type { LedgerSink } from "../ledger/ledger";
+import type {
+  ToolActivityChannel,
+  ToolActivityConfig,
+  ToolActivityConsumer,
+} from "../observability/tool-activity";
 import type { ProjectStoreConfig } from "../project-store/types";
 import type { Role } from "../role";
 import type { SessionLimitController } from "../session-limits";
@@ -24,6 +29,10 @@ export interface RunRoleOptions {
    * tool (e.g. only a reviewer role needs `submit_verdict`).
    */
   tools?: Tool[];
+  activityChannel?: ToolActivityChannel;
+  activityConsumer?: ToolActivityConsumer;
+  /** Monotonic milliseconds seam used by deterministic metric tests. */
+  monotonicNow?: () => number;
 }
 
 /**
@@ -51,6 +60,11 @@ export interface RoleRunnerConfig {
   projectStoreConfig?: ProjectStoreConfig;
   sessionLimitController?: SessionLimitController;
   observability?: { maxReadPaths?: number; maxReadPathBytes?: number };
+  activityChannel?: ToolActivityChannel;
+  activityConsumer?: ToolActivityConsumer;
+  toolActivity?: Partial<ToolActivityConfig>;
+  /** Monotonic milliseconds seam used by all turns unless overridden per call. */
+  monotonicNow?: () => number;
 }
 
 /**
@@ -63,6 +77,9 @@ export function createRoleRunner(config: RoleRunnerConfig): RoleRunner {
   return {
     async runRole(role, model, prompt, opts) {
       const session = opts?.session ?? config.session;
+      const activityChannel = opts?.activityChannel ?? config.activityChannel;
+      const activityConsumer = opts?.activityConsumer ?? config.activityConsumer;
+      const monotonicNow = opts?.monotonicNow ?? config.monotonicNow;
       return runRole({
         role,
         targetDir: config.targetDir,
@@ -80,6 +97,10 @@ export function createRoleRunner(config: RoleRunnerConfig): RoleRunner {
           projectStoreConfig: config.projectStoreConfig,
         }),
         ...(config.observability !== undefined && { observability: config.observability }),
+        ...(config.toolActivity !== undefined && { toolActivity: config.toolActivity }),
+        ...(activityChannel !== undefined && { activityChannel }),
+        ...(activityConsumer !== undefined && { activityConsumer }),
+        ...(monotonicNow !== undefined && { monotonicNow }),
         ...(session !== undefined && { session }),
         ...(opts?.runId !== undefined && { runId: opts.runId }),
         ...(opts?.step !== undefined && { step: opts.step }),

@@ -5,6 +5,11 @@ import { type ContextBudgetPercents, deriveContextBudget } from "../context/budg
 import type { CompactionMode } from "../context/compactor";
 import { assertSummarizerWindow } from "../context/compactor";
 import { MemoryLedgerSink } from "../ledger/ledger";
+import type {
+  ToolActivityChannel,
+  ToolActivityConfig,
+  ToolActivityConsumer,
+} from "../observability/tool-activity";
 import { SUBMIT_FOLLOW_UP_TOOL_NAME } from "../orchestration/follow-up";
 import { DEFAULT_SURFACE_ANALYSIS_LIMITS, SUBMIT_PLAN_TOOL_NAME } from "../orchestration/plan";
 import type {
@@ -152,6 +157,11 @@ export interface ResolvePipelineConfigOptions {
   pluginTools?: Tool[];
   /** Select built-in plugin groups; defaults to all three. Mutually exclusive with pluginTools. */
   enabledPlugins?: readonly BuiltInPluginName[];
+  activityChannel?: ToolActivityChannel;
+  activityConsumer?: ToolActivityConsumer;
+  toolActivity?: Partial<ToolActivityConfig>;
+  /** Monotonic milliseconds seam for deterministic stage metrics. */
+  monotonicNow?: () => number;
 }
 
 /** Env-var names whose PRESENCE selects a provider, in precedence order. */
@@ -509,6 +519,10 @@ function resolveConfig(
     pluginTools,
     ...(pluginToolsForModel !== undefined && { pluginToolsForModel }),
     surfaceAnalysisLimits,
+    ...(options.activityChannel !== undefined && { activityChannel: options.activityChannel }),
+    ...(options.activityConsumer !== undefined && { activityConsumer: options.activityConsumer }),
+    ...(options.toolActivity !== undefined && { toolActivity: options.toolActivity }),
+    ...(options.monotonicNow !== undefined && { monotonicNow: options.monotonicNow }),
     roles:
       pipelineRoles === undefined
         ? { coder: orchestrator, reviewer: orchestrator, orchestrator }

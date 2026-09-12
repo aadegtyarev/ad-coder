@@ -1,9 +1,13 @@
 import { promises as dns } from "node:dns";
 import { promises as fs } from "node:fs";
+import * as http from "node:http";
+import * as https from "node:https";
 import { isIP } from "node:net";
 import path from "node:path";
+import { Readable } from "node:stream";
 import type { Api, Model, Models } from "@earendil-works/pi-ai";
 import { contentText, Type } from "@earendil-works/pi-ai";
+import { markTrustedToolOutcome } from "../observability/tool-activity";
 import type { Tool } from "../runner/tool";
 import { defineTool } from "../runner/tool";
 
@@ -69,21 +73,39 @@ function validateConfig(config: WebToolConfig): void {
 }
 
 function isPrivateAddress(address: string): boolean {
+  const normalized = address.toLowerCase();
+  if (normalized.startsWith("::ffff:")) {
+    const tail = normalized.slice(7);
+    if (isIP(tail) === 4) return isPrivateAddress(tail);
+    const words = tail.split(":");
+    if (words.length === 2) {
+      const high = Number.parseInt(words[0] ?? "", 16);
+      const low = Number.parseInt(words[1] ?? "", 16);
+      if (Number.isInteger(high) && Number.isInteger(low))
+        return isPrivateAddress(`${high >> 8}.${high & 255}.${low >> 8}.${low & 255}`);
+    }
+    return true;
+  }
   if (isIP(address) === 4) {
     const octets = address.split(".").map(Number);
     const a = octets[0] ?? -1;
     const b = octets[1] ?? -1;
+    const c = octets[2] ?? -1;
     return (
       a === 0 ||
       a === 10 ||
       a === 127 ||
+      (a === 100 && b >= 64 && b <= 127) ||
       (a === 169 && b === 254) ||
       (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 0) ||
       (a === 192 && b === 168) ||
+      (a === 192 && b === 0 && c === 2) ||
+      (a === 198 && (b === 18 || b === 19 || b === 51)) ||
+      (a === 203 && b === 0 && c === 113) ||
       a >= 224
     );
   }
-  const normalized = address.toLowerCase();
   return (
     normalized === "::" ||
     normalized === "::1" ||
@@ -93,10 +115,37 @@ function isPrivateAddress(address: string): boolean {
     normalized.startsWith("feb") ||
     normalized.startsWith("fc") ||
     normalized.startsWith("fd") ||
-    normalized.startsWith("::ffff:127.") ||
-    normalized.startsWith("::ffff:10.") ||
-    normalized.startsWith("::ffff:192.168.")
+    normalized.startsWith("2001:db8:") ||
+    normalized.startsWith("ff")
   );
+}
+
+async function assertStablePublicResolution(
+  url: URL,
+  allowPrivateNetwork: boolean,
+  lookup: typeof dns.lookup,
+): Promise<void> {
+  if (allowPrivateNetwork || isIP(url.hostname)) return;
+  const first = (await lookup(url.hostname, { all: true, verbatim: true })) as Array<{
+    address: string;
+    family: number;
+  }>;
+  const second = (await lookup(url.hostname, { all: true, verbatim: true })) as Array<{
+    address: string;
+    family: number;
+  }>;
+  const normalize = (entries: Array<{ address: string }>) =>
+    entries.map(({ address }) => address.toLowerCase()).sort();
+  const a = normalize(first);
+  const b = normalize(second);
+  if (
+    a.length === 0 ||
+    b.length === 0 ||
+    a.some(isPrivateAddress) ||
+    b.some(isPrivateAddress) ||
+    JSON.stringify(a) !== JSON.stringify(b)
+  )
+    throw new Error("private_network_denied");
 }
 
 async function assertPublicUrl(
@@ -122,24 +171,119 @@ async function assertPublicUrl(
   return url;
 }
 
+function createPinnedFetch(lookup: typeof dns.lookup, allowPrivateNetwork: boolean): typeof fetch {
+  return (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = new URL(input instanceof Request ? input.url : input);
+    const addresses = isIP(url.hostname)
+      ? [{ address: url.hostname, family: isIP(url.hostname) }]
+      : ((await lookup(url.hostname, { all: true, verbatim: true })) as Array<{
+          address: string;
+          family: number;
+        }>);
+    const selected = addresses.find(
+      ({ address }) => allowPrivateNetwork || !isPrivateAddress(address),
+    );
+    if (
+      selected === undefined ||
+      (!allowPrivateNetwork && addresses.some(({ address }) => isPrivateAddress(address)))
+    )
+      throw new Error("private_network_denied");
+    return await new Promise<Response>((resolve, reject) => {
+      const transport = url.protocol === "https:" ? https : http;
+      const request = transport.request(
+        url,
+        {
+          method: init?.method ?? "GET",
+          headers: init?.headers as http.OutgoingHttpHeaders,
+          signal: init?.signal ?? undefined,
+          lookup: (_hostname, _options, callback) => {
+            callback(null, selected.address, selected.family);
+          },
+        },
+        (response) => {
+          const peer = response.socket.remoteAddress;
+          if (
+            peer === undefined ||
+            (!allowPrivateNetwork && isPrivateAddress(peer)) ||
+            peer.replace(/^::ffff:/, "") !== selected.address.replace(/^::ffff:/, "")
+          ) {
+            response.destroy();
+            reject(new Error("private_network_denied"));
+            return;
+          }
+          const headers = new Headers();
+          for (const [name, value] of Object.entries(response.headers)) {
+            if (value !== undefined)
+              headers.set(name, Array.isArray(value) ? value.join(", ") : value);
+          }
+          resolve(
+            new Response(Readable.toWeb(response) as ReadableStream<Uint8Array>, {
+              status: response.statusCode ?? 500,
+              ...(response.statusMessage !== undefined && { statusText: response.statusMessage }),
+              headers,
+            }),
+          );
+        },
+      );
+      request.once("error", reject);
+      request.end();
+    });
+  }) as typeof fetch;
+}
+
+class WebTimeoutError extends Error {}
+
+function trustedFailureDetails(error: unknown, signal?: AbortSignal): object {
+  const outcome = signal?.aborted
+    ? "cancelled"
+    : error instanceof WebTimeoutError
+      ? "timed_out"
+      : "failed";
+  return markTrustedToolOutcome({}, outcome);
+}
+
 async function boundedFetch(
   rawUrl: string,
   config: WebToolConfig,
   dependencies: Required<Pick<WebToolDependencies, "fetch" | "lookup">>,
+  signal?: AbortSignal,
 ): Promise<{ url: string; contentType: string; body: string }> {
   let url = await assertPublicUrl(rawUrl, config.allowPrivateNetwork, dependencies.lookup);
   for (let redirect = 0; redirect <= config.maxRedirects; redirect += 1) {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), config.timeoutMs);
+    let timedOut = false;
+    const abortFromHarness = () => controller.abort();
+    signal?.addEventListener("abort", abortFromHarness, { once: true });
+    if (signal?.aborted) controller.abort();
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, config.timeoutMs);
     let response: Response;
     try {
-      response = await dependencies.fetch(url, {
+      // Re-resolve immediately at the transport boundary and on every loop/redirect.
+      // Hosts whose validated address set changes are denied rather than followed.
+      const reboundCheck = await assertPublicUrl(
+        url.href,
+        config.allowPrivateNetwork,
+        dependencies.lookup,
+      );
+      await assertStablePublicResolution(
+        reboundCheck,
+        config.allowPrivateNetwork,
+        dependencies.lookup,
+      );
+      response = await dependencies.fetch(reboundCheck, {
         redirect: "manual",
         signal: controller.signal,
         headers: { accept: "text/html,text/plain;q=0.9", "user-agent": config.userAgent },
       });
+    } catch (error) {
+      if (timedOut) throw new WebTimeoutError();
+      throw error;
     } finally {
       clearTimeout(timer);
+      signal?.removeEventListener("abort", abortFromHarness);
     }
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.get("location");
@@ -299,7 +443,11 @@ export function buildWebTools(
 ): Tool[] {
   const config = { ...DEFAULT_WEB_TOOL_CONFIG, ...overrides };
   validateConfig(config);
-  const runtime = { fetch: dependencies.fetch ?? fetch, lookup: dependencies.lookup ?? dns.lookup };
+  const lookup = dependencies.lookup ?? dns.lookup;
+  const runtime = {
+    fetch: dependencies.fetch ?? createPinnedFetch(lookup, config.allowPrivateNetwork),
+    lookup,
+  };
   const search = defineTool({
     name: WEB_SEARCH_TOOL_NAME,
     description: "Search the public web through DuckDuckGo and return bounded titles and URLs.",
@@ -316,7 +464,10 @@ export function buildWebTools(
           details: undefined,
         };
       } catch (error) {
-        return { content: [{ type: "text", text: safeToolFailure(error) }], details: undefined };
+        return {
+          content: [{ type: "text", text: safeToolFailure(error) }],
+          details: trustedFailureDetails(error),
+        };
       }
     },
   });
@@ -348,7 +499,10 @@ export function buildWebTools(
           details: undefined,
         };
       } catch (error) {
-        return { content: [{ type: "text", text: safeToolFailure(error) }], details: undefined };
+        return {
+          content: [{ type: "text", text: safeToolFailure(error) }],
+          details: trustedFailureDetails(error),
+        };
       }
     },
   });
@@ -375,13 +529,31 @@ async function loadImage(
   targetDir: string,
   config: WebToolConfig,
   dependencies: Required<Pick<WebToolDependencies, "fetch" | "lookup">>,
+  signal?: AbortSignal,
 ): Promise<{ data: string; mimeType: string; source: string }> {
   if (/^https?:\/\//i.test(source)) {
     const url = await assertPublicUrl(source, config.allowPrivateNetwork, dependencies.lookup);
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), config.timeoutMs);
+    let timedOut = false;
+    const abortFromHarness = () => controller.abort();
+    signal?.addEventListener("abort", abortFromHarness, { once: true });
+    if (signal?.aborted) controller.abort();
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, config.timeoutMs);
     try {
-      const response = await dependencies.fetch(url, {
+      const reboundCheck = await assertPublicUrl(
+        url.href,
+        config.allowPrivateNetwork,
+        dependencies.lookup,
+      );
+      await assertStablePublicResolution(
+        reboundCheck,
+        config.allowPrivateNetwork,
+        dependencies.lookup,
+      );
+      const response = await dependencies.fetch(reboundCheck, {
         redirect: "error",
         signal: controller.signal,
         headers: { accept: "image/*", "user-agent": config.userAgent },
@@ -410,8 +582,12 @@ async function loadImage(
         offset += chunk.byteLength;
       }
       return { data: Buffer.from(bytes).toString("base64"), mimeType, source: url.href };
+    } catch (error) {
+      if (timedOut) throw new WebTimeoutError();
+      throw error;
     } finally {
       clearTimeout(timer);
+      signal?.removeEventListener("abort", abortFromHarness);
     }
   }
   if (source.includes("\0")) throw new Error("invalid_path");
@@ -432,9 +608,10 @@ async function loadImage(
 export function buildImageInspectionTool(options: ImageInspectionConfig): Tool {
   const config = { ...DEFAULT_WEB_TOOL_CONFIG, ...options.web };
   validateConfig(config);
+  const lookup = options.dependencies?.lookup ?? dns.lookup;
   const runtime = {
-    fetch: options.dependencies?.fetch ?? fetch,
-    lookup: options.dependencies?.lookup ?? dns.lookup,
+    fetch: options.dependencies?.fetch ?? createPinnedFetch(lookup, config.allowPrivateNetwork),
+    lookup,
   };
   return defineTool({
     name: INSPECT_IMAGE_TOOL_NAME,
@@ -487,7 +664,7 @@ export function buildImageInspectionTool(options: ImageInspectionConfig): Tool {
               text: `image inspection failed: ${safeToolFailure(error).replace("web request failed: ", "")}`,
             },
           ],
-          details: undefined,
+          details: trustedFailureDetails(error),
         };
       }
     },

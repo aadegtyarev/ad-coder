@@ -28,6 +28,14 @@ import {
 import { assertContextFitsBudget, assertTurnFitsBudget } from "../context/preflight";
 import type { LedgerSink } from "../ledger/ledger";
 import { FileLedgerSink, Ledger } from "../ledger/ledger";
+import {
+  attachToolActivity,
+  type ToolActivityAttachment,
+  ToolActivityChannel,
+  type ToolActivityConfig,
+  type ToolActivityConsumer,
+  type ToolActivitySnapshot,
+} from "../observability/tool-activity";
 import { ProjectStore } from "../project-store/project-store";
 import type { ProjectStoreConfig } from "../project-store/types";
 import type { Role } from "../role";
@@ -81,6 +89,9 @@ export interface ConversationConfig {
   sessionLimits?: SessionLimits;
   /** Internal sharing seam for nested work; takes precedence over sessionLimits. */
   sessionLimitController?: SessionLimitController;
+  activityChannel?: ToolActivityChannel;
+  activityConsumer?: ToolActivityConsumer;
+  toolActivity?: Partial<ToolActivityConfig>;
 }
 
 /** A tool invocation observed during a single turn: names only, never args or content. */
@@ -107,6 +118,8 @@ export interface ConversationTurnResult {
   toolCalls: ConversationToolCall[];
   /** CUMULATIVE dropped-record count across every turn so far. Non-zero means audit holes. */
   droppedRecords: number;
+  /** Cumulative loss in the ephemeral activity stream. */
+  droppedActivityEvents?: number;
 }
 
 /** Options for a single turn. */
@@ -124,6 +137,12 @@ export interface ConversationStepOptions {
 export interface ConversationSession {
   step(userInput: string, opts?: ConversationStepOptions): Promise<ConversationTurnResult>;
   close(): Promise<void>;
+  /** Optional for compatibility with external ConversationSession implementations. */
+  subscribeToolActivity?(
+    consumer: ToolActivityConsumer,
+    options?: { replay?: boolean },
+  ): () => void;
+  toolActivitySnapshot?(): ToolActivitySnapshot;
   readonly runId: string;
   /** Absolute ledger path when the default file sink was used; undefined for a custom sink. */
   readonly ledgerPath: string | undefined;
@@ -230,29 +249,54 @@ export async function startConversation(config: ConversationConfig): Promise<Con
   const lane: AgentLane = await harness.lane(config.laneName ?? "main", context);
 
   const role = config.role;
+  const ownsActivityChannel = config.activityChannel === undefined;
+  const activityChannel = config.activityChannel ?? new ToolActivityChannel(config.toolActivity);
+  const offConfiguredConsumer =
+    config.activityConsumer === undefined
+      ? undefined
+      : activityChannel.subscribe(config.activityConsumer);
   let turnCounter = 0;
   let cumulativeDropped = 0;
   let closed = false;
+  let stepping = false;
+  let activeSettled: Promise<void> | undefined;
+  let settleActive: (() => void) | undefined;
+  let activeActivityCleanup: ToolActivityAttachment | undefined;
+  let closePromise: Promise<void> | undefined;
 
   async function step(
     userInput: string,
     opts?: ConversationStepOptions,
   ): Promise<ConversationTurnResult> {
+    if (closed) throw new Error("conversation is closed");
+    if (stepping) throw new Error("conversation step already active");
     controller.assertActive();
+    stepping = true;
+    activeSettled = new Promise<void>((resolve) => {
+      settleActive = resolve;
+    });
     const n = ++turnCounter;
     const stepName = opts?.step ?? `turn:${n}`;
 
-    const entries = await lane.findEntries({ type: "message", order: "oldestFirst" }, context);
-    const pending = { role: "user" as const, content: userInput, timestamp: Date.now() };
-    const messages = [
-      ...entries.flatMap((entry) => (entry.type === "message" ? [entry.message] : [])),
-      pending,
-    ];
-    if (compaction.mode === "auto") {
-      compactor?.assertHealthy(role.name);
-      assertTurnFitsBudget(role, messages, config.model);
-    } else {
-      assertContextFitsBudget(role, messages, config.model);
+    try {
+      const entries = await lane.findEntries({ type: "message", order: "oldestFirst" }, context);
+      const pending = { role: "user" as const, content: userInput, timestamp: Date.now() };
+      const messages = [
+        ...entries.flatMap((entry) => (entry.type === "message" ? [entry.message] : [])),
+        pending,
+      ];
+      if (compaction.mode === "auto") {
+        compactor?.assertHealthy(role.name);
+        assertTurnFitsBudget(role, messages, config.model);
+      } else {
+        assertContextFitsBudget(role, messages, config.model);
+      }
+    } catch (error) {
+      stepping = false;
+      settleActive?.();
+      settleActive = undefined;
+      activeSettled = undefined;
+      throw error;
     }
 
     // A FRESH per-turn Ledger sharing the ONE sink. Its attach/unsubscribe must
@@ -266,6 +310,15 @@ export async function startConversation(config: ConversationConfig): Promise<Con
     const offEvents = harness.events.on("tool_end", (event) => {
       seen.push({ toolName: event.toolName, toolCallId: event.toolCallId });
     });
+    const offActivity = attachToolActivity({
+      channel: activityChannel,
+      events: harness.events,
+      targetDir: absTargetDir,
+      role: role.name,
+      runId,
+      step: stepName,
+    });
+    activeActivityCleanup = offActivity;
 
     try {
       const prompted = await lane.prompt(userInput, undefined, context).catch((error) => {
@@ -293,29 +346,70 @@ export async function startConversation(config: ConversationConfig): Promise<Con
         assistantText,
         toolCalls: seen,
         droppedRecords: cumulativeDropped,
+        droppedActivityEvents: activityChannel.droppedCount,
       };
     } finally {
       offLedger();
       offEvents();
+      offActivity();
+      if (activeActivityCleanup === offActivity) activeActivityCleanup = undefined;
+      stepping = false;
+      settleActive?.();
+      settleActive = undefined;
+      activeSettled = undefined;
     }
   }
 
-  async function close(): Promise<void> {
-    if (closed) {
-      return;
-    }
+  function close(): Promise<void> {
+    if (closePromise !== undefined) return closePromise;
     closed = true;
-    await harness.close(context);
-    if (config.model.api === "openai-codex-responses") {
-      closeOpenAICodexWebSocketSessions(runId);
-    }
-    sink.close?.();
-    await store?.close(context);
+    closePromise = (async () => {
+      try {
+        if (stepping) {
+          const settled = activeSettled;
+          const activity = activeActivityCleanup;
+          void lane.abort(context).catch(() => undefined);
+          activity?.cancelActive();
+          if (settled !== undefined && activityChannel.config.closeDrainMs > 0) {
+            await Promise.race([
+              settled,
+              new Promise<void>((resolve) =>
+                setTimeout(resolve, activityChannel.config.closeDrainMs),
+              ),
+            ]);
+          }
+        }
+        const closingHarness = harness.close(context).catch((error) => {
+          if (!stepping) throw error;
+        });
+        if (activityChannel.config.closeDrainMs > 0) {
+          await Promise.race([
+            closingHarness,
+            new Promise<void>((resolve) =>
+              setTimeout(resolve, activityChannel.config.closeDrainMs),
+            ),
+          ]);
+        }
+      } finally {
+        activeActivityCleanup?.();
+        activeActivityCleanup = undefined;
+        if (ownsActivityChannel) await activityChannel.close();
+        else offConfiguredConsumer?.();
+        if (config.model.api === "openai-codex-responses") {
+          closeOpenAICodexWebSocketSessions(runId);
+        }
+        sink.close?.();
+        await store?.close(context);
+      }
+    })();
+    return closePromise;
   }
 
   return {
     step,
     close,
+    subscribeToolActivity: (consumer, options) => activityChannel.subscribe(consumer, options),
+    toolActivitySnapshot: () => activityChannel.snapshot(),
     runId,
     ledgerPath,
   };

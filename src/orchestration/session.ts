@@ -231,32 +231,25 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     }
     assertSummarizerWindow(config.compaction.summarizerModel, reachable);
   }
-  const runner =
-    routing !== undefined
-      ? createRoleRunner({
-          targetDir,
-          models: routing.registry.models,
-          ...(config.compaction !== undefined && { compaction: config.compaction }),
-          ...(config.sessionLimitController !== undefined && {
-            sessionLimitController: config.sessionLimitController,
-          }),
-          ...(config.projectStoreConfig !== undefined && {
-            projectStoreConfig: config.projectStoreConfig,
-          }),
-          ...(config.observability !== undefined && { observability: config.observability }),
-        })
-      : createRoleRunner({
-          targetDir,
-          models: config.models,
-          ...(config.compaction !== undefined && { compaction: config.compaction }),
-          ...(config.sessionLimitController !== undefined && {
-            sessionLimitController: config.sessionLimitController,
-          }),
-          ...(config.projectStoreConfig !== undefined && {
-            projectStoreConfig: config.projectStoreConfig,
-          }),
-          ...(config.observability !== undefined && { observability: config.observability }),
-        });
+  const commonRunnerConfig = {
+    targetDir,
+    ...(config.compaction !== undefined && { compaction: config.compaction }),
+    ...(config.sessionLimitController !== undefined && {
+      sessionLimitController: config.sessionLimitController,
+    }),
+    ...(config.projectStoreConfig !== undefined && {
+      projectStoreConfig: config.projectStoreConfig,
+    }),
+    ...(config.observability !== undefined && { observability: config.observability }),
+    ...(config.activityChannel !== undefined && { activityChannel: config.activityChannel }),
+    ...(config.activityConsumer !== undefined && { activityConsumer: config.activityConsumer }),
+    ...(config.toolActivity !== undefined && { toolActivity: config.toolActivity }),
+    ...(config.monotonicNow !== undefined && { monotonicNow: config.monotonicNow }),
+  };
+  const runner = createRoleRunner({
+    ...commonRunnerConfig,
+    models: routing?.registry.models ?? config.models,
+  });
 
   const defaults: ResolvedDefaults = {
     onChangesRequested: config.defaults?.onChangesRequested ?? "advance",
@@ -356,10 +349,16 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
         followUps: [],
         metrics: {
           stage: step,
+          provider: observed?.provider ?? "unknown",
+          model: observed?.model ?? "unknown",
+          thinkingLevel: observed?.thinkingLevel ?? role.thinkingLevel ?? "unknown",
+          durationMs: observed?.durationMs ?? 0,
           input: observed?.input ?? 0,
           cachedInput: observed?.cachedInput ?? 0,
           freshInput: observed?.freshInput ?? 0,
           output: observed?.output ?? 0,
+          reasoning: observed?.reasoning ?? 0,
+          costUsd: observed?.costUsd ?? 0,
           readFiles: [...(observed?.readFiles ?? [])],
           readFilesTotal: observed?.readFilesTotal ?? 0,
           readFilesTruncated: observed?.readFilesTruncated ?? 0,
