@@ -6,13 +6,6 @@ Only unresolved work belongs here. Current behavior is in
 
 ## Current priority
 
-- [high] **Make auxiliary role output non-fatal and schema-honest**
-  (`src/orchestration/follow-up.ts`): the `submit_follow_up` JSON schema permits
-  variant-only fields together, while semantic validation rejects them; one bad
-  optional follow-up currently fails the entire role after useful work. Expose a
-  discriminated schema and quarantine/report rejected auxiliary records without
-  discarding the primary role result.
-
 - [high] **Persist standalone role usage and explain its active work**: `role`
   currently loses its in-memory token ledger at process exit, while two
   Reviewer dogfood runs showed only heartbeat for 213s and 156s. Persist a safe
@@ -28,6 +21,14 @@ Only unresolved work belongs here. Current behavior is in
   tool-turn, token, and cost budgets with a durable, actionable pause/resume
   outcome. Dogfood evidence: one Coder stage ran 31m25s, made 167 responses,
   read 20.2M cached tokens, and cost $13.70 despite a 240s request timeout.
+
+- [high] **Narrow role inputs at the tool and prompt boundaries**
+  (`src/project-tools/`, `src/runner/`, `prompts/`, `src/orchestration/`): measure
+  which tool fields, result bytes, prompt sections, and repeated handoff data each
+  role actually consumes. Return bounded task-specific tool projections, keep
+  role prompts focused on judgment, and supply scoped plan/findings/diff/contract
+  context with a visible full-context fallback. Prove savings with comparable
+  dogfood runs and unchanged Reviewer/gate outcomes.
 
 - [high] **Complete workflow-module extraction** (`src/workflows/`,
   `src/orchestration/`, `src/cli/resolve-config.ts`): conversational activation

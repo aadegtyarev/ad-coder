@@ -627,6 +627,22 @@ workflows — one substrate, swappable drivers.
   budget from its effective routed model. Until chunked/recursive summarization
   exists, auto mode rejects configurations whose summarizer window is below the
   maximum window reachable through routing cells, overrides, or orchestrator.
+- **Pipeline-efficiency dogfood program (decided 2026-09-13)** — improve the
+  built-in pipeline by running ad-coder's native roles on ad-coder itself,
+  measuring each stage, and preserving useful partial work when a run is stopped.
+  Optimize provider-weighted token cost, total input, wall time, and operator
+  clarity without weakening contract coverage, security review, tests, or escaped-
+  defect quality. Work in small independently reviewable slices. Before another
+  expensive end-to-end run, provide durable whole-stage budgets and live usage.
+  Then reduce repeated context at every source: make built-in and plugin tools
+  return bounded task-specific projections instead of broad contents; narrow
+  tool schemas and results so roles receive only fields needed for the current
+  decision; keep role prompts short and move mechanics into code/contracts; and
+  pass scoped plan, findings, diff, and contract excerpts between roles. Every
+  optimization remains configurable, records its effective strategy and fallback,
+  and falls back visibly to broader context when correctness requires it. Compare
+  like-for-like dogfood runs before claiming savings, including Reviewer verdicts,
+  gates, duration, turns, fresh/cache/output/reasoning tokens, and provider cost.
 - **Incremental pipeline context (decided 2026-09-12)** — default to scoped
   handoffs between pipeline rounds instead of replaying a repository-wide working
   set. Planner starts from project orientation/docs and an incrementally maintained
