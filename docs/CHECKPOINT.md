@@ -123,3 +123,11 @@ existing defaults.
 Verification: 309 Bun tests with 1,577 assertions, TypeScript, Biome, and
 `git diff --check` passed. A follow-up is recorded for a headless Codex
 subscription-status adapter using the installed app-server rate-limit protocol.
+
+## 2026-09-12 — Incremental pipeline-context decision
+
+The next optimization after the current Orchestrator control-plane increment is
+recorded in ROADMAP and BACKLOG. Planner reconnaissance, Coder fix turns, and
+repeated review will use scoped handoffs by default, with visible automatic
+fallback to full context on scope drift or insufficient evidence. Per-stage
+context and diff telemetry will make the token and cache effect measurable.
