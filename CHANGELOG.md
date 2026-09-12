@@ -8,6 +8,8 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ### Added
 
+- Added a zero-disabled per-stage limit controller for duration, model turns,
+  tool turns, input tokens, and provider-reported cost.
 - Added a bounded headless semantic tool-activity lifecycle stream, optional
   subscriptions, compact console grouping, and schema-v1 NDJSON progress on
   stderr with visible backpressure and subscriber drops.

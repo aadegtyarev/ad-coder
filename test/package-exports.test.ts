@@ -187,6 +187,8 @@ import {
   SessionLimitController,
   SessionLimitError,
   SHOW_COST_TOOL_NAME,
+  StageLimitController,
+  StageLimitError,
   SUBMIT_PLAN_TOOL_NAME,
   SUBMIT_VERDICT_TOOL_NAME,
   SUMMARIZATION_PROMPT,
@@ -263,6 +265,8 @@ test("the package is importable by its published name", () => {
   expect(typeof RunnerError).toBe("function");
   expect(typeof resolveTargetDir).toBe("function");
   expect(typeof runPipeline).toBe("function");
+  expect(typeof StageLimitController).toBe("function");
+  expect(typeof StageLimitError).toBe("function");
   expect(typeof createWorkflowSession).toBe("function");
   expect(typeof applyTransition).toBe("function");
   expect(typeof autoDriver).toBe("function");
