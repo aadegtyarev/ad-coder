@@ -16,6 +16,10 @@ network (pi-ai's fauxProvider) and demonstrated live on DeepSeek.
 
 ### Added
 
+- **Project operations Increment 4** — a durable non-model RunCoordinator,
+  structured per-turn FollowUps, operator decisions, accepted-contract re-review,
+  idempotent closeout, and resume parity across all workflow drivers.
+
 - **Project operations Increment 3** — strict, provenance-preserving FollowUps;
   proposal-only documentation routing; and one configured BacklogStore authority
   with file or opt-in GitHub issue persistence, lifecycle/lease claims, a

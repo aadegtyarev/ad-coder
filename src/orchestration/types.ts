@@ -2,6 +2,8 @@ import type { Api, Model, Models } from "@earendil-works/pi-ai";
 import type { CompactionPolicy } from "../context/compactor";
 import type { LedgerSink } from "../ledger/ledger";
 import type { Profile, ProfileRole, SpawnOverride } from "../profiles/types";
+import type { RunCoordinatorOptions } from "../project-operations/run-coordinator";
+import type { FollowUp } from "../project-operations/types";
 import type { ProjectStoreConfig } from "../project-store/types";
 import type { ResolvedRegistry } from "../registry/types";
 import type { Role } from "../role";
@@ -223,6 +225,8 @@ export interface PipelineConfig {
   sessionLimitController?: SessionLimitController;
   /** Retention and byte limits for all durable state created by this run. */
   projectStoreConfig?: ProjectStoreConfig;
+  /** Durable coordinator identity; supply runId to resume an interrupted run. */
+  coordinator?: RunCoordinatorOptions;
 }
 
 /**
@@ -414,6 +418,8 @@ export interface StepResult {
     text: string;
     verdict?: Verdict;
     plan?: Plan;
+    /** Structured follow-ups captured during this role turn. */
+    followUps?: FollowUp[];
   };
   transitions: AvailableTransition[];
 }

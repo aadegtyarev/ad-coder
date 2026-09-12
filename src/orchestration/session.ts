@@ -4,9 +4,16 @@ import type { Api, Model, TextContent } from "@earendil-works/pi-ai";
 import { resolveProfile } from "../profiles/resolve";
 import type { ProfileRole } from "../profiles/types";
 import { parseProfile } from "../profiles/validate";
+import type { FollowUp } from "../project-operations/types";
 import { ProjectStore } from "../project-store/project-store";
 import { createRoleRunner } from "../runner/role-runner";
 import type { Tool } from "../runner/tool";
+import {
+  buildSubmitFollowUpTool,
+  type FollowUpCapture,
+  formatFollowUpInstruction,
+  SUBMIT_FOLLOW_UP_TOOL_NAME,
+} from "./follow-up";
 import type { PlanCapture } from "./plan";
 import { buildSubmitPlanTool, formatPlannerInstruction } from "./plan";
 import type {
@@ -38,6 +45,9 @@ import { buildSubmitVerdictTool, formatReviewerInstruction } from "./verdict";
 export interface WorkflowSession {
   initialState(): WorkflowState;
   step(state: WorkflowState): Promise<StepResult>;
+  /** Re-run only the reviewer against the current implementation and contracts. */
+  reviewCurrent(state: WorkflowState): Promise<StepResult>;
+  readonly projectStore: ProjectStore;
 }
 
 /** The resolved transition-policy knobs, each already defaulted to today's behavior. */
@@ -79,6 +89,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
   }
 
   const { targetDir } = config;
+  const projectStore = new ProjectStore(config.targetDir, config.projectStoreConfig);
 
   // Complexity-aware routing (optional). When present, re-validate the profile
   // at the sink (house style: untrusted hand-built config is re-parsed before
@@ -153,11 +164,10 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     step: string,
     runId: string,
     tools?: Tool[],
-  ): Promise<string> => {
+  ): Promise<{ text: string; followUps: FollowUp[] }> => {
     // A fresh session per run: each role has its own systemPrompt, so sharing a
     // session would leak one role's history and prompt into another.
-    const store = new ProjectStore(config.targetDir, config.projectStoreConfig);
-    const session = await store.createSession(runId, BACKGROUND_CONTEXT);
+    const session = await projectStore.createSession(runId, BACKGROUND_CONTEXT);
     await runner.runRole(spec.role, model, prompt, {
       runId,
       step,
@@ -169,12 +179,42 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     // runRole closes the session facade it was handed (harness.close ->
     // session.close), while the durable store survives. Reopen a fresh readable
     // facade to scan the settled transcript.
-    const readable = await store.resumeSession(runId, BACKGROUND_CONTEXT);
+    const readable = await projectStore.resumeSession(runId, BACKGROUND_CONTEXT);
     try {
-      return await extractFinalText(readable, BACKGROUND_CONTEXT);
+      return { text: await extractFinalText(readable, BACKGROUND_CONTEXT), followUps: [] };
     } finally {
       await readable.close(BACKGROUND_CONTEXT);
     }
+  };
+
+  const runWorkflowTurn = async (
+    spec: RoleSpec,
+    model: Model<Api>,
+    prompt: string,
+    stepName: string,
+    runId: string,
+    tools: Tool[] = [],
+  ): Promise<{ text: string; followUps: FollowUp[] }> => {
+    const enabled =
+      spec.role.activeToolNames === undefined ||
+      spec.role.activeToolNames.includes(SUBMIT_FOLLOW_UP_TOOL_NAME);
+    const capture: FollowUpCapture = { followUps: [] };
+    const configuredBranch = config.projectStoreConfig?.projectOperations?.branch;
+    const followUpTool = buildSubmitFollowUpTool(capture, {
+      producer: spec.role.name,
+      runId,
+      ...(configuredBranch !== undefined && { branch: configuredBranch }),
+    });
+    const turn = await runTurn(
+      spec,
+      model,
+      enabled ? `${prompt}\n\n${formatFollowUpInstruction()}` : prompt,
+      stepName,
+      runId,
+      [...tools, followUpTool],
+    );
+    if (capture.error !== undefined) throw capture.error;
+    return { text: turn.text, followUps: capture.followUps };
   };
 
   const initialState = (): WorkflowState => ({
@@ -205,7 +245,9 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     const submitPlanTool = buildSubmitPlanTool(capture, runId);
     const prompt = `${config.task}\n\n${formatPlannerInstruction()}`;
     const model = pickModel("planner", planner, state.preComplexity);
-    const text = await runTurn(planner, model, prompt, "plan", runId, [submitPlanTool]);
+    const { text, followUps } = await runWorkflowTurn(planner, model, prompt, "plan", runId, [
+      submitPlanTool,
+    ]);
     const runIds = [...state.runIds, runId];
     // A captured error is parsePlan's OrchestrationError, swallowed by the
     // harness into an error tool-result and re-thrown here (HARD malformed_plan).
@@ -257,6 +299,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
         runId,
         text,
         ...(capture.plan !== undefined && { plan: capture.plan }),
+        followUps,
       },
       transitions,
     };
@@ -273,7 +316,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       appendContractRequirements(state.planSummary, state.contractRequirements),
     );
     const model = pickModel("security", security, state.effective);
-    const text = await runTurn(security, model, prompt, "security", runId);
+    const { text, followUps } = await runWorkflowTurn(security, model, prompt, "security", runId);
     const nextState: WorkflowState = {
       ...state,
       securityNotes: text,
@@ -283,7 +326,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       { kind: "advance", isDefault: defaults.autoAdvance, toPhase: "code", toRound: state.round },
       { kind: "stop", isDefault: !defaults.autoAdvance, toPhase: "done", toRound: state.round },
     ];
-    return { state: nextState, result: { phase: "security", runId, text }, transitions };
+    return { state: nextState, result: { phase: "security", runId, text, followUps }, transitions };
   };
 
   const stepCode = async (state: WorkflowState): Promise<StepResult> => {
@@ -303,7 +346,13 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       appendContractRequirements(handoff, state.contractRequirements),
     );
     const model = pickModel("coder", config.roles.coder, state.effective);
-    const text = await runTurn(config.roles.coder, model, context, `code:${round}`, runId);
+    const { text, followUps } = await runWorkflowTurn(
+      config.roles.coder,
+      model,
+      context,
+      `code:${round}`,
+      runId,
+    );
     const nextState: WorkflowState = {
       ...state,
       changeSummary: text,
@@ -315,7 +364,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       { kind: "rework", isDefault: false, toPhase: "code", toRound: round + 1 },
       { kind: "stop", isDefault: !defaults.autoAdvance, toPhase: "done", toRound: round },
     ];
-    return { state: nextState, result: { phase: "code", runId, text }, transitions };
+    return { state: nextState, result: { phase: "code", runId, text, followUps }, transitions };
   };
 
   const stepReview = async (state: WorkflowState): Promise<StepResult> => {
@@ -333,9 +382,14 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       state.contractRequirements,
     );
     const model = pickModel("reviewer", config.roles.reviewer, state.effective);
-    const text = await runTurn(config.roles.reviewer, model, prompt, `review:${round}`, runId, [
-      submitTool,
-    ]);
+    const { text, followUps } = await runWorkflowTurn(
+      config.roles.reviewer,
+      model,
+      prompt,
+      `review:${round}`,
+      runId,
+      [submitTool],
+    );
     // Missing/malformed here throws OrchestrationError -- distinct from a
     // legitimate non-approval, which is a well-formed changes_requested verdict.
     // A captured error is parseVerdict's OrchestrationError, swallowed by the
@@ -383,7 +437,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     }
     return {
       state: nextState,
-      result: { phase: "review", runId, text, verdict },
+      result: { phase: "review", runId, text, verdict, followUps },
       transitions,
     };
   };
@@ -405,7 +459,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     }
   };
 
-  return { initialState, step };
+  return { initialState, step, reviewCurrent: stepReview, projectStore };
 }
 
 /**

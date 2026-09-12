@@ -11,6 +11,7 @@ import {
 } from "@earendil-works/pi-ai";
 import type { FauxProviderHandle } from "@earendil-works/pi-ai/providers/faux";
 import { MemoryLedgerSink } from "../src/ledger/ledger";
+import { SUBMIT_FOLLOW_UP_TOOL_NAME } from "../src/orchestration/follow-up";
 import {
   buildOrchestratorTools,
   CHOOSE_TRANSITION_TOOL_NAME,
@@ -72,7 +73,7 @@ function fixture(): Fixture {
     return { role: built, model };
   };
 
-  const defaultTools = ["bash", "read", "write", "edit"];
+  const defaultTools = ["bash", "read", "write", "edit", SUBMIT_FOLLOW_UP_TOOL_NAME];
   const buildConfig = (task: string): PipelineConfig => ({
     targetDir,
     models,
@@ -147,6 +148,40 @@ test("capability reachable without the chat front: runPipeline drives to a verdi
   // plan, code, review each ran as one step.
   expect(run.perStep.map((e) => e.phase)).toEqual(["plan", "code", "review"]);
   // No startConversation / tools were involved -- the core alone reached a verdict.
+});
+
+test("conversational core uses coordinator closeout for captured FollowUps", async () => {
+  const fx = fixture();
+  const verdict: Verdict = { status: "approved", issues: [], summary: "looks good" };
+  fx.faux.setResponses([
+    fauxAssistantMessage("plan: do X"),
+    fauxAssistantMessage(
+      fauxToolCall(SUBMIT_FOLLOW_UP_TOOL_NAME, {
+        kind: "note",
+        title: "Conversational coordinator scenario",
+        evidence: [{ summary: "The core captured a durable follow-up" }],
+      }),
+    ),
+    fauxAssistantMessage("coded X"),
+    fauxAssistantMessage(fauxToolCall(SUBMIT_VERDICT_TOOL_NAME, verdict)),
+    fauxAssistantMessage("review complete"),
+  ]);
+
+  const core = createOrchestrator({ buildConfig: fx.buildConfig, ledgerSink: fx.sink });
+  const run = await core.runPipeline("implement X");
+  expect(run.result.approved).toBe(true);
+  const checkpointName = fs
+    .readdirSync(path.join(fx.targetDir, ".ad-coder", "runs"))
+    .find((name) => name.startsWith("coordinator-"));
+  expect(checkpointName).toBeDefined();
+  const checkpoint = JSON.parse(
+    fs.readFileSync(path.join(fx.targetDir, ".ad-coder", "runs", checkpointName as string), "utf8"),
+  ).value;
+  expect(checkpoint.phase).toBe("complete");
+  expect(checkpoint.followUps).toHaveLength(1);
+  expect(
+    fs.readFileSync(path.join(fx.targetDir, "docs", "notes", "candidates.md"), "utf8"),
+  ).toContain("<!-- ad-coder:");
 });
 
 test("unoffered transition is rejected at the core with only the kind", async () => {

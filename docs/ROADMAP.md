@@ -490,8 +490,19 @@ workflows — one substrate, swappable drivers.
   a structural metadata projection of candidate prose. A machine JSON CLI covers
   the same APIs, including the read-only capability probe and one-time migration
   advice. Shared-store claim serialization is supported; multi-host claiming without a shared
-  ProjectStore is explicitly unsupported. RunCoordinator, LDO import, and
-  repository publishing remain later increments.
+  ProjectStore is explicitly unsupported.
+- **Run coordination and durable closeout — DELIVERED (Increment 4)** — every
+  built-in driver now uses the same non-model `RunCoordinator`. Role turns may
+  submit strictly validated FollowUp candidates; the engine adds unforgeable
+  producer/run/branch provenance, aggregates every round, and checkpoints the
+  workflow, pending step, effects, decisions, contract re-reviews, and terminal
+  result with ProjectStore CAS. Notes, authorized existing design docs, and file
+  backlog items close automatically with stable destination markers/IDs;
+  contract and ambiguous product choices stop on durable operator decisions.
+  Accepted one-line contracts are written exactly once and force a reviewer-only
+  pass over the current implementation before approval can close. Numeric
+  coordinator limits default to `0` (disabled). LDO import, repository publishing,
+  and distributed GitHub coordination remain later increments.
 - **Multi-user + pluggable backlog** — multi-user is the SAME conflict-avoidance
   as project memory (per-file records) + worktree isolation, under more writers;
   the ledger gains an actor/user dimension. The delivered BacklogStore remains
@@ -673,6 +684,27 @@ workflows — one substrate, swappable drivers.
   (browse/resume from the phone), the ledger (cost as a notification), consent, and the
   sandbox+wallet. This is the multi-user/remote surface. Enforced by
   docs/contracts/architecture.md (every capability reachable programmatically).
+
+- **Multi-session control plane (decided 2026-09-12)** — independent sessions are
+  owned by a headless `SessionManager`, not by Telegram or the TUI. Each session
+  binds a project, target/worktree, branch, workflow/run, owner, mode, status and
+  durable ProjectStore state. A daemon keeps sessions running and publishes an
+  event stream (`run.started`, `step.finished`, `decision.required`,
+  `run.finished`). TUI, Telegram topics, JSON/RPC clients and future web fronts are
+  interchangeable drivers over that core. One Telegram topic may bind to one
+  session; multiple sessions for the same repository use separate worktrees and
+  branches. Commands are serialized per session while independent sessions run in
+  parallel. Attachments and chat images enter through ProjectStore. The plugin
+  supplies transport and buttons; it does not own execution state.
+
+- **Plugin registry (decided 2026-09-12)** — build on the existing `defineTool`,
+  workflow and driver seams. A small manifest declares an entry module and the
+  capabilities it provides (`tools`, `workflows`, `drivers`, event subscribers).
+  Support local paths and ordinary npm packages with `add`, `enable`, `disable`,
+  `list` and `doctor`; enabled plugin code is trusted operator configuration, like
+  project workflows and prompt overrides. MCP is a general tool-source plugin;
+  Telegram is a driver plugin over SessionManager and the daemon. Avoid a separate
+  package ecosystem or plugin-specific session implementation.
 
 ## Open backlog (mechanical)
 

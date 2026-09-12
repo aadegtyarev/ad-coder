@@ -1,4 +1,6 @@
-import { applyTransition, autoDriver, createWorkflowSession, toPipelineResult } from "./session";
+import { ProjectOperationsError } from "../project-operations/errors";
+import { RunCoordinator } from "../project-operations/run-coordinator";
+import { createWorkflowSession } from "./session";
 import type { PipelineConfig, PipelineResult } from "./types";
 
 /**
@@ -47,10 +49,14 @@ import type { PipelineConfig, PipelineResult } from "./types";
  */
 export async function runPipeline(config: PipelineConfig): Promise<PipelineResult> {
   const session = createWorkflowSession(config);
-  let state = session.initialState();
-  while (!state.done) {
-    const { state: settled, transitions } = await session.step(state);
-    state = applyTransition(settled, autoDriver(transitions));
+  const coordinator = new RunCoordinator(session, session.projectStore, config.coordinator);
+  const completed = await coordinator.run();
+  if (completed.result === undefined) {
+    const decision = completed.checkpoint.decisions.find((item) => item.status === "pending");
+    throw new ProjectOperationsError(
+      "pending_decision",
+      decision?.id ?? completed.checkpoint.runId,
+    );
   }
-  return toPipelineResult(state);
+  return completed.result;
 }

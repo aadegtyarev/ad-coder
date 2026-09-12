@@ -223,14 +223,26 @@ omit it and each role runs on its configured `RoleSpec.model` exactly as before.
 Project operations are available as a headless API. `validateFollowUp` and
 `aggregateFollowUps` produce one strict union of contract, note, design-doc
 drift, and backlog candidates with deterministic provenance. Documentation
-routing returns proposals only; it never publishes files. `createBacklogStore`
+routing remains available for inspection; `RunCoordinator` applies authorized
+note/design-doc proposals with generated metadata-only content and stable
+idempotency markers. `createBacklogStore`
 selects exactly one authority: the target-local file backend by default, or the
 GitHub issues backend when `projectOperations.backlogBackend` is `github` and an
 argv-style executor plus repository mapping are supplied. Backlog claims carry
 owner, run, branch, and lease timestamps through the queued → claimed →
 in_progress → review/blocked → done lifecycle. Backlog persistence always
-projects candidate prose to structural metadata; raw model/project content has
-no persistence escape hatch. All new numeric limits default to `0` (disabled).
+projects candidate prose to structural metadata. All new numeric limits default
+to `0` (disabled).
+
+`RunCoordinator` is the shared non-model lifecycle owner behind direct
+`runPipeline`, `driveWorkflow`, and conversational orchestration. Pass
+`coordinator: { runId }` in `PipelineConfig` to reopen an interrupted run; its
+ProjectStore checkpoint resumes a prepared step, follow-up processing, operator
+decision, contract re-review, or closeout without repeating completed effects.
+Contract and ambiguous product decisions stop loudly for operator resolution.
+Only a trusted programmatic/UI call to `resolveDecision` with `source:
+"operator"` can commit a resolution; accepting a contract also requires exact
+one-line rule text and triggers a reviewer-only pass before approval.
 
 The non-interactive `ad-coder operations <action> --target-dir <dir> [--json]`
 front exposes FollowUp validation/aggregation, documentation routing, every
@@ -238,8 +250,8 @@ backlog lifecycle operation, and GitHub capability/migration probes as JSON.
 Pass candidate JSON with `--input <file>` or `--input -`; claim actions also use
 `--owner`, `--run-id`, and `--branch`.
 
-`runPipeline` is the autonomous driver over a STEPPED engine you can also drive
-yourself. `createWorkflowSession(config)` exposes the same plan → [security] →
+`runPipeline` is the autonomous coordinator driver over a STEPPED engine you can
+also drive yourself. `createWorkflowSession(config)` exposes the same plan → [security] →
 code ⇄ review graph as an explicit `WorkflowState`: `step(state)` runs the one
 pending role turn and hands back the available transitions (`advance`, `rework`,
 `stop`) without committing one, and the pure `applyTransition(state, chosen)`

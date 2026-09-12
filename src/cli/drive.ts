@@ -1,9 +1,11 @@
 import * as readline from "node:readline";
 import type { MemoryLedgerSink } from "../ledger/ledger";
 import type { WorkflowSession } from "../orchestration/session";
-import { applyTransition, autoDriver, toPipelineResult } from "../orchestration/session";
+import { autoDriver } from "../orchestration/session";
 import { assertTransitionOffered } from "../orchestration/transition-guard";
 import type { AvailableTransition, PipelineResult } from "../orchestration/types";
+import { ProjectOperationsError } from "../project-operations/errors";
+import { RunCoordinator, type RunCoordinatorOptions } from "../project-operations/run-coordinator";
 
 export type { DriveErrorCode } from "../orchestration/transition-guard";
 // The transition guard (DriveError/DriveErrorCode/assertTransitionOffered) lives
@@ -37,6 +39,8 @@ export interface DriveWorkflowParams {
   input: NodeJS.ReadableStream;
   output: NodeJS.WritableStream;
   error: NodeJS.WritableStream;
+  coordinator?: RunCoordinator;
+  coordinatorOptions?: RunCoordinatorOptions;
 }
 
 /**
@@ -190,44 +194,56 @@ export async function driveWorkflow(params: DriveWorkflowParams): Promise<Pipeli
   // input stream in a script or CI where nothing is piped in.
   const reader = auto ? undefined : createLineReader(input);
 
-  let state = session.initialState();
   try {
-    while (!state.done) {
-      const costBefore = ledgerSink.records().length;
-      const { state: settled, result, transitions } = await session.step(state);
-      output.write(`\n[${result.phase}] runId ${result.runId}\n`);
-      if (result.text.trim() !== "") {
-        output.write(`${result.text}\n`);
-      }
-      if (result.verdict !== undefined) {
-        output.write(`verdict: ${result.verdict.status} -- ${result.verdict.summary}\n`);
-      }
-      if (result.plan !== undefined) {
-        output.write(
-          `plan: complexity ${result.plan.complexity}, security ${result.plan.securitySurface}\n`,
-        );
-      }
-      const stepCost = costForRange(ledgerSink, costBefore, ledgerSink.records().length);
-      output.write(`cost: $${stepCost.toFixed(8)}\n`);
-      const warning = silentNoopWarning(result.text, stepCost);
-      if (warning !== undefined) {
-        error.write(warning);
-      }
-
-      const chosen = auto
-        ? autoDriver(transitions)
-        : await readChoice(reader as LineReader, transitions, output);
-      assertTransitionOffered(chosen, transitions);
-      state = applyTransition(settled, chosen);
+    const coordinator =
+      params.coordinator ??
+      new RunCoordinator(session, session.projectStore, params.coordinatorOptions);
+    let costBefore = ledgerSink.records().length;
+    const completed = await coordinator.run(
+      async (transitions) => {
+        const chosen = auto
+          ? autoDriver(transitions)
+          : await readChoice(reader as LineReader, transitions, output);
+        assertTransitionOffered(chosen, transitions);
+        return chosen;
+      },
+      async ({ result }) => {
+        output.write(`\n[${result.phase}] runId ${result.runId}\n`);
+        if (result.text.trim() !== "") {
+          output.write(`${result.text}\n`);
+        }
+        if (result.verdict !== undefined) {
+          output.write(`verdict: ${result.verdict.status} -- ${result.verdict.summary}\n`);
+        }
+        if (result.plan !== undefined) {
+          output.write(
+            `plan: complexity ${result.plan.complexity}, security ${result.plan.securitySurface}\n`,
+          );
+        }
+        const stepCost = costForRange(ledgerSink, costBefore, ledgerSink.records().length);
+        output.write(`cost: $${stepCost.toFixed(8)}\n`);
+        const warning = silentNoopWarning(result.text, stepCost);
+        if (warning !== undefined) {
+          error.write(warning);
+        }
+        costBefore = ledgerSink.records().length;
+      },
+    );
+    if (completed.result === undefined) {
+      const pending = completed.checkpoint.decisions.find(
+        (decision) => decision.status === "pending",
+      );
+      throw new ProjectOperationsError(
+        "pending_decision",
+        pending?.id ?? completed.checkpoint.runId,
+      );
     }
+    output.write(
+      `\napproved: ${completed.result.approved} | rounds: ${completed.result.rounds} | ` +
+        `total cost: $${totalCost(ledgerSink).toFixed(8)}\n`,
+    );
+    return completed.result;
   } finally {
     reader?.close();
   }
-
-  const pipelineResult = toPipelineResult(state);
-  output.write(
-    `\napproved: ${pipelineResult.approved} | rounds: ${pipelineResult.rounds} | ` +
-      `total cost: $${totalCost(ledgerSink).toFixed(8)}\n`,
-  );
-  return pipelineResult;
 }

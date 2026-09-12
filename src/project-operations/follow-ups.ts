@@ -1,7 +1,9 @@
+import * as crypto from "node:crypto";
 import { ProjectOperationsError } from "./errors";
 import type {
   BacklogFollowUp,
   FollowUp,
+  FollowUpCandidate,
   FollowUpEvidence,
   FollowUpProvenance,
   FollowUpValidationOptions,
@@ -157,6 +159,23 @@ function semanticKey(item: FollowUp): string {
           ? (item.priority ?? "")
           : "";
   return JSON.stringify([item.kind, item.title.trim().toLowerCase(), destination]);
+}
+
+export function followUpSemanticId(item: FollowUp): string {
+  return crypto
+    .createHash("sha256")
+    .update(semanticKey(validateFollowUp(item)))
+    .digest("hex");
+}
+
+/** Validate the model boundary before engine-authored provenance is attached. */
+export function validateFollowUpCandidate(value: unknown): FollowUpCandidate {
+  if (!plain(value)) fail("follow-up candidate must be an object");
+  if (Object.hasOwn(value, "provenance")) fail("provenance is engine-authored");
+  return validateFollowUp({
+    ...value,
+    provenance: [{ producer: "engine", runId: "capture" }],
+  }) as FollowUpCandidate;
 }
 
 export function aggregateFollowUps(

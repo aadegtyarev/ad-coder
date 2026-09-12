@@ -1,0 +1,489 @@
+import * as crypto from "node:crypto";
+import * as path from "node:path";
+import type { WorkflowSession } from "../orchestration/session";
+import { applyTransition, autoDriver, toPipelineResult } from "../orchestration/session";
+import type { Driver, PipelineResult, StepResult, WorkflowState } from "../orchestration/types";
+import type { ProjectStore } from "../project-store/project-store";
+import type { VersionedState } from "../project-store/types";
+import { ProjectStoreError } from "../project-store/types";
+import { type BacklogStore, FileBacklogStore } from "./backlog";
+import {
+  appendDocumentationProposal,
+  type DocumentationProposal,
+  routeDocumentationFollowUp,
+} from "./documentation";
+import { ProjectOperationsError } from "./errors";
+import { aggregateFollowUps, followUpSemanticId } from "./follow-ups";
+import type { FollowUp } from "./types";
+
+export type CoordinatorPhase = "workflow" | "follow-ups" | "decisions" | "closeout" | "complete";
+export type DecisionStatus = "pending" | "accepted" | "rejected" | "deferred";
+
+export interface OperatorDecision {
+  id: string;
+  followUpId: string;
+  kind: "contract" | "product";
+  status: DecisionStatus;
+  authorizationSource?: "operator";
+  contractText?: string;
+}
+
+export interface ContractReviewRecord {
+  decisionId: string;
+  status: "pending" | "approved" | "changes_requested";
+  runId?: string;
+}
+
+export interface CoordinatorCloseout {
+  pipeline: PipelineResult;
+  followUpIds: string[];
+  decisionIds: string[];
+}
+
+export interface RunCheckpoint {
+  schemaVersion: 1;
+  runId: string;
+  phase: CoordinatorPhase;
+  workflowState: WorkflowState;
+  followUps: FollowUp[];
+  completedEffects: string[];
+  decisions: OperatorDecision[];
+  contractReviews: ContractReviewRecord[];
+  closeout?: CoordinatorCloseout;
+  pendingStep?: StepResult;
+}
+
+export interface RunCoordinatorOptions {
+  runId?: string;
+  decisionLimit?: number;
+  checkpointByteLimit?: number;
+  /** Required for a non-file backlog authority; the coordinator never falls back. */
+  backlogStore?: BacklogStore;
+}
+
+export const DEFAULT_RUN_COORDINATOR_OPTIONS = {
+  decisionLimit: 0,
+  checkpointByteLimit: 0,
+} as const;
+
+export interface CoordinatorRunResult {
+  status: "awaiting_decision" | "complete";
+  checkpoint: RunCheckpoint;
+  result?: PipelineResult;
+}
+
+export interface DecisionResolution {
+  source: "operator";
+  action: "accept" | "reject" | "defer";
+  contractText?: string;
+}
+
+export type CoordinatorDriver = (
+  transitions: Parameters<Driver>[0],
+) => ReturnType<Driver> | Promise<ReturnType<Driver>>;
+
+function clone<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function validateContractText(text: unknown, id: string): string {
+  if (
+    typeof text !== "string" ||
+    text.trim() === "" ||
+    text !== text.trim() ||
+    /[\r\n\0]/.test(text) ||
+    text.includes("<!--")
+  )
+    throw new ProjectOperationsError("invalid_follow_up", id);
+  return text;
+}
+
+/** Deterministic, non-model owner of workflow progress and project closeout. */
+export class RunCoordinator {
+  private persisted: VersionedState<RunCheckpoint>;
+  private readonly checkpointPath: string;
+  private readonly decisionLimit: number;
+  private readonly checkpointByteLimit: number;
+  private readonly backlogStore: BacklogStore | undefined;
+
+  constructor(
+    private readonly session: WorkflowSession,
+    private readonly store: ProjectStore,
+    options: RunCoordinatorOptions = {},
+  ) {
+    const runId = options.runId ?? crypto.randomUUID();
+    this.decisionLimit = options.decisionLimit ?? DEFAULT_RUN_COORDINATOR_OPTIONS.decisionLimit;
+    this.checkpointByteLimit =
+      options.checkpointByteLimit ?? DEFAULT_RUN_COORDINATOR_OPTIONS.checkpointByteLimit;
+    this.backlogStore = options.backlogStore;
+    for (const [name, value] of [
+      ["decisionLimit", this.decisionLimit],
+      ["checkpointByteLimit", this.checkpointByteLimit],
+    ] as const)
+      if (!Number.isSafeInteger(value) || value < 0)
+        throw new ProjectOperationsError("invalid_config", name);
+    this.store.validateId(runId);
+    this.checkpointPath = path.join(store.layout.runs, `coordinator-${runId}.json`);
+    try {
+      this.persisted = store.readVersionedJson<RunCheckpoint>(this.checkpointPath);
+      if (this.persisted.value.schemaVersion !== 1 || this.persisted.value.runId !== runId)
+        throw new ProjectOperationsError("invalid_config", runId);
+    } catch (error) {
+      if (!(error instanceof ProjectStoreError) || error.code !== "not_found") throw error;
+      this.persisted = store.writeVersionedJson(
+        this.checkpointPath,
+        {
+          schemaVersion: 1,
+          runId,
+          phase: "workflow",
+          workflowState: session.initialState(),
+          followUps: [],
+          completedEffects: [],
+          decisions: [],
+          contractReviews: [],
+        },
+        0,
+      );
+    }
+  }
+
+  get checkpoint(): RunCheckpoint {
+    return clone(this.persisted.value);
+  }
+
+  private save(value: RunCheckpoint): void {
+    if (
+      this.checkpointByteLimit > 0 &&
+      Buffer.byteLength(JSON.stringify(value)) > this.checkpointByteLimit
+    )
+      throw new ProjectOperationsError("resource_limit", "checkpointByteLimit");
+    try {
+      this.persisted = this.store.writeVersionedJson(
+        this.checkpointPath,
+        value,
+        this.persisted.version,
+      );
+    } catch (error) {
+      if (error instanceof ProjectStoreError && error.code === "version_conflict")
+        throw new ProjectOperationsError("checkpoint_conflict", value.runId);
+      throw error;
+    }
+  }
+
+  async step(
+    driver: CoordinatorDriver = autoDriver,
+    onStep?: (result: StepResult) => void | Promise<void>,
+  ): Promise<StepResult | undefined> {
+    const result = await this.prepareStep();
+    if (result === undefined) return undefined;
+    await onStep?.(result);
+    const chosen = await driver(result.transitions);
+    this.commitTransition(chosen);
+    return result;
+  }
+
+  async prepareStep(): Promise<StepResult | undefined> {
+    const checkpoint = this.persisted.value;
+    if (checkpoint.phase !== "workflow" || checkpoint.workflowState.done) return undefined;
+    if (checkpoint.pendingStep !== undefined) return clone(checkpoint.pendingStep);
+    const result = await this.session.step(checkpoint.workflowState);
+    const followUps = aggregateFollowUps(
+      [...checkpoint.followUps, ...(result.result.followUps ?? [])],
+      this.store.projectOperations,
+    );
+    const contractReviews =
+      result.result.verdict?.status === "approved"
+        ? checkpoint.contractReviews.map((record) =>
+            record.status === "changes_requested"
+              ? { ...record, status: "approved" as const, runId: result.result.runId }
+              : record,
+          )
+        : checkpoint.contractReviews;
+    this.save({ ...checkpoint, followUps, contractReviews, pendingStep: result });
+    return clone(result);
+  }
+
+  commitTransition(chosen: ReturnType<Driver>): WorkflowState {
+    const checkpoint = this.persisted.value;
+    const pending = checkpoint.pendingStep;
+    if (pending === undefined) throw new ProjectOperationsError("invalid_transition", chosen.kind);
+    const offered = pending.transitions.find(
+      (transition) =>
+        transition.kind === chosen.kind &&
+        transition.toPhase === chosen.toPhase &&
+        transition.toRound === chosen.toRound,
+    );
+    if (offered === undefined) throw new ProjectOperationsError("invalid_transition", chosen.kind);
+    const workflowState = applyTransition(pending.state, offered);
+    const next: RunCheckpoint = {
+      ...checkpoint,
+      workflowState,
+      phase: workflowState.done ? "follow-ups" : "workflow",
+    };
+    delete next.pendingStep;
+    this.save(next);
+    if (workflowState.done) {
+      this.processFollowUps();
+      if (this.persisted.value.phase === "closeout") this.closeout();
+    }
+    return clone(workflowState);
+  }
+
+  private recordEffect(checkpoint: RunCheckpoint, key: string): void {
+    if (checkpoint.completedEffects.includes(key)) return;
+    this.save({
+      ...checkpoint,
+      completedEffects: [...checkpoint.completedEffects, key].sort(),
+    });
+  }
+
+  private ensureDecision(followUp: FollowUp, kind: OperatorDecision["kind"]): void {
+    const checkpoint = this.persisted.value;
+    const followUpId = followUpSemanticId(followUp);
+    const id = crypto
+      .createHash("sha256")
+      .update(`decision:${followUpId}`)
+      .digest("hex")
+      .slice(0, 32);
+    if (checkpoint.decisions.some((decision) => decision.id === id)) return;
+    if (this.decisionLimit > 0 && checkpoint.decisions.length >= this.decisionLimit)
+      throw new ProjectOperationsError("resource_limit", "decisionLimit");
+    this.save({
+      ...checkpoint,
+      decisions: [...checkpoint.decisions, { id, followUpId, kind, status: "pending" }],
+    });
+  }
+
+  private processFollowUps(): void {
+    let checkpoint = this.persisted.value;
+    if (checkpoint.phase !== "follow-ups") return;
+    for (const followUp of checkpoint.followUps) {
+      const id = followUpSemanticId(followUp);
+      const effect = `follow-up:${id}`;
+      if (this.persisted.value.completedEffects.includes(effect)) continue;
+      if (followUp.kind === "contract") {
+        this.ensureDecision(followUp, "contract");
+        this.recordEffect(this.persisted.value, effect);
+        continue;
+      }
+      if (followUp.kind === "backlog") {
+        const backlog =
+          this.backlogStore ??
+          (this.store.projectOperations.backlogBackend === "github"
+            ? undefined
+            : new FileBacklogStore(this.store));
+        if (backlog === undefined)
+          throw new ProjectOperationsError("github_unavailable", "backlogStore");
+        try {
+          backlog.create(followUp, id.slice(0, 32));
+        } catch (error) {
+          if (!(error instanceof ProjectStoreError) || error.code !== "version_conflict")
+            throw error;
+          backlog.get(id.slice(0, 32));
+        }
+        this.recordEffect(this.persisted.value, effect);
+        continue;
+      }
+      try {
+        const proposal = routeDocumentationFollowUp(
+          this.store.layout.targetDir,
+          followUp,
+          this.store.projectOperations,
+        );
+        appendDocumentationProposal(proposal, id);
+        this.recordEffect(this.persisted.value, effect);
+      } catch (error) {
+        if (!(error instanceof ProjectOperationsError) || error.code !== "unsafe_destination")
+          throw error;
+        this.ensureDecision(followUp, "product");
+        this.recordEffect(this.persisted.value, effect);
+      }
+    }
+    checkpoint = this.persisted.value;
+    this.save({ ...checkpoint, phase: checkpoint.decisions.length > 0 ? "decisions" : "closeout" });
+  }
+
+  private acceptedContractProposal(followUp: FollowUp, text: string): DocumentationProposal {
+    const routed = routeDocumentationFollowUp(
+      this.store.layout.targetDir,
+      followUp,
+      this.store.projectOperations,
+    );
+    return { ...routed, content: `- ${text}\n` };
+  }
+
+  async resolveDecision(id: string, resolution: DecisionResolution): Promise<void> {
+    if (resolution.source !== "operator")
+      throw new ProjectOperationsError("unauthorized_resolution", id);
+    let checkpoint = this.persisted.value;
+    const index = checkpoint.decisions.findIndex((decision) => decision.id === id);
+    const current = checkpoint.decisions[index];
+    if (current === undefined) throw new ProjectOperationsError("not_found", id);
+    if (
+      current.status !== "pending" &&
+      !(current.status === "accepted" && current.kind === "contract")
+    )
+      return;
+    const next: OperatorDecision =
+      current.status === "pending"
+        ? {
+            ...current,
+            status:
+              resolution.action === "accept"
+                ? "accepted"
+                : resolution.action === "reject"
+                  ? "rejected"
+                  : "deferred",
+            authorizationSource: "operator",
+          }
+        : current;
+    if (resolution.action === "accept" && current.kind === "contract")
+      next.contractText = validateContractText(resolution.contractText, id);
+    if (current.status === "pending") {
+      const decisions = [...checkpoint.decisions];
+      decisions[index] = next;
+      this.save({ ...checkpoint, decisions });
+    }
+    if (next.status !== "accepted" || next.kind !== "contract") return;
+
+    checkpoint = this.persisted.value;
+    const followUp = checkpoint.followUps.find(
+      (item) => followUpSemanticId(item) === next.followUpId,
+    );
+    if (followUp === undefined || followUp.kind !== "contract")
+      throw new ProjectOperationsError("not_found", next.followUpId);
+    const contractText = next.contractText as string;
+    appendDocumentationProposal(
+      this.acceptedContractProposal(followUp, contractText),
+      `contract-${id}`,
+    );
+    const state: WorkflowState = {
+      ...checkpoint.workflowState,
+      contractRequirements: [
+        ...new Set([...checkpoint.workflowState.contractRequirements, contractText]),
+      ],
+      done: false,
+      approved: false,
+      phase: "review",
+    };
+    const contractReviews = checkpoint.contractReviews.some((record) => record.decisionId === id)
+      ? checkpoint.contractReviews
+      : [
+          ...checkpoint.contractReviews,
+          { decisionId: id, status: "pending" } as ContractReviewRecord,
+        ];
+    this.save({
+      ...checkpoint,
+      workflowState: state,
+      contractReviews,
+    });
+    const review = await this.session.reviewCurrent(state);
+    const verdict = review.result.verdict;
+    if (verdict === undefined) throw new ProjectOperationsError("unresolved_review", id);
+    const reviewRecord: ContractReviewRecord = {
+      decisionId: id,
+      status: verdict.status,
+      runId: review.result.runId,
+    };
+    const reviews = this.persisted.value.contractReviews.map((record) =>
+      record.decisionId === id ? reviewRecord : record,
+    );
+    const followUps = aggregateFollowUps(
+      [...this.persisted.value.followUps, ...(review.result.followUps ?? [])],
+      this.store.projectOperations,
+    );
+    if (verdict.status === "approved") {
+      this.save({
+        ...this.persisted.value,
+        workflowState: { ...review.state, phase: "done", done: true, approved: true },
+        contractReviews: reviews,
+        followUps,
+        phase: "follow-ups",
+      });
+      return;
+    }
+    const advance = review.transitions.find((transition) => transition.toPhase === "code");
+    if (advance === undefined) {
+      this.save({
+        ...this.persisted.value,
+        workflowState: review.state,
+        contractReviews: reviews,
+        followUps,
+      });
+      throw new ProjectOperationsError("unresolved_review", id);
+    }
+    this.save({
+      ...this.persisted.value,
+      workflowState: applyTransition(review.state, advance),
+      contractReviews: reviews,
+      followUps,
+      phase: "workflow",
+    });
+  }
+
+  private closeout(): CoordinatorRunResult {
+    const checkpoint = this.persisted.value;
+    if (checkpoint.closeout !== undefined)
+      return {
+        status: "complete",
+        checkpoint: clone(checkpoint),
+        result: checkpoint.closeout.pipeline,
+      };
+    const pending = checkpoint.decisions.filter((decision) => decision.status === "pending");
+    if (pending.length > 0) return { status: "awaiting_decision", checkpoint: clone(checkpoint) };
+    if (!checkpoint.workflowState.done)
+      return { status: "awaiting_decision", checkpoint: clone(checkpoint) };
+    if (checkpoint.contractReviews.some((record) => record.status !== "approved"))
+      throw new ProjectOperationsError("unresolved_review", checkpoint.runId);
+    const pipeline = toPipelineResult(checkpoint.workflowState);
+    const closeout: CoordinatorCloseout = {
+      pipeline,
+      followUpIds: checkpoint.followUps.map(followUpSemanticId).sort(),
+      decisionIds: checkpoint.decisions.map((decision) => decision.id).sort(),
+    };
+    const complete: RunCheckpoint = { ...checkpoint, phase: "complete", closeout };
+    this.save(complete);
+    return { status: "complete", checkpoint: clone(this.persisted.value), result: pipeline };
+  }
+
+  async run(
+    driver: CoordinatorDriver = autoDriver,
+    onStep?: (result: StepResult) => void | Promise<void>,
+  ): Promise<CoordinatorRunResult> {
+    while (this.persisted.value.phase === "workflow") await this.step(driver, onStep);
+    if (this.persisted.value.phase === "follow-ups") this.processFollowUps();
+    if (this.persisted.value.phase === "decisions") {
+      for (const decision of this.persisted.value.decisions) {
+        if (
+          decision.status === "accepted" &&
+          decision.kind === "contract" &&
+          !this.persisted.value.contractReviews.some(
+            (record) => record.decisionId === decision.id && record.status === "approved",
+          )
+        )
+          await this.resolveDecision(decision.id, {
+            source: "operator",
+            action: "accept",
+            ...(decision.contractText !== undefined && { contractText: decision.contractText }),
+          });
+      }
+      const resumedPhase: CoordinatorPhase = this.checkpoint.phase;
+      if (resumedPhase === "follow-ups") this.processFollowUps();
+      if (resumedPhase === "workflow") return this.run(driver, onStep);
+      const pending = this.persisted.value.decisions.some(
+        (decision) => decision.status === "pending",
+      );
+      if (pending) return { status: "awaiting_decision", checkpoint: this.checkpoint };
+      this.save({ ...this.persisted.value, phase: "closeout" });
+    }
+    return this.closeout();
+  }
+}
+
+export function createRunCoordinator(
+  session: WorkflowSession,
+  store: ProjectStore,
+  options: RunCoordinatorOptions = {},
+): RunCoordinator {
+  return new RunCoordinator(session, store, options);
+}
