@@ -48,7 +48,13 @@ test("each stage boundary blocks the next admission at equality", () => {
 test("an enabled cost budget permits only one unsettled model admission", () => {
   const controller = new StageLimitController({ maxCostUsd: 1 });
   controller.admitModelTurn();
-  expectStageLimit(controller, "cost_in_flight");
+  try {
+    controller.admitModelTurn();
+    throw new Error("expected stage limit");
+  } catch (error) {
+    expect(error).toBeInstanceOf(StageLimitError);
+    expect((error as StageLimitError).reason).toBe("cost_in_flight");
+  }
   expect(controller.snapshot()).toMatchObject({ modelTurns: 1, costInFlight: true });
   controller.observeUsage(4, 0.25);
   expect(() => controller.admitModelTurn()).not.toThrow();

@@ -22,6 +22,10 @@ $0.13613120. It found that the first controller draft admitted concurrent model
 turns while cost was unsettled and omitted the public-API changelog entry. Both
 findings were accepted: an enabled cost limit now reserves the single in-flight
 admission until usage settles, and the exported API is recorded in CHANGELOG.
+The focused re-review took about 122 seconds and $0.13958520; it caught that the
+regression test exercised `assertActive` rather than a second model admission.
+The final test now invokes `admitModelTurn` twice and proves the second dispatch
+is rejected while cost is unsettled.
 
 Continue by implementing and reviewing the stage-limit domain/controller first,
 then runner admission, then coordinator persistence, then CLI/configuration. Run
