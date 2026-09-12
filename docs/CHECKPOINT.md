@@ -124,6 +124,22 @@ Verification: 309 Bun tests with 1,577 assertions, TypeScript, Biome, and
 `git diff --check` passed. A follow-up is recorded for a headless Codex
 subscription-status adapter using the installed app-server rate-limit protocol.
 
+## 2026-09-12 — Daemon-free control plane
+
+The operator's updated mandate is recorded in ROADMAP and the operation-modes
+contract. Pipeline exhaustion now returns a typed `decomposition_required`
+outcome. The headless ProjectStore-backed core now provides atomic request-keyed
+queued admission, restart-safe status/list/resume/cancel, scoped auto/manual
+decisions, provider/session/project limit pauses, sequential decomposition,
+breakpoints, reports and reviewed publish-tree binding. Machine CLI and safe model
+tools call that same core; only the trusted host/CLI surface can resolve a manual
+decision. Publisher checks the exact staged tree before ref mutation.
+
+Verification in this workspace: the focused control-plane/project-operations run
+passes 52 tests with 265 assertions; the full suite passes 316 tests with 1,613
+assertions. TypeScript, Biome and `git diff --check` pass. Bun is reproduced from
+the existing offline npm cache because no direct `bun` executable is on PATH.
+
 ## 2026-09-12 — Incremental pipeline-context decision
 
 The next optimization after the current Orchestrator control-plane increment is
@@ -131,3 +147,16 @@ recorded in ROADMAP and BACKLOG. Planner reconnaissance, Coder fix turns, and
 repeated review will use scoped handoffs by default, with visible automatic
 fallback to full context on scope drift or insufficient evidence. Per-stage
 context and diff telemetry will make the token and cache effect measurable.
+
+## 2026-09-12 — Orchestrator control plane verified
+
+The daemon-free control plane now has durable queued runs, safe status/list/report projections,
+auto/manual decisions, scoped child decomposition, CAS execution leases, cooperative cancellation,
+provider/session/project pauses, exact publish-tree binding, and cursor-based durable events for
+completion, attention, limits, failures, and publication. Auto decisions require existing project
+documentation as evidence; unsupported choices defer instead of fabricating operator approval.
+All numeric resource limits default to `0` unlimited, while decomposition depth remains the explicit
+semantic exception with default `1` and `0` unlimited.
+
+Verification: 318 Bun tests with 1,624 assertions, TypeScript, Biome, and the focused concurrency,
+validation, decomposition, event-cursor, and stale-publication tests pass.

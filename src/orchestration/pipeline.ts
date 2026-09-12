@@ -31,8 +31,9 @@ import type { PipelineConfig, PipelineResult } from "./types";
  * `malformed_verdict`; captured verdict -> use (last-wins on a repeated call).
  *
  * THE LOOP settles when a reviewer round returns `status: 'approved'` or when
- * `maxRounds` is reached. Exhausting the cap returns `approved: false` -- a
- * legitimate, un-thrown result the caller inspects. A missing or malformed
+ * `maxRounds` is reached. Exhausting the cap returns
+ * `outcome: "decomposition_required"` with `approved: false` -- a legitimate,
+ * un-thrown result the caller inspects. A missing or malformed
  * verdict, by contrast, is a hard `OrchestrationError`: it is never read as a
  * pass. Runs are strictly sequential (no `Promise.all`/retry/fan-out), so a
  * shared `ledgerSink` is safe and per-round cost is attributed by the `step`

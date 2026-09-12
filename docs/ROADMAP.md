@@ -734,17 +734,22 @@ workflows — one substrate, swappable drivers.
   sandbox+wallet. This is the multi-user/remote surface. Enforced by
   docs/contracts/architecture.md (every capability reachable programmatically).
 
-- **Multi-session control plane (decided 2026-09-12)** — independent sessions are
-  owned by a headless `SessionManager`, not by Telegram or the TUI. Each session
-  binds a project, target/worktree, branch, workflow/run, owner, mode, status and
-  durable ProjectStore state. A daemon keeps sessions running and publishes an
-  event stream (`run.started`, `step.finished`, `decision.required`,
-  `run.finished`). TUI, Telegram topics, JSON/RPC clients and future web fronts are
-  interchangeable drivers over that core. One Telegram topic may bind to one
-  session; multiple sessions for the same repository use separate worktrees and
-  branches. Commands are serialized per session while independent sessions run in
-  parallel. Attachments and chat images enter through ProjectStore. The plugin
-  supplies transport and buttons; it does not own execution state.
+- **Durable Orchestrator control plane (re-decided 2026-09-12)** — the current
+  increment is a headless, daemon-free queued run service over ProjectStore.
+  `start` atomically records intent and returns; a live in-process scheduler or an
+  explicit `resume`/pump advances work. Status/list/resume/cancel survive process
+  reconstruction and commands serialize within one root tree. Auto mode is an
+  advance mandate to decide from the task and durable project knowledge, with
+  structured grounds and scope recorded for every decision; manual mode waits for
+  an external operator channel. After `maxRounds: 2`,
+  `decomposition_required` starts sequential child pipelines by default. A child
+  requesting decomposition stops its sibling series and exposes full details.
+  `autoDecomposition` independently enables the mechanism;
+  `maxDecompositionDepth` defaults to 1 and 0 means unlimited;
+  `maxChildPipelines` defaults to 8 and 0 means unlimited. Provider subscription/
+  key availability and session budgets pause resumably rather than becoming review
+  failures. A daemon/event stream remains a possible later multi-project feature,
+  not a dependency of this control plane.
 
 - **Plugin registry (decided 2026-09-12)** — build on the existing `defineTool`,
   workflow and driver seams. A small manifest declares an entry module and the
@@ -760,3 +765,8 @@ workflows — one substrate, swappable drivers.
 See docs/BACKLOG.md. Notably: ContextBudgetError should surface the effective
 ceiling min(maxTokens, contextWindow) (minor); UsageDeltaTracker Map growth;
 ledger JSONL retention policy.
+### Control-plane notification contract
+
+TUI, chat, and remote adapters consume the same durable event cursor. They may present runs in the
+background without owning pipeline state; reconnecting from the last acknowledged sequence must
+recover every terminal or operator-attention event. A separate always-on daemon remains optional.

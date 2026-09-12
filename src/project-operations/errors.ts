@@ -24,7 +24,8 @@ export type ProjectOperationsErrorCode =
   | "unauthorized_path"
   | "gate_failed"
   | "approval_required"
-  | "publish_failed";
+  | "publish_failed"
+  | "stale_binding";
 
 export class ProjectOperationsError extends Error {
   override readonly name = "ProjectOperationsError";

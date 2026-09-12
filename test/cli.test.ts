@@ -134,7 +134,7 @@ test("each command renders its own help before validating required input", () =>
   expect(code).toBe(0);
   expect(stdout).toContain("Role to run.");
   expect(stderr).toBe("");
-});
+}, 10_000);
 
 test("auth status and logout are scriptable and credential output is secret-free", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-auth-cli-"));

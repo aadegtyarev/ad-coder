@@ -444,6 +444,7 @@ test("maxRounds exhausted returns approved:false without throwing", async () => 
   });
 
   expect(result.approved).toBe(false);
+  expect(result.outcome).toBe("decomposition_required");
   expect(result.rounds).toBe(1);
   expect(result.verdicts[0]?.status).toBe("changes_requested");
 });

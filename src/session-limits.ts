@@ -56,6 +56,20 @@ export class SessionLimitController {
     this.limits = Object.freeze(resolveLimits(limits));
   }
 
+  /** Restore durable root-tree usage into a fresh process-local controller. */
+  restore(snapshot: Readonly<SessionLimitSnapshot>): void {
+    if (this.admittedTurns !== 0 || this.observedCostUsd !== 0 || this.costInFlight) return;
+    if (
+      snapshot.maxTurns !== this.limits.maxTurns ||
+      snapshot.maxCostUsd !== this.limits.maxCostUsd
+    )
+      throw new TypeError("restored session limits do not match configured limits");
+    this.admittedTurns = snapshot.admittedTurns;
+    this.observedCostUsd = snapshot.observedCostUsd;
+    this.costInFlight = snapshot.costInFlight;
+    this.terminalReason = snapshot.terminalReason;
+  }
+
   snapshot(): Readonly<SessionLimitSnapshot> {
     const current = this.currentError();
     return Object.freeze({
