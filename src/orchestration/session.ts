@@ -1,11 +1,14 @@
 import type { Context, Session } from "@earendil-works/pi-agent-core";
 import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
 import type { Api, Model, TextContent } from "@earendil-works/pi-ai";
+import { deriveContextBudget } from "../context/budget";
+import { assertSummarizerWindow } from "../context/compactor";
 import { resolveProfile } from "../profiles/resolve";
 import type { ProfileRole } from "../profiles/types";
 import { parseProfile } from "../profiles/validate";
 import type { FollowUp } from "../project-operations/types";
 import { ProjectStore } from "../project-store/project-store";
+import { defineRole } from "../role";
 import { createRoleRunner } from "../runner/role-runner";
 import type { Tool } from "../runner/tool";
 import {
@@ -103,6 +106,28 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     config.routing !== undefined
       ? { ...config.routing, profile: parseProfile(config.routing.profile) }
       : undefined;
+
+  // One-shot compaction must be able to accept the largest history any
+  // reachable routed role can produce. Validate the whole routing space before
+  // constructing a runner or dispatching a provider request.
+  if (config.compaction?.mode !== "disabled-then-halt" && config.compaction?.summarizerModel) {
+    const reachable: Model<Api>[] = [];
+    if (routing === undefined) {
+      for (const spec of Object.values(config.roles))
+        if (spec !== undefined) reachable.push(spec.model);
+    } else {
+      for (const entry of routing.profile.entries) {
+        if (entry.role !== "recorder") reachable.push(routing.registry.getModel(entry.model));
+      }
+      for (const [role, override] of Object.entries(routing.overrides ?? {})) {
+        if (role !== "recorder" && override !== undefined) {
+          reachable.push(routing.registry.getModel(override.model));
+        }
+      }
+      if (config.roles.orchestrator !== undefined) reachable.push(config.roles.orchestrator.model);
+    }
+    assertSummarizerWindow(config.compaction.summarizerModel, reachable);
+  }
   const runner =
     routing !== undefined
       ? createRoleRunner({
@@ -168,7 +193,22 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     // A fresh session per run: each role has its own systemPrompt, so sharing a
     // session would leak one role's history and prompt into another.
     const session = await projectStore.createSession(runId, BACKGROUND_CONTEXT);
-    await runner.runRole(spec.role, model, prompt, {
+    const role =
+      routing?.budgetPercents?.[spec.role.name as ProfileRole] === undefined
+        ? spec.role
+        : defineRole(
+            {
+              ...spec.role,
+              provider: model.provider,
+              modelId: model.id,
+              contextBudget: deriveContextBudget(
+                model.contextWindow,
+                routing.budgetPercents[spec.role.name as ProfileRole],
+              ),
+            },
+            model,
+          );
+    await runner.runRole(role, model, prompt, {
       runId,
       step,
       session,

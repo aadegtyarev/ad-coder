@@ -53,6 +53,15 @@ test("parseRegistryConfig returns a typed config on valid data", () => {
   expect(parsed.providers[0]!.models[0]!.name).toBe("m1");
 });
 
+test("contextWindow defaults to 200000 when omitted", () => {
+  const withoutWindow = model();
+  delete withoutWindow.contextWindow;
+  const parsed = parseRegistryConfig(
+    config({ providers: [provider({ models: [withoutWindow] })] }),
+  );
+  expect(parsed.providers[0]!.models[0]!.contextWindow).toBe(200000);
+});
+
 // --- validator: each reject case --------------------------------------------
 
 test("rejects a non-object config", () => {
@@ -340,6 +349,19 @@ test("the codex/oauth provider resolves via the delegated factory, no api-key au
   const m = resolved.getModel("codex-gpt-5.5");
   expect(m.provider).toBe("openai-codex");
   expect(m.id).toBe("gpt-5.5");
+});
+
+test("declared context windows override delegated catalog values in either direction", () => {
+  const base = openaiCodexPreset();
+  const declared = base.models[0]!;
+  const low = resolveRegistry({
+    providers: [{ ...base, models: [{ ...declared, contextWindow: 32000 }] }],
+  });
+  const high = resolveRegistry({
+    providers: [{ ...base, models: [{ ...declared, contextWindow: 400000 }] }],
+  });
+  expect(low.getModel(declared.name).contextWindow).toBe(32000);
+  expect(high.getModel(declared.name).contextWindow).toBe(400000);
 });
 
 test("resolveRegistry re-validates a hand-built config", () => {

@@ -80,6 +80,36 @@ function fixture(): Fixture {
   };
 }
 
+test("workflow rejects an undersized summarizer synchronously before provider dispatch", () => {
+  const fx = fixture();
+  const coder = fx.role("coder", "You code.");
+  const reviewer = reviewerRole(fx);
+  const summarizerModel = { ...fx.model, contextWindow: 32_000 };
+  let dispatches = 0;
+  const models = new Proxy(fx.models, {
+    get(target, property, receiver) {
+      if (["stream", "complete", "streamSimple", "completeSimple"].includes(String(property))) {
+        return (..._args: unknown[]) => {
+          dispatches += 1;
+          throw new Error("unexpected provider dispatch");
+        };
+      }
+      return Reflect.get(target, property, receiver);
+    },
+  });
+  expect(() =>
+    createWorkflowSession({
+      targetDir: fx.targetDir,
+      models,
+      task: "x",
+      maxRounds: 1,
+      roles: { coder, reviewer },
+      compaction: { mode: "auto", summarizerModel },
+    }),
+  ).toThrow("summarizer context window 32000 is below reachable maximum 200000");
+  expect(dispatches).toBe(0);
+});
+
 /** A reviewer role that can call submit_verdict (only this role needs the tool). */
 function reviewerRole(fx: Fixture): RoleSpec {
   return fx.role("reviewer", "You review.", [

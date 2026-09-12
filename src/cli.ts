@@ -8,13 +8,19 @@ import type { Api, Model, Models, TextContent } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { runConsole } from "./cli/console";
 import { driveWorkflow, silentNoopWarning } from "./cli/drive";
-import type { ResolvableProvider, ResolvePipelineConfigOptions } from "./cli/resolve-config";
+import type {
+  BudgetPercents,
+  ConfigurableRole,
+  ResolvableProvider,
+  ResolvePipelineConfigOptions,
+} from "./cli/resolve-config";
 import { resolvePipelineConfig } from "./cli/resolve-config";
 import type { CompactionPolicy } from "./context/compactor";
 import { Ledger, MemoryLedgerSink } from "./ledger/ledger";
 import { startOrchestrator } from "./orchestration/orchestrator";
 import { createWorkflowSession } from "./orchestration/session";
 import type { Complexity, PipelineConfig, RoleSpec } from "./orchestration/types";
+import { parseProfile } from "./profiles/validate";
 import type { ClaimInput } from "./project-operations/backlog";
 import { routeDocumentationFollowUp } from "./project-operations/documentation";
 import { ProjectOperationsError } from "./project-operations/errors";
@@ -45,6 +51,7 @@ import {
 import { ProjectStore } from "./project-store/project-store";
 import type { ProjectStoreConfig } from "./project-store/types";
 import { ProjectStoreError } from "./project-store/types";
+import { parseRegistryConfig } from "./registry/validate";
 import type { Role } from "./role";
 import { resolveTargetDir } from "./runner/errors";
 import { createRoleRunner } from "./runner/role-runner";
@@ -285,6 +292,30 @@ function parseMaxRoundsFlag(value: string | undefined): number | undefined {
     fail(`invalid --max-rounds: ${value} (expected a positive integer)`);
   }
   return parsed;
+}
+
+function parsePercentFlag(name: string, value: string | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0 || parsed >= 1 || value.trim() === "") {
+    fail(`invalid ${name}: ${value} (expected a number between 0 and 1)`);
+  }
+  return parsed;
+}
+
+function readJsonConfig(value: string, option: string): unknown {
+  const resolved = resolveScriptPath(value);
+  let text: string;
+  try {
+    text = fs.readFileSync(resolved, "utf8");
+  } catch (error) {
+    fail(`cannot read ${option} ${resolved}: ${errorMessage(error)}`);
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    fail(`cannot parse ${option} ${resolved}: invalid JSON`);
+  }
 }
 
 function parseMaxInputBytesFlag(value: string | undefined): number | undefined {
@@ -736,6 +767,47 @@ function buildConfigOptions(
   const defaultComplexity = parseComplexityFlag(flags["--default-complexity"]);
   const targetDir = resolveTargetDir(targetDirArg);
   const projectStoreConfig = parseProjectStoreConfig(flags["--project-store-config"]);
+  const registryConfig =
+    flags["--registry-config"] === undefined
+      ? undefined
+      : parseRegistryConfig(readJsonConfig(flags["--registry-config"], "--registry-config"));
+  const profile =
+    flags["--profile-config"] === undefined
+      ? undefined
+      : parseProfile(readJsonConfig(flags["--profile-config"], "--profile-config"));
+  const maxTokensPercent = parsePercentFlag("--max-tokens-percent", flags["--max-tokens-percent"]);
+  const reserveTokensPercent = parsePercentFlag(
+    "--reserve-tokens-percent",
+    flags["--reserve-tokens-percent"],
+  );
+  const keepRecentTokensPercent = parsePercentFlag(
+    "--keep-recent-tokens-percent",
+    flags["--keep-recent-tokens-percent"],
+  );
+  const budgetPercents: BudgetPercents = {
+    ...(maxTokensPercent !== undefined && { maxTokensPercent }),
+    ...(reserveTokensPercent !== undefined && { reserveTokensPercent }),
+    ...(keepRecentTokensPercent !== undefined && { keepRecentTokensPercent }),
+  };
+  const compactionMode = flags["--compaction-mode"];
+  if (
+    compactionMode !== undefined &&
+    compactionMode !== "auto" &&
+    compactionMode !== "disabled-then-halt"
+  ) {
+    fail(`invalid --compaction-mode: ${compactionMode}`);
+  }
+  const crossProvider = flags["--allow-cross-provider-summarization"];
+  if (crossProvider !== undefined && crossProvider !== "true" && crossProvider !== "false") {
+    fail("--allow-cross-provider-summarization expects true or false");
+  }
+  let roleBudgetPercents: Partial<Record<ConfigurableRole, BudgetPercents>> | undefined;
+  if (flags["--role-budget-percents"] !== undefined) {
+    const raw = readJsonConfig(flags["--role-budget-percents"], "--role-budget-percents");
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw))
+      fail("--role-budget-percents must contain a JSON object");
+    roleBudgetPercents = raw as Partial<Record<ConfigurableRole, BudgetPercents>>;
+  }
   warnCwdInsideTarget(targetDir);
   return {
     targetDir,
@@ -744,6 +816,24 @@ function buildConfigOptions(
     ...(flags["--strong-model"] !== undefined && { strongModel: flags["--strong-model"] }),
     ...(flags["--mid-model"] !== undefined && { midModel: flags["--mid-model"] }),
     ...(flags["--cheap-model"] !== undefined && { cheapModel: flags["--cheap-model"] }),
+    ...(registryConfig !== undefined && { registryConfig }),
+    ...(profile !== undefined && { profile }),
+    ...(flags["--planner-model"] !== undefined && { plannerModel: flags["--planner-model"] }),
+    ...(flags["--security-model"] !== undefined && { securityModel: flags["--security-model"] }),
+    ...(flags["--coder-model"] !== undefined && { coderModel: flags["--coder-model"] }),
+    ...(flags["--reviewer-model"] !== undefined && { reviewerModel: flags["--reviewer-model"] }),
+    ...(flags["--orchestrator-model"] !== undefined && {
+      orchestratorModel: flags["--orchestrator-model"],
+    }),
+    ...(flags["--summarizer-model"] !== undefined && {
+      summarizerModel: flags["--summarizer-model"],
+    }),
+    ...(compactionMode !== undefined && { compactionMode }),
+    ...(crossProvider !== undefined && {
+      allowCrossProviderSummarization: crossProvider === "true",
+    }),
+    ...(Object.keys(budgetPercents).length > 0 && { budgetPercents }),
+    ...(roleBudgetPercents !== undefined && { roleBudgetPercents }),
     ...(maxRounds !== undefined && { maxRounds }),
     ...(defaultComplexity !== undefined && { defaultComplexity }),
     ...(projectStoreConfig !== undefined && { projectStoreConfig }),
@@ -912,6 +1002,60 @@ const PIPELINE_OPTIONS: CommandDefinition["options"] = [
   { name: "--strong-model", value: "<name>", description: "Override the strong model." },
   { name: "--mid-model", value: "<name>", description: "Override the mid-tier model." },
   { name: "--cheap-model", value: "<name>", description: "Override the cheap model." },
+  {
+    name: "--registry-config",
+    value: "<file.json>",
+    description: "Load an explicitly selected trusted provider/model registry as JSON.",
+  },
+  {
+    name: "--profile-config",
+    value: "<file.json>",
+    description: "Load complexity routing as data-only JSON.",
+  },
+  { name: "--planner-model", value: "<name>", description: "Override the planner model." },
+  { name: "--security-model", value: "<name>", description: "Override the security model." },
+  { name: "--coder-model", value: "<name>", description: "Override the coder model." },
+  { name: "--reviewer-model", value: "<name>", description: "Override the reviewer model." },
+  {
+    name: "--orchestrator-model",
+    value: "<name>",
+    description: "Override the conversational orchestrator model.",
+  },
+  {
+    name: "--summarizer-model",
+    value: "<name>",
+    description: "Select the compaction summarizer model.",
+  },
+  {
+    name: "--compaction-mode",
+    value: "<mode>",
+    description: "Set auto or disabled-then-halt context handling.",
+  },
+  {
+    name: "--allow-cross-provider-summarization",
+    value: "<boolean>",
+    description: "Explicitly opt in to cross-provider summarization.",
+  },
+  {
+    name: "--max-tokens-percent",
+    value: "<fraction>",
+    description: "Set the default role context ceiling fraction.",
+  },
+  {
+    name: "--reserve-tokens-percent",
+    value: "<fraction>",
+    description: "Set the default reply reserve fraction.",
+  },
+  {
+    name: "--keep-recent-tokens-percent",
+    value: "<fraction>",
+    description: "Set the default retained-tail fraction.",
+  },
+  {
+    name: "--role-budget-percents",
+    value: "<file.json>",
+    description: "Load per-role context budget fractions as JSON.",
+  },
   {
     name: "--max-rounds",
     value: "<n>",

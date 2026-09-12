@@ -13,6 +13,8 @@ const API_KINDS: readonly ApiKind[] = [
   "openai-codex-responses",
 ];
 
+export const DEFAULT_CONTEXT_WINDOW = 200_000;
+
 /**
  * TRUST BOUNDARY. `RegistryConfig` is OPERATOR-AUTHORED, plain-data config: the
  * config AUTHOR is trusted, its concrete SHAPE is not. This validator hardens
@@ -179,7 +181,9 @@ function parseModel(
     bad("invalid_config", `${modelName}.modelId`, "model.modelId must be a non-empty string");
   }
 
-  assertPositiveNumber(record.contextWindow, `${modelName}.contextWindow`, bad);
+  if (record.contextWindow !== undefined) {
+    assertPositiveNumber(record.contextWindow, `${modelName}.contextWindow`, bad);
+  }
   assertPositiveNumber(record.maxTokens, `${modelName}.maxTokens`, bad);
 
   if (record.reasoning !== undefined && typeof record.reasoning !== "boolean") {
@@ -216,7 +220,7 @@ function parseModel(
   return {
     name: modelName,
     modelId: record.modelId as string,
-    contextWindow: record.contextWindow as number,
+    contextWindow: (record.contextWindow as number | undefined) ?? DEFAULT_CONTEXT_WINDOW,
     maxTokens: record.maxTokens as number,
     ...(record.reasoning !== undefined ? { reasoning: record.reasoning as boolean } : {}),
     cost,
