@@ -1,10 +1,19 @@
-import type { AgentHarnessOptions, Session } from "@earendil-works/pi-agent-core";
+import type { AgentHarnessOptions, Session, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Api, CacheRetention, Model, Models } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import type { ContextBudget } from "./context/budget";
 import { validateContextBudget } from "./context/budget";
 
 const CACHE_RETENTIONS: readonly CacheRetention[] = ["none", "short", "long"];
+const THINKING_LEVELS: readonly ThinkingLevel[] = [
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+];
 
 /**
  * A validated preset over the role-owned slice of `AgentHarnessOptions`.
@@ -27,6 +36,7 @@ export interface Role {
    */
   activeToolNames?: string[];
   cacheRetention: CacheRetention;
+  thinkingLevel?: ThinkingLevel;
   /** ad-coder's own context ceiling, validated against the model's window. */
   contextBudget: ContextBudget;
 }
@@ -83,6 +93,11 @@ export function defineRole(input: Role, model: Model<Api>): Role {
       `defineRole(${input.name}): cacheRetention must be one of ${CACHE_RETENTIONS.join(", ")}`,
     );
   }
+  if (input.thinkingLevel !== undefined && !THINKING_LEVELS.includes(input.thinkingLevel)) {
+    throw new Error(
+      `defineRole(${input.name}): thinkingLevel must be one of ${THINKING_LEVELS.join(", ")}`,
+    );
+  }
   validateContextBudget(input.name, input.contextBudget, model);
   return input;
 }
@@ -103,6 +118,7 @@ export function toHarnessOptions(role: Role, deps: RoleRunDeps): AgentHarnessOpt
     ...(role.activeToolNames !== undefined && {
       activeToolNames: [...role.activeToolNames],
     }),
+    ...(role.thinkingLevel !== undefined && { thinkingLevel: role.thinkingLevel }),
     streamOptions: { cacheRetention: role.cacheRetention },
     // Pi's compaction prompt is a hardcoded constant, so the context strategy
     // stays in ad-coder. All three fields are required even when disabled.

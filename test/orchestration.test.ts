@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Api, Context, Message, Model } from "@earendil-works/pi-ai";
 import {
   createModels,
@@ -781,7 +782,12 @@ interface RoutingFixture {
   targetDir: string;
   getModel(name: string): Model<Api>;
   /** A RoleSpec whose own model is `specModel` (used only on the routing-absent path). */
-  role(name: string, specModel: string, activeToolNames?: string[]): RoleSpec;
+  role(
+    name: string,
+    specModel: string,
+    activeToolNames?: string[],
+    thinkingLevel?: ThinkingLevel,
+  ): RoleSpec;
 }
 
 /** A faux provider with three models + a hand-built ResolvedRegistry over them. */
@@ -814,7 +820,7 @@ function routingFixture(): RoutingFixture {
     registry,
     targetDir,
     getModel,
-    role(name, specModel, activeToolNames = ["bash", "read", "write", "edit"]) {
+    role(name, specModel, activeToolNames = ["bash", "read", "write", "edit"], thinkingLevel) {
       const model = getModel(specModel);
       const role: Role = defineRole(
         {
@@ -825,6 +831,7 @@ function routingFixture(): RoutingFixture {
           activeToolNames,
           cacheRetention: "none",
           contextBudget: { ...BUDGET },
+          ...(thinkingLevel !== undefined && { thinkingLevel }),
         },
         model,
       );
@@ -841,6 +848,20 @@ function recordStep(
 ): FauxResponseFactory {
   return (_context, _options, _state, model) => {
     log[key] = model.id;
+    return message;
+  };
+}
+
+/** Records the request reasoning value emitted by pi for the configured thinking level. */
+function recordRoutedStep(
+  modelLog: Record<string, string>,
+  thinkingLog: Record<string, ThinkingLevel | undefined>,
+  key: string,
+  message: ReturnType<typeof fauxAssistantMessage>,
+): FauxResponseFactory {
+  return (_context, options, _state, model) => {
+    modelLog[key] = model.id;
+    thinkingLog[key] = options?.reasoning as ThinkingLevel | undefined;
     return message;
   };
 }
@@ -875,6 +896,7 @@ function defaultRouteProfile(): Profile {
 test("routing (a): planner complexity 'complex' routes the coder to the strong model", async () => {
   const fx = routingFixture();
   const log: Record<string, string> = {};
+  const thinkingLevels: Record<string, ThinkingLevel | undefined> = {};
   const planner = fx.role("planner", "mid", [
     "bash",
     "read",
@@ -891,13 +913,29 @@ test("routing (a): planner complexity 'complex' routes the coder to the strong m
     SUBMIT_VERDICT_TOOL_NAME,
   ]);
   const verdict: Verdict = { status: "approved", issues: [], summary: "ok" };
+  const base = defaultRouteProfile();
+  const profile: Profile = {
+    entries: base.entries.map((entry) =>
+      entry.role === "coder" && entry.complexity === "complex"
+        ? { ...entry, thinkingLevel: "high" }
+        : entry.role === "reviewer" && entry.complexity === "complex"
+          ? { ...entry, thinkingLevel: "low" }
+          : entry,
+    ),
+  };
   fx.faux.setResponses([
     ...plannerTurnRec(log, { complexity: "complex", securitySurface: "low", summary: "plan" }),
-    recordStep(log, "coder", fauxAssistantMessage("coded")),
-    ...reviewerTurnRec(log, verdict),
+    recordRoutedStep(log, thinkingLevels, "coder", fauxAssistantMessage("coded")),
+    recordRoutedStep(
+      log,
+      thinkingLevels,
+      "reviewer",
+      fauxAssistantMessage(fauxToolCall(SUBMIT_VERDICT_TOOL_NAME, verdict)),
+    ),
+    fauxAssistantMessage("review complete"),
   ]);
 
-  const routing: PipelineRouting = { profile: defaultRouteProfile(), registry: fx.registry };
+  const routing: PipelineRouting = { profile, registry: fx.registry };
   const result = await runPipeline({
     targetDir: fx.targetDir,
     models: fx.registry.models,
@@ -912,6 +950,7 @@ test("routing (a): planner complexity 'complex' routes the coder to the strong m
   // coder @ complex -> strong; reviewer -> mid at every complexity.
   expect(log.coder).toBe("strong");
   expect(log.reviewer).toBe("mid");
+  expect(thinkingLevels).toEqual({ coder: "high", reviewer: "low" });
 });
 
 test("routing (b): planner complexity 'trivial' routes the coder to the cheap model", async () => {
@@ -957,6 +996,7 @@ test("routing (b): planner complexity 'trivial' routes the coder to the cheap mo
 test("routing (c): a coder override wins over the (coder, complexity) cell", async () => {
   const fx = routingFixture();
   const log: Record<string, string> = {};
+  const thinkingLevels: Record<string, ThinkingLevel | undefined> = {};
   const planner = fx.role("planner", "mid", [
     "bash",
     "read",
@@ -976,14 +1016,14 @@ test("routing (c): a coder override wins over the (coder, complexity) cell", asy
   fx.faux.setResponses([
     // trivial would route the coder to 'cheap'; the override must beat it.
     ...plannerTurnRec(log, { complexity: "trivial", securitySurface: "none", summary: "plan" }),
-    recordStep(log, "coder", fauxAssistantMessage("coded")),
+    recordRoutedStep(log, thinkingLevels, "coder", fauxAssistantMessage("coded")),
     ...reviewerTurnRec(log, verdict),
   ]);
 
   const routing: PipelineRouting = {
     profile: defaultRouteProfile(),
     registry: fx.registry,
-    overrides: { coder: { model: "strong" } },
+    overrides: { coder: { model: "strong", thinkingLevel: "minimal" } },
   };
   const result = await runPipeline({
     targetDir: fx.targetDir,
@@ -997,6 +1037,7 @@ test("routing (c): a coder override wins over the (coder, complexity) cell", asy
   expect(result.approved).toBe(true);
   // Override 'strong' wins over the trivial cell's 'cheap'.
   expect(log.coder).toBe("strong");
+  expect(thinkingLevels.coder).toBe("minimal");
 });
 
 test("routing (d): the pre-complexity planner routes on defaultComplexity, not the submitted tier", async () => {
@@ -1065,7 +1106,8 @@ test("routing (d): the pre-complexity planner routes on defaultComplexity, not t
 test("routing (e): with no routing, each turn runs on its own RoleSpec.model", async () => {
   const fx = routingFixture();
   const log: Record<string, string> = {};
-  const coder = fx.role("coder", "cheap");
+  const thinkingLevels: Record<string, ThinkingLevel | undefined> = {};
+  const coder = fx.role("coder", "cheap", undefined, "medium");
   const reviewer = fx.role("reviewer", "strong", [
     "bash",
     "read",
@@ -1075,7 +1117,7 @@ test("routing (e): with no routing, each turn runs on its own RoleSpec.model", a
   ]);
   const verdict: Verdict = { status: "approved", issues: [], summary: "ok" };
   fx.faux.setResponses([
-    recordStep(log, "coder", fauxAssistantMessage("coded")),
+    recordRoutedStep(log, thinkingLevels, "coder", fauxAssistantMessage("coded")),
     ...reviewerTurnRec(log, verdict),
   ]);
 
@@ -1091,6 +1133,7 @@ test("routing (e): with no routing, each turn runs on its own RoleSpec.model", a
   // Routing absent: the configured RoleSpec.model is used verbatim.
   expect(log.coder).toBe("cheap");
   expect(log.reviewer).toBe("strong");
+  expect(thinkingLevels.coder).toBe("medium");
 });
 
 /**

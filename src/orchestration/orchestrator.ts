@@ -2,7 +2,7 @@ import { Type } from "@earendil-works/pi-ai";
 import type { ResolvePipelineConfigOptions } from "../cli/resolve-config";
 import { resolvePipelineConfig } from "../cli/resolve-config";
 import type { ConversationSession } from "../conversation/conversation";
-import { startConversation } from "../conversation/conversation";
+import { startConversation as startConversationImpl } from "../conversation/conversation";
 import type { MemoryLedgerSink } from "../ledger/ledger";
 import { MemoryLedgerSink as MemoryLedgerSinkImpl } from "../ledger/ledger";
 import { ProjectOperationsError } from "../project-operations/errors";
@@ -496,6 +496,8 @@ export function buildOrchestratorTools(core: Orchestrator): Tool[] {
  */
 export type OrchestratorConfig = Omit<ResolvePipelineConfigOptions, "task"> & {
   sessionLimits?: SessionLimits;
+  /** Optional construction seam for embedding hosts that own the conversation lifecycle. */
+  startConversation?: typeof startConversationImpl;
 };
 
 /**
@@ -548,11 +550,14 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
       ],
       cacheRetention: "short",
       contextBudget: orchestratorSpec.role.contextBudget,
+      ...(orchestratorSpec.role.thinkingLevel !== undefined && {
+        thinkingLevel: orchestratorSpec.role.thinkingLevel,
+      }),
     },
     orchestratorModel,
   );
 
-  return startConversation({
+  return (config.startConversation ?? startConversationImpl)({
     role: orchestratorRole,
     targetDir: config.targetDir,
     models: seed.models,

@@ -7,11 +7,11 @@ import type { Profile, ProfileRole, ResolvedSelection, SpawnOverride } from "./t
 
 /**
  * Resolve a `(role, complexity)` (or a per-spawn override) into a live pi
- * `Model<Api>` plus its ADVISORY shaping hints.
+ * `Model<Api>`, optional thinking level, and advisory shaping hints.
  *
  * The `ResolvedRegistry` is the SECOND parameter (a resolved registry, not raw
  * config) the profile layer composes ABOVE a resolved registry. Precedence:
- * when `override` is present its `model`/`maxOutput`/`cacheRetention` win over
+ * when `override` is present its `model`/`thinkingLevel`/`maxOutput`/`cacheRetention` win over
  * any `(role, complexity)` cell; otherwise the matching profile entry is used,
  * and a missing cell throws `ProfileError('missing_mapping', 'role:complexity')`.
  *
@@ -57,6 +57,7 @@ export function resolveProfile(
     model,
     ...(selection.maxOutput !== undefined ? { maxOutput: selection.maxOutput } : {}),
     ...(selection.cacheRetention !== undefined ? { cacheRetention: selection.cacheRetention } : {}),
+    ...(selection.thinkingLevel !== undefined ? { thinkingLevel: selection.thinkingLevel } : {}),
   };
 }
 
@@ -78,5 +79,6 @@ function selectFromEntry(
     model: entry.model,
     ...(entry.maxOutput !== undefined ? { maxOutput: entry.maxOutput } : {}),
     ...(entry.cacheRetention !== undefined ? { cacheRetention: entry.cacheRetention } : {}),
+    ...(entry.thinkingLevel !== undefined ? { thinkingLevel: entry.thinkingLevel } : {}),
   };
 }

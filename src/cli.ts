@@ -2,7 +2,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
-import type { Context, Session } from "@earendil-works/pi-agent-core";
+import type { Context, Session, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
 import type { Api, Model, Models, TextContent } from "@earendil-works/pi-ai";
 import { closeOpenAICodexWebSocketSessions } from "@earendil-works/pi-ai/api/openai-codex-responses";
@@ -287,6 +287,23 @@ function parseComplexityFlag(value: string | undefined): Complexity | undefined 
     fail(`invalid --default-complexity: ${value} (expected one of ${COMPLEXITIES.join(", ")})`);
   }
   return value as Complexity;
+}
+
+function parseThinkingLevelFlag(value: string | undefined): ThinkingLevel | undefined {
+  if (value === undefined) return undefined;
+  const levels: readonly ThinkingLevel[] = [
+    "off",
+    "minimal",
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max",
+  ];
+  if (!levels.includes(value as ThinkingLevel)) {
+    fail(`invalid --orchestrator-thinking-level: ${value}`);
+  }
+  return value as ThinkingLevel;
 }
 
 function parseMaxRoundsFlag(value: string | undefined): number | undefined {
@@ -769,6 +786,7 @@ function buildConfigOptions(
   const provider = parseProviderFlag(flags["--provider"]);
   const maxRounds = parseMaxRoundsFlag(flags["--max-rounds"]);
   const defaultComplexity = parseComplexityFlag(flags["--default-complexity"]);
+  const orchestratorThinkingLevel = parseThinkingLevelFlag(flags["--orchestrator-thinking-level"]);
   const targetDir = resolveTargetDir(targetDirArg);
   const projectStoreConfig = parseProjectStoreConfig(flags["--project-store-config"]);
   const registryConfig =
@@ -834,6 +852,7 @@ function buildConfigOptions(
     ...(flags["--orchestrator-model"] !== undefined && {
       orchestratorModel: flags["--orchestrator-model"],
     }),
+    ...(orchestratorThinkingLevel !== undefined && { orchestratorThinkingLevel }),
     ...(flags["--summarizer-model"] !== undefined && {
       summarizerModel: flags["--summarizer-model"],
     }),
@@ -1044,6 +1063,11 @@ const PIPELINE_OPTIONS: CommandDefinition["options"] = [
     name: "--orchestrator-model",
     value: "<name>",
     description: "Override the conversational orchestrator model.",
+  },
+  {
+    name: "--orchestrator-thinking-level",
+    value: "<level>",
+    description: "Set orchestrator reasoning: off, minimal, low, medium, high, xhigh, or max.",
   },
   {
     name: "--summarizer-model",

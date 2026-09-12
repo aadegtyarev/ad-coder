@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { Api, Model } from "@earendil-works/pi-ai";
+import type { Api, CredentialStore, Model } from "@earendil-works/pi-ai";
 import {
   createModels,
   fauxAssistantMessage,
@@ -105,6 +105,51 @@ test("startOrchestrator automatically resolves its target-local prompt override"
       warn: () => {},
     }),
   ).rejects.toThrow("systemPrompt must be a non-empty string");
+});
+
+test("startOrchestrator preserves the resolved seed thinking level", async () => {
+  const targetDir = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-orchestrator-thinking-")),
+  );
+  const credentials: CredentialStore = {
+    read: async () => ({
+      type: "oauth",
+      access: "test-access",
+      refresh: "test-refresh",
+      expires: 0,
+    }),
+    list: async () => [],
+    modify: async (_providerId, fn) => fn(undefined),
+    delete: async () => {},
+  };
+  let captured: Role | undefined;
+
+  const session = await startOrchestrator({
+    targetDir,
+    env: () => undefined,
+    warn: () => {},
+    credentials,
+    orchestratorThinkingLevel: "high",
+    startConversation: async (config) => {
+      captured = config.role;
+      return {
+        runId: "test-session",
+        ledgerPath: undefined,
+        step: async () => ({
+          runId: "test-session",
+          step: "turn:1",
+          status: "completed",
+          assistantText: "",
+          toolCalls: [],
+          droppedRecords: 0,
+        }),
+        close: async () => {},
+      };
+    },
+  });
+
+  expect(session.runId).toBe("test-session");
+  expect(captured?.thinkingLevel).toBe("high");
 });
 
 /** Script a plan -> code -> review(approved) run: one faux queue, in phase order. */

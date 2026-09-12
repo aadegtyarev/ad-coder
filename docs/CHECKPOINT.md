@@ -110,3 +110,16 @@ Verification: 260 Bun tests (1,285 assertions), TypeScript, Biome, and
 `git diff --check` pass. Next:
 non-destructive LDO import/operator commands. Repository publishing policy and
 distributed GitHub claim coordination remain deferred.
+## 2026-09-12 — Codex role reasoning defaults
+
+Model profiles now carry an optional validated `thinkingLevel` through profile
+resolution, complexity routing, Role, and pi-agent-core harness options. OpenAI
+Codex OAuth defaults route Coder at every complexity to `gpt-5.6-sol` with
+`medium` reasoning and the conversational Orchestrator to `gpt-5.6-sol` with
+`low` reasoning. Explicit profiles, spawn overrides, model choices, and the CLI
+Orchestrator reasoning option retain precedence; other providers keep their
+existing defaults.
+
+Verification: 309 Bun tests with 1,577 assertions, TypeScript, Biome, and
+`git diff --check` passed. A follow-up is recorded for a headless Codex
+subscription-status adapter using the installed app-server rate-limit protocol.
