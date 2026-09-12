@@ -2,6 +2,7 @@ import type { Api, Model, Models } from "@earendil-works/pi-ai";
 import type { CompactionPolicy } from "../context/compactor";
 import type { LedgerSink } from "../ledger/ledger";
 import type { Profile, ProfileRole, SpawnOverride } from "../profiles/types";
+import type { ProjectStoreConfig } from "../project-store/types";
 import type { ResolvedRegistry } from "../registry/types";
 import type { Role } from "../role";
 import type { SessionLimitController } from "../session-limits";
@@ -220,6 +221,8 @@ export interface PipelineConfig {
   defaults?: WorkflowDefaults;
   /** Shared generation-call accounting for every role in this workflow session. */
   sessionLimitController?: SessionLimitController;
+  /** Retention and byte limits for all durable state created by this run. */
+  projectStoreConfig?: ProjectStoreConfig;
 }
 
 /**

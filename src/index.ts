@@ -119,6 +119,28 @@ export type {
   SpawnOverride,
 } from "./profiles/types";
 export { parseProfile } from "./profiles/validate";
+export { ProjectStoreFileSystem } from "./project-store/filesystem-store";
+export {
+  copyProjectAttachment,
+  createProjectStore,
+  deleteProjectSession,
+  listProjectSessions,
+  ProjectStore,
+  resumeProjectSession,
+} from "./project-store/project-store";
+export type {
+  AttachmentMetadata,
+  CleanupResult,
+  ProjectSessionMetadata,
+  ProjectStoreArea,
+  ProjectStoreByteLimits,
+  ProjectStoreConfig,
+  ProjectStoreErrorCode,
+  ProjectStoreLayout,
+  ProjectStoreRetention,
+  VersionedState,
+} from "./project-store/types";
+export { ProjectStoreError } from "./project-store/types";
 export type { PromptErrorCode } from "./prompts/errors";
 export { PromptError } from "./prompts/errors";
 export type { ResolvePromptOptions } from "./prompts/prompts";

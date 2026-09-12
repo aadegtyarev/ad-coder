@@ -2,6 +2,7 @@ import type { Context, Session } from "@earendil-works/pi-agent-core";
 import type { Api, Model, Models } from "@earendil-works/pi-ai";
 import type { CompactionPolicy, Summarizer } from "../context/compactor";
 import type { LedgerSink } from "../ledger/ledger";
+import type { ProjectStoreConfig } from "../project-store/types";
 import type { Role } from "../role";
 import type { SessionLimitController } from "../session-limits";
 import type { RunRoleResult } from "./runner";
@@ -47,6 +48,7 @@ export interface RoleRunnerConfig {
   summarizer?: Summarizer;
   compaction?: CompactionPolicy;
   session?: Session;
+  projectStoreConfig?: ProjectStoreConfig;
   sessionLimitController?: SessionLimitController;
 }
 
@@ -72,6 +74,9 @@ export function createRoleRunner(config: RoleRunnerConfig): RoleRunner {
         ...(config.compaction !== undefined && { compaction: config.compaction }),
         ...(config.sessionLimitController !== undefined && {
           sessionLimitController: config.sessionLimitController,
+        }),
+        ...(config.projectStoreConfig !== undefined && {
+          projectStoreConfig: config.projectStoreConfig,
         }),
         ...(session !== undefined && { session }),
         ...(opts?.runId !== undefined && { runId: opts.runId }),

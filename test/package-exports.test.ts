@@ -1,4 +1,8 @@
 import { expect, test } from "bun:test";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
 import type {
   ApiKind,
   AvailableTransition,
@@ -36,6 +40,8 @@ import type {
   ProfileEntry,
   ProfileErrorCode,
   ProfileRole,
+  ProjectStoreConfig,
+  ProjectStoreLayout,
   PromptErrorCode,
   ProviderConfig,
   QualityGate,
@@ -87,7 +93,9 @@ import {
   CHOOSE_TRANSITION_TOOL_NAME,
   ContextBudgetError,
   ContextCompactor,
+  copyProjectAttachment,
   createOrchestrator,
+  createProjectStore,
   createRoleRunner,
   createSummarizer,
   createWorkflowSession,
@@ -95,17 +103,21 @@ import {
   DriveError,
   deepseekPreset,
   defineTool,
+  deleteProjectSession,
   diffUsage,
   driveWorkflow,
   GateRunner,
   isWorkflowModule,
   Ledger,
+  listProjectSessions,
   OrchestrationError,
   OrchestratorError,
   openaiCodexPreset,
   openaiCompatiblePreset,
   openrouterPreset,
   ProfileError,
+  ProjectStore,
+  ProjectStoreError,
   PromptError,
   parseProfile,
   parseRegistryConfig,
@@ -118,6 +130,7 @@ import {
   resolvePrompt,
   resolveRegistry,
   resolveTargetDir,
+  resumeProjectSession,
   runConsole,
   runPipeline,
   runRole,
@@ -158,6 +171,9 @@ test("the package is importable by its published name", () => {
   expect(typeof SUMMARIZATION_PROMPT).toBe("string");
   expect(typeof GateRunner).toBe("function");
   expect(typeof runRole).toBe("function");
+  expect(typeof ProjectStore).toBe("function");
+  expect(typeof ProjectStoreError).toBe("function");
+  expect(typeof createProjectStore).toBe("function");
   expect(typeof startConversation).toBe("function");
   expect(typeof createRoleRunner).toBe("function");
   expect(typeof defineTool).toBe("function");
@@ -205,9 +221,13 @@ test("the package is importable by its published name", () => {
   const _budgetPercents: BudgetPercents | undefined = undefined;
   const _resolvableProvider: ResolvableProvider | undefined = undefined;
   const _resolveConfigOpts: ResolvePipelineConfigOptions | undefined = undefined;
+  const _storeConfig: ProjectStoreConfig | undefined = undefined;
+  const _storeLayout: ProjectStoreLayout | undefined = undefined;
   expect(_budgetPercents).toBeUndefined();
   expect(_resolvableProvider).toBeUndefined();
   expect(_resolveConfigOpts).toBeUndefined();
+  expect(_storeConfig).toBeUndefined();
+  expect(_storeLayout).toBeUndefined();
   // Type-only imports are erased; reference them so the imports are not unused.
   const _budget: ContextBudget | undefined = undefined;
   const _summarizer: Summarizer | undefined = undefined;
@@ -353,4 +373,26 @@ test("the published name resolves the same module as the relative path", async (
   const byName = await import("ad-coder");
   const byPath = await import("../src/index");
   expect(byName.isWorkflowModule).toBe(byPath.isWorkflowModule);
+});
+
+test("package-root project operations persist sessions and attachments", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-exports-"));
+  try {
+    const source = path.join(root, "source.txt");
+    fs.writeFileSync(source, "public attachment");
+    const first = createProjectStore(root);
+    const session = await first.createSession("public_session");
+    await session.close(BACKGROUND_CONTEXT);
+    const attachment = await copyProjectAttachment(first, source, "public.txt", "public_file");
+
+    const second = createProjectStore(root);
+    expect((await listProjectSessions(second)).map(({ id }) => id)).toEqual(["public_session"]);
+    const resumed = await resumeProjectSession(second, "public_session");
+    await resumed.close(BACKGROUND_CONTEXT);
+    expect(fs.readFileSync(attachment.path, "utf8")).toBe("public attachment");
+    await deleteProjectSession(second, "public_session");
+    expect(await listProjectSessions(second)).toEqual([]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
