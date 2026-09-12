@@ -172,10 +172,11 @@ export function followUpSemanticId(item: FollowUp): string {
 export function validateFollowUpCandidate(value: unknown): FollowUpCandidate {
   if (!plain(value)) fail("follow-up candidate must be an object");
   if (Object.hasOwn(value, "provenance")) fail("provenance is engine-authored");
-  return validateFollowUp({
+  const { provenance: _engineValidationProvenance, ...candidate } = validateFollowUp({
     ...value,
     provenance: [{ producer: "engine", runId: "capture" }],
-  }) as FollowUpCandidate;
+  });
+  return candidate;
 }
 
 export function aggregateFollowUps(
