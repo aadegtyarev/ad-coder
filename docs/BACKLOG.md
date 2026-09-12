@@ -2,9 +2,11 @@
 
 ## Current priority
 
-- [next] Define and implement repository publishing policy as a separate
-  increment: gates, branch/remote authority, push/PR behavior, credentials,
-  failure recovery, and a headless machine-mode surface. The TUI remains later.
+- [next] Reach the minimum self-hosting milestone: implement chunked/recursive compaction
+  that cannot overflow the summarizer model; allow independent model selection for every
+  role including Orchestrator and Summarizer; derive context budgets per role rather than
+  from the smallest model in the profile; then run a long resumable dogfood session on
+  ad-coder itself and record compaction behavior and cost.
 
 ## Future control plane and plugins
 
@@ -55,7 +57,7 @@ Planner, Coder, and Reviewer and was approved for $0.01502091. See the
 
 - [medium] src/orchestration/orchestrator.ts: Spawn/fork tools for the orchestrator. A SUBAGENT is `runRole` with a fixed role (planner/researcher/coder) or an ad-hoc prompt the orchestrator composes. A FORK is a subagent that inherits the orchestrator's own context and model and returns only a summary (context economy: spin off a detour, keep only its conclusion). Both are per-role custom tools via the tools-seam. Unblocked by: the runner tools-seam (done) and the orchestrator tools wiring (done). Named follow-on from the orchestrator core (2026-09-11).
 
-- [medium] src/orchestration/orchestrator.ts + src/runner/tool.ts: Researcher and Publisher tools for the orchestrator. Researcher: a role with WEB tools (web-fetch / web-search) that refills the project's NOTES orientation doc with fresh findings so next research queries hit the cache (notes) first. Publisher: git/gh operations (tidy, branch, run gates/tests as hard pre-publish checks, PR creation). Both bring their own credential/URL/egress surfaces — document when each lands. Named follow-on from the orchestrator core (2026-09-11).
+- [medium] src/orchestration/orchestrator.ts + src/runner/tool.ts: Researcher and Publisher tool wrappers for the orchestrator. Researcher refills NOTES with fresh findings; Publisher should invoke the delivered headless repository-publishing core. The wrappers retain their credential/URL/egress surfaces. Named follow-on from the orchestrator core (2026-09-11).
 
 - [medium] src/orchestration/orchestrator.ts: Run-until-phase breakpoint driver. A driver (like `autoDriver`) that auto-advances through default edges but halts before a named target phase and returns control, enabling a caller/UI to set a breakpoint without hand-stepping every phase. Sits on the existing `beginStepping`/`stepOnce`/`chooseTransition` seam already exposed. Example: auto-run planner+researcher then stop before code; or run through code then stop before review. Requirement already documented in `docs/ROADMAP.md` workflow-execution-model section (breakpoint control). Named follow-on from the orchestrator core (2026-09-11).
 

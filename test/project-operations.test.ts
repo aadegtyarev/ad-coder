@@ -13,6 +13,7 @@ import type {
   BacklogFollowUp,
   FollowUp,
   GitHubCommandRequest,
+  PublishingCommandRequest,
   Verdict,
   WorkflowSession,
   WorkflowState,
@@ -20,19 +21,25 @@ import type {
 import {
   aggregateFollowUps,
   appendDocumentationProposal,
+  buildPublishingPrBody,
   createBacklogStore,
+  DEFAULT_REPOSITORY_PUBLISHING_CONFIG,
   detectLdoProject,
   FileBacklogStore,
+  finishRepositoryPublishing,
   GitHubBacklogStore,
   importLdoArtifacts,
   inspectImportedLdoWork,
   ProjectOperationsError,
   ProjectStore,
+  preflightRepositoryPublishing,
   previewLdoImport,
   probeGitHubBacklogCapability,
   RunCoordinator,
+  resolveRepositoryPublishingConfig,
   resumeImportedLdoWork,
   routeDocumentationFollowUp,
+  startRepositoryPublishing,
   suggestBacklogMigrationOnce,
   validateFollowUp,
 } from "../src";
@@ -1011,4 +1018,443 @@ test("GitHub mutations fail loudly without a shared coordination domain", () => 
     github: { repository: "owner/repo" },
   });
   expect(() => backlog.claim("1", holder)).toThrow(ProjectOperationsError);
+});
+
+function repositoryExecutor() {
+  const requests: PublishingCommandRequest[] = [];
+  return {
+    requests,
+    execute(request: PublishingCommandRequest) {
+      requests.push(request);
+      const result = Bun.spawnSync(request.argv, {
+        cwd: request.cwd,
+        env: { ...process.env, ...request.env },
+        ...(request.stdin !== undefined && { stdin: Buffer.from(request.stdin) }),
+      });
+      return {
+        exitCode: result.exitCode,
+        stdout: result.stdout.toString(),
+        stderr: result.stderr.toString(),
+      };
+    },
+  };
+}
+
+function localRepository(): string {
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-publish-"));
+  const run = (args: string[]) => {
+    const result = Bun.spawnSync(["git", ...args], { cwd: target });
+    if (result.exitCode !== 0) throw new Error(result.stderr.toString());
+  };
+  run(["init", "-b", "main"]);
+  run(["config", "user.name", "Publisher Test"]);
+  run(["config", "user.email", "publisher@example.invalid"]);
+  fs.writeFileSync(path.join(target, "kept.txt"), "base\n");
+  run(["add", "--", "kept.txt"]);
+  run(["commit", "-m", "base"]);
+  return target;
+}
+
+test("publishing config defaults are efficient and validation is strict", () => {
+  expect(DEFAULT_REPOSITORY_PUBLISHING_CONFIG.gate).toBe("local");
+  expect(DEFAULT_REPOSITORY_PUBLISHING_CONFIG.outputByteLimit).toBe(0);
+  expect(resolveRepositoryPublishingConfig().baseCandidates).toEqual(["main", "master"]);
+  expect(() => resolveRepositoryPublishingConfig({ gate: "unknown" as never })).toThrow(
+    ProjectOperationsError,
+  );
+  expect(() => resolveRepositoryPublishingConfig({ outputByteLimit: -1 })).toThrow(
+    ProjectOperationsError,
+  );
+});
+
+test("publishing preflight is read-only, reports dirt and local mode, then locally squash-merges", () => {
+  const target = localRepository();
+  fs.writeFileSync(path.join(target, "user.txt"), "do not publish\n");
+  const executor = repositoryExecutor();
+  const config = {
+    mode: "local" as const,
+    gate: "local" as const,
+    localTestCommand: ["git", "status", "--porcelain"],
+  };
+  const preflight = preflightRepositoryPublishing(executor, target, config);
+  expect(preflight).toMatchObject({
+    phase: "preflight",
+    gate: "local",
+    mode: "local",
+    base: "main",
+    currentBranch: "main",
+  });
+  expect(preflight.dirty.untracked).toContain("user.txt");
+  expect(
+    executor.requests.every(
+      (request) =>
+        !["switch", "add", "commit", "push", "update-ref"].includes(request.argv[1] ?? ""),
+    ),
+  ).toBe(true);
+  const started = startRepositoryPublishing(
+    executor,
+    target,
+    { preflight, featureBranch: "feature/publish" },
+    config,
+  );
+  fs.writeFileSync(path.join(target, "feature.txt"), "published\n");
+  const result = finishRepositoryPublishing(
+    executor,
+    target,
+    {
+      started,
+      paths: ["feature.txt"],
+      commitMessage: "publish feature",
+      title: "Publish feature",
+      description: {
+        problem: "Missing policy",
+        audience: "Operators",
+        userImpact: "Safe publishing",
+        verification: "Tests pass",
+        reviewerVerdict: "approved",
+      },
+    },
+    config,
+  );
+  expect(result).toMatchObject({ phase: "finished", gate: "local", mode: "local" });
+  expect(fs.readFileSync(path.join(target, "user.txt"), "utf8")).toBe("do not publish\n");
+  expect(
+    Bun.spawnSync(["git", "branch", "--show-current"], { cwd: target }).stdout.toString().trim(),
+  ).toBe("feature/publish");
+  expect(
+    Bun.spawnSync(["git", "rev-list", "--count", `${preflight.baseOid}..main`], { cwd: target })
+      .stdout.toString()
+      .trim(),
+  ).toBe("1");
+  const add = executor.requests.find((request) => request.argv[1] === "add");
+  expect(add?.argv).toEqual(["git", "add", "--", "feature.txt"]);
+  expect(add?.env?.GIT_INDEX_FILE).toBeString();
+});
+
+test("publishing commits from a linked Git worktree whose .git is a file", () => {
+  const primary = localRepository();
+  const linked = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-linked-publish-"));
+  fs.rmdirSync(linked);
+  expect(
+    Bun.spawnSync(["git", "worktree", "add", "-b", "linked-start", linked, "main"], {
+      cwd: primary,
+    }).exitCode,
+  ).toBe(0);
+  expect(fs.lstatSync(path.join(linked, ".git")).isFile()).toBe(true);
+
+  const executor = repositoryExecutor();
+  const config = {
+    mode: "local" as const,
+    gate: "local" as const,
+    localTestCommand: ["git", "status", "--porcelain"],
+  };
+  const preflight = preflightRepositoryPublishing(executor, linked, config);
+  const started = startRepositoryPublishing(
+    executor,
+    linked,
+    { preflight, featureBranch: "feature/from-linked" },
+    config,
+  );
+  fs.writeFileSync(path.join(linked, "linked.txt"), "published from worktree\n");
+  expect(
+    finishRepositoryPublishing(
+      executor,
+      linked,
+      {
+        started,
+        paths: ["linked.txt"],
+        commitMessage: "publish linked worktree",
+        title: "Publish linked worktree",
+        description: {
+          problem: "Linked worktree support",
+          audience: "Operators",
+          userImpact: "Publishing works",
+          verification: "Regression test",
+          reviewerVerdict: "approved",
+        },
+      },
+      config,
+    ).phase,
+  ).toBe("finished");
+  expect(Bun.spawnSync(["git", "show", "main:linked.txt"], { cwd: linked }).stdout.toString()).toBe(
+    "published from worktree\n",
+  );
+});
+
+test("publishing refuses to start from a branch divergent from the selected base", () => {
+  const target = localRepository();
+  const executor = repositoryExecutor();
+  expect(Bun.spawnSync(["git", "switch", "-c", "topic/divergent"], { cwd: target }).exitCode).toBe(
+    0,
+  );
+  fs.writeFileSync(path.join(target, "divergent.txt"), "divergent\n");
+  for (const args of [
+    ["add", "--", "divergent.txt"],
+    ["commit", "-m", "divergent"],
+  ])
+    expect(Bun.spawnSync(["git", ...args], { cwd: target }).exitCode).toBe(0);
+  const config = { mode: "local" as const };
+  const preflight = preflightRepositoryPublishing(executor, target, config);
+
+  expect(() =>
+    startRepositoryPublishing(
+      executor,
+      target,
+      { preflight, featureBranch: "feature/from-divergent" },
+      config,
+    ),
+  ).toThrow(ProjectOperationsError);
+  expect(
+    Bun.spawnSync(["git", "branch", "--show-current"], { cwd: target }).stdout.toString().trim(),
+  ).toBe("topic/divergent");
+  expect(
+    Bun.spawnSync(["git", "show-ref", "--verify", "refs/heads/feature/from-divergent"], {
+      cwd: target,
+    }).exitCode,
+  ).not.toBe(0);
+});
+
+test("publishing refuses protected heads, dirty paths, moved bases, and unavailable approval", () => {
+  const target = localRepository();
+  const executor = repositoryExecutor();
+  const config = { mode: "local" as const, gate: "manual" as const };
+  const preflight = preflightRepositoryPublishing(executor, target, config);
+  expect(() =>
+    startRepositoryPublishing(executor, target, { preflight, featureBranch: "main" }, config),
+  ).toThrow(ProjectOperationsError);
+  fs.writeFileSync(path.join(target, "dirty.txt"), "user\n");
+  const dirty = preflightRepositoryPublishing(executor, target, config);
+  const started = startRepositoryPublishing(
+    executor,
+    target,
+    { preflight: dirty, featureBranch: "feature/guard" },
+    config,
+  );
+  expect(() =>
+    finishRepositoryPublishing(
+      executor,
+      target,
+      {
+        started,
+        paths: ["dirty.txt"],
+        commitMessage: "x",
+        title: "x",
+        description: {
+          problem: "x",
+          audience: "x",
+          userImpact: "x",
+          verification: "x",
+          reviewerVerdict: "x",
+        },
+      },
+      config,
+    ),
+  ).toThrow(ProjectOperationsError);
+  expect(() =>
+    preflightRepositoryPublishing(executor, target, { ...config, multiDeveloper: true }),
+  ).toThrow(ProjectOperationsError);
+  const moved = Bun.spawnSync(
+    ["git", "commit-tree", `${dirty.baseOid}^{tree}`, "-p", dirty.baseOid],
+    { cwd: target, stdin: Buffer.from("move base\n") },
+  )
+    .stdout.toString()
+    .trim();
+  expect(
+    Bun.spawnSync(["git", "update-ref", "refs/heads/main", moved, dirty.baseOid], { cwd: target })
+      .exitCode,
+  ).toBe(0);
+  expect(() =>
+    finishRepositoryPublishing(
+      executor,
+      target,
+      {
+        started,
+        paths: ["dirty.txt"],
+        authorizeInitiallyDirtyPaths: ["dirty.txt"],
+        commitMessage: "x",
+        title: "x",
+        description: {
+          problem: "x",
+          audience: "x",
+          userImpact: "x",
+          verification: "x",
+          reviewerVerdict: "x",
+        },
+      },
+      config,
+    ),
+  ).toThrow(ProjectOperationsError);
+});
+
+test("publishing refuses a preflight-staged index instead of consuming user staging", () => {
+  const target = localRepository();
+  const executor = repositoryExecutor();
+  fs.writeFileSync(path.join(target, "staged.txt"), "user staging\n");
+  expect(Bun.spawnSync(["git", "add", "--", "staged.txt"], { cwd: target }).exitCode).toBe(0);
+  const config = { mode: "local" as const, gate: "manual" as const };
+  const preflight = preflightRepositoryPublishing(executor, target, config);
+  const started = startRepositoryPublishing(
+    executor,
+    target,
+    { preflight, featureBranch: "feature/staged" },
+    config,
+  );
+  expect(() =>
+    finishRepositoryPublishing(
+      executor,
+      target,
+      {
+        started,
+        paths: ["staged.txt"],
+        authorizeInitiallyDirtyPaths: ["staged.txt"],
+        commitMessage: "x",
+        title: "x",
+        description: {
+          problem: "x",
+          audience: "x",
+          userImpact: "x",
+          verification: "x",
+          reviewerVerdict: "x",
+        },
+      },
+      config,
+    ),
+  ).toThrow(ProjectOperationsError);
+  expect(
+    Bun.spawnSync(["git", "diff", "--cached", "--name-only"], { cwd: target })
+      .stdout.toString()
+      .trim(),
+  ).toBe("staged.txt");
+});
+
+test("PR bodies carry every required section and optional pipeline usage", () => {
+  const base = {
+    problem: "P",
+    audience: "A",
+    userImpact: "I",
+    verification: "V",
+    reviewerVerdict: "approved",
+  };
+  const body = buildPublishingPrBody(base);
+  for (const heading of [
+    "What happens / problem",
+    "Who needs it",
+    "User impact",
+    "Verification",
+    "Pipeline Reviewer verdict",
+  ])
+    expect(body).toContain(`## ${heading}`);
+  expect(body).not.toContain("Pipeline usage");
+  expect(buildPublishingPrBody({ ...base, pipelineUsage: { total: 12 } })).toContain('"total": 12');
+});
+
+test("GitHub publishing pins checks, approval, body stdin, push refspec, and squash merge", () => {
+  const target = localRepository();
+  expect(
+    Bun.spawnSync(["git", "remote", "add", "origin", "https://github.com/example/project.git"], {
+      cwd: target,
+    }).exitCode,
+  ).toBe(0);
+  const requests: PublishingCommandRequest[] = [];
+  const executor = {
+    execute(request: PublishingCommandRequest) {
+      requests.push(request);
+      if (request.argv[0] === "gh") {
+        const featureOid = Bun.spawnSync(["git", "rev-parse", "HEAD"], { cwd: target })
+          .stdout.toString()
+          .trim();
+        const baseOid = Bun.spawnSync(["git", "rev-parse", "main"], { cwd: target })
+          .stdout.toString()
+          .trim();
+        if (request.argv.includes("checks"))
+          return { exitCode: 0, stdout: JSON.stringify([{ name: "test", state: "SUCCESS" }]) };
+        if (request.argv.at(-1)?.endsWith("/reviews"))
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify([
+              { state: "APPROVED", user: { login: "second-developer" }, commit_id: featureOid },
+            ]),
+          };
+        if (request.argv.includes("view"))
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              number: 7,
+              url: "https://github.com/example/project/pull/7",
+              author: { login: "author" },
+              headRefOid: featureOid,
+              baseRefOid: baseOid,
+            }),
+          };
+        return { exitCode: 0, stdout: "{}" };
+      }
+      if (request.argv[0] === "git" && request.argv[1] === "push")
+        return { exitCode: 0, stdout: "" };
+      const result = Bun.spawnSync(request.argv, {
+        cwd: request.cwd,
+        env: { ...process.env, ...request.env },
+        ...(request.stdin !== undefined && { stdin: Buffer.from(request.stdin) }),
+      });
+      return {
+        exitCode: result.exitCode,
+        stdout: result.stdout.toString(),
+        stderr: result.stderr.toString(),
+      };
+    },
+  };
+  const config = {
+    gate: "local-and-ci" as const,
+    localTestCommand: ["git", "status", "--porcelain"],
+    multiDeveloper: true,
+  };
+  const preflight = preflightRepositoryPublishing(executor, target, config);
+  const started = startRepositoryPublishing(
+    executor,
+    target,
+    { preflight, featureBranch: "feature/github" },
+    config,
+  );
+  fs.writeFileSync(path.join(target, "github.txt"), "publish\n");
+  const result = finishRepositoryPublishing(
+    executor,
+    target,
+    {
+      started,
+      paths: ["github.txt"],
+      commitMessage: "github publish",
+      title: "GitHub publish",
+      description: {
+        problem: "Missing flow",
+        audience: "Operators",
+        userImpact: "Can publish",
+        verification: "All tests pass",
+        reviewerVerdict: "approved",
+        pipelineUsage: { totalTokens: 12 },
+      },
+    },
+    config,
+  );
+  expect(result).toMatchObject({
+    phase: "finished",
+    gate: "local-and-ci",
+    ciGate: { ran: true, passed: true, count: 1 },
+    approval: { required: true, approved: true },
+  });
+  expect(requests.find((request) => request.argv[1] === "push")?.argv).toEqual([
+    "git",
+    "push",
+    "origin",
+    "HEAD:refs/heads/feature/github",
+  ]);
+  const create = requests.find(
+    (request) => request.argv[0] === "gh" && request.argv.includes("create"),
+  );
+  expect(create?.argv).toContain("--body-file");
+  expect(create?.stdin).toContain("## Pipeline Reviewer verdict");
+  expect(create?.stdin).toContain("## Pipeline usage");
+  const merge = requests.find(
+    (request) => request.argv[0] === "gh" && request.argv.includes("merge"),
+  );
+  expect(merge?.argv).toContain("--match-head-commit");
+  expect(merge?.argv).not.toContain("--delete-branch");
 });

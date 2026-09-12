@@ -258,7 +258,8 @@ Only a trusted programmatic/UI call to `resolveDecision` with `source:
 one-line rule text and triggers a reviewer-only pass before approval.
 
 The non-interactive `ad-coder operations <action> --target-dir <dir> [--json]`
-front exposes `ldo-detect`, `ldo-preview`, `ldo-import`, `ldo-inspect`, and
+front exposes `publish-preflight`, `publish-start`, `publish-finish`,
+`ldo-detect`, `ldo-preview`, `ldo-import`, `ldo-inspect`, and
 `ldo-resume`, FollowUp validation/aggregation, documentation routing, every
 backlog lifecycle operation, and GitHub capability/migration probes as JSON.
 Pass candidate JSON with `--input <file>` or `--input -`; claim actions also use
@@ -266,6 +267,21 @@ Pass candidate JSON with `--input <file>` or `--input -`; claim actions also use
 `plan:<ldo-id>` or `run:<ldo-id>`; import accepts
 `{"trustDigests":["<sha256>"]}` only when the operator intends those exact
 revisions to become executable.
+
+Repository publishing defaults to the `local` gate (`bun test`). Preflight
+discovers remote HEAD then `main`/`master`, captures its OID, and reports dirty
+paths without initializing project state; start requires HEAD at that selected
+base and creates a feature branch; finish commits only explicit paths via an
+isolated index, pushes an explicit refspec, creates a structured PR, and squash
+merges. Other gates are `ci`, `local-and-ci`, and `manual`. Empty/pending CI and
+changed PR heads fail closed. `multiDeveloper: true` requires approval on the
+exact head by someone other than the author and is unavailable for local-only
+repositories. Local Git instead advances the unchanged base with one squash
+commit while leaving HEAD and user files on the feature branch. Remote, bases,
+protected branches, feature prefix, mode, gate, argv test command, approval
+mode, and the output-retention limit are configurable. Its `0` default disables
+truncation; a positive value retains at most that many bytes per output stream. Failures
+leave recovery guidance.
 
 `runPipeline` is the autonomous coordinator driver over a STEPPED engine you can
 also drive yourself. `createWorkflowSession(config)` exposes the same plan → [security] →

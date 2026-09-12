@@ -16,7 +16,15 @@ export type ProjectOperationsErrorCode =
   | "unsupported_import"
   | "unsafe_import"
   | "stale_import"
-  | "untrusted_import";
+  | "untrusted_import"
+  | "not_repository"
+  | "protected_base"
+  | "base_moved"
+  | "dirty_index"
+  | "unauthorized_path"
+  | "gate_failed"
+  | "approval_required"
+  | "publish_failed";
 
 export class ProjectOperationsError extends Error {
   override readonly name = "ProjectOperationsError";

@@ -187,6 +187,26 @@ export {
   resumeImportedLdoWork,
 } from "./project-operations/ldo-import";
 export type {
+  FinishPublishingInput,
+  PublishingCommandExecutor,
+  PublishingCommandRequest,
+  PublishingCommandResult,
+  PublishingDescription,
+  PublishingResult,
+  RepositoryPublishingPreflight,
+  ResolvedPublishingConfig,
+  StartedPublishing,
+  StartPublishingInput,
+} from "./project-operations/repository-publishing";
+export {
+  buildPublishingPrBody,
+  DEFAULT_REPOSITORY_PUBLISHING_CONFIG,
+  finishRepositoryPublishing,
+  preflightRepositoryPublishing,
+  resolveRepositoryPublishingConfig,
+  startRepositoryPublishing,
+} from "./project-operations/repository-publishing";
+export type {
   ContractReviewRecord,
   CoordinatorCloseout,
   CoordinatorDriver,
@@ -235,6 +255,9 @@ export type {
   ProjectStoreErrorCode,
   ProjectStoreLayout,
   ProjectStoreRetention,
+  PublishingGate,
+  PublishingMode,
+  RepositoryPublishingConfig,
   VersionedState,
 } from "./project-store/types";
 export { ProjectStoreError } from "./project-store/types";

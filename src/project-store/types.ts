@@ -58,6 +58,22 @@ export interface ProjectOperationsConfig {
     >;
     managedLabel?: string;
   };
+  publishing?: RepositoryPublishingConfig;
+}
+
+export type PublishingGate = "local" | "ci" | "local-and-ci" | "manual";
+export type PublishingMode = "auto" | "github" | "local";
+
+export interface RepositoryPublishingConfig {
+  remote?: string;
+  baseCandidates?: string[];
+  protectedBases?: string[];
+  featurePrefix?: string;
+  mode?: PublishingMode;
+  gate?: PublishingGate;
+  localTestCommand?: string[];
+  multiDeveloper?: boolean;
+  outputByteLimit?: number;
 }
 
 export interface VersionedState<T> {

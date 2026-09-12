@@ -32,6 +32,16 @@ import {
   previewLdoImport,
   resumeImportedLdoWork,
 } from "./project-operations/ldo-import";
+import type {
+  FinishPublishingInput,
+  PublishingCommandExecutor,
+  StartPublishingInput,
+} from "./project-operations/repository-publishing";
+import {
+  finishRepositoryPublishing,
+  preflightRepositoryPublishing,
+  startRepositoryPublishing,
+} from "./project-operations/repository-publishing";
 import { ProjectStore } from "./project-store/project-store";
 import type { ProjectStoreConfig } from "./project-store/types";
 import { ProjectStoreError } from "./project-store/types";
@@ -46,9 +56,10 @@ const ROLE_NAMES = ["planner", "coder", "reviewer", "security"] as const;
 type RoleName = (typeof ROLE_NAMES)[number];
 const PROVIDERS = ["deepseek", "openrouter", "openai-codex"] as const;
 const COMPLEXITIES = ["trivial", "medium", "complex"] as const;
+let operationsJsonFront = false;
 
 function fail(message: string): never {
-  if (process.argv[2] === "operations" && process.argv.slice(3).includes("--json")) {
+  if (operationsJsonFront) {
     process.stderr.write(`${JSON.stringify({ error: { code: "usage", detail: message } })}\n`);
     process.exit(2);
   }
@@ -374,6 +385,7 @@ function parseProjectStoreConfig(value: string | undefined): ProjectStoreConfig 
       "documentation",
       "ldo",
       "github",
+      "publishing",
     ]);
     if (Object.keys(operationObject).some((key) => !allowed.has(key)))
       fail("--project-store-config contains an unknown projectOperations setting");
@@ -443,6 +455,64 @@ function parseProjectStoreConfig(value: string | undefined): ProjectStoreConfig 
           "projectOperations.github.stateLabels",
         );
     }
+    const publishing = operationObject.publishing;
+    if (publishing !== undefined) {
+      if (typeof publishing !== "object" || publishing === null || Array.isArray(publishing))
+        fail("invalid --project-store-config setting: projectOperations.publishing");
+      const publishingObject = publishing as Record<string, unknown>;
+      const publishingAllowed = new Set([
+        "remote",
+        "baseCandidates",
+        "protectedBases",
+        "featurePrefix",
+        "mode",
+        "gate",
+        "localTestCommand",
+        "multiDeveloper",
+        "outputByteLimit",
+      ]);
+      if (Object.keys(publishingObject).some((key) => !publishingAllowed.has(key)))
+        fail("--project-store-config contains an unknown projectOperations.publishing setting");
+      for (const key of ["remote", "featurePrefix"] as const)
+        if (
+          publishingObject[key] !== undefined &&
+          (typeof publishingObject[key] !== "string" || publishingObject[key] === "")
+        )
+          fail(`invalid --project-store-config setting: projectOperations.publishing.${key}`);
+      for (const key of ["baseCandidates", "protectedBases", "localTestCommand"] as const) {
+        const setting = publishingObject[key];
+        if (
+          setting !== undefined &&
+          (!Array.isArray(setting) ||
+            setting.length === 0 ||
+            setting.some((entry) => typeof entry !== "string" || entry === ""))
+        )
+          fail(`invalid --project-store-config setting: projectOperations.publishing.${key}`);
+      }
+      if (
+        publishingObject.mode !== undefined &&
+        !["auto", "github", "local"].includes(publishingObject.mode as string)
+      )
+        fail("invalid --project-store-config setting: projectOperations.publishing.mode");
+      if (
+        publishingObject.gate !== undefined &&
+        !["local", "ci", "local-and-ci", "manual"].includes(publishingObject.gate as string)
+      )
+        fail("invalid --project-store-config setting: projectOperations.publishing.gate");
+      if (
+        publishingObject.multiDeveloper !== undefined &&
+        typeof publishingObject.multiDeveloper !== "boolean"
+      )
+        fail("invalid --project-store-config setting: projectOperations.publishing.multiDeveloper");
+      if (
+        publishingObject.outputByteLimit !== undefined &&
+        (!Number.isSafeInteger(publishingObject.outputByteLimit) ||
+          (publishingObject.outputByteLimit as number) < 0)
+      )
+        fail(
+          "invalid --project-store-config setting: projectOperations.publishing.outputByteLimit",
+        );
+    }
   }
   return object as ProjectStoreConfig;
 }
@@ -493,6 +563,46 @@ function githubExecutor(): GitHubCommandExecutor {
   };
 }
 
+function publishingExecutor(): PublishingCommandExecutor {
+  return {
+    execute(request) {
+      try {
+        const result = Bun.spawnSync(request.argv, {
+          cwd: request.cwd,
+          ...(request.stdin !== undefined && { stdin: Buffer.from(request.stdin) }),
+          ...(request.env !== undefined && { env: { ...process.env, ...request.env } }),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const stdout = result.stdout.toString();
+        const stderr = result.stderr.toString();
+        const retain = (value: string) =>
+          request.outputByteLimit > 0 ? value.slice(0, request.outputByteLimit) : value;
+        return {
+          exitCode: result.exitCode,
+          stdout: retain(stdout),
+          stderr: retain(stderr),
+        };
+      } catch {
+        return { exitCode: 127, stdout: "", stderr: "" };
+      }
+    },
+  };
+}
+
+function strictOperationInput(
+  value: unknown,
+  allowed: readonly string[],
+  name: string,
+): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    fail(`${name} input must be an object`);
+  const object = value as Record<string, unknown>;
+  if (Object.keys(object).some((key) => !allowed.includes(key)))
+    fail(`${name} input contains an unknown setting`);
+  return object;
+}
+
 function operationClaim(flags: Record<string, string | undefined>): ClaimInput {
   const owner = flags["--owner"];
   const runId = flags["--run-id"];
@@ -526,11 +636,40 @@ async function operationsCommand(
     );
     return;
   }
+  if (action === "publish-preflight") {
+    const result = preflightRepositoryPublishing(
+      publishingExecutor(),
+      targetDir,
+      projectConfig?.projectOperations?.publishing,
+    );
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+    return;
+  }
   const store = new ProjectStore(targetDir, projectConfig);
   const config = store.projectOperations;
   const input = () => readJsonInput(flags["--input"]);
   let result: unknown;
-  if (action === "ldo-import") {
+  if (action === "publish-start") {
+    const supplied = strictOperationInput(input(), ["preflight", "featureBranch"], action);
+    result = startRepositoryPublishing(
+      publishingExecutor(),
+      targetDir,
+      supplied as unknown as StartPublishingInput,
+      config.publishing,
+    );
+  } else if (action === "publish-finish") {
+    const supplied = strictOperationInput(
+      input(),
+      ["started", "paths", "commitMessage", "title", "description", "authorizeInitiallyDirtyPaths"],
+      action,
+    );
+    result = finishRepositoryPublishing(
+      publishingExecutor(),
+      targetDir,
+      supplied as unknown as FinishPublishingInput,
+      config.publishing,
+    );
+  } else if (action === "ldo-import") {
     const supplied = flags["--input"] === undefined ? {} : input();
     if (typeof supplied !== "object" || supplied === null || Array.isArray(supplied))
       fail("ldo-import input must be an object");
@@ -798,7 +937,7 @@ const COMMANDS: readonly CommandDefinition[] = [
       {
         name: "<action>",
         description:
-          "Action including ldo-detect, ldo-preview, ldo-import, ldo-inspect, or ldo-resume.",
+          "Action including publish-preflight, publish-start, publish-finish, ldo-resume, and backlog operations.",
       },
     ],
     options: [
@@ -923,6 +1062,7 @@ async function main(argv: string[]): Promise<void> {
     return;
   }
   const commandName = argv[0];
+  operationsJsonFront = commandName === "operations";
   const command = COMMANDS.find(({ name }) => name === commandName);
   if (command === undefined)
     fail(commandName === undefined ? "missing command" : `unknown command: ${commandName}`);
@@ -943,7 +1083,7 @@ if (import.meta.main) {
   try {
     await main(process.argv.slice(2));
   } catch (error) {
-    if (process.argv[2] === "operations" && process.argv.slice(3).includes("--json")) {
+    if (operationsJsonFront) {
       const payload =
         error instanceof ProjectOperationsError
           ? { code: error.code, detail: error.detail }

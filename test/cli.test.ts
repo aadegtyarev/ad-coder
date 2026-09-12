@@ -207,6 +207,58 @@ test("operations exposes FollowUp, documentation, and backlog APIs as JSON", () 
   });
 });
 
+test("operations exposes strict repository publishing preflight as JSON", () => {
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-publish-cli-"));
+  for (const args of [
+    ["init", "-b", "main"],
+    ["config", "user.name", "CLI Test"],
+    ["config", "user.email", "cli@example.invalid"],
+  ])
+    expect(Bun.spawnSync(["git", ...args], { cwd: target }).exitCode).toBe(0);
+  fs.writeFileSync(path.join(target, "base.txt"), "base\n");
+  expect(Bun.spawnSync(["git", "add", "--", "base.txt"], { cwd: target }).exitCode).toBe(0);
+  expect(Bun.spawnSync(["git", "commit", "-m", "base"], { cwd: target }).exitCode).toBe(0);
+  const config = path.join(target, "config.json");
+  fs.writeFileSync(
+    config,
+    JSON.stringify({ projectOperations: { publishing: { mode: "local", gate: "manual" } } }),
+  );
+  fs.chmodSync(config, 0o600);
+  const result = runCli([
+    "operations",
+    "publish-preflight",
+    "--target-dir",
+    target,
+    "--project-store-config",
+    config,
+    "--json",
+  ]);
+  expect(result.code).toBe(0);
+  expect(JSON.parse(result.stdout)).toMatchObject({
+    phase: "preflight",
+    gate: "manual",
+    mode: "local",
+    base: "main",
+  });
+  expect(fs.existsSync(path.join(target, ".ad-coder"))).toBe(false);
+  expect(fs.existsSync(path.join(target, ".ad-coder"))).toBe(false);
+  fs.writeFileSync(
+    config,
+    JSON.stringify({ projectOperations: { publishing: { surprise: true } } }),
+  );
+  const invalid = runCli([
+    "operations",
+    "publish-preflight",
+    "--target-dir",
+    target,
+    "--project-store-config",
+    config,
+    "--json",
+  ]);
+  expect(invalid.code).toBe(2);
+  expect(JSON.parse(invalid.stderr).error.code).toBe("usage");
+});
+
 test("operations exposes all LDO actions as one-result JSON commands", () => {
   const target = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-ldo-cli-"));
   const runs = path.join(target, ".codex", "ldo", "runs");

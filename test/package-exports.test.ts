@@ -53,9 +53,14 @@ import type {
   ProjectStoreLayout,
   PromptErrorCode,
   ProviderConfig,
+  PublishingCommandExecutor,
+  PublishingGate,
+  PublishingResult,
   QualityGate,
   RegistryConfig,
   RegistryErrorCode,
+  RepositoryPublishingConfig,
+  RepositoryPublishingPreflight,
   ResolvableProvider,
   ResolvedRegistry,
   ResolvedSelection,
@@ -99,6 +104,7 @@ import {
   BACKLOG_STATES,
   buildDefaultProfile,
   buildOrchestratorTools,
+  buildPublishingPrBody,
   buildSubmitPlanTool,
   buildSubmitVerdictTool,
   CHOOSE_TRANSITION_TOOL_NAME,
@@ -113,6 +119,7 @@ import {
   createWorkflowSession,
   DEFAULT_CONSOLE_MAX_INPUT_BYTES,
   DEFAULT_PROJECT_OPERATIONS_CONFIG,
+  DEFAULT_REPOSITORY_PUBLISHING_CONFIG,
   DocumentationRouter,
   DriveError,
   deepseekPreset,
@@ -122,6 +129,7 @@ import {
   diffUsage,
   driveWorkflow,
   FileBacklogStore,
+  finishRepositoryPublishing,
   GateRunner,
   GitHubBacklogStore,
   importLdoArtifacts,
@@ -141,6 +149,7 @@ import {
   PromptError,
   parseProfile,
   parseRegistryConfig,
+  preflightRepositoryPublishing,
   previewLdoImport,
   probeBacklogMigration,
   probeGitHubBacklogCapability,
@@ -153,6 +162,7 @@ import {
   resolveProfile,
   resolvePrompt,
   resolveRegistry,
+  resolveRepositoryPublishingConfig,
   resolveTargetDir,
   resumeImportedLdoWork,
   resumeProjectSession,
@@ -169,6 +179,7 @@ import {
   silentNoopWarning,
   startConversation,
   startOrchestrator,
+  startRepositoryPublishing,
   suggestBacklogMigrationOnce,
   toolCallCounts,
   UsageDeltaTracker,
@@ -220,6 +231,12 @@ test("the package is importable by its published name", () => {
   expect(typeof probeGitHubBacklogCapability).toBe("function");
   expect(typeof probeBacklogMigration).toBe("function");
   expect(typeof suggestBacklogMigrationOnce).toBe("function");
+  expect(typeof buildPublishingPrBody).toBe("function");
+  expect(typeof preflightRepositoryPublishing).toBe("function");
+  expect(typeof startRepositoryPublishing).toBe("function");
+  expect(typeof finishRepositoryPublishing).toBe("function");
+  expect(typeof resolveRepositoryPublishingConfig).toBe("function");
+  expect(DEFAULT_REPOSITORY_PUBLISHING_CONFIG.gate).toBe("local");
   expect(typeof createProjectStore).toBe("function");
   expect(typeof startConversation).toBe("function");
   expect(typeof createRoleRunner).toBe("function");
@@ -276,6 +293,11 @@ test("the package is importable by its published name", () => {
   const _backlogState: BacklogState | undefined = undefined;
   const _backlogStore: BacklogStore | undefined = undefined;
   const _githubExecutor: GitHubCommandExecutor | undefined = undefined;
+  const _publishingExecutor: PublishingCommandExecutor | undefined = undefined;
+  const _publishingGate: PublishingGate | undefined = undefined;
+  const _publishingResult: PublishingResult | undefined = undefined;
+  const _publishingConfig: RepositoryPublishingConfig | undefined = undefined;
+  const _publishingPreflight: RepositoryPublishingPreflight | undefined = undefined;
   expect(_budgetPercents).toBeUndefined();
   expect(_resolvableProvider).toBeUndefined();
   expect(_resolveConfigOpts).toBeUndefined();
@@ -287,6 +309,11 @@ test("the package is importable by its published name", () => {
   expect(_backlogState).toBeUndefined();
   expect(_backlogStore).toBeUndefined();
   expect(_githubExecutor).toBeUndefined();
+  expect(_publishingExecutor).toBeUndefined();
+  expect(_publishingGate).toBeUndefined();
+  expect(_publishingResult).toBeUndefined();
+  expect(_publishingConfig).toBeUndefined();
+  expect(_publishingPreflight).toBeUndefined();
   // Type-only imports are erased; reference them so the imports are not unused.
   const _budget: ContextBudget | undefined = undefined;
   const _summarizer: Summarizer | undefined = undefined;

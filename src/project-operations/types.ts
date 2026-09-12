@@ -52,7 +52,7 @@ export interface FollowUpValidationOptions {
 export const DEFAULT_PROJECT_OPERATIONS_CONFIG: Required<
   Pick<
     ProjectOperationsConfig,
-    "backlogBackend" | "evidenceLimit" | "aggregationLimit" | "claimLeaseMs" | "ldo"
+    "backlogBackend" | "evidenceLimit" | "aggregationLimit" | "claimLeaseMs" | "ldo" | "publishing"
   >
 > = {
   backlogBackend: "files",
@@ -64,5 +64,16 @@ export const DEFAULT_PROJECT_OPERATIONS_CONFIG: Required<
     artifactCountLimit: 0,
     perFileByteLimit: 0,
     aggregateByteLimit: 0,
+  },
+  publishing: {
+    remote: "origin",
+    baseCandidates: ["main", "master"],
+    protectedBases: ["main", "master"],
+    featurePrefix: "feature/",
+    mode: "auto",
+    gate: "local",
+    localTestCommand: ["bun", "test"],
+    multiDeveloper: false,
+    outputByteLimit: 0,
   },
 };

@@ -512,8 +512,13 @@ workflows — one substrate, swappable drivers.
   combinations into the native workflow/RunCoordinator and rejects untrusted,
   changed, malformed, unsafe, oversized, or unsupported inputs. Numeric limits
   default to `0` disabled; trusted prompt overrides and the accepted no-sandbox
-  MVP stance are unchanged. Repository publishing policy is the next increment;
-  distributed GitHub coordination remains later work.
+  MVP stance are unchanged. Distributed GitHub coordination remains later work.
+- **Repository publishing — DELIVERED (Increment 6)** — headless and JSON
+  operations implement remote-HEAD/main/master base discovery, feature branches,
+  isolated explicit-path commits, local/CI/combined/manual gates, explicit push,
+  structured PRs, exact-head external approval, and GitHub/local squash merge.
+  Protected bases, dirty work, moving refs, empty CI, and changed PR heads fail
+  closed with the feature branch and recovery guidance preserved.
 - **Multi-user + pluggable backlog** — multi-user is the SAME conflict-avoidance
   as project memory (per-file records) + worktree isolation, under more writers;
   the ledger gains an actor/user dimension. The delivered BacklogStore remains
@@ -582,7 +587,8 @@ workflows — one substrate, swappable drivers.
   prompts — it was deliberately held out of the 2026-09-11 prompt-fidelity pass for
   exactly this home. The orchestrator role itself is profile-switchable like any
   other. Cache-optimal: a stable preamble is a shared cache prefix.
-- **Publisher role** — ad-coder's /ldo-ship equivalent: tidy the work, create a
+- **Publisher role integration** — the headless policy is delivered; a future
+  orchestrator wrapper can invoke it as ad-coder's /ldo-ship equivalent: tidy the work, create a
   branch, run the gates/tests as a HARD pre-publish check (a gate, not a prompt),
   open a PR, squash-merge. Its job is git/gh operations, so it needs PRIVILEGED
   tools via the tools-seam + ideally the credential broker (git push / gh pr run on
