@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { Api, Model } from "@earendil-works/pi-ai";
+import type { Api, Model, Models } from "@earendil-works/pi-ai";
 import {
   createModels,
   fauxAssistantMessage,
@@ -130,6 +130,25 @@ test("runRole drives one turn to a settled result and lands the ledger under tar
 
   const underCwd = path.join(process.cwd(), LEDGER_BASE_DIR, `${result.runId}.jsonl`);
   expect(fs.existsSync(underCwd)).toBe(false);
+});
+
+test("runRole rejects missing authentication before provider generation", async () => {
+  const { faux, models, model, role } = harnessFixture();
+  faux.setResponses([fauxAssistantMessage("must remain pending")]);
+  const unauthenticated = new Proxy(models, {
+    get(target, property, receiver) {
+      if (property === "getAuth") return async () => undefined;
+      return Reflect.get(target, property, receiver);
+    },
+  }) as Models;
+
+  await expect(
+    runRole({ role, targetDir, models: unauthenticated, model, prompt: "do not dispatch" }),
+  ).rejects.toMatchObject({
+    code: "authentication_required",
+    detail: "faux",
+  });
+  expect(faux.getPendingResponseCount()).toBe(1);
 });
 
 test("runRole roots the execution tools at targetDir", async () => {

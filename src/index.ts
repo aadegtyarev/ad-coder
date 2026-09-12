@@ -1,3 +1,13 @@
+export type { FileCredentialStoreOptions } from "./auth/credential-store";
+export {
+  assertCredentialPathOutsideProject,
+  defaultCredentialPath,
+  FileCredentialStore,
+} from "./auth/credential-store";
+export type { AuthErrorCode } from "./auth/errors";
+export { AuthError } from "./auth/errors";
+export type { AuthLoginResult, AuthLogoutResult, AuthStatus } from "./auth/operations";
+export { getAuthStatus, login, logout, requireModelAuthentication } from "./auth/operations";
 export type {
   CostMode,
   ModelCapabilities,
@@ -10,6 +20,8 @@ export {
   deriveCapabilities,
   reconcileRoleWithModel,
 } from "./capabilities/capabilities";
+export type { AuthCommandOptions, CodexLoginMethod } from "./cli/auth";
+export { runAuthCommand } from "./cli/auth";
 export type {
   ConsoleExitReason,
   ConsoleOutputMode,

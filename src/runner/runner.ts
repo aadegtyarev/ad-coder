@@ -18,6 +18,8 @@ import {
 } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/harness/env/nodejs";
 import type { Api, Model, Models } from "@earendil-works/pi-ai";
+import { closeOpenAICodexWebSocketSessions } from "@earendil-works/pi-ai/api/openai-codex-responses";
+import { requireModelAuthentication } from "../auth/operations";
 import type { CompactionPolicy, Summarizer } from "../context/compactor";
 import {
   COMPACTION_SAFETY_PROMPT,
@@ -131,6 +133,8 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
   const absTargetDir = resolveTargetDir(params.targetDir);
   const runId = assertRunId(params.runId ?? crypto.randomUUID());
   const context = params.context ?? BACKGROUND_CONTEXT;
+
+  await requireModelAuthentication(params.models, params.model.provider);
 
   const env = new NodeExecutionEnv({ cwd: absTargetDir });
   const toolContext: ExecutionToolContext = { env };
@@ -258,6 +262,9 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
     };
   } finally {
     await harness.close(context);
+    if (params.model.api === "openai-codex-responses") {
+      closeOpenAICodexWebSocketSessions(runId);
+    }
     ledger.close();
     await store?.close(context);
   }

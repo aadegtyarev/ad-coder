@@ -1,5 +1,32 @@
 # Checkpoint
 
+## 2026-09-12 — Persistent OpenAI Codex OAuth readiness
+
+Codex OAuth credentials persist in a private user-local file through an injectable
+CredentialStore with validated data, cross-process locking, owner-only modes, fsync,
+and atomic publication. Headless status/login/logout expose no token values. The
+registry-derived CLI supports browser and device-code login and rejects project-local
+credential paths. Missing or failed refreshed authentication stops before generation.
+Standalone roles expose only their registered tools, and CLI shutdown closes Codex
+WebSocket resources instead of waiting for the provider idle timeout.
+
+Live subscription dogfood passed: auth status reported OAuth; standalone Planner
+returned meaningful text and exited cleanly; the Orchestrator called `show_cost` and
+answered; a temporary-project automatic pipeline produced meaningful Planner and
+Coder output, verified its file byte-for-byte, and received an approved Reviewer
+verdict in one round. Pipeline cost was $0.17039500 ($0.048626 plan, $0.068133 code,
+$0.053636 review); two additional short role checks cost $0.047035 and $0.008435.
+The implementation pipeline consumed 10,487,990 tokens, including 9,829,120 cached.
+
+The local gate passes 302 tests with 1,536 assertions plus TypeScript, Biome, and
+`git diff --check`; the auth stress suite additionally passed 20 repeated runs. The
+default review ceiling is now `maxRounds: 2`: one initial implementation and one fix
+cycle. A second blocking verdict is the signal for Orchestrator-led decomposition.
+Codex OAuth defaults mirror the LDO tiers: Astra for Orchestrator, Sol for
+Planner/Security and complex Coder work, Terra for Reviewer and medium Coder work,
+and Luna for Summarizer and trivial Coder work. Every selected model has a 272k
+window, so the global Summarizer-window invariant holds.
+
 ## 2026-09-12 — Self-hosting model and context configuration
 
 Every active model is independently selectable, including Orchestrator and

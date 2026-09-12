@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import type { CredentialStore } from "@earendil-works/pi-ai";
 import { resolvePipelineConfig } from "../src/cli/resolve-config";
 import { deriveContextBudget } from "../src/context/budget";
 import { buildDefaultProfile } from "../src/profiles/default-profile";
@@ -171,7 +172,7 @@ test("selects deepseek by env presence and builds a valid PipelineConfig", () =>
   expect(config.roles.security).toBeDefined();
   expect(config.roles.coder).toBeDefined();
   expect(config.roles.reviewer).toBeDefined();
-  expect(config.maxRounds).toBe(3);
+  expect(config.maxRounds).toBe(2);
   expect(config.routing?.defaultComplexity).toBe("medium");
   expect(config.models).toBe(config.routing?.registry.models as typeof config.models);
   expect(config.ledgerSink).toBeDefined();
@@ -277,7 +278,41 @@ test("falls back to codex OAuth when no env-var key is present", () => {
     env: fakeEnv({}),
     warn: silent,
   });
+  expect(config.roles.planner?.model.id).toBe("gpt-5.6-sol");
+  expect(config.roles.security?.model.id).toBe("gpt-5.6-sol");
+  expect(config.roles.coder.model.id).toBe("gpt-5.6-terra");
+  expect(config.roles.reviewer.model.id).toBe("gpt-5.6-terra");
+  expect(config.roles.orchestrator?.model.id).toBe("gpt-6-astra");
+  expect(config.compaction?.summarizerModel?.id).toBe("gpt-5.6-luna");
   expect(config.routing?.registry.getModel("codex-gpt-5.5")).toBeDefined();
+});
+
+test("resolvePipelineConfig gives its Models the injected CredentialStore", async () => {
+  let reads = 0;
+  const credentials: CredentialStore = {
+    read: async () => {
+      reads += 1;
+      return {
+        type: "oauth",
+        access: "sentinel-access",
+        refresh: "sentinel-refresh",
+        expires: Date.now() + 60 * 60_000,
+      };
+    },
+    list: async () => [],
+    modify: async (_providerId, fn) => fn(undefined),
+    delete: async () => undefined,
+  };
+  const config = resolvePipelineConfig({
+    task: "x",
+    targetDir: "/tmp/target",
+    env: fakeEnv({}),
+    credentials,
+    warn: silent,
+  });
+  const auth = await config.models.getAuth("openai-codex");
+  expect(reads).toBe(1);
+  expect(auth).toBeDefined();
 });
 
 test("a forced env-var provider with no key throws missing_credential naming the var only", () => {

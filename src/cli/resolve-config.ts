@@ -1,4 +1,5 @@
-import type { Api, Model } from "@earendil-works/pi-ai";
+import type { Api, CredentialStore, Model } from "@earendil-works/pi-ai";
+import { assertCredentialPathOutsideProject, FileCredentialStore } from "../auth/credential-store";
 import { type ContextBudgetPercents, deriveContextBudget } from "../context/budget";
 import type { CompactionMode } from "../context/compactor";
 import { assertSummarizerWindow } from "../context/compactor";
@@ -42,7 +43,7 @@ export type BudgetPercents = ContextBudgetPercents;
 export type ConfigurableRole = "planner" | "security" | "coder" | "reviewer" | "orchestrator";
 
 /** maxRounds default when the caller does not override it. */
-const DEFAULT_MAX_ROUNDS = 3;
+const DEFAULT_MAX_ROUNDS = 2;
 /** The complexity every pre-plan role and later fallback routes on by default. */
 const DEFAULT_COMPLEXITY: Complexity = "medium";
 const CONFIGURABLE_ROLES: readonly ConfigurableRole[] = [
@@ -109,6 +110,8 @@ export interface ResolvePipelineConfigOptions {
   roleBudgetPercents?: Partial<Record<ConfigurableRole, BudgetPercents>>;
   warn?: (message: string) => void;
   projectStoreConfig?: ProjectStoreConfig;
+  /** Persistent provider credentials; defaults to the private user-local store. */
+  credentials?: CredentialStore;
 }
 
 /** Env-var names whose PRESENCE selects a provider, in precedence order. */
@@ -124,7 +127,7 @@ const PROVIDER_PRESETS: Record<
 > = {
   deepseek: { preset: deepseekPreset, defaultModel: "deepseek-chat" },
   openrouter: { preset: openrouterPreset, defaultModel: "openrouter-auto" },
-  "openai-codex": { preset: openaiCodexPreset, defaultModel: "codex-gpt-5.5" },
+  "openai-codex": { preset: openaiCodexPreset, defaultModel: "codex-sol" },
 };
 
 /**
@@ -191,8 +194,8 @@ export function resolvePipelineConfig(options: ResolvePipelineConfigOptions): Pi
   if (defaultModel === undefined) throw new Error("registryConfig must declare at least one model");
 
   const strong = options.strongModel ?? defaultModel;
-  const mid = options.midModel ?? defaultModel;
-  const cheap = options.cheapModel ?? defaultModel;
+  const mid = options.midModel ?? (provider === "openai-codex" ? "codex-terra" : defaultModel);
+  const cheap = options.cheapModel ?? (provider === "openai-codex" ? "codex-luna" : defaultModel);
   const compactionMode = options.compactionMode ?? "auto";
   if (compactionMode === "cache-aware") {
     throw new Error('context compaction mode "cache-aware" is not supported yet');
@@ -201,7 +204,14 @@ export function resolvePipelineConfig(options: ResolvePipelineConfigOptions): Pi
     throw new Error(`unknown context compaction mode "${String(compactionMode)}"`);
   }
 
-  const registry: ResolvedRegistry = resolveRegistry(registryConfig, { env });
+  const credentials = options.credentials ?? new FileCredentialStore();
+  if (credentials instanceof FileCredentialStore) {
+    assertCredentialPathOutsideProject(credentials.path, options.targetDir);
+  }
+  const registry: ResolvedRegistry = resolveRegistry(registryConfig, {
+    env,
+    credentials,
+  });
   for (const configuredProvider of registryConfig.providers) {
     const credentialName =
       configuredProvider.credential.kind === "env-var"
@@ -288,7 +298,9 @@ export function resolvePipelineConfig(options: ResolvePipelineConfigOptions): Pi
   const orchestratorModel =
     options.orchestratorModel !== undefined
       ? registry.getModel(options.orchestratorModel)
-      : resolveProfile(profile, registry, "coder", defaultComplexity, overrides.coder).model;
+      : provider === "openai-codex"
+        ? registry.getModel("codex-astra")
+        : resolveProfile(profile, registry, "coder", defaultComplexity, overrides.coder).model;
   const orchestrator = buildNamedRole("orchestrator", orchestratorModel, ["read", "bash"]);
 
   if (compactionMode !== "disabled-then-halt") {

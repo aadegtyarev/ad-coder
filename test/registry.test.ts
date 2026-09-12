@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
+import type { CredentialStore } from "@earendil-works/pi-ai";
 import type { ModelConfig, ProviderConfig, RegistryConfig } from "ad-coder";
 import {
   anthropicCompatiblePreset,
@@ -322,6 +323,29 @@ test("credentials resolve through the injected accessor, not process.env", async
   // the injected accessor. The transmitted key must be the injected value.
   const auth = await resolved.models.getAuth("p1");
   expect(auth?.auth.apiKey).toBe("fake-injected-value");
+});
+
+test("resolveRegistry gives pi Models the exact injected CredentialStore", async () => {
+  let reads = 0;
+  const credentials: CredentialStore = {
+    read: async (providerId) => {
+      reads += 1;
+      expect(providerId).toBe("openai-codex");
+      return {
+        type: "oauth",
+        access: "sentinel-access",
+        refresh: "sentinel-refresh",
+        expires: Date.now() + 60 * 60_000,
+      };
+    },
+    list: async () => [],
+    modify: async (_providerId, fn) => fn(undefined),
+    delete: async () => undefined,
+  };
+  const resolved = resolveRegistry({ providers: [openaiCodexPreset()] }, { credentials });
+  const auth = await resolved.models.getAuth("openai-codex");
+  expect(reads).toBe(1);
+  expect(auth).toBeDefined();
 });
 
 test("a mixed-api provider (openrouter dual-api) resolves both apis", () => {

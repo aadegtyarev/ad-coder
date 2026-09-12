@@ -128,6 +128,38 @@ export function openaiCodexPreset(models?: ModelConfig[]): ProviderConfig {
     models: mergeModels(
       [
         {
+          name: "codex-sol",
+          modelId: "gpt-5.6-sol",
+          contextWindow: 272000,
+          maxTokens: 128000,
+          reasoning: true,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        },
+        {
+          name: "codex-terra",
+          modelId: "gpt-5.6-terra",
+          contextWindow: 272000,
+          maxTokens: 128000,
+          reasoning: true,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        },
+        {
+          name: "codex-luna",
+          modelId: "gpt-5.6-luna",
+          contextWindow: 272000,
+          maxTokens: 128000,
+          reasoning: true,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        },
+        {
+          name: "codex-astra",
+          modelId: "gpt-6-astra",
+          contextWindow: 272000,
+          maxTokens: 128000,
+          reasoning: true,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        },
+        {
           name: "codex-gpt-5.5",
           modelId: "gpt-5.5",
           contextWindow: 272000,

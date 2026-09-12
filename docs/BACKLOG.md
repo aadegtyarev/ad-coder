@@ -2,10 +2,15 @@
 
 ## Current priority
 
-- [next] Complete Codex OAuth self-hosting readiness: add persistent local credentials,
-  headless auth status/login/logout, thin interactive CLI wiring, actionable missing-auth
-  errors, then run role, Orchestrator and full pipeline smoke tests with the operator's
-  ChatGPT subscription.
+- [next] Bring the conversational Orchestrator to LDO-level control with a small
+  structured surface: asynchronous pipeline start, run status/list/resume/cancel,
+  pending-decision list/resolve, run-until breakpoint control, Publisher invocation,
+  and one complete `RunReport` covering files, checks, verdicts, usage, checkpoint,
+  backlog and publication. Mechanical triage must force contracts/security/large
+  changes through the pipeline. The default is `maxRounds: 2`: after one fix cycle,
+  another blocking review returns both verdicts as `decomposition_required`; the
+  Orchestrator narrows the work from project evidence or asks only on a real
+  product/architecture fork.
 
 ## Future control plane and plugins
 
@@ -26,12 +31,15 @@ DeepSeek is the verified dogfood provider: a real one-round CLI pipeline reached
 Planner, Coder, and Reviewer and was approved for $0.01502091. See the
 [live-smoke receipt](reviews/2026-09-12-deepseek-cli-pipeline-smoke.md).
 
-- [high] Diagnose the openai-codex OAuth pipeline's empty zero-cost stage
+- [done] Diagnose the openai-codex OAuth pipeline's empty zero-cost stage
   responses before treating it as a working provider. Close this only with a
   deterministic regression test or repeatable smoke showing meaningful Planner
   and Coder output plus a Reviewer verdict, or an earlier actionable CLI error.
   Evidence: [failed 2026-09-12 pipeline smoke](reviews/2026-09-12-openai-codex-cli-pipeline-smoke.md)
   and [earlier single-role observation](reviews/2026-09-11-human-cli-config-role.md).
+  Closed by persistent OAuth plus live authenticated role, Orchestrator, and full
+  pipeline runs. The pipeline produced meaningful Planner/Coder text and an approved
+  Reviewer verdict in one round for $0.17039500.
 
 ## 2026-09-10
 
@@ -67,7 +75,6 @@ Planner, Coder, and Reviewer and was approved for $0.01502091. See the
 - [minor] src/registry/validate.ts: parseCredential's envVar check only requires non-empty string — does not restrict to valid environment-variable name format (alphanumeric/underscore only). Whitespace, newlines, control chars accepted and flow verbatim into RegistryError.detail/message, creating minor log-injection/confusing-output vector if config is less carefully authored than assumed. Recommendation: optionally add /^[A-Za-z_][A-Za-z0-9_]*$/.test(envVar) validation, rejecting with invalid_config. Not blocking given operator-trusted config trust boundary (verified only affects error-message readability, not security controls).
 - [nit] test/package-exports.test.ts: expect(_pipelineRouting) assertion placed inline immediately after _pipelineRouting declaration (line 145), breaking the file's own pattern of declaring all _xyz consts first (lines 122-144) then asserting them together (lines 161-197). Functionally harmless, does not block. Recommendation: move expect(_pipelineRouting).toBeUndefined() into batched assertion block next to other config/result assertions, matching the rest of the file's style.
 - [minor] src/orchestration/session.ts: applyTransition(state, chosen) trusts chosen unconditionally — never checks that chosen is actually one of the AvailableTransition objects step() just offered for that state. Consistent with plan's explicit 'PURE' design (Redux-reducer mirror) and drivers are trusted caller code, not untrusted external input, so not a security/correctness bug today. → If a future driver becomes less trusted (e.g., conversational orchestrator exposes free-form transition choice to a model), consider having applyTransition or step assert chosen is reference-equal to (or matches kind+toPhase+toRound of) one of the offered transitions, so a forged/stale transition throws instead of silently corrupting invariants. Not blocking; no current caller does this.
-- [minor] src/cli.ts: The openai-codex OAuth fallback (default provider when no env-var key present — CLI's documented no-config happy path) completes `ad-coder role <name> ...` with exit 0, empty printed text, and $0.00000000 cost when no local OAuth session exists, with no detectable network attempt and no warning. Operator gets no signal that authentication is needed or that the turn did nothing meaningful. Pre-existing in registry/runner OAuth handling (intentionally does not check codex credentials). → Optional follow-on: stderr warning in roleCommand when empty text + zero cost from oauth-fallback provider, e.g. "turn produced no assistant text and no cost — check that `codex login` (or equivalent) has been completed".
 - [nit] src/cli.ts: `--max-rounds` flag accepted/validated/threaded for `ad-coder role` subcommand, but has zero effect on single-turn role run (per design). README wording not explicit about this. → Optional clarification: one-line README note that `--max-rounds` accepted for parity with future `ad-coder drive` loop but has no effect on single `role` invocation. Purely cosmetic.
 - [minor] src/cli.ts: `driveCommand` duplicates `roleCommand`'s block (~15 lines, lines ~277-294 vs new driveCommand) parsing --provider/--max-rounds/--default-complexity, resolving target dir, and building resolvePipelineConfig options almost verbatim. → Extract a shared helper (e.g. `buildPipelineConfig(task, targetDirArg, flags)` returning the config, or returning `{config, absTargetDir}`) used by both, preventing drift as new flags are added in the future.
 - [deferred] registry/cli: Native OpenAI provider preset — `openaiPreset()` (api `openai-completions`, baseUrl `https://api.openai.com/v1`, credential `OPENAI_API_KEY`) wired into `resolve-config` like `deepseekPreset` (ResolvableProvider + PROVIDER_BY_ENV appended last + PROVIDER_PRESETS + parseProviderFlag + usage), exported and pinned in tests, so real per-token OpenAI costs land in the ledger instead of faux zeros. Deferred by operator: `openai-codex` (oauth) covers OpenAI for now. Note: two LDO `research: true` runs stalled on an LDO researcher StructuredOutput bug (the `findings` field arrived malformed, 5 retries exhausted) — when picked up, either drop `research: true` and supply verified current model ids + per-1M pricing directly, or retry once the LDO researcher bug is fixed. Ship costs as operator-overridable defaults per docs/contracts/config.md.

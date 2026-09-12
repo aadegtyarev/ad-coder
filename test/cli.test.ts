@@ -2,6 +2,8 @@ import { expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import type { AuthInteraction, Models } from "@earendil-works/pi-ai";
+import { renderAuthEvent, runAuthCommand } from "../src/cli/auth";
 
 const REPO_ROOT = path.resolve(import.meta.dir, "..");
 const CLI = path.join(REPO_ROOT, "src/cli.ts");
@@ -92,6 +94,7 @@ test("root help succeeds on stdout and failure usage is registry-derived", () =>
     const { code, stdout, stderr } = runCli([flag]);
     expect(code).toBe(0);
     expect(stdout).toContain("usage: ad-coder <command> [options]");
+    expect(stdout).toContain("auth    Manage persistent OpenAI Codex authentication.");
     expect(stdout).toContain("operations Run a project-operations action and emit JSON.");
     expect(stdout).toContain("run     Run a workflow module.");
     expect(stdout).toContain("role    Run one pipeline role once.");
@@ -110,6 +113,7 @@ test("root help succeeds on stdout and failure usage is registry-derived", () =>
 
 test("each command renders its own help before validating required input", () => {
   const commandHelps: ReadonlyArray<readonly [string, string, string]> = [
+    ["auth", "<status|login|logout>", "--auto"],
     ["operations", "ldo-resume", "<script.ts>"],
     ["run", "<script.ts>", "--provider"],
     ["role", "<planner|coder|reviewer|security>", "--auto"],
@@ -130,6 +134,119 @@ test("each command renders its own help before validating required input", () =>
   expect(code).toBe(0);
   expect(stdout).toContain("Role to run.");
   expect(stderr).toBe("");
+});
+
+test("auth status and logout are scriptable and credential output is secret-free", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-auth-cli-"));
+  const target = path.join(root, "project");
+  const credentialPath = path.join(root, "private", "credentials.json");
+  fs.mkdirSync(target);
+  try {
+    const status = runCli([
+      "auth",
+      "status",
+      "--json",
+      "--target-dir",
+      target,
+      "--credential-path",
+      credentialPath,
+    ]);
+    expect(status.code).toBe(0);
+    expect(JSON.parse(status.stdout)).toEqual({
+      providerId: "openai-codex",
+      authenticated: false,
+    });
+    expect(`${status.stdout}${status.stderr}`).not.toContain("access");
+    expect(`${status.stdout}${status.stderr}`).not.toContain("refresh");
+
+    const logoutResult = runCli([
+      "auth",
+      "logout",
+      "--json",
+      "--target-dir",
+      target,
+      "--credential-path",
+      credentialPath,
+    ]);
+    expect(logoutResult.code).toBe(0);
+    expect(JSON.parse(logoutResult.stdout)).toEqual({
+      providerId: "openai-codex",
+      authenticated: false,
+    });
+
+    const invalid = runCli(["auth", "status", "--credential-path", "relative.json"]);
+    expect(invalid.code).not.toBe(0);
+    expect(invalid.stdout).toBe("");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("auth login selects browser and device-code flows without exposing credentials", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-auth-login-cli-"));
+  const targetDir = path.join(root, "project");
+  const credentialPath = path.join(root, "private", "credentials.json");
+  fs.mkdirSync(targetDir);
+  const selected: string[] = [];
+  const secret = "sentinel-access-token";
+  const refresh = "sentinel-refresh-token";
+  const models = {
+    getProvider: () => ({}),
+    login: async (_providerId: string, _type: string, interaction: AuthInteraction) => {
+      selected.push(
+        await interaction.prompt({
+          type: "select",
+          message: "Choose login method",
+          options: [
+            { id: "browser", label: "Browser" },
+            { id: "device_code", label: "Device code" },
+          ],
+        }),
+      );
+      interaction.notify({
+        type: "auth_url",
+        url: "https://auth.example.test/authorize",
+        instructions: "Complete authorization",
+      });
+      interaction.notify({
+        type: "device_code",
+        verificationUri: "https://auth.example.test/device",
+        userCode: "SAFE-CODE",
+      });
+      return { type: "oauth", access: secret, refresh, expires: Date.now() + 60_000 };
+    },
+  } as unknown as Models;
+
+  try {
+    for (const method of ["browser", "device_code"] as const) {
+      let output = "";
+      const write = (text: string) => {
+        output += text;
+      };
+      const interaction: AuthInteraction = {
+        prompt: async () => "ignored",
+        notify: (event) => renderAuthEvent(event, write),
+      };
+      await runAuthCommand({
+        action: "login",
+        credentialPath,
+        targetDir,
+        method,
+        interaction,
+        models,
+        providerId: "openai-codex",
+        write,
+      });
+      expect(output).toContain("authenticated");
+      expect(output).toContain("https://auth.example.test/authorize");
+      expect(output).toContain("SAFE-CODE");
+      expect(output).not.toContain(secret);
+      expect(output).not.toContain(refresh);
+    }
+    expect(selected).toEqual(["browser", "device_code"]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("operations exposes FollowUp, documentation, and backlog APIs as JSON", () => {

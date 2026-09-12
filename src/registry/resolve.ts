@@ -1,4 +1,4 @@
-import type { Api, Model } from "@earendil-works/pi-ai";
+import type { Api, CredentialStore, Model } from "@earendil-works/pi-ai";
 import { createModels, createProvider, envApiKeyAuth } from "@earendil-works/pi-ai";
 import { anthropicMessagesApi } from "@earendil-works/pi-ai/api/anthropic-messages.lazy";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
@@ -21,6 +21,7 @@ import { parseRegistryConfig } from "./validate";
  */
 export interface ResolveOptions {
   env?: (name: string) => string | undefined;
+  credentials?: CredentialStore;
 }
 
 type ProviderStreams = ReturnType<typeof openAICompletionsApi>;
@@ -62,6 +63,7 @@ export function resolveRegistry(
   const readEnv = options?.env ?? ((name: string) => process.env[name]);
 
   const models = createModels({
+    ...(options?.credentials !== undefined && { credentials: options.credentials }),
     authContext: {
       env: async (name: string) => readEnv(name),
       fileExists: async () => false,
