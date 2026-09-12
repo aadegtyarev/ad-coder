@@ -358,6 +358,11 @@ workflows — one substrate, swappable drivers.
   `submit_plan`, surfaced on `result.complexity`; routing selects each post-plan
   role from its `(complexity × role)` profile cell, with the configured default
   complexity as the fallback when the planner emits no structured signal.
+  **Current Codex product decision (2026-09-12):** the zero-config OAuth preset
+  deliberately pins Coder to `codex-sol` with medium thinking at every complexity,
+  Reviewer to `codex-terra`, and Recorder to `codex-luna`. Keep this until profile
+  evals justify a change; do not infer that the generic Coder tier matrix should
+  override the explicit Codex preset.
   ad-coder EDGE: the ledger already measures per-role/round cost, so routing can
   later be LEARNED from observation ("cheap coder averaged 2.3 rounds on medium
   features, strong 1.1 — which is cheaper end to end?") rather than only declared —

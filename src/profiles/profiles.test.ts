@@ -245,17 +245,19 @@ test("resolveProfile throws missing_mapping for a (role, complexity) with no ent
 
 test("buildDefaultProfile routes each role and coder scales with complexity", () => {
   const profile = buildDefaultProfile({ strong: "S", mid: "M", cheap: "C" });
-  // 5 roles x 3 complexities.
-  expect(profile.entries).toHaveLength(15);
+  // 7 roles x 3 complexities.
+  expect(profile.entries).toHaveLength(21);
   // parseProfile must accept the builder output unchanged (self-consistent, no dupes).
-  expect(parseProfile(profile).entries).toHaveLength(15);
+  expect(parseProfile(profile).entries).toHaveLength(21);
 
   const registry = stubRegistry(["S", "M", "C"]);
   expect(resolveProfile(profile, registry, "coder", "complex").model.id).toBe("S");
   expect(resolveProfile(profile, registry, "coder", "medium").model.id).toBe("M");
   expect(resolveProfile(profile, registry, "coder", "trivial").model.id).toBe("C");
   expect(resolveProfile(profile, registry, "planner", "trivial").model.id).toBe("S");
+  expect(resolveProfile(profile, registry, "researcher", "medium").model.id).toBe("S");
   expect(resolveProfile(profile, registry, "security", "complex").model.id).toBe("S");
   expect(resolveProfile(profile, registry, "reviewer", "medium").model.id).toBe("M");
+  expect(resolveProfile(profile, registry, "auditor", "complex").model.id).toBe("M");
   expect(resolveProfile(profile, registry, "recorder", "complex").model.id).toBe("C");
 });

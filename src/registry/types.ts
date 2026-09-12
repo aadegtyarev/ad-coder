@@ -38,6 +38,8 @@ export interface ModelConfig {
   contextWindow?: number;
   maxTokens: number;
   reasoning?: boolean;
+  /** Accepted input modalities; defaults to text-only for custom providers. */
+  input?: ("text" | "image")[];
   cost: {
     input: number;
     output: number;

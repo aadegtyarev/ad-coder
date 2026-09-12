@@ -15,4 +15,6 @@ jobs:
       - run: bun run typecheck
       - run: bun run check
       - run: bun run check:release
+      - run: bun run check:docs
       - run: bun test
+      - run: bun run smoke:artifact

@@ -1,0 +1,6 @@
+{
+  "paths": ["README.md", "docs/ARCHITECTURE.md", "docs/contracts"],
+  "maxProseLineChars": 120,
+  "maxArchitectureWords": 2000,
+  "architectureWarningRatio": 0.8
+}

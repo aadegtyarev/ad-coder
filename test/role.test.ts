@@ -98,6 +98,20 @@ test("toHarnessOptions passes the system prompt through verbatim and disables co
   expect(opts.models).toBe(models);
 });
 
+test("role request timeout reaches provider stream options and zero disables it", () => {
+  const { models } = resolveRoleModel(valid);
+  const deps = { session: {} as Session, models, model };
+  expect(
+    toHarnessOptions(defineRole({ ...valid, requestTimeoutMs: 1234 }, model), deps).streamOptions
+      ?.timeoutMs,
+  ).toBe(1234);
+  expect(
+    toHarnessOptions(defineRole({ ...valid, requestTimeoutMs: 0 }, model), deps).streamOptions
+      ?.timeoutMs,
+  ).toBeUndefined();
+  expect(() => defineRole({ ...valid, requestTimeoutMs: -1 }, model)).toThrow("non-negative");
+});
+
 test("toHarnessOptions preserves a configured thinking level and omits an absent one", () => {
   const { model: runModel, models } = resolveRoleModel(valid);
   const configured = defineRole({ ...valid, thinkingLevel: "medium" }, runModel);

@@ -6,6 +6,36 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-09-12
+
+### Changed
+
+- Replaced the accreted architecture dump with a readable system map and added
+  an enforced human-first documentation contract, configurable readability gate,
+  and cold-reader planning/review procedure.
+- Tightened the Orchestrator prompt, made its tool policy explicitly default-open
+  over all registered tools, and added documentation audit triggers.
+- Added plugin-shaped DuckDuckGo search and navigable page reading, content-image
+  discovery, and capability-based image inspection with configurable vision-model
+  routing for text-only roles.
+- Added Git-ignore-aware `explore_project` reconnaissance for every code-reading
+  role, isolated `decompose_task`, and Auditor/project-health contracts for
+  evidence-based, test-pinned decomposition.
+- Made the shipped pipeline an opt-in conversational workflow module selected by
+  `--workflows pipeline`; disabled workflows register no tools, while standalone
+  `drive` remains an explicit pipeline entry point.
+- Exposed gate, exploration, web, media, and model-modality defaults as typed
+  configuration instead of hidden behavioral constants.
+- Added configurable stderr progress heartbeats and provider-request timeouts for
+  long-running model-backed CLI operations.
+- Added enforceable product-change, error-behavior, compatibility/release, and
+  decomposition methods and made every delivery role apply their boundaries.
+- Extended CI through a packed-artifact installation smoke.
+- Added pipeline-independent `run_role` delegation so the Orchestrator can call
+  every shipped specialist directly while workflow modules remain disabled.
+- Defined the next-step headless tool-observability contract and recorded its
+  compact human and structured machine renderers in the backlog.
+
 ## [0.2.0] - 2026-09-12
 
 The working core of the harness. Built on `@earendil-works/pi-agent-core` and

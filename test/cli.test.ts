@@ -99,7 +99,7 @@ test("root help succeeds on stdout and failure usage is registry-derived", () =>
     expect(stdout).toContain("auth    Manage persistent OpenAI Codex authentication.");
     expect(stdout).toContain("operations Run a project-operations action and emit JSON.");
     expect(stdout).toContain("run     Run a workflow module.");
-    expect(stdout).toContain("role    Run one pipeline role once.");
+    expect(stdout).toContain("role    Run one shipped role once.");
     expect(stdout).toContain("drive   Interactively drive the built-in pipeline.");
     expect(stdout).toContain("console Chat with the persistent orchestrator session.");
     expect(stderr).toBe("");
@@ -118,7 +118,7 @@ test("each command renders its own help before validating required input", () =>
     ["auth", "<status|login|logout>", "--auto"],
     ["operations", "ldo-resume", "<script.ts>"],
     ["run", "<script.ts>", "--provider"],
-    ["role", "<planner|coder|reviewer|security>", "--auto"],
+    ["role", "<planner|researcher|coder|reviewer|auditor|security>", "--auto"],
     ["drive", "--auto", "<planner|coder|reviewer|security>"],
     ["console", "--max-input-bytes", "<planner|coder|reviewer|security>"],
   ];

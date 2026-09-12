@@ -194,6 +194,23 @@ function parseModel(
     );
   }
 
+  let input: ("text" | "image")[] | undefined;
+  if (record.input !== undefined) {
+    if (
+      !Array.isArray(record.input) ||
+      record.input.length === 0 ||
+      record.input.some((item) => item !== "text" && item !== "image") ||
+      new Set(record.input).size !== record.input.length
+    ) {
+      bad(
+        "invalid_config",
+        `${modelName}.input`,
+        'model.input must be a non-empty unique array containing only "text" and "image"',
+      );
+    }
+    input = record.input as ("text" | "image")[];
+  }
+
   const cost = parseCost(record.cost, modelName, bad);
 
   let api: ApiKind | undefined;
@@ -223,6 +240,7 @@ function parseModel(
     contextWindow: (record.contextWindow as number | undefined) ?? DEFAULT_CONTEXT_WINDOW,
     maxTokens: record.maxTokens as number,
     ...(record.reasoning !== undefined ? { reasoning: record.reasoning as boolean } : {}),
+    ...(input !== undefined ? { input } : {}),
     cost,
     ...(api !== undefined ? { api } : {}),
     ...(record.compat !== undefined ? { compat: record.compat } : {}),

@@ -133,6 +133,13 @@ test("output is bounded by maxOutputChars and carries a truncation marker", asyn
   expect(output).toContain("truncated 100 of 50000 chars");
 });
 
+test("gate output ceiling is configurable but cannot disable the safety bound", () => {
+  const { executor } = scriptedExecutor([]);
+  expect(() => new GateRunner({ executor, maxOutputChars: 0 })).toThrow(
+    "maxOutputChars must be a positive safe integer",
+  );
+});
+
 test("a rejecting executor fails only that gate, not the whole report", async () => {
   const executor: CommandExecutor = async () => {
     throw new Error("spawn eslint ENOENT");

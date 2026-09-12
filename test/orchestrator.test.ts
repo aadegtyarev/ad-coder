@@ -20,11 +20,16 @@ import {
 } from "../src/orchestration/control-plane";
 import { SUBMIT_FOLLOW_UP_TOOL_NAME } from "../src/orchestration/follow-up";
 import {
+  buildBuiltInPipelineTools,
   buildOrchestratorTools,
+  buildRunRoleTool,
   CHOOSE_TRANSITION_TOOL_NAME,
   createOrchestrator,
+  DECOMPOSE_TASK_TOOL_NAME,
   RUN_PIPELINE_TOOL_NAME,
+  RUN_ROLE_TOOL_NAME,
   RUN_STEP_TOOL_NAME,
+  SHOW_COST_TOOL_NAME,
   startOrchestrator,
 } from "../src/orchestration/orchestrator";
 import { SUBMIT_PLAN_TOOL_NAME } from "../src/orchestration/plan";
@@ -40,11 +45,21 @@ import type {
 import { SUBMIT_VERDICT_TOOL_NAME } from "../src/orchestration/verdict";
 import { RunCoordinator } from "../src/project-operations/run-coordinator";
 import { ProjectStore } from "../src/project-store/project-store";
+import { EXPLORE_PROJECT_TOOL_NAME } from "../src/project-tools/explore";
 import type { Role } from "../src/role";
 import { defineRole } from "../src/role";
 import { ProviderLimitError } from "../src/runner/errors";
 import type { Tool } from "../src/runner/tool";
 import { SessionLimitController, SessionLimitError } from "../src/session-limits";
+import {
+  INSPECT_IMAGE_TOOL_NAME,
+  WEB_READ_TOOL_NAME,
+  WEB_SEARCH_TOOL_NAME,
+} from "../src/web/tools";
+import {
+  BUILT_IN_PIPELINE_WORKFLOW,
+  BUILT_IN_PIPELINE_WORKFLOW_NAME,
+} from "../src/workflows/builtin-pipeline";
 
 const CONTEXT_WINDOW = 200_000;
 const BUDGET = { maxTokens: 100_000, reserveTokens: 10_000, keepRecentTokens: 20_000 } as const;
@@ -141,6 +156,7 @@ test("startOrchestrator preserves the resolved seed thinking level", async () =>
     delete: async () => {},
   };
   let captured: Role | undefined;
+  let capturedToolNames: string[] | undefined;
 
   const session = await startOrchestrator({
     targetDir,
@@ -148,8 +164,11 @@ test("startOrchestrator preserves the resolved seed thinking level", async () =>
     warn: () => {},
     credentials,
     orchestratorThinkingLevel: "high",
+    workflowModules: [BUILT_IN_PIPELINE_WORKFLOW],
+    enabledWorkflows: [BUILT_IN_PIPELINE_WORKFLOW_NAME],
     startConversation: async (config) => {
       captured = config.role;
+      capturedToolNames = config.tools?.map(({ name }) => name);
       return {
         runId: "test-session",
         ledgerPath: undefined,
@@ -168,7 +187,141 @@ test("startOrchestrator preserves the resolved seed thinking level", async () =>
 
   expect(session.runId).toBe("test-session");
   expect(captured?.thinkingLevel).toBe("high");
+  expect(captured?.requestTimeoutMs).toBe(120_000);
+  expect(captured?.activeToolNames).toBeUndefined();
+  expect(capturedToolNames).toEqual([
+    EXPLORE_PROJECT_TOOL_NAME,
+    WEB_SEARCH_TOOL_NAME,
+    WEB_READ_TOOL_NAME,
+    INSPECT_IMAGE_TOOL_NAME,
+    RUN_ROLE_TOOL_NAME,
+    RUN_PIPELINE_TOOL_NAME,
+    DECOMPOSE_TASK_TOOL_NAME,
+    RUN_STEP_TOOL_NAME,
+    CHOOSE_TRANSITION_TOOL_NAME,
+    SHOW_COST_TOOL_NAME,
+  ]);
 });
+
+test("disabled pipeline does not resolve its role prompts or construct its core tools", async () => {
+  const targetDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-disabled-")));
+  const promptDir = path.join(targetDir, ".ad-coder", "prompts");
+  fs.mkdirSync(promptDir, { recursive: true });
+  for (const name of ["planner", "coder", "reviewer", "security"])
+    fs.writeFileSync(path.join(promptDir, `${name}.md`), "", "utf8");
+  const credentials: CredentialStore = {
+    read: async () => ({ type: "oauth", access: "a", refresh: "r", expires: 0 }),
+    list: async () => [],
+    modify: async (_providerId, fn) => fn(undefined),
+    delete: async () => {},
+  };
+  let names: string[] = [];
+  await startOrchestrator({
+    targetDir,
+    env: () => undefined,
+    warn: () => {},
+    credentials,
+    workflowModules: [BUILT_IN_PIPELINE_WORKFLOW],
+    enabledWorkflows: [],
+    startConversation: async (config) => {
+      names = config.tools?.map(({ name }) => name) ?? [];
+      return {
+        runId: "disabled",
+        ledgerPath: undefined,
+        step: async () => ({
+          runId: "disabled",
+          step: "turn:1",
+          status: "completed",
+          assistantText: "",
+          toolCalls: [],
+          droppedRecords: 0,
+        }),
+        close: async () => {},
+      };
+    },
+  });
+  expect(names).not.toContain(RUN_PIPELINE_TOOL_NAME);
+  expect(names).not.toContain(RUN_STEP_TOOL_NAME);
+  expect(names).toContain(RUN_ROLE_TOOL_NAME);
+  expect(names).toContain(EXPLORE_PROJECT_TOOL_NAME);
+});
+
+test("run_role delegates independently and rejects unknown role names safely", async () => {
+  const calls: Array<{ role: string; task: string }> = [];
+  const tool = buildRunRoleTool(async (role, task) => {
+    calls.push({ role, task });
+    return { role, text: "focused result", cost: 0.25 };
+  });
+
+  expect(await callTool(tool, { role: "auditor", task: "inspect health" })).toContain(
+    "auditor complete (cost 0.25)\nfocused result",
+  );
+  expect(calls).toEqual([{ role: "auditor", task: "inspect health" }]);
+  expect(await callTool(tool, { role: "publisher", task: "publish" })).toBe(
+    "error: invalid_role (publisher)",
+  );
+  expect(calls).toHaveLength(1);
+});
+
+test("pipeline-disabled startOrchestrator delegates Researcher and Auditor with own roles", async () => {
+  const targetDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-delegated-")));
+  const credentials: CredentialStore = {
+    read: async () => ({ type: "oauth", access: "a", refresh: "r", expires: 0 }),
+    list: async () => [],
+    modify: async (_providerId, fn) => fn(undefined),
+    delete: async () => {},
+  };
+  let outerTools: Tool[] = [];
+  const delegated: Array<{ role: Role; modelId: string; tools: string[] }> = [];
+  await startOrchestrator({
+    targetDir,
+    env: () => undefined,
+    warn: () => {},
+    credentials,
+    researcherModel: "codex-sol",
+    auditorModel: "codex-terra",
+    enabledWorkflows: [],
+    startConversation: async (config) => {
+      outerTools = config.tools ?? [];
+      return fakeConversation("outer");
+    },
+    startDelegatedConversation: async (config) => {
+      delegated.push({
+        role: config.role,
+        modelId: config.model.id,
+        tools: (config.tools ?? []).map(({ name }) => name),
+      });
+      return fakeConversation(config.role.name);
+    },
+  });
+  const runRole = outerTools.find(({ name }) => name === RUN_ROLE_TOOL_NAME) as Tool;
+  await callTool(runRole, { role: "researcher", task: "find evidence" });
+  await callTool(runRole, { role: "auditor", task: "audit health" });
+
+  expect(delegated.map(({ role }) => role.name)).toEqual(["researcher", "auditor"]);
+  expect(delegated[0]?.role.systemPrompt).toContain("You are the Researcher");
+  expect(delegated[1]?.role.systemPrompt).toContain("# Auditor");
+  expect(delegated[0]?.modelId).not.toBe(delegated[1]?.modelId);
+  expect(delegated[0]?.tools).toContain(WEB_SEARCH_TOOL_NAME);
+  expect(delegated[1]?.tools).toContain(EXPLORE_PROJECT_TOOL_NAME);
+  expect(delegated.flatMap(({ tools }) => tools)).not.toContain("write");
+});
+
+function fakeConversation(runId: string) {
+  return {
+    runId,
+    ledgerPath: undefined,
+    step: async () => ({
+      runId,
+      step: "turn:1",
+      status: "completed",
+      assistantText: `${runId} result`,
+      toolCalls: [],
+      droppedRecords: 0,
+    }),
+    close: async () => {},
+  };
+}
 
 /** Script a plan -> code -> review(approved) run: one faux queue, in phase order. */
 function approveScenario(fx: Fixture, verdict: Verdict): void {
@@ -223,6 +376,39 @@ async function callTool(tool: Tool, params: Record<string, unknown>): Promise<st
 }
 
 const ALL_KINDS: readonly TransitionKind[] = ["advance", "rework", "stop"];
+
+test("built-in pipeline tools are absent until its workflow module is enabled", () => {
+  const fx = fixture();
+  const core = createOrchestrator({ buildConfig: fx.buildConfig, ledgerSink: fx.sink });
+  expect(buildOrchestratorTools(core, [])).toEqual([]);
+  expect(
+    buildOrchestratorTools(core, [], [BUILT_IN_PIPELINE_WORKFLOW]).map(({ name }) => name),
+  ).toEqual([
+    RUN_PIPELINE_TOOL_NAME,
+    DECOMPOSE_TASK_TOOL_NAME,
+    RUN_STEP_TOOL_NAME,
+    CHOOSE_TRANSITION_TOOL_NAME,
+    SHOW_COST_TOOL_NAME,
+  ]);
+});
+
+test("decomposeTask runs Planner only and leaves manual stepping untouched", async () => {
+  const fx = fixture();
+  fx.faux.setResponses(governedPlanTurn());
+  const core = createOrchestrator({ buildConfig: fx.buildConfig, ledgerSink: fx.sink });
+
+  const result = await core.decomposeTask("split this task");
+
+  expect(result.plan.summary).toBe("plan: do X");
+  expect(result.cost.phase).toBe("plan");
+  expect(core.isStepping()).toBe(false);
+  expect(
+    fx.sink
+      .records()
+      .map(({ role }) => role)
+      .every((role) => role === "planner"),
+  ).toBe(true);
+});
 
 test("capability reachable without the chat front: runPipeline drives to a verdict", async () => {
   const fx = fixture();
@@ -305,7 +491,7 @@ test("unoffered transition is rejected via the choose_transition tool", async ()
   const view = await core.stepOnce();
   const unoffered = ALL_KINDS.find((k) => !view.transitions.includes(k)) as TransitionKind;
 
-  const tools = buildOrchestratorTools(core);
+  const tools = buildBuiltInPipelineTools(core);
   const chooseTool = tools.find((t) => t.name === CHOOSE_TRANSITION_TOOL_NAME);
   expect(chooseTool).toBeDefined();
 
@@ -370,7 +556,7 @@ test("run_step tool begins a run from a task and reports the offered transitions
   fx.faux.setResponses(governedPlanTurn());
 
   const core = createOrchestrator({ buildConfig: fx.buildConfig, ledgerSink: fx.sink });
-  const tools = buildOrchestratorTools(core);
+  const tools = buildBuiltInPipelineTools(core);
   const runStep = tools.find((t) => t.name === RUN_STEP_TOOL_NAME) as Tool;
 
   const text = await callTool(runStep, { task: "implement X" });
@@ -382,7 +568,7 @@ test("run_step tool begins a run from a task and reports the offered transitions
 test("run_step tool without a task and no active run reports a safe precondition error", async () => {
   const fx = fixture();
   const core = createOrchestrator({ buildConfig: fx.buildConfig, ledgerSink: fx.sink });
-  const tools = buildOrchestratorTools(core);
+  const tools = buildBuiltInPipelineTools(core);
   const runStep = tools.find((t) => t.name === RUN_STEP_TOOL_NAME) as Tool;
 
   const text = await callTool(runStep, {});
@@ -395,7 +581,7 @@ test("run_pipeline tool reports approval, rounds, and cost", async () => {
   approveScenario(fx, verdict);
 
   const core = createOrchestrator({ buildConfig: fx.buildConfig, ledgerSink: fx.sink });
-  const tools = buildOrchestratorTools(core);
+  const tools = buildBuiltInPipelineTools(core);
   const runPipelineTool = tools.find((t) => t.name === RUN_PIPELINE_TOOL_NAME) as Tool;
 
   const text = await callTool(runPipelineTool, { task: "implement X" });

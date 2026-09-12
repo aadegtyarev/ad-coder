@@ -22,6 +22,12 @@ suggestions. Implement and test each one exactly as carried. If a requirement is
 compressed or its source is ambiguous, inspect the named contract before editing;
 do not weaken it by guessing.
 
+When the change moves responsibilities or splits code, read and apply the
+project's decomposition contract. Preserve observable behavior with
+characterization tests, move one boundary at a time, keep state/error/config and
+side-effect ownership explicit, and separate structural moves from behavior
+changes.
+
 For each step: read the file before editing it, make the change, write or update
 its test. Tests are not a separate phase — when the logic is non-obvious, write
 the test first; it forces the interface clear before you commit to it. Cover the
@@ -56,6 +62,9 @@ by a grep), run that enumeration and fix every member, not only the listed sites
   typed result. `catch {}`, `catch (e) { return null }` with no logging, and
   `except: pass` are failure modes waiting for a state you didn't test. If you
   genuinely mean to ignore a specific expected failure, say why at that line.
+- Treat error text, typed error codes, exit status, recovery guidance, and machine
+  output as public behavior. Exercise failure paths; do not turn provider, timeout,
+  cancellation, limit, or configuration failures into the same generic result.
 - A comment earns its place only by stating something the code can't show itself —
   a non-obvious constraint, why a simpler approach was rejected. Don't restate the
   next line or narrate what you did; if you reach for a comment to explain *what*

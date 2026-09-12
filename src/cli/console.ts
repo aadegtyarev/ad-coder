@@ -25,6 +25,8 @@ export interface RunConsoleParams {
   error: NodeJS.WritableStream;
   mode?: ConsoleOutputMode;
   maxInputBytes?: number;
+  /** Progress interval for an in-flight turn; zero/omitted disables progress. */
+  heartbeatMs?: number;
 }
 
 export interface ConsoleRunResult {
@@ -118,9 +120,12 @@ function renderFormatted(result: ConversationTurnResult): string {
 export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunResult> {
   const mode = params.mode ?? "formatted";
   const maxInputBytes = params.maxInputBytes ?? DEFAULT_CONSOLE_MAX_INPUT_BYTES;
+  const heartbeatMs = params.heartbeatMs ?? 0;
   if (!Number.isInteger(maxInputBytes) || maxInputBytes <= 0) {
     throw new RangeError("maxInputBytes must be a positive integer");
   }
+  if (!Number.isSafeInteger(heartbeatMs) || heartbeatMs < 0)
+    throw new RangeError("heartbeatMs must be a non-negative safe integer");
 
   let reason: ConsoleExitReason = "eof";
   let completedTurns = 0;
@@ -140,7 +145,25 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
       return;
     }
     try {
-      const result = sanitizeTurn(await params.session.step(line));
+      const started = Date.now();
+      const progress = (event: "started" | "heartbeat") => {
+        const elapsedSeconds = Math.floor((Date.now() - started) / 1000);
+        params.error.write(
+          mode === "json"
+            ? `${JSON.stringify({ type: "progress", event, stage: "console-turn", elapsedSeconds })}\n`
+            : `ad-coder: console turn ${event === "started" ? "started" : "still running"} (${elapsedSeconds}s)\n`,
+        );
+      };
+      progress("started");
+      const timer =
+        heartbeatMs > 0 ? setInterval(() => progress("heartbeat"), heartbeatMs) : undefined;
+      let rawResult: ConversationTurnResult;
+      try {
+        rawResult = await params.session.step(line);
+      } finally {
+        if (timer !== undefined) clearInterval(timer);
+      }
+      const result = sanitizeTurn(rawResult);
       completedTurns++;
       params.output.write(
         mode === "json" ? `${JSON.stringify(result)}\n` : renderFormatted(result),

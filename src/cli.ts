@@ -73,12 +73,17 @@ import type { SessionLimits } from "./session-limits";
 import { SessionLimitController } from "./session-limits";
 import type { WorkflowContext } from "./workflow";
 import { isWorkflowModule } from "./workflow";
+import {
+  BUILT_IN_PIPELINE_WORKFLOW,
+  BUILT_IN_PIPELINE_WORKFLOW_NAME,
+} from "./workflows/builtin-pipeline";
 
-const ROLE_NAMES = ["planner", "coder", "reviewer", "security"] as const;
+const ROLE_NAMES = ["planner", "researcher", "coder", "reviewer", "auditor", "security"] as const;
 type RoleName = (typeof ROLE_NAMES)[number];
 const PROVIDERS = ["deepseek", "openrouter", "openai-codex"] as const;
 const COMPLEXITIES = ["trivial", "medium", "complex"] as const;
 let operationsJsonFront = false;
+const DEFAULT_HEARTBEAT_MS = 10_000;
 
 function fail(message: string): never {
   if (operationsJsonFront) {
@@ -268,16 +273,20 @@ export async function runRoleStandalone(params: {
   return { text, cost };
 }
 
-/** The resolved RoleSpec for a validated role name (all four are always present here). */
+/** The resolved RoleSpec for a validated shipped role name. */
 function roleSpecFor(config: PipelineConfig, name: RoleName): RoleSpec {
   const spec =
     name === "planner"
       ? config.roles.planner
-      : name === "security"
-        ? config.roles.security
-        : name === "coder"
-          ? config.roles.coder
-          : config.roles.reviewer;
+      : name === "researcher"
+        ? config.roles.researcher
+        : name === "security"
+          ? config.roles.security
+          : name === "coder"
+            ? config.roles.coder
+            : name === "reviewer"
+              ? config.roles.reviewer
+              : config.roles.auditor;
   if (spec === undefined) {
     throw new Error(`ad-coder: internal error: resolved config has no ${name} role`);
   }
@@ -324,6 +333,35 @@ function parseMaxRoundsFlag(value: string | undefined): number | undefined {
     fail(`invalid --max-rounds: ${value} (expected a positive integer)`);
   }
   return parsed;
+}
+
+function parseNonNegativeIntegerFlag(name: string, value: string | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value)))
+    fail(`invalid ${name}: ${value} (expected a non-negative integer)`);
+  return Number(value);
+}
+
+async function withCliProgress<T>(
+  label: string,
+  heartbeatMs: number,
+  task: () => Promise<T>,
+): Promise<T> {
+  const started = Date.now();
+  process.stderr.write(`ad-coder: started ${label}; waiting for provider\n`);
+  const timer =
+    heartbeatMs === 0
+      ? undefined
+      : setInterval(() => {
+          process.stderr.write(
+            `ad-coder: ${label} still running (${Math.floor((Date.now() - started) / 1000)}s)\n`,
+          );
+        }, heartbeatMs);
+  try {
+    return await task();
+  } finally {
+    if (timer !== undefined) clearInterval(timer);
+  }
 }
 
 function parsePercentFlag(name: string, value: string | undefined): number | undefined {
@@ -1031,6 +1069,10 @@ function buildConfigOptions(
   const maxRounds = parseMaxRoundsFlag(flags["--max-rounds"]);
   const defaultComplexity = parseComplexityFlag(flags["--default-complexity"]);
   const orchestratorThinkingLevel = parseThinkingLevelFlag(flags["--orchestrator-thinking-level"]);
+  const requestTimeoutMs = parseNonNegativeIntegerFlag(
+    "--request-timeout-ms",
+    flags["--request-timeout-ms"],
+  );
   const targetDir = resolveTargetDir(targetDirArg);
   const projectStoreConfig = parseProjectStoreConfig(flags["--project-store-config"]);
   const registryConfig =
@@ -1067,6 +1109,14 @@ function buildConfigOptions(
   if (crossProvider !== undefined && crossProvider !== "true" && crossProvider !== "false") {
     fail("--allow-cross-provider-summarization expects true or false");
   }
+  const enabledPlugins =
+    flags["--plugins"] === undefined
+      ? undefined
+      : flags["--plugins"] === "none"
+        ? []
+        : flags["--plugins"].split(",").map((name) => name.trim());
+  if (enabledPlugins?.some((name) => name !== "explore" && name !== "web" && name !== "vision"))
+    fail("--plugins expects comma-separated explore,web,vision or none");
   let roleBudgetPercents: Partial<Record<ConfigurableRole, BudgetPercents>> | undefined;
   if (flags["--role-budget-percents"] !== undefined) {
     const raw = readJsonConfig(flags["--role-budget-percents"], "--role-budget-percents");
@@ -1090,19 +1140,28 @@ function buildConfigOptions(
     ...(registryConfig !== undefined && { registryConfig }),
     ...(profile !== undefined && { profile }),
     ...(flags["--planner-model"] !== undefined && { plannerModel: flags["--planner-model"] }),
+    ...(flags["--researcher-model"] !== undefined && {
+      researcherModel: flags["--researcher-model"],
+    }),
     ...(flags["--security-model"] !== undefined && { securityModel: flags["--security-model"] }),
     ...(flags["--coder-model"] !== undefined && { coderModel: flags["--coder-model"] }),
     ...(flags["--reviewer-model"] !== undefined && { reviewerModel: flags["--reviewer-model"] }),
+    ...(flags["--auditor-model"] !== undefined && { auditorModel: flags["--auditor-model"] }),
     ...(flags["--orchestrator-model"] !== undefined && {
       orchestratorModel: flags["--orchestrator-model"],
     }),
+    ...(flags["--vision-model"] !== undefined && { visionModel: flags["--vision-model"] }),
     ...(orchestratorThinkingLevel !== undefined && { orchestratorThinkingLevel }),
+    ...(requestTimeoutMs !== undefined && { requestTimeoutMs }),
     ...(flags["--summarizer-model"] !== undefined && {
       summarizerModel: flags["--summarizer-model"],
     }),
     ...(compactionMode !== undefined && { compactionMode }),
     ...(crossProvider !== undefined && {
       allowCrossProviderSummarization: crossProvider === "true",
+    }),
+    ...(enabledPlugins !== undefined && {
+      enabledPlugins: enabledPlugins as ("explore" | "web" | "vision")[],
     }),
     ...(Object.keys(budgetPercents).length > 0 && { budgetPercents }),
     ...(roleBudgetPercents !== undefined && { roleBudgetPercents }),
@@ -1217,19 +1276,32 @@ async function consoleCommand(
   if (positionals[1] !== undefined) fail("the console command accepts no positional arguments");
   const targetDirArg = flags["--target-dir"] ?? process.cwd();
   const maxInputBytes = parseMaxInputBytesFlag(flags["--max-input-bytes"]);
+  const heartbeatMs =
+    parseNonNegativeIntegerFlag("--heartbeat-ms", flags["--heartbeat-ms"]) ?? DEFAULT_HEARTBEAT_MS;
   const sessionLimits = parseSessionLimits(flags);
+  const enabledWorkflows =
+    flags["--workflows"] === undefined
+      ? []
+      : flags["--workflows"]
+          .split(",")
+          .map((name) => name.trim())
+          .filter(Boolean);
   const session = await startOrchestrator({
     ...buildConfigOptions(targetDirArg, flags),
     sessionLimits,
+    workflowModules: [BUILT_IN_PIPELINE_WORKFLOW],
+    enabledWorkflows,
   });
-  await runConsole({
+  const result = await runConsole({
     session,
     input: process.stdin,
     output: process.stdout,
     error: process.stderr,
     mode: json ? "json" : "formatted",
     ...(maxInputBytes !== undefined && { maxInputBytes }),
+    heartbeatMs,
   });
+  if (result.reason !== "eof" && result.reason !== "exit") process.exitCode = 1;
 }
 
 /** Load and run a workflow module against an optional target directory. */
@@ -1299,13 +1371,35 @@ const PIPELINE_OPTIONS: CommandDefinition["options"] = [
     description: "Load complexity routing as data-only JSON.",
   },
   { name: "--planner-model", value: "<name>", description: "Override the planner model." },
+  { name: "--researcher-model", value: "<name>", description: "Override the researcher model." },
   { name: "--security-model", value: "<name>", description: "Override the security model." },
   { name: "--coder-model", value: "<name>", description: "Override the coder model." },
   { name: "--reviewer-model", value: "<name>", description: "Override the reviewer model." },
+  { name: "--auditor-model", value: "<name>", description: "Override the auditor model." },
   {
     name: "--orchestrator-model",
     value: "<name>",
     description: "Override the conversational orchestrator model.",
+  },
+  {
+    name: "--vision-model",
+    value: "<name>",
+    description: "Route image inspection through this image-capable model.",
+  },
+  {
+    name: "--plugins",
+    value: "<names|none>",
+    description: "Enable built-in plugin groups: explore,web,vision; defaults to all.",
+  },
+  {
+    name: "--request-timeout-ms",
+    value: "<n>",
+    description: "Provider request timeout; defaults to 120000, 0 disables.",
+  },
+  {
+    name: "--heartbeat-ms",
+    value: "<n>",
+    description: "CLI progress interval; defaults to 10000, 0 disables.",
   },
   {
     name: "--orchestrator-thinking-level",
@@ -1439,7 +1533,15 @@ const COMMANDS: readonly CommandDefinition[] = [
         ...buildConfigOptions(target, flags),
         task: "config show",
       });
-      const effective = config.effectiveConfig ?? {};
+      const effective = {
+        ...(config.effectiveConfig ?? {}),
+        heartbeatMs: {
+          value:
+            parseNonNegativeIntegerFlag("--heartbeat-ms", flags["--heartbeat-ms"]) ??
+            DEFAULT_HEARTBEAT_MS,
+          source: flags["--heartbeat-ms"] !== undefined ? "cli" : "built-in-default",
+        },
+      };
       if (booleans["--json"] === true) {
         process.stdout.write(`${JSON.stringify(effective)}\n`);
       } else {
@@ -1505,13 +1607,22 @@ const COMMANDS: readonly CommandDefinition[] = [
   },
   {
     name: "role",
-    description: "Run one pipeline role once.",
+    description: "Run one shipped role once.",
     positionals: [
-      { name: "<planner|coder|reviewer|security>", description: "Role to run." },
+      {
+        name: "<planner|researcher|coder|reviewer|auditor|security>",
+        description: "Role to run.",
+      },
       { name: "<task>", description: "Task for the role." },
     ],
     options: PIPELINE_OPTIONS,
-    run: ({ positionals, flags }) => roleCommand(positionals, flags),
+    run: ({ positionals, flags }) =>
+      withCliProgress(
+        `role ${positionals[1] ?? "unknown"}`,
+        parseNonNegativeIntegerFlag("--heartbeat-ms", flags["--heartbeat-ms"]) ??
+          DEFAULT_HEARTBEAT_MS,
+        () => roleCommand(positionals, flags),
+      ),
   },
   {
     name: "drive",
@@ -1522,7 +1633,12 @@ const COMMANDS: readonly CommandDefinition[] = [
       ...PIPELINE_OPTIONS,
     ],
     run: ({ positionals, flags, booleans }) =>
-      driveCommand(positionals, flags, booleans["--auto"] === true),
+      withCliProgress(
+        "pipeline drive",
+        parseNonNegativeIntegerFlag("--heartbeat-ms", flags["--heartbeat-ms"]) ??
+          DEFAULT_HEARTBEAT_MS,
+        () => driveCommand(positionals, flags, booleans["--auto"] === true),
+      ),
   },
   {
     name: "console",
@@ -1540,6 +1656,11 @@ const COMMANDS: readonly CommandDefinition[] = [
           : option,
       ),
       { name: "--json", description: "Write one JSON record per completed turn." },
+      {
+        name: "--workflows",
+        value: "<names>",
+        description: `Enable comma-separated workflow modules; available: ${BUILT_IN_PIPELINE_WORKFLOW_NAME}.`,
+      },
       {
         name: "--max-input-bytes",
         value: "<n>",

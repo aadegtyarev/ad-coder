@@ -15,13 +15,14 @@ const ALL_COMPLEXITIES: readonly Complexity[] = ["trivial", "medium", "complex"]
  *
  * Takes NAMES only (no hardcoded provider ids), so the same builder works over
  * any registry. It emits exactly one entry for every `(role x complexity)` pair
- * (5 roles x 3 complexities = 15) because the profile is keyed on
+ * (7 roles x 3 complexities = 21) because the profile is keyed on
  * `(role, complexity)` and `resolveProfile` throws `missing_mapping` on any gap
  * even the complexity-invariant roles get an entry at every complexity.
  *
- * Routing: `planner` and `security` -> `strong` at every complexity (planning
- * and threat-modelling are where the strong model earns its cost); `reviewer`
- * -> `mid`; `recorder` -> `cheap`; `coder` scales with the task
+ * Routing: `planner`, `researcher`, and `security` -> `strong` at every
+ * complexity (up-front decisions are where the strong model earns its cost);
+ * `reviewer` and `auditor` -> `mid`; `recorder` -> `cheap`; `coder` scales
+ * with the task
  * (`trivial -> cheap`, `medium -> mid`, `complex -> strong`), since a weak coder
  * on a hard task just buys extra review rounds.
  *
@@ -34,9 +35,11 @@ export function buildDefaultProfile(models: DefaultProfileModels): Profile {
   const modelFor = (role: ProfileRole, complexity: Complexity): string => {
     switch (role) {
       case "planner":
+      case "researcher":
       case "security":
         return strong;
       case "reviewer":
+      case "auditor":
         return mid;
       case "recorder":
         return cheap;
@@ -46,7 +49,15 @@ export function buildDefaultProfile(models: DefaultProfileModels): Profile {
   };
 
   const entries: ProfileEntry[] = [];
-  const roles: readonly ProfileRole[] = ["planner", "coder", "reviewer", "security", "recorder"];
+  const roles: readonly ProfileRole[] = [
+    "planner",
+    "researcher",
+    "coder",
+    "reviewer",
+    "auditor",
+    "security",
+    "recorder",
+  ];
   for (const role of roles) {
     for (const complexity of ALL_COMPLEXITIES) {
       entries.push({ role, complexity, model: modelFor(role, complexity) });

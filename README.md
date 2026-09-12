@@ -93,6 +93,10 @@ ad-coder role planner "Summarize this repository" \
   --provider openai-codex --target-dir ./my-project
 ```
 
+The standalone roles are `planner`, `researcher`, `coder`, `reviewer`, `auditor`,
+and `security`. Researcher and Auditor have independent profile cells and may be
+overridden with `--researcher-model` and `--auditor-model`.
+
 Then run the built-in reviewed pipeline. `--auto` takes default transitions and
 is the non-interactive/scripted mode:
 
@@ -115,10 +119,31 @@ Start a persistent conversational orchestrator with:
 ad-coder console --provider openai-codex --target-dir ./my-project
 ```
 
+The built-in reviewed pipeline is an opt-in workflow module. Enable it in the
+conversation only when wanted:
+
+```sh
+ad-coder console --provider openai-codex --target-dir ./my-project --workflows pipeline
+```
+
+Without `--workflows pipeline`, its `run_pipeline`, `decompose_task`, `run_step`,
+`choose_transition`, and `show_cost` tools are not registered. Standalone
+`drive` still explicitly selects the built-in pipeline. The general `run_role`
+tool remains available either way and lets the Orchestrator invoke Planner,
+Researcher, Security, Coder, Reviewer, or Auditor independently.
+
 Enter `/exit` or EOF to close it. `--json` writes one JSON record per turn.
 Input defaults to 65,536 bytes per line; use `--max-input-bytes` to change it.
 `--max-session-turns` and `--max-session-cost-usd` set session limits; `0`
 disables either limit.
+
+The Orchestrator and every code-reading pipeline role can use
+`explore_project`, a bounded structural view that follows Git's standard ignore
+rules. The console also provides DuckDuckGo `web_search`, navigable `web_read`,
+and `inspect_image`. If the active role is text-only, configure an image-capable
+registered model with `--vision-model <name>`; otherwise image inspection fails
+clearly instead of silently dropping pixels. `decompose_task` runs Planner only
+when you want surfaces and contract coverage without starting implementation.
 
 ## Durable runs and operations
 
@@ -149,9 +174,21 @@ Explicit profile, spawn, and model overrides take precedence;
 
 The shared role/pipeline options include provider/model tier overrides,
 `--registry-config`, `--profile-config`, per-role model overrides,
-context-budget percentages, `--summarizer-model`, `--compaction-mode`, and
+context-budget percentages, `--vision-model`, `--summarizer-model`, `--compaction-mode`, and
 `--project-store-config`. Registry/profile JSON is explicitly selected trusted
 data; the CLI never discovers configuration from `target-dir`.
+
+Custom registry models declare `"input": ["text", "image"]` when they accept
+images; omission intentionally means text-only.
+Built-in plugin groups default to `explore,web,vision`; select a subset with
+`--plugins`, or pass `--plugins none`. Programmatic hosts may replace them with
+their own `pluginTools`.
+
+Model-backed `role` and `drive` commands announce their stage immediately and
+print a heartbeat to stderr every 10 seconds. Change it with `--heartbeat-ms`.
+Provider requests time out after 120 seconds by default; use
+`--request-timeout-ms`. Zero explicitly disables either behavior. Progress never
+pollutes machine-result stdout.
 
 Context compaction defaults to `auto`. `disabled-then-halt` refuses an
 over-budget turn rather than summarizing it. Cross-provider summarization needs

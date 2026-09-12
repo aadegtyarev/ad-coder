@@ -99,6 +99,7 @@ export function resolveRegistry(
       ...model,
       contextWindow: entry.config.contextWindow ?? 200_000,
       maxTokens: entry.config.maxTokens,
+      ...(entry.config.input !== undefined && { input: [...entry.config.input] }),
     };
   };
 
@@ -157,7 +158,7 @@ function toPiModel(model: ModelConfig, provider: ProviderConfig): Model<Api> {
     provider: provider.id,
     baseUrl: provider.baseUrl,
     reasoning: model.reasoning ?? false,
-    input: ["text"],
+    input: model.input ?? ["text"],
     cost: {
       input: model.cost.input,
       output: model.cost.output,

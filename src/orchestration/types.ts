@@ -8,6 +8,7 @@ import type { FollowUp } from "../project-operations/types";
 import type { ProjectStoreConfig } from "../project-store/types";
 import type { ResolvedRegistry } from "../registry/types";
 import type { Role } from "../role";
+import type { Tool } from "../runner/tool";
 import type { SessionLimitController } from "../session-limits";
 
 /**
@@ -245,6 +246,10 @@ export interface PipelineConfig {
   models: Models;
   task: string;
   maxRounds: number;
+  /** General plugin tools available to roles whose allow-list names them. Empty disables plugins. */
+  pluginTools?: Tool[];
+  /** Built-in plugin factory bound to the model actually dispatched for a role turn. */
+  pluginToolsForModel?: (model: Model<Api>) => Tool[];
   /** Optional Planner governance limits; every zero value disables that limit. */
   surfaceAnalysisLimits?: SurfaceAnalysisLimits;
   roles: {
@@ -253,6 +258,8 @@ export interface PipelineConfig {
     researcher?: RoleSpec;
     coder: RoleSpec;
     reviewer: RoleSpec;
+    /** Whole-project cold-read role; not part of the built-in pipeline graph. */
+    auditor?: RoleSpec;
     /**
      * OPTIONAL threat-modelling role. The conditional Security phase runs only
      * when the planner's `securitySurface` is `elevated` AND this role is

@@ -35,11 +35,16 @@ export type { DriveErrorCode, DriveWorkflowParams } from "./cli/drive";
 export { DriveError, driveWorkflow, silentNoopWarning } from "./cli/drive";
 export type {
   BudgetPercents,
+  BuiltInPluginName,
   ConfigurableRole,
   ResolvableProvider,
   ResolvePipelineConfigOptions,
 } from "./cli/resolve-config";
-export { resolvePipelineConfig } from "./cli/resolve-config";
+export {
+  DEFAULT_REQUEST_TIMEOUT_MS,
+  resolveOrchestratorSeed,
+  resolvePipelineConfig,
+} from "./cli/resolve-config";
 export type { ContextBudget, ContextBudgetPercents } from "./context/budget";
 export {
   ContextBudgetError,
@@ -64,7 +69,8 @@ export type {
   ConversationTurnResult,
 } from "./conversation/conversation";
 export { startConversation } from "./conversation/conversation";
-export { GateRunner } from "./gates/runner";
+export type { GateRunnerConfig } from "./gates/runner";
+export { DEFAULT_GATE_RUNNER_CONFIG, GateRunner } from "./gates/runner";
 export type {
   CommandExecutor,
   ExecResult,
@@ -121,6 +127,9 @@ export {
 } from "./orchestration/follow-up";
 export type {
   CostReport,
+  DecompositionResult,
+  DelegatableRoleName,
+  DelegatedRoleResult,
   Orchestrator,
   OrchestratorConfig,
   OrchestratorDeps,
@@ -130,11 +139,16 @@ export type {
   StepView,
 } from "./orchestration/orchestrator";
 export {
+  buildBuiltInPipelineTools,
   buildOrchestratorTools,
+  buildRunRoleTool,
   CHOOSE_TRANSITION_TOOL_NAME,
   createOrchestrator,
+  DECOMPOSE_TASK_TOOL_NAME,
+  DELEGATABLE_ROLE_NAMES,
   OrchestratorError,
   RUN_PIPELINE_TOOL_NAME,
+  RUN_ROLE_TOOL_NAME,
   RUN_STEP_TOOL_NAME,
   SHOW_COST_TOOL_NAME,
   startOrchestrator,
@@ -333,6 +347,12 @@ export type {
   VersionedState,
 } from "./project-store/types";
 export { ProjectStoreError } from "./project-store/types";
+export type { ExploreProjectConfig } from "./project-tools/explore";
+export {
+  buildExploreProjectTool,
+  DEFAULT_EXPLORE_PROJECT_CONFIG,
+  EXPLORE_PROJECT_TOOL_NAME,
+} from "./project-tools/explore";
 export type { PromptErrorCode } from "./prompts/errors";
 export { PromptError } from "./prompts/errors";
 export type { ResolvePromptOptions } from "./prompts/prompts";
@@ -378,5 +398,28 @@ export type {
   SessionLimits,
 } from "./session-limits";
 export { SessionLimitController, SessionLimitError } from "./session-limits";
+export type {
+  ExtractedPage,
+  ImageInspectionConfig,
+  WebToolConfig,
+  WebToolDependencies,
+} from "./web/tools";
+export {
+  buildImageInspectionTool,
+  buildWebTools,
+  DEFAULT_WEB_TOOL_CONFIG,
+  extractPage,
+  htmlToText,
+  INSPECT_IMAGE_TOOL_NAME,
+  parseDuckDuckGoResults,
+  WEB_READ_TOOL_NAME,
+  WEB_SEARCH_TOOL_NAME,
+} from "./web/tools";
 export type { WorkflowContext, WorkflowModule } from "./workflow";
 export { isWorkflowModule } from "./workflow";
+export {
+  BUILT_IN_PIPELINE_WORKFLOW,
+  BUILT_IN_PIPELINE_WORKFLOW_NAME,
+} from "./workflows/builtin-pipeline";
+export { resolveWorkflowModules } from "./workflows/registry";
+export type { OrchestratorWorkflowModule } from "./workflows/types";
