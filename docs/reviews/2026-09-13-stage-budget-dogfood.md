@@ -132,3 +132,7 @@ a path segment was truncated at the FFI boundary, so `..\0ignored` reached
 `openat` as `..`. The tool now rejects NUL before native traversal and a direct
 regression test preserves the boundary. Reviewer otherwise confirmed telemetry
 propagation, renderer cleanup, exports, contracts, and 406 passing tests.
+
+The focused NUL fix re-review approved in about 27.6 seconds for $0.03508040.
+It ran only `test/read-project.test.ts` (5/5) and mutation-checked the guard:
+removing it made the regression fail at the native traversal boundary.
