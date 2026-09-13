@@ -26,6 +26,10 @@
     {
       "id": "has-concurrency-tests",
       "weight": 1
+    },
+    {
+      "id": "rejects-invalid-capacity",
+      "weight": 2
     }
   ],
   "scorerInput": "target"

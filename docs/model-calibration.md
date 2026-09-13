@@ -165,3 +165,15 @@ first sample is insufficient to replace Terra for complex or broad review. The
 run also exposed an invalid scorer assumption that models would guess hidden
 exact defect codes; the scorer now accepts equivalent stable codes and the CLI's
 documented trailing cost line.
+
+On `complex-reservation-v1`, the first Luna Planner → Sol Coder ⇄ Terra Reviewer
+automatic run exhausted two rounds despite passing the original 5/5 scorer.
+Terra found negative and then NaN constructor-capacity holes. A continuation run
+closed both and was approved in one round; the strengthened scorer passes 6/6.
+Across both runs: 607.10 s of stage time, 152,680 fresh plus 223,744 cached input,
+17,995 output, 8,621 reasoning tokens, and $0.83711116. Both Luna Planner samples
+classified the corpus-labelled complex task as medium, so complex planning moves
+provisionally to Terra. Sol remains the complex Coder candidate, while Terra is
+retained for medium/complex review. The committed `codex-5.6-calibrated` snapshot
+uses Luna for trivial/bounded cells and medium coding, and Sol for deep research
+and complex coding; cells without controlled role samples remain hypotheses.

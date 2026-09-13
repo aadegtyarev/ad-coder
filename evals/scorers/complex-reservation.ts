@@ -18,6 +18,15 @@ try {
   invalid = true;
 }
 const after = await p2.reserve(1);
+let invalidCapacity = true;
+for (const capacity of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+  try {
+    new Pool(capacity);
+    invalidCapacity = false;
+  } catch {
+    // Expected: construction must establish a finite non-negative invariant.
+  }
+}
 const files = fs
   .readdirSync(target, { recursive: true })
   .map(String)
@@ -33,6 +42,7 @@ console.log(
       { id: "rejects-invalid", passed: invalid },
       { id: "recovers-after-failure", passed: after === true },
       { id: "has-concurrency-tests", passed: files.some((f) => /test|spec/.test(f)) },
+      { id: "rejects-invalid-capacity", passed: invalidCapacity },
     ],
     null,
     2,
