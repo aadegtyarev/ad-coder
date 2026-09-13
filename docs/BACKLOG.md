@@ -22,7 +22,8 @@ Only unresolved work belongs here. Current behavior is in
   Planner reconnaissance now batches reads and fails closed on unresolved gaps.
   `search_project` now supplies a ranked, byte-bounded task projection including
   tracked modifications and untracked additions. Comparative dogfood and broader
-  role-specific handoff projections remain.
+  role-specific handoff projections remain. Every stage now reports separate
+  system-prompt, handoff-prompt, tool-definition, and total assembly bytes.
 
 - [high] **Complete workflow-module extraction** (`src/workflows/`,
   `src/orchestration/`, `src/cli/resolve-config.ts`): conversational activation

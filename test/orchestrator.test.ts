@@ -1016,6 +1016,7 @@ test("stage metrics survive reconstruction and model reports expose counts, not 
         output: 3,
         reasoning: 2,
         costUsd: 0.012,
+        requestBytes: { systemPrompt: 10, prompt: 20, toolDefinitions: 30, total: 60 },
         readFiles: ["src/private-name.ts"],
         readFilesTotal: 1,
         readFilesTruncated: 0,

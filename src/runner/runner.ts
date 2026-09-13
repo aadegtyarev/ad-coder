@@ -151,6 +151,13 @@ export interface RoleObservations {
   output: number;
   reasoning?: number;
   costUsd?: number;
+  /** UTF-8 request-assembly sizes before provider-specific serialization. */
+  requestBytes: {
+    systemPrompt: number;
+    prompt: number;
+    toolDefinitions: number;
+    total: number;
+  };
   readFiles: string[];
   readFilesTotal: number;
   readFilesTruncated: number;
@@ -333,14 +340,23 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
     models,
     model: params.model,
   });
+  const effectiveSystemPrompt =
+    compaction.mode === "auto"
+      ? `${params.role.systemPrompt}\n\n${COMPACTION_SAFETY_PROMPT}`
+      : params.role.systemPrompt;
   const options: AgentHarnessOptions<ExecutionToolContext> = {
     ...base,
-    ...(compaction.mode === "auto" && {
-      systemPrompt: `${base.systemPrompt}\n\n${COMPACTION_SAFETY_PROMPT}`,
-    }),
+    systemPrompt: effectiveSystemPrompt,
     tools,
     toolContext,
   };
+  const systemPromptBytes = Buffer.byteLength(effectiveSystemPrompt);
+  const promptBytes = Buffer.byteLength(params.prompt);
+  const toolDefinitionBytes = Buffer.byteLength(
+    JSON.stringify(
+      tools.map(({ name, description, parameters }) => ({ name, description, parameters })),
+    ),
+  );
 
   let ledgerPath: string | undefined;
   let sink: LedgerSink;
@@ -563,6 +579,12 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
         output: usage.output,
         reasoning: usage.reasoning,
         costUsd: usage.costUsd,
+        requestBytes: {
+          systemPrompt: systemPromptBytes,
+          prompt: promptBytes,
+          toolDefinitions: toolDefinitionBytes,
+          total: systemPromptBytes + promptBytes + toolDefinitionBytes,
+        },
         readFiles: [...readFiles].sort(),
         readFilesTotal: seenReadFiles.size,
         readFilesTruncated: Math.max(0, seenReadFiles.size - readFiles.size),

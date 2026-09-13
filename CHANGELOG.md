@@ -19,6 +19,8 @@ All notable changes to ad-coder are recorded here. The format follows
   stderr with visible backpressure and subscriber drops.
 - Added safe per-stage provider/model, thinking, duration, reasoning-token, cost,
   and context-strategy metrics to pipeline results and durable reports.
+- Added per-stage UTF-8 byte measurements for the effective system prompt,
+  stage handoff prompt, tool definitions, and their request-assembly total.
 
 ### Changed
 

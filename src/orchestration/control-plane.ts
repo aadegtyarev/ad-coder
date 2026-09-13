@@ -1477,6 +1477,7 @@ export function buildControlPlaneTools(control: OrchestratorControlPlane): Tool[
               output: metric.output,
               reasoning: metric.reasoning ?? 0,
               costUsd: metric.costUsd ?? 0,
+              requestBytes: metric.requestBytes,
               readFilesTotal: metric.readFilesTotal,
               readFilesTruncated: metric.readFilesTruncated,
               diffBytes: metric.diffBytes,
