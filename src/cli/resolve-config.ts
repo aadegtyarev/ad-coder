@@ -4,6 +4,8 @@ import { assertCredentialPathOutsideProject, FileCredentialStore } from "../auth
 import { type ContextBudgetPercents, deriveContextBudget } from "../context/budget";
 import type { CompactionMode } from "../context/compactor";
 import { assertSummarizerWindow } from "../context/compactor";
+import { resolveModelInventory } from "../inventory/resolve";
+import type { ModelInventoryConfig } from "../inventory/types";
 import { MemoryLedgerSink } from "../ledger/ledger";
 import type {
   ToolActivityChannel,
@@ -139,6 +141,8 @@ export interface ResolvePipelineConfigOptions {
   /** Explicit operator-authored registry data; never discovered from targetDir. */
   registryConfig?: RegistryConfig;
   profile?: Profile;
+  inventoryConfig?: ModelInventoryConfig;
+  inventoryProfile?: string;
   overrides?: Partial<Record<ProfileRole, import("../profiles/types").SpawnOverride>>;
   plannerModel?: string;
   researcherModel?: string;
@@ -276,6 +280,33 @@ function resolveConfig(
   if (options.registryConfig !== undefined && options.provider !== undefined) {
     throw new Error("provider cannot be combined with registryConfig");
   }
+  if (
+    options.inventoryConfig !== undefined &&
+    [
+      options.registryConfig,
+      options.profile,
+      options.provider,
+      options.strongModel,
+      options.midModel,
+      options.cheapModel,
+      options.plannerModel,
+      options.researcherModel,
+      options.securityModel,
+      options.coderModel,
+      options.reviewerModel,
+      options.auditorModel,
+      options.orchestratorModel,
+      options.summarizerModel,
+      options.visionModel,
+      options.overrides,
+    ].some((value) => value !== undefined)
+  ) {
+    throw new Error(
+      "inventoryConfig cannot be combined with independent provider, profile, or model overrides",
+    );
+  }
+  if (options.inventoryProfile !== undefined && options.inventoryConfig === undefined)
+    throw new Error("inventoryProfile requires inventoryConfig");
   const env = options.env ?? ((name: string) => process.env[name]);
   if (
     options.orchestratorThinkingLevel !== undefined &&
@@ -285,11 +316,28 @@ function resolveConfig(
   }
   const warn = options.warn ?? ((message: string) => void process.stderr.write(message));
 
+  const credentials = options.credentials ?? new FileCredentialStore();
+  if (credentials instanceof FileCredentialStore) {
+    assertCredentialPathOutsideProject(credentials.path, options.targetDir);
+  }
+  const inventory =
+    options.inventoryConfig === undefined
+      ? undefined
+      : resolveModelInventory(options.inventoryConfig, options.inventoryProfile, {
+          env,
+          credentials,
+        });
   const provider =
-    options.registryConfig === undefined ? selectProvider(env, options.provider, warn) : undefined;
+    options.registryConfig === undefined && inventory === undefined
+      ? selectProvider(env, options.provider, warn)
+      : undefined;
   const presetSelection = provider === undefined ? undefined : PROVIDER_PRESETS[provider];
   let registryConfig: RegistryConfig;
-  if (options.registryConfig !== undefined) registryConfig = options.registryConfig;
+  if (inventory !== undefined)
+    registryConfig = options.inventoryConfig?.profiles.find(
+      (entry) => entry.name === inventory.name,
+    )?.registry as RegistryConfig;
+  else if (options.registryConfig !== undefined) registryConfig = options.registryConfig;
   else if (presetSelection !== undefined)
     registryConfig = { providers: [presetSelection.preset()] };
   else throw new Error("provider preset could not be selected");
@@ -331,14 +379,8 @@ function resolveConfig(
     throw new Error(`unknown context compaction mode "${String(compactionMode)}"`);
   }
 
-  const credentials = options.credentials ?? new FileCredentialStore();
-  if (credentials instanceof FileCredentialStore) {
-    assertCredentialPathOutsideProject(credentials.path, options.targetDir);
-  }
-  const registry: ResolvedRegistry = resolveRegistry(registryConfig, {
-    env,
-    credentials,
-  });
+  const registry: ResolvedRegistry =
+    inventory?.registry ?? resolveRegistry(registryConfig, { env, credentials });
   for (const configuredProvider of registryConfig.providers) {
     const credentialName =
       configuredProvider.credential.kind === "env-var"
@@ -359,7 +401,8 @@ function resolveConfig(
     options.midModel === undefined &&
     options.cheapModel === undefined;
   const profile: Profile = parseProfile(
-    options.profile ??
+    inventory?.profile ??
+      options.profile ??
       (useCodexOAuthDefaults
         ? {
             entries: defaultProfile.entries.map((entry) =>
@@ -625,6 +668,10 @@ function resolveConfig(
     },
     defaults: { maxRounds, defaultComplexity },
     effectiveConfig: {
+      inventoryProfile: {
+        value: inventory?.name ?? "not-configured",
+        source: inventory?.source ?? "built-in-default",
+      },
       provider: {
         value: provider ?? "custom",
         source:

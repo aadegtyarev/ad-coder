@@ -8,6 +8,9 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ### Added
 
+- Added a headless named model-inventory layer and CLI selection that atomically
+  pairs a provider/model registry with its role-by-complexity routing profile.
+
 - Added native Orchestrator `resume_pipeline` support and safe aggregate stage
   usage/run identity in automatic pipeline results.
 - Added `drive --resume-run` for stage-limit pauses, with actionable checkpoint

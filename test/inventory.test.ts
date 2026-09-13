@@ -1,0 +1,104 @@
+import { expect, test } from "bun:test";
+import type { ModelInventoryConfig, Profile, RegistryConfig } from "ad-coder";
+import { ModelInventoryError, parseModelInventoryConfig, resolveModelInventory } from "ad-coder";
+
+function registry(name = "model-a", envVar = "INVENTORY_TEST_KEY"): RegistryConfig {
+  return {
+    providers: [
+      {
+        id: `provider-${name}`,
+        api: "openai-completions",
+        baseUrl: "https://api.example.com",
+        credential: { kind: "env-var", envVar },
+        models: [
+          {
+            name,
+            modelId: `native-${name}`,
+            maxTokens: 4096,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          },
+        ],
+      },
+    ],
+  };
+}
+
+function profile(model = "model-a"): Profile {
+  return { entries: [{ role: "coder", complexity: "medium", model }] };
+}
+
+function inventory(): ModelInventoryConfig {
+  return {
+    profiles: [
+      { name: "primary", registry: registry(), profile: profile() },
+      { name: "backup", registry: registry("model-b", "BACKUP_KEY"), profile: profile("model-b") },
+    ],
+    default: "primary",
+  };
+}
+
+test("validates and resolves a named atomic registry/profile pair", () => {
+  const parsed = parseModelInventoryConfig(inventory());
+  expect(parsed.profiles.map((entry) => entry.name)).toEqual(["primary", "backup"]);
+  const resolved = resolveModelInventory(parsed, "backup", {
+    env: (name) => (name === "BACKUP_KEY" ? "secret-value" : undefined),
+  });
+  expect(resolved.name).toBe("backup");
+  expect(resolved.profile.entries[0]?.model).toBe("model-b");
+  expect(resolved.registry.getModel("model-b").id).toBe("native-model-b");
+  expect(resolved.summary).toEqual({
+    name: "backup",
+    providerIds: ["provider-model-b"],
+    modelNames: ["model-b"],
+  });
+  expect(JSON.stringify(resolved.summary)).not.toContain("secret-value");
+  expect(JSON.stringify(resolved.summary)).not.toContain("BACKUP_KEY");
+});
+
+test("uses the optional default and requires selection when absent", () => {
+  const selected = resolveModelInventory(inventory(), undefined, {
+    env: (name) => (name === "INVENTORY_TEST_KEY" ? "key" : undefined),
+  });
+  expect(selected.name).toBe("primary");
+  expect(selected.source).toBe("default");
+
+  const withoutDefault = inventory();
+  delete withoutDefault.default;
+  expect(() => resolveModelInventory(withoutDefault)).toThrow(ModelInventoryError);
+});
+
+test("rejects malformed, duplicate, and unknown default names", () => {
+  expect(() => parseModelInventoryConfig({ profiles: [] })).toThrow(ModelInventoryError);
+  expect(() =>
+    parseModelInventoryConfig({
+      profiles: [{ name: "bad name", registry: registry(), profile: profile() }],
+    }),
+  ).toThrow(ModelInventoryError);
+  expect(() =>
+    parseModelInventoryConfig({
+      profiles: [
+        { name: "same", registry: registry(), profile: profile() },
+        { name: "same", registry: registry("model-b"), profile: profile("model-b") },
+      ],
+    }),
+  ).toThrow(ModelInventoryError);
+  expect(() =>
+    parseModelInventoryConfig({
+      profiles: [{ name: "primary", registry: registry(), profile: profile() }],
+      default: "missing",
+    }),
+  ).toThrow(ModelInventoryError);
+});
+
+test("rejects profile references outside its paired registry", () => {
+  try {
+    parseModelInventoryConfig({
+      profiles: [{ name: "primary", registry: registry(), profile: profile("model-b") }],
+    });
+    throw new Error("expected rejection");
+  } catch (error) {
+    expect(error).toBeInstanceOf(ModelInventoryError);
+    expect((error as ModelInventoryError).code).toBe("unknown_model");
+    expect((error as ModelInventoryError).detail).toBe("model-b");
+  }
+});

@@ -209,6 +209,24 @@ data; the CLI never discovers configuration from `target-dir`.
 
 Custom registry models declare `"input": ["text", "image"]` when they accept
 images; omission intentionally means text-only.
+
+To switch a complete account/provider model inventory atomically, put named
+registry and routing-profile pairs in one trusted JSON file, then select one:
+
+```sh
+ad-coder config show --inventory-config ./inventories.json \
+  --inventory-profile codex-secondary --json
+ad-coder drive "Implement the change" --inventory-config ./inventories.json \
+  --inventory-profile codex-secondary --target-dir ./my-project --auto
+```
+
+An inventory entry has `{ "name", "registry", "profile" }`; the top-level
+object has `profiles` and an optional `default`. The pair is validated together,
+and inventory options cannot be mixed with separate `--provider`,
+`--registry-config`, or `--profile-config` sources. `config show` exposes only
+the selected name and ordinary secret-free effective configuration.
+Model-selection overrides are likewise rejected while an inventory is active;
+budget, context, and execution-limit overrides remain available.
 Built-in plugin groups default to `explore,web,vision`; select a subset with
 `--plugins`, or pass `--plugins none`. Programmatic hosts may replace them with
 their own `pluginTools`.

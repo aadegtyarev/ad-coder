@@ -82,6 +82,17 @@ export type {
   QualityGate,
   QualityGateKind,
 } from "./gates/types";
+export type { ModelInventoryErrorCode } from "./inventory/errors";
+export { ModelInventoryError } from "./inventory/errors";
+export { resolveModelInventory } from "./inventory/resolve";
+export type {
+  ModelInventoryConfig,
+  ModelInventoryProfile,
+  ModelInventorySummary,
+  ResolvedModelInventory,
+  ResolveModelInventoryOptions,
+} from "./inventory/types";
+export { parseModelInventoryConfig } from "./inventory/validate";
 export type { LedgerOptions, LedgerSink } from "./ledger/ledger";
 export { FileLedgerSink, LEDGER_BASE_DIR, Ledger, MemoryLedgerSink } from "./ledger/ledger";
 export type { LedgerRecord, UsageAmounts, UsageDelta } from "./ledger/types";

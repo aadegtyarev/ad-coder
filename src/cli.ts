@@ -23,6 +23,7 @@ import type {
 import { resolvePipelineConfig } from "./cli/resolve-config";
 import { ToolActivityRenderer } from "./cli/tool-activity";
 import type { CompactionPolicy } from "./context/compactor";
+import { parseModelInventoryConfig } from "./inventory/validate";
 import { Ledger, type LedgerSink, MemoryLedgerSink } from "./ledger/ledger";
 import {
   DEFAULT_TOOL_ACTIVITY_CONFIG,
@@ -1334,6 +1335,12 @@ function buildConfigOptions(
     flags["--registry-config"] === undefined
       ? undefined
       : parseRegistryConfig(readJsonConfig(flags["--registry-config"], "--registry-config"));
+  const inventoryConfig =
+    flags["--inventory-config"] === undefined
+      ? undefined
+      : parseModelInventoryConfig(
+          readJsonConfig(flags["--inventory-config"], "--inventory-config"),
+        );
   const profile =
     flags["--profile-config"] === undefined
       ? undefined
@@ -1418,6 +1425,10 @@ function buildConfigOptions(
     ...(flags["--mid-model"] !== undefined && { midModel: flags["--mid-model"] }),
     ...(flags["--cheap-model"] !== undefined && { cheapModel: flags["--cheap-model"] }),
     ...(registryConfig !== undefined && { registryConfig }),
+    ...(inventoryConfig !== undefined && { inventoryConfig }),
+    ...(flags["--inventory-profile"] !== undefined && {
+      inventoryProfile: flags["--inventory-profile"],
+    }),
     ...(profile !== undefined && { profile }),
     ...(flags["--planner-model"] !== undefined && { plannerModel: flags["--planner-model"] }),
     ...(flags["--researcher-model"] !== undefined && {
@@ -1709,6 +1720,16 @@ const PIPELINE_OPTIONS: CommandDefinition["options"] = [
     name: "--registry-config",
     value: "<file.json>",
     description: "Load an explicitly selected trusted provider/model registry as JSON.",
+  },
+  {
+    name: "--inventory-config",
+    value: "<file.json>",
+    description: "Load named atomic registry/profile inventories as JSON.",
+  },
+  {
+    name: "--inventory-profile",
+    value: "<name>",
+    description: "Select one profile from --inventory-config.",
   },
   {
     name: "--profile-config",
