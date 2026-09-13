@@ -549,7 +549,6 @@ function resolveConfig(
           "write",
           "edit",
           "bash",
-          EXPLORE_PROJECT_TOOL_NAME,
           SEARCH_PROJECT_TOOL_NAME,
           READ_PROJECT_TOOL_NAME,
           SUBMIT_FOLLOW_UP_TOOL_NAME,

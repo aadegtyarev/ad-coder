@@ -118,3 +118,17 @@ authorize `resumeResearch`. The accepted-result cost is therefore still unknown.
 Do not change the routing matrix from this single failed sample. It does justify
 testing a cheaper Planner first and fixing research recovery before another full
 matrix run.
+
+A later retry-capable run reached two complete review rounds and passed all four
+machine checks for $0.704820, but independent Terra review correctly rejected
+the regression proof: materialization kept the safe implementation at HEAD and
+placed seeded defects only in the working diff, so restoring HEAD could never
+reproduce the defect. Full-pipeline calibration now uses `--commit-defect`; the
+original diff mode remains for standalone Reviewer calibration.
+
+With the corrected committed-defect baseline, Luna low handled Planner,
+Security, and Coder while Terra low independently reviewed. The run was accepted
+in one round and passed all four machine checks: 170.9 s, 58,140 fresh plus
+58,880 cached input, 6,687 output, 2,367 reasoning tokens, and $0.078138 total.
+This seeds medium behavioral repair with Luna for those three roles and Terra for
+Reviewer; broader task classes must pass before this becomes a general default.

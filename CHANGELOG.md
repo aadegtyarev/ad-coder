@@ -50,6 +50,8 @@ All notable changes to ad-coder are recorded here. The format follows
   every role stage.
 - Planner now stops after one sufficient bounded evidence pass for tasks with
   explicit files and acceptance criteria, and ends immediately after submission.
+- Coder now skips broad exploration after a concrete Planner handoff, edits
+  existing files in place, and bounds repeated verification runs.
 - Bounded normal Planner reconnaissance by batching independent reads and
   converting unresolved evidence into a research gate before Coder dispatch.
 - Planner now specifies verification commands without executing suites, builds,

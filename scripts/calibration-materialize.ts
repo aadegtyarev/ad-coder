@@ -3,9 +3,10 @@ import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-const [fixtureDir, targetDir] = process.argv.slice(2);
+const [fixtureDir, targetDir, mode] = process.argv.slice(2);
 if (!fixtureDir || !targetDir)
-  throw new Error("usage: calibration-materialize <fixture-dir> <target-dir>");
+  throw new Error("usage: calibration-materialize <fixture-dir> <target-dir> [--commit-defect]");
+if (mode !== undefined && mode !== "--commit-defect") throw new Error(`unknown mode: ${mode}`);
 if (fs.existsSync(targetDir)) throw new Error(`target already exists: ${targetDir}`);
 fs.mkdirSync(targetDir, { recursive: true });
 for (const entry of fs.readdirSync(fixtureDir)) {
@@ -22,4 +23,8 @@ git(["config", "user.email", "calibration@invalid"]);
 git(["add", "."]);
 git(["commit", "-qm", "fixture baseline"]);
 git(["apply", path.resolve(fixtureDir, "change.patch")]);
+if (mode === "--commit-defect") {
+  git(["add", "."]);
+  git(["commit", "-qm", "seed benchmark defect"]);
+}
 process.stdout.write(`${path.resolve(targetDir)}\n`);
