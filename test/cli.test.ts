@@ -25,6 +25,48 @@ function runCli(
   };
 }
 
+test("background start propagates an explicit owner to the detached worker", async () => {
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-background-cli-"));
+  const ownerId = `fresh-owner-${Date.now()}`;
+  const started = runCli([
+    "background",
+    "start",
+    "detached regression task",
+    "--target-dir",
+    target,
+    "--owner-id",
+    ownerId,
+  ]);
+  expect(started.code).toBe(0);
+  const runId = JSON.parse(started.stdout).runId as string;
+  let lifecycle = "requested";
+  const recordPath = path.join(target, ".ad-coder", "runs", "background", `${runId}.json`);
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    await Bun.sleep(100);
+    try {
+      const stored = JSON.parse(fs.readFileSync(recordPath, "utf8"));
+      lifecycle = (stored.value ?? stored).lifecycle as string;
+    } catch {
+      // The detached worker may be between its atomic record writes.
+    }
+    if (["started", "failed", "cancelled", "timed_out", "completed"].includes(lifecycle)) break;
+  }
+  expect(lifecycle).not.toBe("requested");
+  expect(["started", "failed", "cancelled", "timed_out", "completed"]).toContain(lifecycle);
+  const status = runCli([
+    "background",
+    "status",
+    "--target-dir",
+    target,
+    "--owner-id",
+    ownerId,
+    "--id",
+    runId,
+  ]);
+  expect(status.code).toBe(0);
+  expect(JSON.parse(status.stdout).lifecycle).toBe(lifecycle);
+});
+
 test("target dotenv cannot supply provider credentials", () => {
   const target = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-target-env-"));
   fs.writeFileSync(path.join(target, ".env"), "DEEPSEEK_API_KEY=target-owned-value\n");

@@ -1,3 +1,4 @@
+import * as crypto from "node:crypto";
 import { Type } from "@earendil-works/pi-ai";
 import type { ResolvePipelineConfigOptions } from "../cli/resolve-config";
 import { resolveOrchestratorSeed, resolvePipelineConfig } from "../cli/resolve-config";
@@ -17,6 +18,7 @@ import { SessionLimitController } from "../session-limits";
 import { buildWebTools } from "../web/tools";
 import { resolveWorkflowModules } from "../workflows/registry";
 import type { OrchestratorWorkflowModule } from "../workflows/types";
+import { type BackgroundRunLimits, BackgroundRunManager } from "./background-runs";
 import type { WorkflowSession } from "./session";
 import { autoDriver, createWorkflowSession } from "./session";
 import { assertTransitionOffered, DriveError } from "./transition-guard";
@@ -40,6 +42,11 @@ export const RUN_STEP_TOOL_NAME = "run_step";
 export const CHOOSE_TRANSITION_TOOL_NAME = "choose_transition";
 export const SHOW_COST_TOOL_NAME = "show_cost";
 export const RUN_ROLE_TOOL_NAME = "run_role";
+export const START_PIPELINE_TOOL_NAME = "start_pipeline";
+export const PIPELINE_STATUS_TOOL_NAME = "pipeline_status";
+export const PIPELINE_EVENTS_TOOL_NAME = "pipeline_events";
+export const PIPELINE_RESULT_TOOL_NAME = "pipeline_result";
+export const CANCEL_PIPELINE_TOOL_NAME = "cancel_pipeline";
 
 export const DELEGATABLE_ROLE_NAMES = [
   "planner",
@@ -79,6 +86,8 @@ export type OrchestratorErrorCode =
  * `DriveError`/`OrchestrationError` house style: safe tokens only, dense WHY in
  * JSDoc, nothing that leaks into the transcript.
  */
+class BackgroundCancellation extends Error {}
+
 export class OrchestratorError extends Error {
   override readonly name = "OrchestratorError";
   readonly code: OrchestratorErrorCode;
@@ -161,6 +170,13 @@ export interface OrchestratorDeps {
   buildConfig: (task: string) => PipelineConfig;
   ledgerSink: MemoryLedgerSink;
   sessionLimitController?: SessionLimitController;
+  backgroundRuns?: Partial<BackgroundRunLimits>;
+  /** Durable background state root. Required by production fronts; optional for embedded test cores. */
+  backgroundTargetDir?: string;
+  /** Stable owner scope used to reconnect to this session's background runs. */
+  backgroundOwnerId?: string;
+  /** Host-owned detached worker launcher; required by start_pipeline. */
+  backgroundHostLauncher?: import("./background-runs").BackgroundHostLauncher;
 }
 
 /**
@@ -186,6 +202,8 @@ export interface Orchestrator {
   stepOnce(): Promise<StepView>;
   chooseTransition(kind: TransitionKind, rationale?: string): WorkflowPhase;
   showCost(): CostReport;
+  /** Session-scoped asynchronous execution; callers must not share this object across principals. */
+  readonly backgroundRuns: BackgroundRunManager;
   /** True while a stepping run is in progress and not yet settled. */
   isStepping(): boolean;
 }
@@ -237,13 +255,17 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
   const executePipeline = async (
     task: string,
     resumeRunId?: string,
+    control?: { cancelled: () => boolean; onStage: (step: StepCost) => void },
+    createWithRunId = false,
   ): Promise<RunPipelineResult> => {
     const config = buildConfig(task);
     const wf = createWorkflowSession(config);
     const runCoordinator = new RunCoordinator(wf, wf.projectStore, {
       ...config.coordinator,
       task,
-      ...(resumeRunId === undefined ? {} : { runId: resumeRunId, resumeExisting: true }),
+      ...(resumeRunId === undefined
+        ? {}
+        : { runId: resumeRunId, ...(createWithRunId ? {} : { resumeExisting: true }) }),
     });
     if (resumeRunId !== undefined && runCoordinator.checkpoint.pause?.code === "stage_limit")
       runCoordinator.resumeStage({ source: "host_config", action: "retry" });
@@ -251,8 +273,11 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     let costCursor = sink.records().length;
     const completed = await runCoordinator.run(autoDriver, ({ result }) => {
       const after = sink.records().length;
-      perStep.push(recordStep(result.phase, costCursor, after));
+      const step = recordStep(result.phase, costCursor, after);
+      perStep.push(step);
       costCursor = after;
+      if (control?.cancelled()) throw new BackgroundCancellation();
+      control?.onStage(step);
     });
     if (completed.result === undefined) {
       if (completed.status === "paused" && completed.checkpoint.pause !== undefined)
@@ -274,6 +299,67 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
   const runPipeline = (task: string): Promise<RunPipelineResult> => executePipeline(task);
   const resumePipeline = (task: string, runId: string): Promise<RunPipelineResult> =>
     executePipeline(task, runId);
+  const executeBackgroundPipeline = async (
+    task: string,
+    runId: string,
+    control: { cancelled: () => boolean; onStage: (step: StepCost) => void },
+  ): Promise<RunPipelineResult> => {
+    const resolved = deps.buildConfig(task);
+    const workerSink = new MemoryLedgerSinkImpl();
+    const inheritedLimits =
+      resolved.sessionLimitController?.limits ?? deps.sessionLimitController?.limits;
+    const workerLimits = new SessionLimitController(inheritedLimits);
+    const config: PipelineConfig = {
+      ...resolved,
+      ledgerSink: workerSink,
+      sessionLimitController: workerLimits,
+    };
+    const workflow = createWorkflowSession(config);
+    const workerCoordinator = new RunCoordinator(workflow, workflow.projectStore, {
+      ...config.coordinator,
+      task,
+      runId,
+    });
+    const perStep: StepCost[] = [];
+    let cursor = 0;
+    const completed = await workerCoordinator.run(autoDriver, ({ result }) => {
+      const records = workerSink.records();
+      let cost = 0;
+      for (let index = cursor; index < records.length; index += 1)
+        cost += records[index]?.usage.cost.total ?? 0;
+      cursor = records.length;
+      const step = { phase: result.phase, step: perStep.length + 1, cost };
+      perStep.push(step);
+      if (control.cancelled()) throw new BackgroundCancellation();
+      control.onStage(step);
+    });
+    if (completed.result === undefined) {
+      if (completed.status === "paused" && completed.checkpoint.pause !== undefined)
+        throw new OrchestrationError(
+          "requirements_unresolved",
+          completed.checkpoint.runId,
+          completed.checkpoint.pause.action,
+        );
+      const decision = completed.checkpoint.decisions.find((item) => item.status === "pending");
+      throw new ProjectOperationsError(
+        "pending_decision",
+        decision?.id ?? completed.checkpoint.runId,
+      );
+    }
+    return {
+      runId: completed.checkpoint.runId,
+      result: completed.result,
+      perStep,
+      totalCost: perStep.reduce((sum, step) => sum + step.cost, 0),
+    };
+  };
+  const backgroundRuns = new BackgroundRunManager(
+    executeBackgroundPipeline,
+    deps.backgroundRuns,
+    deps.backgroundTargetDir,
+    deps.backgroundOwnerId,
+    deps.backgroundHostLauncher,
+  );
 
   const decomposeTask = async (task: string): Promise<DecompositionResult> => {
     const config = buildConfig(task);
@@ -402,6 +488,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     stepOnce,
     chooseTransition,
     showCost,
+    backgroundRuns,
     isStepping,
   };
 }
@@ -582,6 +669,98 @@ export function buildBuiltInPipelineTools(core: Orchestrator): Tool[] {
     },
   });
 
+  const startPipelineTool = defineTool({
+    name: START_PIPELINE_TOOL_NAME,
+    description:
+      "Start the built-in pipeline in an isolated background conversation and return immediately. The only parameter is untrusted task data.",
+    label: "start pipeline",
+    parameters: Type.Object({ task: Type.String() }),
+    async execute(_toolCallId, params) {
+      try {
+        const started = await core.backgroundRuns.startDetached(params.task);
+        return {
+          content: [{ type: "text", text: `pipeline requested: runId=${started.runId}` }],
+          details: undefined,
+        };
+      } catch (error) {
+        return { content: [{ type: "text", text: safeErrorText(error) }], details: undefined };
+      }
+    },
+  });
+
+  const pipelineStatusTool = defineTool({
+    name: PIPELINE_STATUS_TOOL_NAME,
+    description:
+      "Read safe lifecycle and aggregate metrics for a background pipeline owned by this conversation.",
+    label: "pipeline status",
+    parameters: Type.Object({ runId: Type.String() }),
+    async execute(_toolCallId, params) {
+      try {
+        const status = core.backgroundRuns.status(params.runId);
+        return { content: [{ type: "text", text: JSON.stringify(status) }], details: undefined };
+      } catch (error) {
+        return { content: [{ type: "text", text: safeErrorText(error) }], details: undefined };
+      }
+    },
+  });
+
+  const pipelineEventsTool = defineTool({
+    name: PIPELINE_EVENTS_TOOL_NAME,
+    description: "Consume a bounded page of content-free lifecycle events after a cursor.",
+    label: "pipeline events",
+    parameters: Type.Object({
+      runId: Type.String(),
+      cursor: Type.Number(),
+      limit: Type.Optional(Type.Number()),
+    }),
+    async execute(_toolCallId, params) {
+      try {
+        const page = core.backgroundRuns.events(params.runId, params.cursor, params.limit);
+        return { content: [{ type: "text", text: JSON.stringify(page) }], details: undefined };
+      } catch (error) {
+        return { content: [{ type: "text", text: safeErrorText(error) }], details: undefined };
+      }
+    },
+  });
+
+  const pipelineResultTool = defineTool({
+    name: PIPELINE_RESULT_TOOL_NAME,
+    description:
+      "Read terminal outcome and aggregate usage for a background pipeline owned by this conversation.",
+    label: "pipeline result",
+    parameters: Type.Object({ runId: Type.String() }),
+    async execute(_toolCallId, params) {
+      try {
+        const run = core.backgroundRuns.result(params.runId);
+        return {
+          content: [{ type: "text", text: JSON.stringify(run) }],
+          details: undefined,
+        };
+      } catch (error) {
+        return { content: [{ type: "text", text: safeErrorText(error) }], details: undefined };
+      }
+    },
+  });
+
+  const cancelPipelineTool = defineTool({
+    name: CANCEL_PIPELINE_TOOL_NAME,
+    description: "Cancel a background pipeline owned by this conversation.",
+    label: "cancel pipeline",
+    parameters: Type.Object({ runId: Type.String() }),
+    async execute(_toolCallId, params) {
+      try {
+        return {
+          content: [
+            { type: "text", text: JSON.stringify(core.backgroundRuns.cancel(params.runId)) },
+          ],
+          details: undefined,
+        };
+      } catch (error) {
+        return { content: [{ type: "text", text: safeErrorText(error) }], details: undefined };
+      }
+    },
+  });
+
   const resumePipelineTool = defineTool({
     name: RESUME_PIPELINE_TOOL_NAME,
     description:
@@ -694,6 +873,11 @@ export function buildBuiltInPipelineTools(core: Orchestrator): Tool[] {
   return [
     runPipelineTool,
     resumePipelineTool,
+    startPipelineTool,
+    pipelineStatusTool,
+    pipelineEventsTool,
+    pipelineResultTool,
+    cancelPipelineTool,
     decomposeTaskTool,
     runStepTool,
     chooseTransitionTool,
@@ -729,6 +913,12 @@ export type OrchestratorConfig = Omit<ResolvePipelineConfigOptions, "task"> & {
   /** Independent worker-session seam; defaults to the same headless conversation constructor. */
   startDelegatedConversation?: typeof startConversationImpl;
   workflowModules?: readonly OrchestratorWorkflowModule[];
+  /** Public limits for asynchronous pipeline workers; omitted values use bounded defaults. */
+  backgroundRuns?: Partial<BackgroundRunLimits>;
+  /** Stable opaque owner scope for durable reconnect; defaults to a fresh conversation scope. */
+  backgroundOwnerId?: string;
+  /** CLI or embedding host provider for detached start_pipeline work. */
+  backgroundHostLauncher?: import("./background-runs").BackgroundHostLauncher;
   /** Empty by default: the built-in pipeline is shipped but opt-in. */
   enabledWorkflows?: readonly string[];
 };
@@ -751,6 +941,7 @@ export type OrchestratorConfig = Omit<ResolvePipelineConfigOptions, "task"> & {
  */
 export async function startOrchestrator(config: OrchestratorConfig): Promise<ConversationSession> {
   const sink = new MemoryLedgerSinkImpl();
+  const ownerId = config.backgroundOwnerId ?? crypto.randomUUID();
   const controller = new SessionLimitController(config.sessionLimits);
   const buildConfig = (task: string): PipelineConfig => resolvePipelineConfig({ ...config, task });
   // A placeholder task only seeds the config that yields the orchestrator's own
@@ -769,6 +960,12 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
           buildConfig,
           ledgerSink: sink,
           sessionLimitController: controller,
+          ...(config.backgroundRuns !== undefined && { backgroundRuns: config.backgroundRuns }),
+          backgroundTargetDir: config.targetDir,
+          backgroundOwnerId: ownerId,
+          ...(config.backgroundHostLauncher !== undefined && {
+            backgroundHostLauncher: config.backgroundHostLauncher,
+          }),
         });
   const delegatedRoleTool = buildRunRoleTool(async (name, task) => {
     // Resolve worker roles lazily: disabling the pipeline does not construct its
@@ -859,7 +1056,7 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
     orchestratorModel,
   );
 
-  return (config.startConversation ?? startConversationImpl)({
+  const conversation = await (config.startConversation ?? startConversationImpl)({
     role: orchestratorRole,
     targetDir: config.targetDir,
     models: seed.models,
@@ -872,4 +1069,14 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
     ...(config.toolActivity !== undefined && { toolActivity: config.toolActivity }),
     ...(seed.compaction !== undefined && { compaction: seed.compaction }),
   });
+  if (core === undefined) return conversation;
+  return {
+    ...conversation,
+    step: conversation.step.bind(conversation),
+    close: async () => {
+      await core.backgroundRuns.close();
+      await conversation.close();
+    },
+    backgroundRuns: core.backgroundRuns,
+  } as ConversationSession & { backgroundRuns: BackgroundRunManager };
 }

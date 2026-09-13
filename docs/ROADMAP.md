@@ -37,6 +37,15 @@ module-locality from the touched-file set to decide what can parallelize.
 
 ## Status
 
+### Detached background pipelines (implemented 2026-09-13)
+
+The seven pipeline tools and JSON `background` CLI support detached execution,
+owner-scoped polling, bounded cursor events, terminal results, cancellation, and
+lease-based stale-worker recovery. Numeric resource limits follow zero-disabled
+configuration semantics; finite page, close-drain, and lease safety ceilings
+remain enabled. The worker reuses the built-in pipeline while foreground
+conversation turns remain available.
+
 ### Documentation ownership (implemented 2026-09-12)
 
 The repository uses the durable handoff structure: README is orientation and

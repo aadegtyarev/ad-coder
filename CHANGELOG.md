@@ -8,6 +8,10 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ### Added
 
+- Added detached background pipeline execution with owner-scoped polling,
+  bounded cursor events, terminal results, cancellation, lease-based recovery,
+  and JSON CLI access while the foreground conversation remains available.
+
 - Taught Orchestrator to accept complete terminal pipeline evidence and avoid
   duplicate post-pipeline reads and test runs.
 

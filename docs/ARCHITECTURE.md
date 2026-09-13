@@ -93,36 +93,39 @@ the host configuration to raise or disable the exhausted budget.
 
 ### Conversation and orchestrator
 
-`startConversation` keeps one durable harness session across turns and attaches
-per-turn ledger listeners without replaying prior messages. `startOrchestrator`
-adds the selected independent project, web, and image plugins (all three by
-default; callers may select none or replace them). Named workflow modules
-are validated by a registry and contribute tools only when explicitly enabled.
-The shipped `pipeline` module is opt-in; disabling it removes all five of its
-tools. `decompose_task` runs its Planner alone in an isolated workflow and cannot
-dispatch Coder or disturb manual stepping. The orchestrator routes work; it does
-not recursively start another orchestrator. Its tool policy is default-open, so
-it receives every built-in and host-registered tool, including file editing and
-shell execution.
+`startConversation` keeps one durable harness session and attaches ledger
+listeners per turn. `startOrchestrator` adds selected project, web, and image
+plugins. Named workflow modules contribute tools only when enabled. Disabling
+the opt-in `pipeline` module removes its synchronous, stepped, and background
+tools. `decompose_task` runs Planner alone without disturbing manual stepping.
+The orchestrator routes work, never starts another orchestrator, and receives
+all host-registered tools by default.
 
-`explore_project` is shared by every role that reads project code. In a Git
-worktree it discovers tracked and untracked files through Git's standard exclude
-rules; a bounded filesystem fallback is used outside Git. It reports metadata
-and decomposition signals, never file contents. Web tools are plugin-shaped and
-replaceable. `web_read` preserves normalized page and content-image links.
-`inspect_image` returns pixels to an image-capable model; for a
-text-only model it makes a bounded one-shot call to the configured vision model
-and returns the description as text. Default web transport pins each request to
-its validated DNS address, checks the connected peer, and repeats validation for
-redirects; private-network access remains an explicit trusted override.
+`explore_project` gives every code-reading role a bounded, Git-ignore-aware map
+without file contents. Web tools are replaceable plugins; `web_read` preserves
+normalized links. `inspect_image` sends pixels directly to a capable model or
+uses one bounded vision call. Web transport validates DNS, peer address, and
+redirects; private-network access requires an explicit trusted override.
 
 ### Durable control plane
 
 The control plane stores queued intents and workflow checkpoints in
-`ProjectStore`. Compare-and-swap versions reject stale writers. A stopped process
-does not continue in the background; another process can explicitly resume the
-first incomplete phase. Provider limits, manual decisions, decomposition, and
-publication are represented as durable states and events.
+`ProjectStore`. Compare-and-swap versions reject stale writers. Control runs
+require an explicit `resume` after a process stops; provider limits, manual
+decisions, decomposition, and publication are represented as durable states and
+events.
+
+### Background runs
+
+The session-owned background API reuses the pipeline through seven tools:
+`run_pipeline`, `resume_pipeline`, `start_pipeline`, `pipeline_status`,
+`pipeline_events`, `pipeline_result`, and `cancel_pipeline`. CLI `background
+start` persists an owner-scoped request, spawns a detached worker, and returns.
+Content-free lifecycle events use bounded exclusive cursors. A propagated owner
+ID scopes reconnect; leases distinguish live and abandoned workers. Optional
+resource limits are zero-disabled, with finite page, close-drain, and lease
+safety ceilings. Owner scope is not authentication, and execution is not a
+sandbox.
 
 ## State and trust boundaries
 

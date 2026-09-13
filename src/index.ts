@@ -120,6 +120,23 @@ export {
   ToolActivityError,
 } from "./observability/tool-activity";
 export type {
+  BackgroundDetachedLaunch,
+  BackgroundEventPage,
+  BackgroundHostLauncher,
+  BackgroundLifecycle,
+  BackgroundRunErrorCode,
+  BackgroundRunEvent,
+  BackgroundRunLimits,
+  BackgroundRunOutcome,
+  BackgroundRunStatus,
+  BackgroundTerminalLifecycle,
+} from "./orchestration/background-runs";
+export {
+  BackgroundRunError,
+  BackgroundRunManager,
+  DEFAULT_BACKGROUND_RUN_LIMITS,
+} from "./orchestration/background-runs";
+export type {
   ChildPipelineSpec,
   ContentBinding,
   ContentBindingEntry,
@@ -178,16 +195,21 @@ export {
   buildBuiltInPipelineTools,
   buildOrchestratorTools,
   buildRunRoleTool,
+  CANCEL_PIPELINE_TOOL_NAME,
   CHOOSE_TRANSITION_TOOL_NAME,
   createOrchestrator,
   DECOMPOSE_TASK_TOOL_NAME,
   DELEGATABLE_ROLE_NAMES,
   OrchestratorError,
+  PIPELINE_EVENTS_TOOL_NAME,
+  PIPELINE_RESULT_TOOL_NAME,
+  PIPELINE_STATUS_TOOL_NAME,
   RESUME_PIPELINE_TOOL_NAME,
   RUN_PIPELINE_TOOL_NAME,
   RUN_ROLE_TOOL_NAME,
   RUN_STEP_TOOL_NAME,
   SHOW_COST_TOOL_NAME,
+  START_PIPELINE_TOOL_NAME,
   startOrchestrator,
 } from "./orchestration/orchestrator";
 export { runPipeline } from "./orchestration/pipeline";
