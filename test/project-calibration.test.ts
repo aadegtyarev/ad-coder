@@ -107,3 +107,22 @@ test("project snapshot refuses symlinked directories and destinations", () => {
     fs.rmSync(outside, { recursive: true, force: true });
   }
 });
+
+test("project snapshot refuses a symlinked target directory", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-calibration-target-link-"));
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-calibration-target-outside-"));
+  const linkedTarget = path.join(root, "target");
+  try {
+    fs.symlinkSync(outside, linkedTarget);
+    expect(() =>
+      writeProjectCalibrationSnapshot(
+        linkedTarget,
+        createProjectCalibrationSnapshot(profile, "work"),
+      ),
+    ).toThrow(UserProfileError);
+    expect(fs.existsSync(path.join(outside, ".ad-coder", "calibration.json"))).toBe(false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(outside, { recursive: true, force: true });
+  }
+});

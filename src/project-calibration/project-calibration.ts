@@ -150,37 +150,56 @@ export function parseProjectCalibrationSnapshot(value: unknown): ProjectCalibrat
 export function writeProjectCalibrationSnapshot(targetDir: string, value: unknown) {
   const snapshot = parseProjectCalibrationSnapshot(value);
   const file = projectCalibrationPath(targetDir);
-  const directory = path.dirname(file);
-  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
-  const directoryStat = fs.lstatSync(directory);
-  if (!directoryStat.isDirectory() || directoryStat.isSymbolicLink())
-    throw new UserProfileError("invalid_path", "snapshot", "snapshot directory is unsafe");
-  const directoryFd = fs.openSync(
-    directory,
+  const resolvedTarget = path.resolve(targetDir);
+  const targetStat = fs.lstatSync(resolvedTarget);
+  if (
+    !targetStat.isDirectory() ||
+    targetStat.isSymbolicLink() ||
+    fs.realpathSync(resolvedTarget) !== resolvedTarget
+  )
+    throw new UserProfileError("invalid_path", "snapshot", "snapshot target is unsafe");
+  const targetFd = fs.openSync(
+    resolvedTarget,
     fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | NOFOLLOW,
   );
-  const stableDirectory = `/proc/self/fd/${directoryFd}`;
-  const destination = path.join(stableDirectory, FILE);
-  const tmp = path.join(stableDirectory, `.${FILE}.${crypto.randomUUID()}.tmp`);
   try {
+    const directory = `/proc/self/fd/${targetFd}/.ad-coder`;
+    fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+    const directoryStat = fs.lstatSync(directory);
+    if (!directoryStat.isDirectory() || directoryStat.isSymbolicLink())
+      throw new UserProfileError("invalid_path", "snapshot", "snapshot directory is unsafe");
+    const directoryFd = fs.openSync(
+      directory,
+      fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | NOFOLLOW,
+    );
+    const stableDirectory = `/proc/self/fd/${directoryFd}`;
+    const destination = path.join(stableDirectory, FILE);
+    const tmp = path.join(stableDirectory, `.${FILE}.${crypto.randomUUID()}.tmp`);
     try {
-      const destinationStat = fs.lstatSync(destination);
-      if (
-        !destinationStat.isFile() ||
-        destinationStat.isSymbolicLink() ||
-        destinationStat.nlink !== 1
-      )
-        throw new UserProfileError("invalid_path", "snapshot", "snapshot destination is unsafe");
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      try {
+        const destinationStat = fs.lstatSync(destination);
+        if (
+          !destinationStat.isFile() ||
+          destinationStat.isSymbolicLink() ||
+          destinationStat.nlink !== 1
+        )
+          throw new UserProfileError("invalid_path", "snapshot", "snapshot destination is unsafe");
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+      fs.writeFileSync(tmp, `${JSON.stringify(snapshot, null, 2)}\n`, {
+        mode: 0o600,
+        flag: "wx",
+      });
+      fs.renameSync(tmp, destination);
+      fs.chmodSync(destination, 0o600);
+      fs.fsyncSync(directoryFd);
+    } finally {
+      fs.rmSync(tmp, { force: true });
+      fs.closeSync(directoryFd);
     }
-    fs.writeFileSync(tmp, `${JSON.stringify(snapshot, null, 2)}\n`, { mode: 0o600, flag: "wx" });
-    fs.renameSync(tmp, destination);
-    fs.chmodSync(destination, 0o600);
-    fs.fsyncSync(directoryFd);
   } finally {
-    fs.rmSync(tmp, { force: true });
-    fs.closeSync(directoryFd);
+    fs.closeSync(targetFd);
   }
   return file;
 }
