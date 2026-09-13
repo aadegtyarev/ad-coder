@@ -30,7 +30,7 @@ work lives in `docs/BACKLOG.md`.
 | Portable user profile | `src/user-profile/` | Persist validated inventories, calibrated routing, and append-only economics behind atomic writes and a cross-process lock; expose deterministic import/export through the package and JSON CLI. |
 | Project calibration | `src/project-calibration/` | Materialize a bounded anonymous current snapshot at `.ad-coder/calibration.json`; matching named inventories consume its routing automatically, with an API switch to disable the override. |
 | Stage-attempt accounting | `src/orchestration/session.ts`, `src/project-operations/run-coordinator.ts` | Tee every role response into a readable ledger and persist partial metrics/run identity before a stage-limit pause, so resumed terminal economics include failed attempts. |
-| Roles and prompts | `src/role.ts`, `src/prompts/`, `prompts/` | Validate roles and resolve built-in or project prompts. |
+| Roles and prompts | `src/role.ts`, `src/prompts/`, `prompts/` | Validate roles, resolve built-in or project prompts, and compose versioned model-inventory Researcher briefs without persisting content. |
 | Runner | `src/runner/` | Execute one role turn with tools rooted at the target directory. |
 | Context | `src/context/` | Enforce context budgets and optional ad-coder-owned compaction. |
 | Ledger | `src/ledger/` | Record usage, cost, role, step, and tool-call counts without content. |
