@@ -1579,9 +1579,12 @@ async function driveCommand(
   positionals: string[],
   flags: Record<string, string | undefined>,
   auto: boolean,
+  retryResearch: boolean,
 ): Promise<void> {
   const task = positionals[1];
   if (task === undefined) fail("missing <task>");
+  if (retryResearch && flags["--resume-run"] === undefined)
+    fail("--retry-research requires --resume-run");
   const targetDirArg = flags["--target-dir"];
   if (targetDirArg === undefined) fail("--target-dir is required for the drive command");
 
@@ -1604,6 +1607,7 @@ async function driveCommand(
       ...(resumeRun === undefined ? {} : { runId: resumeRun, resumeExisting: true }),
       task,
     });
+    if (retryResearch) coordinator.resumeResearch({ source: "operator", action: "retry" });
     if (resumeRun !== undefined && coordinator.checkpoint.pause?.code === "stage_limit")
       coordinator.resumeStage({ source: "operator", action: "retry" });
     await driveWorkflow({
@@ -2125,7 +2129,11 @@ const COMMANDS: readonly CommandDefinition[] = [
       {
         name: "--resume-run",
         value: "<id>",
-        description: "Resume a pipeline paused by a stage limit.",
+        description: "Resume a paused pipeline from its durable checkpoint.",
+      },
+      {
+        name: "--retry-research",
+        description: "Authorize retrying rejected research; requires --resume-run.",
       },
       ...PIPELINE_OPTIONS,
     ],
@@ -2134,7 +2142,13 @@ const COMMANDS: readonly CommandDefinition[] = [
         "pipeline drive",
         parseNonNegativeIntegerFlag("--heartbeat-ms", flags["--heartbeat-ms"]) ??
           DEFAULT_HEARTBEAT_MS,
-        () => driveCommand(positionals, flags, booleans["--auto"] === true),
+        () =>
+          driveCommand(
+            positionals,
+            flags,
+            booleans["--auto"] === true,
+            booleans["--retry-research"] === true,
+          ),
       ),
   },
   {

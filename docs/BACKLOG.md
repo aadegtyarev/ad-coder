@@ -78,11 +78,19 @@ Only unresolved work belongs here. Current behavior is in
 
 ## Reliability and observability
 
-- [high] **Resume rejected research from every front** (`src/cli.ts`,
-  `src/project-operations/run-coordinator.ts`): the core exposes the authorized
-  `resumeResearch` transition, but `drive --resume-run` retries only stage-limit
-  pauses. Add an explicit operator action that re-prepares rejected research and
-  resumes the same run without repeating Planner.
+- [high] **Account for failed-stage usage** (`src/runner/`,
+  `src/project-operations/run-coordinator.ts`): a rejected Researcher consumes
+  provider tokens and cost but contributes no entry to workflow `stageMetrics`.
+  Persist safe partial numeric observations for failed and rejected stages so
+  pipeline totals and calibration efficiency include unsuccessful work.
+
+- [high] **Resume an interrupted role without repeating reconnaissance**
+  (`src/orchestration/session.ts`, `src/project-operations/run-coordinator.ts`):
+  a stage-limit checkpoint preserves the workflow phase but not the unfinished
+  role-run identity, so retry creates a fresh role session. Persist the active
+  stage run ID and resume its durable conversation after a raised limit; prove
+  the Planner does not repeat completed reads. Rejected Researcher retry already
+  preserves the accepted Planner result through `--retry-research`.
 
 - [medium] **Complete activity-stream dogfood evidence**
   (`docs/cost-economics.md`): the interrupted run now has exact checkpoint,

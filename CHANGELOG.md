@@ -16,6 +16,8 @@ All notable changes to ad-coder are recorded here. The format follows
 - Added `drive --resume-run` for stage-limit pauses, with actionable checkpoint
   output, unknown-run failure, task-binding protection, and rejection when the
   exhausted host budget was not raised or disabled.
+- Added explicit `drive --resume-run <id> --retry-research` recovery for rejected
+  Researcher output while preserving the accepted Planner result.
 - Added configurable incremental pipeline retry handoffs, deterministic full-context
   fallback reasons, and durable per-stage handoff-strategy observability.
 - Added `search_project`, a configurable ranked and byte-bounded task
@@ -46,6 +48,8 @@ All notable changes to ad-coder are recorded here. The format follows
   usage envelope, stream semantic tool activity, and retain selected plugin tools.
 - Pipeline `drive` runs now stream the same bounded semantic tool activity for
   every role stage.
+- Planner now stops after one sufficient bounded evidence pass for tasks with
+  explicit files and acceptance criteria, and ends immediately after submission.
 - Bounded normal Planner reconnaissance by batching independent reads and
   converting unresolved evidence into a research gate before Coder dispatch.
 - Planner now specifies verification commands without executing suites, builds,

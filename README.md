@@ -113,6 +113,14 @@ ad-coder drive "Make a small reviewed maintenance change" \
   --provider openai-codex --target-dir ./my-project --auto
 ```
 
+If bounded Researcher output is rejected, inspect the checkpoint and retry only
+that research dispatch without rerunning Planner:
+
+```sh
+ad-coder drive "Make a small reviewed maintenance change" \
+  --target-dir ./my-project --resume-run <id> --retry-research --auto
+```
+
 When a planner role is configured, it must submit a structured affected-surface
 and contract-coverage analysis. Missing analysis and unresolved research gaps
 stop before coding; `--auto` does not bypass this requirements gate.

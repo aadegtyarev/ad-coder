@@ -185,6 +185,9 @@ resource limits use zero to mean disabled unless a separate mandatory safety
 ceiling is documented. `config show` exposes effective values and their sources
 without returning credential material.
 
+The Planner instruction derives allowed canonical IDs from validation's
+`CONTRACT_INDEX`, avoiding speculative research and duplicate identifier sources.
+
 Each pipeline role stage owns a fresh `StageLimitController`. The runner meters
 every model and tool admission, provider-reported input and cost, and elapsed
 time; a deadline closes the active harness. `RunCoordinator` checkpoints a
@@ -193,6 +196,10 @@ and an operator can change the configured limit and resume the incomplete phase
 with `drive --resume-run <id>`. The CLI prints the coordinator run ID and checkpoint
 path on pause. New checkpoints bind to a digest of the original task; a mismatched
 task or unknown resume ID fails instead of starting unrelated work.
+An explicitly rejected Researcher result is retried with
+`drive --resume-run <id> --retry-research`. This clears only a research pause and
+re-prepares its durable dispatch; it preserves the accepted Planner result and
+refuses use without an existing run.
 
 ## Context, usage, and recovery
 
