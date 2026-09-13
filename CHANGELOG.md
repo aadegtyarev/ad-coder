@@ -22,6 +22,8 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ### Changed
 
+- Standalone `role` runs now persist their numeric usage ledger, print a safe
+  usage envelope, stream semantic tool activity, and retain selected plugin tools.
 - Bounded normal Planner reconnaissance by batching independent reads and
   converting unresolved evidence into a research gate before Coder dispatch.
 

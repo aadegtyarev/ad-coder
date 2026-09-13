@@ -80,3 +80,9 @@ another multi-hour run, but they confirm that standalone semantic activity and
 role-turn efficiency remain unresolved. Local review then caught and fixed two
 projection defects: Git search now treats task terms literally, and result
 metadata reports truncation caused by either match-count or byte ceilings.
+
+The standalone front was then fixed at the actual wiring boundary: it now feeds
+runner activity into the bounded human renderer, preserves selected plugin tools
+such as `search_project`, writes the default target-local numeric ledger, and
+prints a narrowed usage envelope. The earlier Reviewer prompts could not have
+used `search_project` because the front had removed all plugin tools.

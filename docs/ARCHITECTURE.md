@@ -44,6 +44,11 @@ work lives in `docs/BACKLOG.md`.
 builds an agent harness, drives one model turn, and closes resources. The target
 directory is a starting working directory, not a security sandbox.
 
+The standalone `role` front uses the same target-local durable numeric ledger,
+prints a narrowed usage envelope after completion, and streams the shared
+bounded tool-activity projection while work is in flight. It exposes selected
+built-in plugin tools but removes structured pipeline submission tools.
+
 ### Tool activity flow
 
 Runner and conversation adapters attach to harness events before a turn starts.
