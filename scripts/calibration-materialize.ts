@@ -9,7 +9,7 @@ if (!fixtureDir || !targetDir)
 if (fs.existsSync(targetDir)) throw new Error(`target already exists: ${targetDir}`);
 fs.mkdirSync(targetDir, { recursive: true });
 for (const entry of fs.readdirSync(fixtureDir)) {
-  if (entry === "change.patch" || entry === "README.md") continue;
+  if (entry === "change.patch" || entry === "README.md" || entry === ".ad-coder") continue;
   fs.cpSync(path.join(fixtureDir, entry), path.join(targetDir, entry), { recursive: true });
 }
 function git(args: string[]) {
