@@ -233,12 +233,18 @@ export async function driveWorkflow(params: DriveWorkflowParams): Promise<Pipeli
       },
     );
     if (completed.result === undefined) {
-      if (completed.status === "paused" && completed.checkpoint.pause !== undefined)
+      if (completed.status === "paused" && completed.checkpoint.pause !== undefined) {
+        error.write(
+          `ad-coder: pipeline paused; runId=${completed.checkpoint.runId} ` +
+            `checkpoint=${coordinator.checkpointFile}\n` +
+            `resume: ad-coder drive <same-task> --resume-run ${completed.checkpoint.runId} <same-options>\n`,
+        );
         throw new OrchestrationError(
           "requirements_unresolved",
           completed.checkpoint.runId,
           completed.checkpoint.pause.action,
         );
+      }
       const pending = completed.checkpoint.decisions.find(
         (decision) => decision.status === "pending",
       );

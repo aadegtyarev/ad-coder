@@ -86,6 +86,13 @@ and contract.
 the automatic driver for that one built-in workflow. Custom workflows use the
 same substrate without becoming the built-in pipeline.
 
+The conversational Orchestrator exposes the same execution choices: `run_role`
+for one specialist, `run_step` plus `choose_transition` for manual workflow
+control, and `run_pipeline` for automatic completion. Pipeline results include a
+durable run ID and aggregate stage usage. `resume_pipeline` reopens that run with
+the original task and reuses committed stages; stage-limit recovery still requires
+the host configuration to raise or disable the exhausted budget.
+
 ### Conversation and orchestrator
 
 `startConversation` keeps one durable harness session across turns and attaches
@@ -167,14 +174,22 @@ Each pipeline role stage owns a fresh `StageLimitController`. The runner meters
 every model and tool admission, provider-reported input and cost, and elapsed
 time; a deadline closes the active harness. `RunCoordinator` checkpoints a
 `stage_limit` pause before returning, so completed earlier phases remain committed
-and an operator can change the configured limit and resume the incomplete phase.
+and an operator can change the configured limit and resume the incomplete phase
+with `drive --resume-run <id>`. The CLI prints the coordinator run ID and checkpoint
+path on pause. New checkpoints bind to a digest of the original task; a mismatched
+task or unknown resume ID fails instead of starting unrelated work.
 
 ## Context, usage, and recovery
 
 ad-coder disables the framework's built-in compaction and owns its context
 policy. Auto mode summarizes only the evicted head through a configured
 summarizer. Disabled mode never summarizes and halts when the full branch no
-longer fits. Cross-provider summarization requires explicit authorization.
+longer fits. Context refusals use the effective ceiling
+`min(maxTokens, contextWindow)`, including when a role is run with a smaller
+runtime model window; the typed diagnostic reports that ceiling without
+transcript content. Operators should select a model with a larger context window
+or lower the role's context-budget settings before retrying. Cross-provider
+summarization requires explicit authorization.
 
 Pipeline handoff context is a separate policy from transcript compaction. The
 first Reviewer remains broad. Later Coder and Reviewer turns default to bounded

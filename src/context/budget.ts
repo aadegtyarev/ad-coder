@@ -84,13 +84,14 @@ export function validateContextBudget(
 
 /**
  * Raised by the pre-flight when even the irreducible recent tail plus the
- * reserve cannot fit under `maxTokens`. Carries the role name and token
- * numbers ONLY -- never message bodies, content, or prompt text.
+ * reserve cannot fit under the effective ceiling. Carries the role name and
+ * token numbers ONLY -- never message bodies, content, or prompt text.
  */
 export class ContextBudgetError extends Error {
   override readonly name = "ContextBudgetError";
   readonly role: string;
   readonly maxTokens: number;
+  readonly effectiveCeiling: number;
   readonly reserveTokens: number;
   readonly keepRecentTokens: number;
   readonly measuredTokens: number;
@@ -98,16 +99,19 @@ export class ContextBudgetError extends Error {
   constructor(fields: {
     role: string;
     maxTokens: number;
+    effectiveCeiling?: number;
     reserveTokens: number;
     keepRecentTokens: number;
     measuredTokens: number;
     reason?: string;
   }) {
+    const effectiveCeiling = fields.effectiveCeiling ?? fields.maxTokens;
     super(
-      `context budget (${fields.role}): measured ${fields.measuredTokens} tokens against maxTokens ${fields.maxTokens} (reserveTokens ${fields.reserveTokens}, keepRecentTokens ${fields.keepRecentTokens}); ${fields.reason ?? "the irreducible recent tail plus reserve does not fit"}`,
+      `context budget (${fields.role}): measured ${fields.measuredTokens} tokens against effective ceiling ${effectiveCeiling} (maxTokens ${fields.maxTokens}, reserveTokens ${fields.reserveTokens}, keepRecentTokens ${fields.keepRecentTokens}); ${fields.reason ?? "the irreducible recent tail plus reserve does not fit"}. Choose a model with a larger context window or reduce the context-budget settings, then retry.`,
     );
     this.role = fields.role;
     this.maxTokens = fields.maxTokens;
+    this.effectiveCeiling = effectiveCeiling;
     this.reserveTokens = fields.reserveTokens;
     this.keepRecentTokens = fields.keepRecentTokens;
     this.measuredTokens = fields.measuredTokens;

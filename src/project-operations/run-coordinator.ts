@@ -2,7 +2,7 @@ import * as crypto from "node:crypto";
 import * as path from "node:path";
 import type { WorkflowSession } from "../orchestration/session";
 import { applyTransition, autoDriver, toPipelineResult } from "../orchestration/session";
-import { StageLimitError } from "../orchestration/stage-limits";
+import { StageLimitError, type StageLimitReason } from "../orchestration/stage-limits";
 import type {
   Driver,
   PipelineResult,
@@ -50,6 +50,8 @@ export interface CoordinatorCloseout {
 export interface RunCheckpoint {
   schemaVersion: 1;
   runId: string;
+  /** Binds a resumable run to its original task without persisting task contents. */
+  taskDigest?: string;
   phase: CoordinatorPhase;
   workflowState: WorkflowState;
   followUps: FollowUp[];
@@ -62,11 +64,20 @@ export interface RunCheckpoint {
     intent: ResearchDispatchIntent;
     status: "prepared" | "dispatched" | "completed";
   };
-  pause?: { phase: WorkflowState["phase"]; code: string; action: string };
+  pause?: {
+    phase: WorkflowState["phase"];
+    code: string;
+    action: string;
+    limitReason?: StageLimitReason;
+    limit?: number;
+  };
 }
 
 export interface RunCoordinatorOptions {
   runId?: string;
+  task?: string;
+  /** Fail instead of silently creating a new checkpoint for a mistyped resume id. */
+  resumeExisting?: boolean;
   decisionLimit?: number;
   checkpointByteLimit?: number;
   /** Required for a non-file backlog authority; the coordinator never falls back. */
@@ -104,7 +115,7 @@ export interface DecisionResolution {
 }
 
 export interface ResearchPauseResolution {
-  source: "operator";
+  source: "operator" | "host_config";
   action: "retry";
 }
 
@@ -154,15 +165,36 @@ export class RunCoordinator {
         throw new ProjectOperationsError("invalid_config", name);
     this.store.validateId(runId);
     this.checkpointPath = path.join(store.layout.runs, `coordinator-${runId}.json`);
+    const taskDigest =
+      options.task === undefined
+        ? undefined
+        : crypto.createHash("sha256").update(options.task).digest("hex");
     try {
       this.persisted = store.readVersionedJson<RunCheckpoint>(this.checkpointPath);
       if (this.persisted.value.schemaVersion !== 1 || this.persisted.value.runId !== runId)
         throw new ProjectOperationsError("invalid_config", runId);
+      if (
+        taskDigest !== undefined &&
+        this.persisted.value.taskDigest !== undefined &&
+        this.persisted.value.taskDigest !== taskDigest
+      )
+        throw new ProjectOperationsError("invalid_config", "resume task does not match checkpoint");
+      // Legacy checkpoints predate task binding. The explicit operator resume is
+      // the migration boundary: bind once, then reject every later mismatch.
+      if (options.resumeExisting && taskDigest !== undefined && !this.persisted.value.taskDigest) {
+        this.persisted = store.writeVersionedJson(
+          this.checkpointPath,
+          { ...this.persisted.value, taskDigest },
+          this.persisted.version,
+        );
+      }
     } catch (error) {
       if (!(error instanceof ProjectStoreError) || error.code !== "not_found") throw error;
+      if (options.resumeExisting) throw new ProjectOperationsError("not_found", runId);
       const initial: RunCheckpoint = {
         schemaVersion: 1,
         runId,
+        ...(taskDigest === undefined ? {} : { taskDigest }),
         phase: "workflow",
         workflowState: session.initialState(),
         followUps: [],
@@ -179,6 +211,10 @@ export class RunCoordinator {
     return clone(this.persisted.value);
   }
 
+  get checkpointFile(): string {
+    return this.checkpointPath;
+  }
+
   resumeResearch(resolution: ResearchPauseResolution): void {
     const checkpoint = this.persisted.value;
     if (resolution.source !== "operator" || checkpoint.pause?.phase !== "research")
@@ -193,8 +229,28 @@ export class RunCoordinator {
   /** Clear a stage-budget pause after the operator supplies a larger/disabled budget. */
   resumeStage(resolution: ResearchPauseResolution): void {
     const checkpoint = this.persisted.value;
-    if (resolution.source !== "operator" || checkpoint.pause?.code !== "stage_limit")
+    if (
+      (resolution.source !== "operator" && resolution.source !== "host_config") ||
+      checkpoint.pause?.code !== "stage_limit"
+    )
       throw new ProjectOperationsError("unauthorized_resolution", checkpoint.runId);
+    const reason = checkpoint.pause.limitReason;
+    const priorLimit = checkpoint.pause.limit;
+    if (reason === undefined || priorLimit === undefined)
+      throw new ProjectOperationsError("invalid_config", "stage pause lacks limit evidence");
+    const key =
+      reason === "duration"
+        ? "maxDurationMs"
+        : reason === "model_turns"
+          ? "maxModelTurns"
+          : reason === "tool_turns"
+            ? "maxToolTurns"
+            : reason === "input"
+              ? "maxInputTokens"
+              : "maxCostUsd";
+    const resumedLimit = this.session.stageLimits?.[key] ?? 0;
+    if (resumedLimit !== 0 && resumedLimit <= priorLimit)
+      throw new ProjectOperationsError("invalid_config", `unchanged ${reason} stage limit`);
     const next = { ...checkpoint };
     delete next.pause;
     this.save(next);
@@ -297,6 +353,8 @@ export class RunCoordinator {
             phase: checkpoint.workflowState.phase,
             code: "stage_limit",
             action: `increase or disable the ${error.reason} stage limit, then resume explicitly`,
+            limitReason: error.reason,
+            limit: error.limit,
           },
         });
         return undefined;

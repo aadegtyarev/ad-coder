@@ -286,7 +286,7 @@ export async function startConversation(config: ConversationConfig): Promise<Con
         pending,
       ];
       if (compaction.mode === "auto") {
-        compactor?.assertHealthy(role.name);
+        compactor?.assertHealthy(role.name, config.model.contextWindow);
         assertTurnFitsBudget(role, messages, config.model);
       } else {
         assertContextFitsBudget(role, messages, config.model);

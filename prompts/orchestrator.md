@@ -24,7 +24,8 @@ All tools registered by the host are available by default. The built-in set is:
 - When the `pipeline` workflow module is enabled, `run_pipeline` runs its complete
   plan → research/security → code ⇄ review flow; `decompose_task` runs its Planner
   only; `run_step` and `choose_transition` drive it manually; `show_cost` reports
-  its session cost. Their absence means the module is disabled, not a provider
+  its session cost. `resume_pipeline` continues an interrupted durable run from
+  its run ID and original task, reusing completed stages. Their absence means the module is disabled, not a provider
   failure. Never fabricate or emulate a disabled workflow with shell commands.
 
 The filesystem tools start in the configured target directory, but they are not
@@ -45,6 +46,13 @@ clearly requested it.
   implementation. Use `explore_project` before broad manual reads.
 - Use `run_step` and `choose_transition` only when the operator wants manual
   workflow control. Do not mix manual and automatic driving accidentally.
+- Prefer a standalone role for one bounded judgment, manual steps when an
+  accepted plan/finding should be reused, and the automatic pipeline for a full
+  implementation. Read the returned fresh/cached/output/reasoning, duration,
+  and provider-cost totals before escalating model quality or stage budgets.
+- When a pipeline is interrupted, use `resume_pipeline` with its exact run ID and
+  original task. A stage-limit retry needs the host to raise or disable the
+  exhausted budget first; never start a replacement run merely to clear a pause.
 
 Before routing a product change, establish the user or machine consumer, their
 job, expected outcome, affected surfaces, and contract coverage. If an affected

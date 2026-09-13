@@ -126,7 +126,18 @@ test("a summarizer that throws leaves messages untransformed and bumps compactio
     (process.stderr as { write: unknown }).write = original;
   }
   expect(compactor.compactionFailures).toBe(1);
-  expect(() => compactor.assertHealthy("coder")).toThrow(ContextBudgetError);
+  let caught: unknown;
+  const smallerRuntimeWindow = 500;
+  try {
+    compactor.assertHealthy("coder", smallerRuntimeWindow);
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught).toBeInstanceOf(ContextBudgetError);
+  const error = caught as ContextBudgetError;
+  expect(error.effectiveCeiling).toBe(smallerRuntimeWindow);
+  expect(error.message).toContain("effective ceiling 500");
+  expect(error.message).not.toContain(secret);
   // Leak invariant: the warning carries numbers only, never the evicted content.
   const warning = writes.join("");
   expect(warning).toContain("compaction failed");
@@ -200,7 +211,7 @@ test("assertTurnFitsBudget returns void when the irreducible tail plus reserve f
   expect(() => assertTurnFitsBudget(role, [small("a"), small("b")], localModel)).not.toThrow();
 });
 
-test("assertTurnFitsBudget throws a typed ContextBudgetError on an impossible turn", () => {
+test("assertTurnFitsBudget reports the runtime model window as its effective ceiling", () => {
   const role = defineRole(
     {
       name: "planner",
@@ -213,10 +224,11 @@ test("assertTurnFitsBudget throws a typed ContextBudgetError on an impossible tu
     },
     localModel,
   );
+  const smallerRuntimeModel = { contextWindow: 500 } as unknown as Model<Api>;
   // The final message alone (~1000 tokens) is the irreducible tail floor.
   let caught: unknown;
   try {
-    assertTurnFitsBudget(role, [small("a"), big()], localModel);
+    assertTurnFitsBudget(role, [small("a"), big()], smallerRuntimeModel);
   } catch (error) {
     caught = error;
   }
@@ -225,9 +237,11 @@ test("assertTurnFitsBudget throws a typed ContextBudgetError on an impossible tu
   expect(err.name).toBe("ContextBudgetError");
   expect(err.role).toBe("planner");
   expect(err.maxTokens).toBe(1000);
+  expect(err.effectiveCeiling).toBe(500);
   // Message carries identifiers and numbers only, no message content.
   expect(err.message).toContain("planner");
-  expect(err.message).toContain("1000");
+  expect(err.message).toContain("effective ceiling 500");
+  expect(err.message).toContain("larger context window");
   expect(err.message).not.toContain("y".repeat(400));
 });
 
@@ -267,7 +281,7 @@ test("createSummarizer rejects custom messages and empty provider output", async
   await expect(summarizer([small("source")])).rejects.toThrow("empty summary");
 });
 
-test("assertContextFitsBudget checks the full context for disabled compaction", () => {
+test("assertContextFitsBudget reports the runtime window for disabled compaction", () => {
   const role = defineRole(
     {
       name: "planner",
@@ -280,8 +294,18 @@ test("assertContextFitsBudget checks the full context for disabled compaction", 
     },
     localModel,
   );
-  expect(() => assertContextFitsBudget(role, [big(), big()], localModel)).toThrow(
-    ContextBudgetError,
-  );
+  const smallerRuntimeModel = { contextWindow: 500 } as unknown as Model<Api>;
+  const secret = `disabled-context-secret:${"z".repeat(4000)}`;
+  let caught: unknown;
+  try {
+    assertContextFitsBudget(role, [userMessage(secret)], smallerRuntimeModel);
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught).toBeInstanceOf(ContextBudgetError);
+  const error = caught as ContextBudgetError;
+  expect(error.effectiveCeiling).toBe(500);
+  expect(error.message).toContain("effective ceiling 500");
+  expect(error.message).not.toContain(secret);
   expect(() => assertTurnFitsBudget(role, [big(), small("tail")], localModel)).not.toThrow();
 });

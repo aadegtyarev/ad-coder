@@ -525,11 +525,13 @@ test("RunCoordinator checkpoints aggregation and makes automatic closeout effect
 });
 
 test("RunCoordinator durably pauses a limited stage and resumes only that stage", async () => {
-  const store = new ProjectStore(root());
+  const target = root();
+  const store = new ProjectStore(target);
   const base = coordinatorSession(store, []);
   let attempts = 0;
   const session: WorkflowSession = {
     ...base,
+    stageLimits: { maxDurationMs: 10 },
     async step(state) {
       attempts += 1;
       if (attempts === 1) throw new StageLimitError("duration", 10, 10);
@@ -543,10 +545,20 @@ test("RunCoordinator durably pauses a limited stage and resumes only that stage"
     phase: "code",
     code: "stage_limit",
     action: "increase or disable the duration stage limit, then resume explicitly",
+    limitReason: "duration",
+    limit: 10,
   });
   expect(attempts).toBe(1);
-  coordinator.resumeStage({ source: "operator", action: "retry" });
-  expect((await coordinator.run()).status).toBe("complete");
+  expect(() => coordinator.resumeStage({ source: "operator", action: "retry" })).toThrow(
+    "unchanged duration stage limit",
+  );
+  const resumed = new RunCoordinator(
+    { ...session, stageLimits: { maxDurationMs: 20 } },
+    new ProjectStore(target),
+    { runId: "stage-limit-pause", resumeExisting: true },
+  );
+  resumed.resumeStage({ source: "operator", action: "retry" });
+  expect((await resumed.run()).status).toBe("complete");
   expect(attempts).toBe(2);
 });
 

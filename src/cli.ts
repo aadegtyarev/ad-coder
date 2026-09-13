@@ -68,6 +68,7 @@ import {
   preflightRepositoryPublishing,
   startRepositoryPublishing,
 } from "./project-operations/repository-publishing";
+import { RunCoordinator } from "./project-operations/run-coordinator";
 import { ProjectStore } from "./project-store/project-store";
 import type { ProjectStoreConfig } from "./project-store/types";
 import { ProjectStoreError } from "./project-store/types";
@@ -1399,6 +1400,13 @@ async function driveCommand(
   config.activityConsumer = renderer.consume;
   const session = createWorkflowSession(config);
   try {
+    const resumeRun = flags["--resume-run"];
+    const coordinator = new RunCoordinator(session, session.projectStore, {
+      ...(resumeRun === undefined ? {} : { runId: resumeRun, resumeExisting: true }),
+      task,
+    });
+    if (resumeRun !== undefined && coordinator.checkpoint.pause?.code === "stage_limit")
+      coordinator.resumeStage({ source: "operator", action: "retry" });
     await driveWorkflow({
       session,
       ledgerSink,
@@ -1406,6 +1414,7 @@ async function driveCommand(
       input: process.stdin,
       output: process.stdout,
       error: process.stderr,
+      coordinator,
     });
   } finally {
     renderer.close();
@@ -1897,6 +1906,11 @@ const COMMANDS: readonly CommandDefinition[] = [
     positionals: [{ name: "<task>", description: "Task for the pipeline." }],
     options: [
       { name: "--auto", description: "Automatically choose pipeline transitions." },
+      {
+        name: "--resume-run",
+        value: "<id>",
+        description: "Resume a pipeline paused by a stage limit.",
+      },
       ...PIPELINE_OPTIONS,
     ],
     run: ({ positionals, flags, booleans }) =>

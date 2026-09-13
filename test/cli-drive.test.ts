@@ -29,6 +29,7 @@ import type {
 } from "../src/orchestration/types";
 import { OrchestrationError } from "../src/orchestration/types";
 import { SUBMIT_VERDICT_TOOL_NAME } from "../src/orchestration/verdict";
+import { RunCoordinator } from "../src/project-operations/run-coordinator";
 import type { Role } from "../src/role";
 import { defineRole } from "../src/role";
 
@@ -176,6 +177,91 @@ test("a stage-limit pause is reported as recovery guidance, not a pending decisi
   expect((caught as Error).message).toBe(
     "increase or disable the model_turns stage limit, then resume explicitly",
   );
+});
+
+test("a paused drive resumes its incomplete stage from the coordinator checkpoint", async () => {
+  const fx = fixture();
+  const coder = fx.role("coder", "You code.");
+  const reviewer = reviewerRole(fx);
+  const approve: Verdict = { status: "approved", issues: [], summary: "ok" };
+  fx.faux.setResponses([
+    fauxAssistantMessage("coded"),
+    fauxAssistantMessage(fauxToolCall("bash", { command: "printf one" })),
+  ]);
+  const ledgerSink = new MemoryLedgerSink();
+  const pipeline = config(fx, { coder, reviewer }, ledgerSink);
+  pipeline.stageLimits = { maxModelTurns: 1 };
+  const firstSession = createWorkflowSession(pipeline);
+  const first = new RunCoordinator(firstSession, firstSession.projectStore, {
+    runId: "drive-resume",
+    task: pipeline.task,
+  });
+  await expect(
+    driveWorkflow({
+      session: firstSession,
+      ledgerSink,
+      auto: true,
+      input: Readable.from(""),
+      output: new Capture(),
+      error: new Capture(),
+      coordinator: first,
+    }),
+  ).rejects.toMatchObject({ code: "requirements_unresolved" });
+  expect(first.checkpoint.workflowState.phase).toBe("code");
+
+  fx.faux.setResponses([fauxAssistantMessage("coded after retry"), ...reviewerTurn(approve)]);
+  pipeline.stageLimits = { maxModelTurns: 3 };
+  const resumedSession = createWorkflowSession(pipeline);
+  const resumed = new RunCoordinator(resumedSession, resumedSession.projectStore, {
+    runId: "drive-resume",
+    task: pipeline.task,
+    resumeExisting: true,
+  });
+  resumed.resumeStage({ source: "operator", action: "retry" });
+  const result = await driveWorkflow({
+    session: resumedSession,
+    ledgerSink,
+    auto: true,
+    input: Readable.from(""),
+    output: new Capture(),
+    error: new Capture(),
+    coordinator: resumed,
+  });
+  expect(result.approved).toBe(true);
+  expect(resumed.checkpoint.workflowState.done).toBe(true);
+});
+
+test("an interrupted coordinator without a pause can be reopened and driven", async () => {
+  const fx = fixture();
+  const coder = fx.role("coder", "You code.");
+  const reviewer = reviewerRole(fx);
+  const approve: Verdict = { status: "approved", issues: [], summary: "ok" };
+  const ledgerSink = new MemoryLedgerSink();
+  const pipeline = config(fx, { coder, reviewer }, ledgerSink);
+  const firstSession = createWorkflowSession(pipeline);
+  new RunCoordinator(firstSession, firstSession.projectStore, {
+    runId: "drive-interrupted",
+    task: pipeline.task,
+  });
+
+  fx.faux.setResponses([fauxAssistantMessage("coded"), ...reviewerTurn(approve)]);
+  const resumedSession = createWorkflowSession(pipeline);
+  const resumed = new RunCoordinator(resumedSession, resumedSession.projectStore, {
+    runId: "drive-interrupted",
+    task: pipeline.task,
+    resumeExisting: true,
+  });
+  expect(resumed.checkpoint.pause).toBeUndefined();
+  const result = await driveWorkflow({
+    session: resumedSession,
+    ledgerSink,
+    auto: true,
+    input: Readable.from(""),
+    output: new Capture(),
+    error: new Capture(),
+    coordinator: resumed,
+  });
+  expect(result.approved).toBe(true);
 });
 
 test("a scripted rework choice re-runs the coder without a review in between", async () => {

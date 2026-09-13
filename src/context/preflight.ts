@@ -31,6 +31,7 @@ export function assertTurnFitsBudget(
     throw new ContextBudgetError({
       role: role.name,
       maxTokens,
+      effectiveCeiling: ceiling,
       reserveTokens,
       keepRecentTokens,
       measuredTokens: measured,
@@ -51,6 +52,7 @@ export function assertContextFitsBudget(
     throw new ContextBudgetError({
       role: role.name,
       maxTokens,
+      effectiveCeiling: ceiling,
       reserveTokens,
       keepRecentTokens,
       measuredTokens: measured,

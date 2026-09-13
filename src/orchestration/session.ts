@@ -221,6 +221,8 @@ export interface WorkflowSession {
   reviewCurrent(state: WorkflowState): Promise<StepResult>;
   prepareResearch?(state: WorkflowState): ResearchDispatchIntent | undefined;
   readonly projectStore: ProjectStore;
+  /** Effective stage ceilings used to validate durable stage-limit recovery. */
+  readonly stageLimits?: PipelineConfig["stageLimits"];
 }
 
 /** The resolved transition-policy knobs, each already defaulted to today's behavior. */
@@ -1083,7 +1085,14 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     }
   };
 
-  return { initialState, step, reviewCurrent: stepReview, prepareResearch, projectStore };
+  return {
+    initialState,
+    step,
+    reviewCurrent: stepReview,
+    prepareResearch,
+    projectStore,
+    ...(config.stageLimits === undefined ? {} : { stageLimits: { ...config.stageLimits } }),
+  };
 }
 
 /**
