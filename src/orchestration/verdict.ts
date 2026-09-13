@@ -97,21 +97,29 @@ export function parseVerdict(value: unknown, detail: string, expected?: SurfaceA
       };
     });
     const expectedBySurface = new Map(
-      applicable.map((item) => [item.surfaceId, new Set(item.contractIds)]),
+      applicable.map((item) => [
+        item.surfaceId,
+        { ids: item.contractIds, set: new Set(item.contractIds) },
+      ]),
     );
     if (coverage.length !== expectedBySurface.size) return bad("verdict.coverage is incomplete");
     const seen = new Set<string>();
-    for (const item of coverage) {
+    for (const [index, item] of coverage.entries()) {
       const contracts = expectedBySurface.get(item.surfaceId);
       if (contracts === undefined || seen.has(item.surfaceId))
         return bad("verdict.coverage contains unknown or duplicate surfaceId");
       seen.add(item.surfaceId);
       if (
-        item.contractIds.length !== contracts.size ||
-        item.contractIds.some((id) => !contracts.has(id)) ||
-        item.evidence.length === 0
+        item.contractIds.length !== contracts.set.size ||
+        item.contractIds.some((id) => !contracts.set.has(id))
       )
-        return bad(`verdict.coverage does not support ${item.surfaceId}`);
+        return bad(
+          `verdict.coverage[${index}].contractIds must exactly match required contract IDs: ${contracts.ids.join(", ")}; resubmit the verdict with those IDs`,
+        );
+      if (item.evidence.length === 0)
+        return bad(
+          `verdict.coverage[${index}].evidence must include at least one verification result; resubmit the verdict with evidence`,
+        );
     }
   }
 
@@ -175,7 +183,10 @@ export function buildSubmitVerdictTool(
         if (error instanceof OrchestrationError) {
           capture.error = error;
           delete capture.verdict;
-          return { content: [{ type: "text", text: error.code }], details: undefined };
+          return {
+            content: [{ type: "text", text: `${error.code}: ${error.message}` }],
+            details: undefined,
+          };
         }
         throw error;
       }
@@ -199,7 +210,14 @@ export function formatReviewerInstruction(expected?: SurfaceAnalysis): string {
       : '{ "status": "approved" | "changes_requested", "issues": [ { "severity": "blocker" | "major" | "minor", "what": "<one issue>" } ], "summary": "<short summary>", "coverage": [{"surfaceId":"<id>","contractIds":["<id>"],"evidence":["<verification>"]}] }',
     ...(applicable.length === 0
       ? []
-      : [`Cover exactly these surfaces: ${applicable.map((item) => item.surfaceId).join(", ")}.`]),
+      : [
+          `Cover exactly these surface contracts: ${JSON.stringify(
+            applicable.map((item) => ({
+              surfaceId: item.surfaceId,
+              contractIds: item.contractIds,
+            })),
+          )}.`,
+        ]),
     'Use "approved" only when no further changes are required; otherwise "changes_requested" with each required change as an issue.',
   ].join("\n");
 }

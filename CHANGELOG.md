@@ -49,6 +49,8 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ### Fixed
 
+- Reviewer verdict instructions now include the exact contract IDs required for
+  each planned surface, so valid documentation-only reviews can self-correct.
 - Preserved typed stage-limit failures across the model harness boundary and
   made `drive` report actionable stage pauses instead of pending decisions.
 - Made `submit_follow_up` advertise discriminated variants and prevented invalid
