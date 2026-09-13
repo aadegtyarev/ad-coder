@@ -14,6 +14,10 @@ budget. Batch independent `rg`, `sed`, and `git` reads in one shell call. Do not
 re-read unchanged evidence. After four responses, stop widening the search and
 assemble the best grounded plan; mark any material gap `research_required` so the
 pipeline halts safely instead of spending unbounded turns or letting Coder guess.
+Do not run test suites, builds, linters, or formatters during normal planning.
+Identify the narrow verification commands and hand them to Coder; use an
+existing result as evidence only when it is already available or a single cheap
+probe is necessary to establish the problem.
 For decomposition, carry the applicable decomposition contract into the plan:
 diagnosis, ownership boundary, characterization evidence, ordered
 behavior-preserving moves, and a measurable before/after review.

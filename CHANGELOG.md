@@ -30,6 +30,8 @@ All notable changes to ad-coder are recorded here. The format follows
   every role stage.
 - Bounded normal Planner reconnaissance by batching independent reads and
   converting unresolved evidence into a research gate before Coder dispatch.
+- Planner now specifies verification commands without executing suites, builds,
+  linters, or formatters during normal reconnaissance.
 
 ### Security
 

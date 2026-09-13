@@ -103,3 +103,9 @@ pipeline drive. `drive` now consumes the same bounded activity stream for every
 stage. Per-stage metrics also report effective system-prompt, handoff-prompt,
 tool-definition, and total pre-serialization bytes, so subsequent reductions can
 be attributed across the whole pipeline.
+
+The first activity-visible retry showed why Planner still reached its 120-second
+duration ceiling: it launched a shell operation lasting about 41 seconds and
+continued reconnaissance afterward. Planner guidance now leaves suites, builds,
+linters, and formatters to Coder and permits only a single cheap probe when
+needed to establish the problem. Verification commands remain part of the plan.
