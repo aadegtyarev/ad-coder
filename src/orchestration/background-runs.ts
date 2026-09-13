@@ -403,6 +403,13 @@ export class BackgroundRunManager {
     }
     return () => this.removeSubscriber(subscriber);
   }
+  /** Owner-scoped, bounded lifecycle summary. Foreign records are never loaded. */
+  list(limit = this.limits.maxPageSize): BackgroundRunStatus[] {
+    if (!Number.isSafeInteger(limit) || limit < 0) throw new BackgroundRunError("invalid_request");
+    return [...this.entries.values()]
+      .slice(0, Math.min(limit || this.limits.maxPageSize, this.limits.maxPageSize))
+      .map((entry) => this.statusOf(entry));
+  }
   status(runId: string): BackgroundRunStatus {
     return this.statusOf(this.owned(runId));
   }

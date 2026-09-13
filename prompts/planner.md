@@ -111,6 +111,10 @@ you checked against>`.
   chores in one request are three. If it should split, say where and why; if it
   only works when all of it lands, keep it whole.
 
+For an interactive CLI, TUI, or UI surface, include the applicable
+`ui-responsiveness:*` contracts. Model calls, tools, subprocesses, watches, and
+retries must leave operator interrupt, cancel, status, and exit controls usable.
+
 ## Write the plan
 
 In `submit_plan.surfaceAnalysis.coverage`, never mark a surface `covered` unless

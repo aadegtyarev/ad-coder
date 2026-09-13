@@ -83,6 +83,9 @@ export const CONTRACT_INDEX = Object.freeze({
   "tool-observability:headless-stream": "docs/contracts/tool-observability.md",
   "tool-observability:safe-projection": "docs/contracts/tool-observability.md",
   "tool-observability:truthful-lifecycle": "docs/contracts/tool-observability.md",
+  "ui-responsiveness:input-control": "docs/contracts/ui-responsiveness.md",
+  "ui-responsiveness:isolated-interrupt": "docs/contracts/ui-responsiveness.md",
+  "ui-responsiveness:bounded-watch": "docs/contracts/ui-responsiveness.md",
 } as const);
 
 function nonEmptyBounded(value: unknown, maxTextBytes: number): value is string {

@@ -1,8 +1,19 @@
 import { expect, test } from "bun:test";
 import { PassThrough, Readable, Writable } from "node:stream";
+import { createModels, fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 import { runConsole } from "../src/cli/console";
-import type { ConversationSession, ConversationTurnResult } from "../src/conversation/conversation";
-import type { BackgroundRunNotice } from "../src/orchestration/background-runs";
+import {
+  type ConversationSession,
+  type ConversationTurnResult,
+  startConversation,
+  TurnInterruptedError,
+} from "../src/conversation/conversation";
+import { MemoryLedgerSink } from "../src/ledger/ledger";
+import {
+  BackgroundRunManager,
+  type BackgroundRunNotice,
+} from "../src/orchestration/background-runs";
+import { defineRole, type Role } from "../src/role";
 import { SessionLimitError } from "../src/session-limits";
 
 class Capture extends Writable {
@@ -18,6 +29,31 @@ class Capture extends Writable {
   text(): string {
     return this.chunks.join("");
   }
+}
+
+function deferred<T = void>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+}
+
+function rawInput(): PassThrough & {
+  isTTY: boolean;
+  isRaw?: boolean;
+  setRawMode: (enabled: boolean) => void;
+} {
+  const input = new PassThrough() as PassThrough & {
+    isTTY: boolean;
+    isRaw?: boolean;
+    setRawMode: (enabled: boolean) => void;
+  };
+  input.isTTY = true;
+  input.setRawMode = (enabled) => {
+    input.isRaw = enabled;
+  };
+  return input;
 }
 
 function fakeSession(
@@ -487,6 +523,432 @@ test("formatted background notices enum-project hostile fields and remove termin
       return code <= 0x08 || (code >= 0x0b && code <= 0x1f) || (code >= 0x7f && code <= 0x9f);
     }),
   ).toBe(false);
+});
+
+test("TTY Escape aborts only the in-flight conversation turn and leaves detached work available", async () => {
+  const input = new PassThrough() as PassThrough & {
+    isTTY: boolean;
+    isRaw?: boolean;
+    setRawMode: (enabled: boolean) => void;
+  };
+  input.isTTY = true;
+  const rawModes: boolean[] = [];
+  input.setRawMode = (enabled) => {
+    rawModes.push(enabled);
+    input.isRaw = enabled;
+  };
+  const detached = new BackgroundRunManager(
+    async () => {
+      throw new Error("detached worker must not run in the console process");
+    },
+    {},
+    undefined,
+    "console-owner",
+    () => undefined,
+  );
+  const run = await detached.startDetached("detached task");
+  let rejectFirst: ((error: Error) => void) | undefined;
+  let interrupted = 0;
+  const session = fakeSession();
+  session.step = async (line) => {
+    session.inputs.push(line);
+    if (line === "first") {
+      return new Promise<ConversationTurnResult>((_resolve, reject) => {
+        rejectFirst = reject;
+      });
+    }
+    return {
+      runId: "session",
+      step: "turn:2",
+      status: "ok",
+      assistantText: "second reply",
+      toolCalls: [],
+      droppedRecords: 0,
+    };
+  };
+  session.interrupt = async () => {
+    interrupted++;
+    rejectFirst?.(new TurnInterruptedError());
+    return true;
+  };
+  const output = new Capture();
+  const error = new Capture();
+  const running = runConsole({
+    session,
+    input,
+    output,
+    error,
+    escapeSequenceTimeoutMs: 20,
+  });
+
+  input.write("first\r");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  input.write("\u001b");
+  await new Promise((resolve) => setTimeout(resolve, 35));
+  expect(interrupted).toBe(1);
+  input.write("second\r/exit\r");
+  input.end();
+
+  expect(await running).toEqual({ reason: "exit", completedTurns: 1 });
+  expect(session.inputs).toEqual(["first", "second"]);
+  expect(session.closes).toBe(1);
+  expect(detached.status(run.runId).lifecycle).toBe("requested");
+  expect(rawModes).toEqual([true, false]);
+  expect(error.text()).toContain("current turn interrupted");
+  await detached.close(true);
+});
+
+test("console-local background controls use headless APIs without model turns", async () => {
+  const runId = "123e4567-e89b-12d3-a456-426614174000";
+  const calls: string[] = [];
+  const backgroundRuns = {
+    list: () => {
+      calls.push("list");
+      return [
+        { runId, lifecycle: "started", metrics: { steps: 2, totalCost: 1.5 }, recovery: "wait" },
+      ];
+    },
+    events: () => {
+      calls.push("events");
+      return {
+        events: [{ sequence: 1, runId, lifecycle: "stage_changed", timestamp: 1, stage: "code" }],
+        nextCursor: 1,
+        gap: false,
+      };
+    },
+    status: () => {
+      calls.push("status");
+      return {
+        runId,
+        lifecycle: "started",
+        metrics: { steps: 2, totalCost: 1.5 },
+        recovery: "wait",
+      };
+    },
+    result: () => {
+      calls.push("result");
+      return {
+        runId,
+        lifecycle: "completed",
+        metrics: { steps: 3, totalCost: 2 },
+        recovery: "none",
+        approved: true,
+      };
+    },
+    cancel: () => {
+      calls.push("cancel");
+      return {
+        runId,
+        lifecycle: "cancelled",
+        metrics: { steps: 2, totalCost: 1.5 },
+        recovery: "none",
+      };
+    },
+  } as unknown as BackgroundRunManager;
+  const session = fakeSession() as ConversationSession & {
+    inputs: string[];
+    closes: number;
+    backgroundRuns: BackgroundRunManager;
+  };
+  session.backgroundRuns = backgroundRuns;
+  const output = new Capture();
+  await runConsole({
+    session,
+    input: Readable.from(
+      `/list\n/events ${runId}\n/status ${runId}\n/result ${runId}\n/cancel ${runId}\n/exit\n`,
+    ),
+    output,
+    error: new Capture(),
+    mode: "json",
+  });
+
+  expect(session.inputs).toEqual([]);
+  expect(calls).toEqual(["list", "events", "status", "result", "cancel"]);
+  const records = output
+    .text()
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  expect(records.map(({ type }) => type)).toEqual([
+    "background_list",
+    "background_events",
+    "background_status",
+    "background_result",
+    "background_cancel",
+  ]);
+  expect(records[1].events).toEqual([
+    { sequence: 1, runId, lifecycle: "stage_changed", timestamp: 1, stage: "code" },
+  ]);
+  expect(records[3].result).toMatchObject({ runId, lifecycle: "completed", approved: true });
+});
+
+test("local status runs while a foreground turn is pending", async () => {
+  const input = new PassThrough();
+  const turnStarted = deferred();
+  const statusCalled = deferred();
+  const session = fakeSession() as ConversationSession & {
+    inputs: string[];
+    closes: number;
+    backgroundRuns: BackgroundRunManager;
+  };
+  session.backgroundRuns = {
+    status: () => {
+      statusCalled.resolve();
+      return {
+        runId: "123e4567-e89b-12d3-a456-426614174000",
+        lifecycle: "started",
+        metrics: { steps: 0, totalCost: 0 },
+      };
+    },
+  } as unknown as BackgroundRunManager;
+  const interrupted = deferred();
+  session.step = async (line) => {
+    session.inputs.push(line);
+    turnStarted.resolve();
+    await interrupted.promise;
+    throw new TurnInterruptedError();
+  };
+  session.interrupt = async () => {
+    interrupted.resolve();
+    return true;
+  };
+  const running = runConsole({ session, input, output: new Capture(), error: new Capture() });
+
+  input.write("foreground\n");
+  await turnStarted.promise;
+  input.write("/status 123e4567-e89b-12d3-a456-426614174000\n");
+  await statusCalled.promise;
+  expect(session.inputs).toEqual(["foreground"]);
+
+  input.write("/exit\n");
+  input.end();
+  expect(await running).toEqual({ reason: "exit", completedTurns: 0 });
+});
+
+test("exit and raw terminal interrupts settle pending turns without cancelling detached work", async () => {
+  for (const [name, control] of [
+    ["exit", "/exit\r"],
+    ["Ctrl-C", "\u0003"],
+    ["Ctrl-D", "\u0004"],
+  ] as const) {
+    const input = rawInput();
+    const started = deferred();
+    const interrupted = deferred();
+    const detached = new BackgroundRunManager(
+      async () => {
+        throw new Error("detached worker must not run in the console process");
+      },
+      {},
+      undefined,
+      "console-owner",
+      async () => undefined,
+    );
+    const run = await detached.startDetached("must survive foreground interrupt");
+    const session = fakeSession();
+    session.step = async (line) => {
+      session.inputs.push(line);
+      started.resolve();
+      await interrupted.promise;
+      throw new TurnInterruptedError();
+    };
+    session.interrupt = async () => {
+      interrupted.resolve();
+      return true;
+    };
+    const running = runConsole({ session, input, output: new Capture(), error: new Capture() });
+    input.write("foreground\r");
+    await started.promise;
+    input.write(control);
+    input.end();
+
+    expect(await running).toMatchObject({ reason: name === "Ctrl-D" ? "eof" : "exit" });
+    expect(detached.status(run.runId).lifecycle).toBe("requested");
+    await detached.close(true);
+  }
+});
+
+test("raw CSI and SS3 cursor sequences never become foreground prompt text", async () => {
+  const input = rawInput();
+  const started = deferred();
+  const interrupted = deferred();
+  const session = fakeSession();
+  session.step = async (line) => {
+    session.inputs.push(line);
+    started.resolve();
+    await interrupted.promise;
+    throw new TurnInterruptedError();
+  };
+  session.interrupt = async () => {
+    interrupted.resolve();
+    return true;
+  };
+  const running = runConsole({ session, input, output: new Capture(), error: new Capture() });
+  input.write("foreground\r");
+  await started.promise;
+  input.write("\u001b[A\u001bOA\u0003");
+  input.end();
+
+  await running;
+  expect(session.inputs).toEqual(["foreground"]);
+});
+
+test("repeated Escape preserves its first deadline and interrupts once", async () => {
+  const input = rawInput();
+  const started = deferred();
+  const interrupted = deferred();
+  let interruptCalls = 0;
+  const session = fakeSession();
+  session.step = async (line) => {
+    session.inputs.push(line);
+    started.resolve();
+    await interrupted.promise;
+    throw new TurnInterruptedError();
+  };
+  session.interrupt = async () => {
+    interruptCalls++;
+    interrupted.resolve();
+    return true;
+  };
+  const running = runConsole({
+    session,
+    input,
+    output: new Capture(),
+    error: new Capture(),
+    escapeSequenceTimeoutMs: 20,
+  });
+  input.write("foreground\r\u001b");
+  await started.promise;
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  input.write("\u001b");
+  await new Promise((resolve) => setTimeout(resolve, 15));
+  expect(interruptCalls).toBe(1);
+  input.end();
+  await running;
+  expect(interruptCalls).toBe(1);
+});
+
+test("a malformed local control reports an error without blocking a later control", async () => {
+  const calls: string[] = [];
+  const session = fakeSession() as unknown as ConversationSession & {
+    backgroundRuns: BackgroundRunManager;
+  };
+  session.backgroundRuns = {
+    list: () => {
+      calls.push("list");
+      return [];
+    },
+  } as unknown as BackgroundRunManager;
+  const error = new Capture();
+  await runConsole({
+    session,
+    input: Readable.from("/status\n/list\n/exit\n"),
+    output: new Capture(),
+    error,
+    mode: "json",
+  });
+  expect(error.text()).toContain('"code":"invalid_command"');
+  expect(calls).toEqual(["list"]);
+});
+
+test("startConversation propagates the provider AbortSignal used by raw Ctrl-C", async () => {
+  const faux = fauxProvider({
+    provider: "console-abort",
+    models: [{ id: "console-abort", contextWindow: 200_000 }],
+  });
+  const models = createModels();
+  models.setProvider(faux.provider);
+  const model = faux.getModel();
+  const role: Role = defineRole(
+    {
+      name: "coder",
+      provider: "console-abort",
+      modelId: model.id,
+      systemPrompt: "test",
+      activeToolNames: [],
+      cacheRetention: "none",
+      contextBudget: { maxTokens: 100_000, reserveTokens: 10_000, keepRecentTokens: 20_000 },
+    },
+    model,
+  );
+  const providerStarted = deferred();
+  const providerAborted = deferred();
+  faux.setResponses([
+    async (_context, options) => {
+      const signal = options?.signal;
+      expect(signal).toBeInstanceOf(AbortSignal);
+      providerStarted.resolve();
+      await new Promise<void>((resolve) =>
+        signal?.addEventListener("abort", () => resolve(), { once: true }),
+      );
+      providerAborted.resolve();
+      return fauxAssistantMessage("unreachable");
+    },
+  ]);
+  const session = await startConversation({
+    role,
+    targetDir: process.cwd(),
+    models,
+    model,
+    ledgerSink: new MemoryLedgerSink(),
+  });
+  const input = rawInput();
+  const running = runConsole({ session, input, output: new Capture(), error: new Capture() });
+  input.write("foreground\r");
+  await providerStarted.promise;
+  input.write("\u0003");
+  input.end();
+  await providerAborted.promise;
+  expect(await running).toMatchObject({ reason: "exit" });
+});
+
+test("raw Ctrl-C settles when the real provider ignores cancellation forever", async () => {
+  const faux = fauxProvider({
+    provider: "console-never-settles",
+    models: [{ id: "console-never-settles", contextWindow: 200_000 }],
+  });
+  const models = createModels();
+  models.setProvider(faux.provider);
+  const model = faux.getModel();
+  const role: Role = defineRole(
+    {
+      name: "coder",
+      provider: "console-never-settles",
+      modelId: model.id,
+      systemPrompt: "test",
+      activeToolNames: [],
+      cacheRetention: "none",
+      contextBudget: { maxTokens: 100_000, reserveTokens: 10_000, keepRecentTokens: 20_000 },
+    },
+    model,
+  );
+  const providerStarted = deferred();
+  const providerAborted = deferred();
+  faux.setResponses([
+    async (_context, options) => {
+      providerStarted.resolve();
+      options?.signal?.addEventListener("abort", () => providerAborted.resolve(), { once: true });
+      await new Promise<never>(() => undefined);
+      return fauxAssistantMessage("unreachable");
+    },
+  ]);
+  const session = await startConversation({
+    role,
+    targetDir: process.cwd(),
+    models,
+    model,
+    ledgerSink: new MemoryLedgerSink(),
+  });
+  const input = rawInput();
+  const running = runConsole({ session, input, output: new Capture(), error: new Capture() });
+  input.write("foreground\r");
+  await providerStarted.promise;
+  input.write("\u0003");
+  input.end();
+  await providerAborted.promise;
+
+  const outcome = await Promise.race([running, Bun.sleep(1_000).then(() => "timeout" as const)]);
+  expect(outcome).not.toBe("timeout");
+  expect(outcome).toMatchObject({ reason: "exit", completedTurns: 0 });
 });
 
 test("zero heartbeat keeps the immediate stage event and disables only periodic events", async () => {
