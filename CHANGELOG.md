@@ -8,6 +8,12 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ### Added
 
+- Added responsive console-local controls plus configurable console page sizing and Escape-sequence timeout handling.
+
+- Added `Escape`/`/interrupt` turn-only console interruption and local commands
+  to list, inspect, read, and cancel detached pipeline runs without invoking the
+  orchestrator model.
+
 - Added detached background pipeline execution with owner-scoped polling,
   bounded cursor events, terminal results, cancellation, lease-based recovery,
   and JSON CLI access while the foreground conversation remains available.

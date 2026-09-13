@@ -160,6 +160,12 @@ conversation only when wanted:
 ad-coder console --provider openai-codex --target-dir ./my-project --workflows pipeline
 ```
 
+In an interactive terminal, press `Escape` to interrupt only the current
+orchestrator turn. The conversation stays open and detached pipelines continue.
+Use `/list`, `/events <run-id>`, `/status <run-id>`, `/result <run-id>`, or
+`/cancel <run-id>` to manage detached work locally without a model request.
+`/interrupt` provides the same turn-only interruption for scripted terminals.
+
 Without `--workflows pipeline`, its `run_pipeline`, `decompose_task`, `run_step`,
 `choose_transition`, and `show_cost` tools are not registered. Standalone
 `drive` still explicitly selects the built-in pipeline. The general `run_role`

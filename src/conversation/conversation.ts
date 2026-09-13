@@ -126,6 +126,14 @@ export interface ConversationTurnResult {
 }
 
 /** Options for a single turn. */
+export class TurnInterruptedError extends Error {
+  readonly code = "interrupted" as const;
+  constructor() {
+    super("interrupted");
+    this.name = "TurnInterruptedError";
+  }
+}
+
 export interface ConversationStepOptions {
   /** Ledger attribution for this turn. Defaults to `turn:N` where N is the 1-based turn index. */
   step?: string;
@@ -140,6 +148,8 @@ export interface ConversationStepOptions {
 export interface ConversationSession {
   step(userInput: string, opts?: ConversationStepOptions): Promise<ConversationTurnResult>;
   close(): Promise<void>;
+  /** Abort only the currently active turn; the session remains usable afterwards. */
+  interrupt?(): Promise<boolean>;
   /** Optional for compatibility with external ConversationSession implementations. */
   subscribeToolActivity?(
     consumer: ToolActivityConsumer,
@@ -171,7 +181,6 @@ export async function startConversation(config: ConversationConfig): Promise<Con
   const absTargetDir = resolveTargetDir(config.targetDir);
   const runId = assertRunId(config.runId ?? crypto.randomUUID());
   const context = config.context ?? BACKGROUND_CONTEXT;
-
   const env = new NodeExecutionEnv({ cwd: absTargetDir });
   const toolContext: ExecutionToolContext = { env };
   const builtin: AgentHarnessTool<ExecutionToolContext>[] = [
@@ -267,7 +276,28 @@ export async function startConversation(config: ConversationConfig): Promise<Con
   let activeSettled: Promise<void> | undefined;
   let settleActive: (() => void) | undefined;
   let activeActivityCleanup: ToolActivityAttachment | undefined;
+  let interrupted = false;
+  let interruptActive: (() => void) | undefined;
+  // A provider can observe abort yet never settle. Do not dispatch another turn
+  // into that lane until its original prompt has actually settled.
+  let laneBusy = false;
+  let abortRequested = false;
   let closePromise: Promise<void> | undefined;
+
+  const requestAbort = (): void => {
+    if (abortRequested) return;
+    abortRequested = true;
+    // Abort is best-effort: some lane implementations wait for a provider that
+    // ignores AbortSignal. Its rejection is observed here, while the active turn
+    // is settled through interruptActive below.
+    void lane.abort(context).catch(() => {
+      if (!closed) {
+        console.error(
+          "ad-coder: lane abort failed; wait for the active provider call before retrying",
+        );
+      }
+    });
+  };
 
   async function step(
     userInput: string,
@@ -275,8 +305,15 @@ export async function startConversation(config: ConversationConfig): Promise<Con
   ): Promise<ConversationTurnResult> {
     if (closed) throw new Error("conversation is closed");
     if (stepping) throw new Error("conversation step already active");
+    if (laneBusy) {
+      throw new Error(
+        "conversation lane is still stopping after interruption; wait for the provider call to settle before retrying",
+      );
+    }
     controller.assertActive();
     stepping = true;
+    interrupted = false;
+    abortRequested = false;
     activeSettled = new Promise<void>((resolve) => {
       settleActive = resolve;
     });
@@ -326,10 +363,28 @@ export async function startConversation(config: ConversationConfig): Promise<Con
     activeActivityCleanup = offActivity;
 
     try {
-      const prompted = await lane.prompt(userInput, undefined, context).catch((error) => {
+      laneBusy = true;
+      const providerPrompt = lane.prompt(userInput, undefined, context);
+      // Always observe the detached provider result. This both prevents a late
+      // rejection from becoming unhandled and releases the lane only when its
+      // original operation has really stopped.
+      void providerPrompt.then(
+        () => {
+          laneBusy = false;
+        },
+        () => {
+          laneBusy = false;
+        },
+      );
+      const interruption = new Promise<never>((_resolve, reject) => {
+        interruptActive = () => reject(new TurnInterruptedError());
+      });
+      const prompted = await Promise.race([providerPrompt, interruption]).catch((error) => {
+        if (interrupted) throw new TurnInterruptedError();
         controller.assertNoBoundaryFailure();
         throw error;
       });
+      if (interrupted) throw new TurnInterruptedError();
       controller.assertNoBoundaryFailure();
       const result = getOrThrow(prompted);
       if ("status" in result && result.status === "suspended") {
@@ -358,6 +413,7 @@ export async function startConversation(config: ConversationConfig): Promise<Con
       offEvents();
       offActivity();
       if (activeActivityCleanup === offActivity) activeActivityCleanup = undefined;
+      interruptActive = undefined;
       stepping = false;
       settleActive?.();
       settleActive = undefined;
@@ -373,7 +429,7 @@ export async function startConversation(config: ConversationConfig): Promise<Con
         if (stepping) {
           const settled = activeSettled;
           const activity = activeActivityCleanup;
-          void lane.abort(context).catch(() => undefined);
+          requestAbort();
           activity?.cancelActive();
           if (settled !== undefined && activityChannel.config.closeDrainMs > 0) {
             await Promise.race([
@@ -412,6 +468,14 @@ export async function startConversation(config: ConversationConfig): Promise<Con
 
   return {
     step,
+    interrupt: async () => {
+      if (!stepping) return false;
+      interrupted = true;
+      activeActivityCleanup?.cancelActive();
+      interruptActive?.();
+      requestAbort();
+      return true;
+    },
     close,
     subscribeToolActivity: (consumer, options) => activityChannel.subscribe(consumer, options),
     toolActivitySnapshot: () => activityChannel.snapshot(),

@@ -1981,6 +1981,13 @@ async function consoleCommand(
   const maxInputBytes = parseMaxInputBytesFlag(flags["--max-input-bytes"]);
   const heartbeatMs =
     parseNonNegativeIntegerFlag("--heartbeat-ms", flags["--heartbeat-ms"]) ?? DEFAULT_HEARTBEAT_MS;
+  const controlPageSize =
+    parsePositiveIntegerFlag("--console-page-size", flags["--console-page-size"]) ??
+    backgroundLimits(flags).maxPageSize;
+  const escapeSequenceTimeoutMs = parsePositiveIntegerFlag(
+    "--escape-sequence-timeout-ms",
+    flags["--escape-sequence-timeout-ms"],
+  );
   const sessionLimits = parseSessionLimits(flags);
   const enabledWorkflows =
     flags["--workflows"] === undefined
@@ -2004,6 +2011,8 @@ async function consoleCommand(
     mode: json ? "json" : "formatted",
     ...(maxInputBytes !== undefined && { maxInputBytes }),
     heartbeatMs,
+    ...(controlPageSize !== undefined && { controlPageSize }),
+    ...(escapeSequenceTimeoutMs !== undefined && { escapeSequenceTimeoutMs }),
     ...(configOptions.toolActivity !== undefined && {
       toolActivity: configOptions.toolActivity,
     }),
@@ -2650,6 +2659,16 @@ const COMMANDS: readonly CommandDefinition[] = [
         name: "--max-input-bytes",
         value: "<n>",
         description: "Set the maximum bytes accepted in one input line.",
+      },
+      {
+        name: "--console-page-size",
+        value: "<n>",
+        description: "Maximum background records shown by each console-local command.",
+      },
+      {
+        name: "--escape-sequence-timeout-ms",
+        value: "<n>",
+        description: "Wait this long before treating an ambiguous Escape as an interrupt.",
       },
       {
         name: "--max-session-turns",

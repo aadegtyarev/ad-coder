@@ -1,10 +1,16 @@
+import {
+  ConsoleControlError,
+  DEFAULT_CONSOLE_CONTROL_PAGE_SIZE,
+  executeConsoleControl,
+} from "../conversation/console-control";
 import type {
   ConversationSession,
   ConversationToolCall,
   ConversationTurnResult,
 } from "../conversation/conversation";
+import { TurnInterruptedError } from "../conversation/conversation";
 import type { ToolActivityConfig } from "../observability/tool-activity";
-import type { BackgroundRunNotice } from "../orchestration/background-runs";
+import type { BackgroundRunManager, BackgroundRunNotice } from "../orchestration/background-runs";
 import { EmptyTurnError } from "../runner/errors";
 import { SessionLimitError } from "../session-limits";
 import { ToolActivityRenderer } from "./tool-activity";
@@ -18,6 +24,7 @@ export type ConsoleExitReason =
   | "input_too_large"
   | "input_failed"
   | "turn_failed"
+  | "interrupted"
   | "session_limit"
   | "close_failed";
 
@@ -30,6 +37,13 @@ export interface RunConsoleParams {
   maxInputBytes?: number;
   /** Progress interval for an in-flight turn; zero/omitted disables progress. */
   heartbeatMs?: number;
+  /** Bounded count for local background list/event output. */
+  controlPageSize?: number;
+  /**
+   * Time to wait for bytes completing an ambiguous lone Escape. Terminal escape
+   * sequences are parsed deterministically; raise this for slow remote TTYs.
+   */
+  escapeSequenceTimeoutMs?: number;
   toolActivity?: Partial<ToolActivityConfig>;
 }
 
@@ -42,7 +56,15 @@ const INPUT_TOO_LARGE_MESSAGE = "ad-coder: input line exceeds the configured byt
 const INPUT_FAILED_MESSAGE = "ad-coder: console input failed\n";
 const TURN_FAILED_MESSAGE = "ad-coder: console turn failed\n";
 const SESSION_LIMIT_MESSAGE = "ad-coder: session resource limit reached\n";
+const INTERRUPTED_MESSAGE = "ad-coder: current turn interrupted; session remains available\n";
 const CLOSE_FAILED_MESSAGE = "ad-coder: console session close failed\n";
+export const DEFAULT_CONSOLE_ESCAPE_SEQUENCE_TIMEOUT_MS = 1_000;
+
+interface TtyReadableStream extends NodeJS.ReadableStream {
+  isTTY?: boolean;
+  isRaw?: boolean;
+  setRawMode?: (mode: boolean) => void;
+}
 
 function isSuccessfulExit(reason: ConsoleExitReason): boolean {
   return reason === "eof" || reason === "exit";
@@ -111,6 +133,108 @@ function sanitizeTurn(result: ConversationTurnResult): ConversationTurnResult {
   };
 }
 
+function renderControl(
+  result: Awaited<ReturnType<typeof executeConsoleControl>>,
+  mode: ConsoleOutputMode,
+  controlPageSize: number,
+): string {
+  if (result === undefined) return "";
+  const status = (value: unknown): Record<string, unknown> | undefined => {
+    if (typeof value !== "object" || value === null) return undefined;
+    const entry = value as {
+      runId?: unknown;
+      lifecycle?: unknown;
+      metrics?: { steps?: unknown; totalCost?: unknown };
+      recovery?: unknown;
+      approved?: unknown;
+      rounds?: unknown;
+      verdict?: unknown;
+    };
+    if (typeof entry.runId !== "string" || !BACKGROUND_LIFECYCLES.has(entry.lifecycle as string))
+      return undefined;
+    const metrics = entry.metrics;
+    if (
+      metrics === undefined ||
+      typeof metrics.steps !== "number" ||
+      !Number.isSafeInteger(metrics.steps) ||
+      metrics.steps < 0 ||
+      typeof metrics.totalCost !== "number" ||
+      !Number.isFinite(metrics.totalCost) ||
+      metrics.totalCost < 0
+    )
+      return undefined;
+    const recovery = safeNoticeEnum(
+      entry.recovery,
+      new Set(["wait", "inspect_events", "resume_pipeline", "none"]),
+    );
+    return {
+      runId: safeNoticeText(entry.runId),
+      lifecycle: entry.lifecycle,
+      metrics: { steps: metrics.steps, totalCost: metrics.totalCost },
+      ...(recovery === undefined ? {} : { recovery }),
+      ...(typeof entry.approved === "boolean" ? { approved: entry.approved } : {}),
+      ...(Number.isSafeInteger(entry.rounds) && (entry.rounds as number) >= 0
+        ? { rounds: entry.rounds }
+        : {}),
+      ...(safeNoticeEnum(entry.verdict, new Set(["approved", "changes_requested"])) === undefined
+        ? {}
+        : { verdict: safeNoticeEnum(entry.verdict, new Set(["approved", "changes_requested"])) }),
+    };
+  };
+  let safe: Record<string, unknown>;
+  if (result.type === "console_control")
+    safe = { type: result.type, command: result.command, status: result.status };
+  else if (result.type === "background_list")
+    safe = {
+      type: result.type,
+      runs: result.runs.slice(0, controlPageSize).flatMap((run) => {
+        const projected = status(run);
+        return projected === undefined ? [] : [projected];
+      }),
+    };
+  else if (result.type === "background_events")
+    safe = {
+      type: result.type,
+      runId: safeNoticeText(result.runId),
+      events: result.events.slice(0, controlPageSize).flatMap((event) => {
+        const projected = projectBackgroundEvent(event);
+        return projected === undefined ? [] : [projected];
+      }),
+      nextCursor: safeNoticeInteger(result.nextCursor),
+      gap: result.gap === true,
+    };
+  else {
+    const projected = status(result.type === "background_result" ? result.result : result.run);
+    safe = {
+      type: result.type,
+      ...(result.type === "background_result" ? { result: projected } : { run: projected }),
+    };
+  }
+  if (mode === "json") return `${JSON.stringify(safe)}\n`;
+  if (result.type === "console_control") return `ad-coder: current turn ${result.status}\n`;
+  if (result.type === "background_list")
+    return `${(safe.runs as Record<string, unknown>[]).map((run) => `ad-coder: background ${run.runId} ${run.lifecycle} steps ${(run.metrics as Record<string, unknown>).steps} cost ${(run.metrics as Record<string, unknown>).totalCost}`).join("\n") || "ad-coder: 0 background runs"}\n`;
+  if (result.type === "background_events") {
+    const events = safe.events as Array<Record<string, unknown>>;
+    const details = events
+      .map(
+        (event) =>
+          `#${event.sequence} ${event.lifecycle}${event.stage === undefined ? "" : ` (${event.stage})`}`,
+      )
+      .join(", ");
+    return `ad-coder: background events ${safeNoticeText(result.runId)} cursor ${safe.nextCursor} gap ${safe.gap}${details === "" ? "" : `: ${details}`}\n`;
+  }
+  const run = (result.type === "background_result" ? safe.result : safe.run) as
+    | Record<string, unknown>
+    | undefined;
+  if (run === undefined) return "ad-coder: background record unavailable\n";
+  const terminal =
+    result.type === "background_result"
+      ? `${run.approved === undefined ? "" : ` approved ${run.approved}`}${run.rounds === undefined ? "" : ` rounds ${run.rounds}`}${run.verdict === undefined ? "" : ` verdict ${run.verdict}`}`
+      : "";
+  return `ad-coder: background ${run.runId} ${run.lifecycle} steps ${(run.metrics as Record<string, unknown>).steps} cost ${(run.metrics as Record<string, unknown>).totalCost}${terminal}\n`;
+}
+
 function renderFormatted(result: ConversationTurnResult): string {
   const lines = [`[${result.step}] ${result.status} (runId ${result.runId})`];
   if (result.assistantText !== "") lines.push(result.assistantText);
@@ -136,7 +260,7 @@ const BACKGROUND_LIFECYCLES = new Set([
 const BACKGROUND_STAGES = new Set(["plan", "research", "security", "code", "review", "done"]);
 
 function safeNoticeText(value: unknown): string {
-  return typeof value === "string" ? sanitizeTerminalText(value) : "unknown";
+  return typeof value === "string" ? sanitizeTerminalText(value).slice(0, 256) : "unknown";
 }
 function safeNoticeEnum(value: unknown, values: Set<string>): string | undefined {
   return typeof value === "string" && values.has(value) ? value : undefined;
@@ -145,36 +269,50 @@ function safeNoticeInteger(value: unknown): number {
   return Number.isSafeInteger(value) && (value as number) >= 0 ? (value as number) : 0;
 }
 
+function projectBackgroundEvent(event: unknown): Record<string, unknown> | undefined {
+  if (typeof event !== "object" || event === null) return undefined;
+  const value = event as {
+    lifecycle?: unknown;
+    stage?: unknown;
+    errorCode?: unknown;
+    metrics?: { steps?: unknown; totalCost?: unknown };
+    sequence?: unknown;
+    runId?: unknown;
+    timestamp?: unknown;
+  };
+  const lifecycle = safeNoticeEnum(value.lifecycle, BACKGROUND_LIFECYCLES);
+  if (lifecycle === undefined) return undefined;
+  const stage = safeNoticeEnum(value.stage, BACKGROUND_STAGES);
+  const errorCode = safeNoticeEnum(
+    value.errorCode,
+    new Set(["internal_failure", "operator_attention", "deadline_exceeded"]),
+  );
+  const metrics = value.metrics;
+  return {
+    sequence: safeNoticeInteger(value.sequence),
+    runId: safeNoticeText(value.runId),
+    lifecycle,
+    timestamp: safeNoticeInteger(value.timestamp),
+    ...(stage === undefined ? {} : { stage }),
+    ...(errorCode === undefined ? {} : { errorCode }),
+    ...(metrics !== undefined &&
+    typeof metrics.steps === "number" &&
+    Number.isSafeInteger(metrics.steps) &&
+    metrics.steps >= 0 &&
+    typeof metrics.totalCost === "number" &&
+    Number.isFinite(metrics.totalCost) &&
+    metrics.totalCost >= 0
+      ? { metrics: { steps: metrics.steps, totalCost: metrics.totalCost } }
+      : {}),
+  };
+}
+
 function renderBackgroundNotice(notice: BackgroundRunNotice, mode: ConsoleOutputMode): string {
   const runId = safeNoticeText(notice.runId);
   const events = Array.isArray(notice.events)
     ? notice.events.flatMap((event) => {
-        const lifecycle = safeNoticeEnum(event.lifecycle, BACKGROUND_LIFECYCLES);
-        if (lifecycle === undefined) return [];
-        const stage = safeNoticeEnum(event.stage, BACKGROUND_STAGES);
-        const errorCode = safeNoticeEnum(
-          event.errorCode,
-          new Set(["internal_failure", "operator_attention", "deadline_exceeded"]),
-        );
-        const metrics = event.metrics;
-        return [
-          {
-            sequence: safeNoticeInteger(event.sequence),
-            runId: safeNoticeText(event.runId),
-            lifecycle,
-            timestamp: safeNoticeInteger(event.timestamp),
-            ...(stage === undefined ? {} : { stage }),
-            ...(errorCode === undefined ? {} : { errorCode }),
-            ...(metrics !== undefined &&
-            Number.isSafeInteger(metrics.steps) &&
-            metrics.steps >= 0 &&
-            typeof metrics.totalCost === "number" &&
-            Number.isFinite(metrics.totalCost) &&
-            metrics.totalCost >= 0
-              ? { metrics: { steps: metrics.steps, totalCost: metrics.totalCost } }
-              : {}),
-          },
-        ];
+        const projected = projectBackgroundEvent(event);
+        return projected === undefined ? [] : [projected];
       })
     : [];
   const droppedEvents = safeNoticeInteger(notice.droppedEvents);
@@ -206,19 +344,46 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
   const mode = params.mode ?? "formatted";
   const maxInputBytes = params.maxInputBytes ?? DEFAULT_CONSOLE_MAX_INPUT_BYTES;
   const heartbeatMs = params.heartbeatMs ?? 0;
+  const controlPageSize = params.controlPageSize ?? DEFAULT_CONSOLE_CONTROL_PAGE_SIZE;
+  const escapeSequenceTimeoutMs =
+    params.escapeSequenceTimeoutMs ?? DEFAULT_CONSOLE_ESCAPE_SEQUENCE_TIMEOUT_MS;
   if (!Number.isInteger(maxInputBytes) || maxInputBytes <= 0) {
     throw new RangeError("maxInputBytes must be a positive integer");
   }
   if (!Number.isSafeInteger(heartbeatMs) || heartbeatMs < 0)
     throw new RangeError("heartbeatMs must be a non-negative safe integer");
+  if (!Number.isSafeInteger(controlPageSize) || controlPageSize < 1)
+    throw new RangeError("controlPageSize must be a positive safe integer");
+  if (!Number.isSafeInteger(escapeSequenceTimeoutMs) || escapeSequenceTimeoutMs < 1)
+    throw new RangeError("escapeSequenceTimeoutMs must be a positive safe integer");
 
   let reason: ConsoleExitReason = "eof";
   let completedTurns = 0;
   let lineBytes: number[] = [];
   let stopped = false;
   let lineQueue = Promise.resolve();
-  const handleLine = async (rawLine: string): Promise<void> => {
-    if (stopped) return;
+  let queuedPromptCount = 0;
+  let exitPromptCount: number | undefined;
+  const ttyInput = params.input as TtyReadableStream;
+  const rawTty = ttyInput.isTTY === true && typeof ttyInput.setRawMode === "function";
+  let rawModeEnabled = false;
+  let escapeTimer: ReturnType<typeof setTimeout> | undefined;
+  let escapeState: "text" | "escape" | "csi" | "ss3" = "text";
+  const interruptForeground = (): void => {
+    // This calls the session-scoped abort only; detached runs have their own
+    // explicit /cancel control and must survive foreground shutdown.
+    void (params.session.interrupt?.() ?? Promise.resolve(false)).catch(() => {
+      params.error.write("ad-coder: current turn interrupt failed\n");
+    });
+  };
+  const handleLine = async (rawLine: string, promptNumber?: number): Promise<void> => {
+    if (
+      stopped &&
+      (promptNumber === undefined ||
+        exitPromptCount === undefined ||
+        promptNumber > exitPromptCount)
+    )
+      return;
     const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
     if (line.trim() === "") {
       if (mode === "formatted") params.output.write("ad-coder> ");
@@ -226,10 +391,27 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
     }
     if (line.trim() === "/exit") {
       reason = "exit";
+      exitPromptCount = queuedPromptCount;
       stopped = true;
+      interruptForeground();
       return;
     }
     try {
+      const backgroundRuns = (
+        params.session as ConversationSession & {
+          backgroundRuns?: BackgroundRunManager;
+        }
+      ).backgroundRuns;
+      const managed = executeConsoleControl(line.trim(), {
+        ...(backgroundRuns === undefined ? {} : { backgroundRuns }),
+        interrupt: params.session.interrupt ?? (async () => false),
+        maxPageSize: controlPageSize,
+      });
+      if (managed !== undefined) {
+        params.output.write(renderControl(await managed, mode, controlPageSize));
+        if (mode === "formatted") params.output.write("ad-coder> ");
+        return;
+      }
       const started = Date.now();
       let lastActivity = started;
       const progress = (event: "started" | "heartbeat") => {
@@ -275,7 +457,21 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
       );
       if (mode === "formatted") params.output.write("ad-coder> ");
     } catch (error) {
-      if (error instanceof SessionLimitError) {
+      if (error instanceof ConsoleControlError) {
+        params.error.write(
+          mode === "json"
+            ? `${JSON.stringify({ type: "console_error", code: error.code })}\n`
+            : `ad-coder: console command ${error.code}; use /list, /events, /status, /result, /cancel, or /interrupt\n`,
+        );
+        if (mode === "formatted") params.output.write("ad-coder> ");
+        return;
+      } else if (error instanceof TurnInterruptedError) {
+        params.error.write(
+          mode === "json" ? '{"type":"console_error","code":"interrupted"}\n' : INTERRUPTED_MESSAGE,
+        );
+        if (mode === "formatted") params.output.write("ad-coder> ");
+        return;
+      } else if (error instanceof SessionLimitError) {
         params.error.write(
           mode === "json"
             ? `${JSON.stringify({ type: "console_error", code: "session_limit" })}\n`
@@ -303,7 +499,19 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
   const queueLine = (): void => {
     const line = Buffer.from(lineBytes).toString("utf8");
     lineBytes = [];
-    lineQueue = lineQueue.then(() => handleLine(line));
+    // Controls own no model-turn state, so dispatch them outside the serialized
+    // prompt lane. This keeps list/status/cancel and exit available while a turn waits.
+    if (line.trim().startsWith("/")) {
+      void handleLine(line);
+      return;
+    }
+    const promptNumber = ++queuedPromptCount;
+    lineQueue = lineQueue.then(() => handleLine(line, promptNumber));
+  };
+  const requestEscapeInterrupt = (): void => {
+    escapeTimer = undefined;
+    escapeState = "text";
+    interruptForeground();
   };
 
   let unsubscribeBackground: (() => void) | undefined;
@@ -320,13 +528,58 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
   }
 
   try {
+    if (rawTty) {
+      ttyInput.setRawMode?.(true);
+      rawModeEnabled = true;
+    }
     if (mode === "formatted") {
-      params.output.write("ad-coder console — /exit or EOF to close\nad-coder> ");
+      params.output.write(
+        "ad-coder console — Escape interrupts the current turn; /exit or EOF to close\nad-coder> ",
+      );
     }
     for await (const rawChunk of params.input as AsyncIterable<Buffer | string>) {
       const chunk = Buffer.isBuffer(rawChunk) ? rawChunk : Buffer.from(rawChunk);
       for (const byte of chunk) {
-        if (byte === 0x0a) {
+        if (rawTty && (byte === 0x03 || byte === 0x04)) {
+          reason = byte === 0x03 ? "exit" : "eof";
+          stopped = true;
+          interruptForeground();
+          break;
+        }
+        if (rawTty && escapeState !== "text") {
+          if (escapeState === "escape") {
+            if (byte === 0x1b) {
+              // Keep the original deadline: a key-repeat cannot defer a lone Escape forever.
+              continue;
+            }
+            if (byte === 0x5b) {
+              if (escapeTimer !== undefined) clearTimeout(escapeTimer);
+              escapeTimer = undefined;
+              escapeState = "csi";
+              continue;
+            }
+            if (byte === 0x4f) {
+              if (escapeTimer !== undefined) clearTimeout(escapeTimer);
+              escapeTimer = undefined;
+              escapeState = "ss3";
+              continue;
+            }
+            if (escapeTimer !== undefined) clearTimeout(escapeTimer);
+            requestEscapeInterrupt();
+          } else if (escapeState === "csi") {
+            if (byte >= 0x40 && byte <= 0x7e) escapeState = "text";
+            continue;
+          } else {
+            if (byte >= 0x30 && byte <= 0x7e) escapeState = "text";
+            continue;
+          }
+        }
+        if (rawTty && byte === 0x1b) {
+          escapeState = "escape";
+          escapeTimer = setTimeout(requestEscapeInterrupt, escapeSequenceTimeoutMs);
+          continue;
+        }
+        if (byte === 0x0a || (rawTty && byte === 0x0d)) {
           queueLine();
           if (stopped) break;
         } else {
@@ -350,12 +603,15 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
     params.error.write(INPUT_FAILED_MESSAGE);
     reason = "input_failed";
   } finally {
+    if (escapeTimer !== undefined) clearTimeout(escapeTimer);
     unsubscribeBackground?.();
     try {
       await params.session.close();
     } catch {
       params.error.write(CLOSE_FAILED_MESSAGE);
       if (isSuccessfulExit(reason)) reason = "close_failed";
+    } finally {
+      if (rawModeEnabled) ttyInput.setRawMode?.(false);
     }
   }
   return { reason, completedTurns };

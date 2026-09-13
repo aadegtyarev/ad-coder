@@ -22,3 +22,7 @@ Rules for ad-coder's command-line front. A violation is always blocking.
   available, and applies a configurable provider-request timeout. Zero disables
   heartbeat or timeout explicitly. Machine-result stdout stays free of progress
   text, and timeout is a visible non-success rather than an empty completion.
+- 2026-09-14: In a TTY, `Escape` interrupts only the active orchestrator turn;
+  the conversation session and detached background runs remain alive.
+  Console-local background list/events/status/result/cancel commands execute
+  through the headless manager and never dispatch a model turn.

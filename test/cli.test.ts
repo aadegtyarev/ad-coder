@@ -814,6 +814,8 @@ test("console help is registry-derived and invalid input limits fail before prov
     "--target-dir <dir>",
     "--json",
     "--max-input-bytes <n>",
+    "--console-page-size <n>",
+    "--escape-sequence-timeout-ms <n>",
     "--max-session-turns <n>",
     "--max-session-cost-usd <amount>",
     "--provider <provider>",
@@ -850,6 +852,12 @@ test("console help is registry-derived and invalid input limits fail before prov
     const result = runCli(["console", "--target-dir", ".", `--max-input-bytes=${value}`]);
     expect(result.code).toBe(2);
     expect(result.stderr).toContain("invalid --max-input-bytes");
+  }
+  for (const option of ["--console-page-size", "--escape-sequence-timeout-ms"]) {
+    const result = runCli(["console", "--target-dir", ".", `${option}=0`]);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain(option);
+    expect(result.stderr).toContain("positive integer");
   }
   for (const value of ["-1", "1.5", "", " 1", "1e2", "NaN", "Infinity"]) {
     const result = runCli(["console", "--target-dir", ".", `--max-session-turns=${value}`]);
