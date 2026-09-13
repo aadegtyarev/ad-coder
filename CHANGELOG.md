@@ -18,6 +18,11 @@ All notable changes to ad-coder are recorded here. The format follows
 - Added safe per-stage provider/model, thinking, duration, reasoning-token, cost,
   and context-strategy metrics to pipeline results and durable reports.
 
+### Changed
+
+- Bounded normal Planner reconnaissance by batching independent reads and
+  converting unresolved evidence into a research gate before Coder dispatch.
+
 ### Security
 
 - Hardened activity projection against argument, identifier, terminal-control,

@@ -21,6 +21,13 @@ test("ships the Auditor contract-coverage prompt", () => {
   expect(prompt).toContain("explicitly approves");
 });
 
+test("Planner prompt bounds reconnaissance without hiding evidence gaps", () => {
+  const prompt = resolvePrompt("planner");
+  expect(prompt).toContain("twelve tool calls");
+  expect(prompt).toContain("Batch independent `rg`, `sed`, and `git` reads");
+  expect(prompt).toContain("mark any material gap `research_required`");
+});
+
 test("a project prompt shadows the built-in of the same name", () => {
   const projectDir = tmpDir();
   const dir = path.join(projectDir, ".ad-coder", "prompts");
