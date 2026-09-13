@@ -19,12 +19,14 @@ import type {
   ResolvePipelineConfigOptions,
 } from "./cli/resolve-config";
 import { resolvePipelineConfig } from "./cli/resolve-config";
+import { ToolActivityRenderer } from "./cli/tool-activity";
 import type { CompactionPolicy } from "./context/compactor";
-import { Ledger, MemoryLedgerSink } from "./ledger/ledger";
+import { Ledger, type LedgerSink, MemoryLedgerSink } from "./ledger/ledger";
 import {
   DEFAULT_TOOL_ACTIVITY_CONFIG,
   resolveToolActivityConfig,
   type ToolActivityConfig,
+  type ToolActivityConsumer,
 } from "./observability/tool-activity";
 import {
   createOrchestratorControlPlane,
@@ -74,6 +76,7 @@ import type { Role } from "./role";
 import { defineRole } from "./role";
 import { resolveTargetDir } from "./runner/errors";
 import { createRoleRunner } from "./runner/role-runner";
+import type { Tool } from "./runner/tool";
 import type { SessionLimits } from "./session-limits";
 import { SessionLimitController } from "./session-limits";
 import type { WorkflowContext } from "./workflow";
@@ -243,16 +246,24 @@ export async function runRoleStandalone(params: {
   models: Models;
   targetDir: string;
   task: string;
-  ledgerSink: MemoryLedgerSink;
+  runId?: string;
+  ledgerSink?: LedgerSink;
+  tools?: Tool[];
+  activityConsumer?: ToolActivityConsumer;
   compaction?: CompactionPolicy;
   projectStoreConfig?: ProjectStoreConfig;
   toolActivity?: Partial<ToolActivityConfig>;
   stageLimits?: import("./orchestration/stage-limits").StageLimits;
-}): Promise<{ text: string; cost: number }> {
-  const runId = crypto.randomUUID();
+}): Promise<{
+  text: string;
+  cost: number;
+  ledgerPath: string | undefined;
+  observations: import("./runner/runner").RoleObservations;
+}> {
+  const runId = params.runId ?? crypto.randomUUID();
   const store = new ProjectStore(params.targetDir, params.projectStoreConfig);
   const session = await store.createSession(runId, BACKGROUND_CONTEXT);
-  await createRoleRunner({
+  const result = await createRoleRunner({
     targetDir: params.targetDir,
     models: params.models,
     ...(params.compaction !== undefined && { compaction: params.compaction }),
@@ -260,11 +271,13 @@ export async function runRoleStandalone(params: {
       projectStoreConfig: params.projectStoreConfig,
     }),
     ...(params.toolActivity !== undefined && { toolActivity: params.toolActivity }),
+    ...(params.activityConsumer !== undefined && { activityConsumer: params.activityConsumer }),
     ...(params.stageLimits !== undefined && { stageLimits: params.stageLimits }),
   }).runRole(params.role, params.model, params.task, {
     runId,
     session,
-    ledgerSink: params.ledgerSink,
+    ...(params.ledgerSink !== undefined && { ledgerSink: params.ledgerSink }),
+    ...(params.tools !== undefined && { tools: params.tools }),
   });
   // runRole closes the session facade it was handed; reopen a fresh readable
   // facade from the durable store to scan the settled transcript.
@@ -275,11 +288,12 @@ export async function runRoleStandalone(params: {
   } finally {
     await readable.close(BACKGROUND_CONTEXT);
   }
-  let cost = 0;
-  for (const record of params.ledgerSink.records()) {
-    cost += record.usage.cost.total;
-  }
-  return { text, cost };
+  return {
+    text,
+    cost: result.observations.costUsd ?? 0,
+    ledgerPath: result.ledgerPath,
+    observations: result.observations,
+  };
 }
 
 /** The resolved RoleSpec for a validated shipped role name. */
@@ -1255,36 +1269,58 @@ async function roleCommand(
   });
 
   const spec = roleSpecFor(config, name as RoleName);
-  const ledgerSink = new MemoryLedgerSink();
   const standaloneRole = defineRole(
     {
       ...spec.role,
       systemPrompt: `${spec.role.systemPrompt}\n\nThis is a standalone role invocation. Return the complete result as assistant text; structured pipeline submission tools are unavailable.`,
-      activeToolNames: (spec.role.activeToolNames ?? []).filter((tool) =>
-        ["bash", "read", "write", "edit"].includes(tool),
+      activeToolNames: (spec.role.activeToolNames ?? []).filter(
+        (tool) => !tool.startsWith("submit_"),
       ),
     },
     spec.model,
   );
-  const { text, cost } = await runRoleStandalone({
-    role: standaloneRole,
-    model: spec.model,
-    models: config.models,
-    targetDir: configOptions.targetDir,
-    task,
-    ledgerSink,
-    ...(config.compaction !== undefined && { compaction: config.compaction }),
-    ...(config.projectStoreConfig !== undefined && {
-      projectStoreConfig: config.projectStoreConfig,
-    }),
-    ...(config.toolActivity !== undefined && { toolActivity: config.toolActivity }),
-    ...(config.stageLimits !== undefined && { stageLimits: config.stageLimits }),
-  });
+  const renderer = new ToolActivityRenderer(process.stderr, "human", config.toolActivity);
+  const standaloneRunId = crypto.randomUUID();
+  const expectedLedgerPath = path.join(
+    configOptions.targetDir,
+    ".ad-coder",
+    "ledger",
+    `${standaloneRunId}.jsonl`,
+  );
+  const standaloneResult = await (async () => {
+    try {
+      return await runRoleStandalone({
+        role: standaloneRole,
+        model: spec.model,
+        models: config.models,
+        targetDir: configOptions.targetDir,
+        task,
+        runId: standaloneRunId,
+        tools: config.pluginToolsForModel?.(spec.model) ?? config.pluginTools,
+        activityConsumer: renderer.consume,
+        ...(config.compaction !== undefined && { compaction: config.compaction }),
+        ...(config.projectStoreConfig !== undefined && {
+          projectStoreConfig: config.projectStoreConfig,
+        }),
+        ...(config.toolActivity !== undefined && { toolActivity: config.toolActivity }),
+        ...(config.stageLimits !== undefined && { stageLimits: config.stageLimits }),
+      });
+    } catch (error) {
+      process.stderr.write(`ad-coder: partial usage ledger=${expectedLedgerPath}\n`);
+      throw error;
+    } finally {
+      renderer.close();
+    }
+  })();
+  const { text, cost, ledgerPath, observations } = standaloneResult;
 
   // The extracted assistant text IS this subcommand's result value, so it is
   // the one thing that reaches stdout (never the raw OperationResultRecord).
   process.stdout.write(`${text}\n`);
   process.stdout.write(`cost: $${cost.toFixed(8)}\n`);
+  process.stderr.write(
+    `ad-coder: usage input=${observations.input} output=${observations.output} reasoning=${observations.reasoning ?? 0} durationMs=${observations.durationMs ?? 0} tools-read=${observations.readFilesTotal} ledger=${ledgerPath ?? "custom"}\n`,
+  );
   // A silent no-op turn (empty text AND zero cost) is otherwise two blank-looking
   // lines; surface it as a clear stderr signal (provider auth / empty response).
   const warning = silentNoopWarning(text, cost);

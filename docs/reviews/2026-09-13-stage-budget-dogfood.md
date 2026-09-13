@@ -80,3 +80,17 @@ another multi-hour run, but they confirm that standalone semantic activity and
 role-turn efficiency remain unresolved. Local review then caught and fixed two
 projection defects: Git search now treats task terms literally, and result
 metadata reports truncation caused by either match-count or byte ceilings.
+
+The standalone front was then fixed at the actual wiring boundary: it now feeds
+runner activity into the bounded human renderer, preserves selected plugin tools
+such as `search_project`, writes the default target-local numeric ledger, and
+prints a narrowed usage envelope. The earlier Reviewer prompts could not have
+used `search_project` because the front had removed all plugin tools.
+
+A post-fix Reviewer run visibly executed Search, Read, and Run lifecycles before
+the 12-tool ceiling stopped it after about 22 seconds. Its private `0600` ledger
+contained four provider records: 20,563 input tokens, 848 output tokens,
+$0.05212120, and requested-tool counts of one `search_project`, twelve `read`,
+and four `bash`. This both validates the wiring and shows the remaining waste:
+the role still broadens from one projection into many reads. Failed standalone
+runs now print their known partial-ledger path for immediate diagnosis.

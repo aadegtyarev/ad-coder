@@ -6,11 +6,6 @@ Only unresolved work belongs here. Current behavior is in
 
 ## Current priority
 
-- [high] **Persist standalone role usage and explain its active work**: `role`
-  currently loses its in-memory token ledger at process exit, while two
-  Reviewer dogfood runs showed only heartbeat for 213s and 156s. Persist a safe
-  usage envelope and ensure semantic activity reaches this front.
-
 - [high] **Remove target `.env` from the provider credential boundary**: the
   standalone Reviewer warned that running inside `targetDir` auto-loaded the
   project's `.env`. Provider credentials must come only from the explicit

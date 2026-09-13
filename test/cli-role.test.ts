@@ -3,7 +3,12 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { Api, Model } from "@earendil-works/pi-ai";
-import { createModels, fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
+import {
+  createModels,
+  fauxAssistantMessage,
+  fauxProvider,
+  fauxToolCall,
+} from "@earendil-works/pi-ai";
 import { runRoleStandalone } from "../src/cli";
 import { MemoryLedgerSink } from "../src/ledger/ledger";
 import { StageLimitError } from "../src/orchestration/stage-limits";
@@ -84,4 +89,34 @@ test("standalone roles enforce the same stage budgets as pipeline roles", async 
       stageLimits: { maxInputTokens: 1 },
     }),
   ).rejects.toBeInstanceOf(StageLimitError);
+});
+
+test("standalone roles persist usage and emit semantic tool activity by default", async () => {
+  const { faux, models, model, role } = fixture();
+  fs.writeFileSync(path.join(targetDir, "observed.txt"), "hello\n");
+  faux.setResponses([
+    fauxAssistantMessage(fauxToolCall("read", { path: "observed.txt" })),
+    fauxAssistantMessage("reviewed"),
+  ]);
+  const activity: string[] = [];
+
+  const result = await runRoleStandalone({
+    role,
+    model,
+    models,
+    targetDir,
+    task: "review the change",
+    runId: "standalone-observed",
+    activityConsumer: (record) => {
+      if (record.type === "tool_activity") activity.push(`${record.activity}:${record.lifecycle}`);
+    },
+  });
+
+  expect(result.ledgerPath).toBe(
+    path.join(targetDir, ".ad-coder", "ledger", "standalone-observed.jsonl"),
+  );
+  expect(fs.existsSync(result.ledgerPath as string)).toBe(true);
+  expect(result.observations.input).toBeGreaterThanOrEqual(0);
+  expect(activity).toContain("Read:requested");
+  expect(activity).toContain("Read:completed");
 });
