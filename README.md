@@ -208,7 +208,13 @@ their own `pluginTools`.
 Model-backed `role` and `drive` commands announce their stage immediately and
 print a heartbeat to stderr every 10 seconds. Change it with `--heartbeat-ms`.
 Provider requests time out after 120 seconds by default; use
-`--request-timeout-ms`. Zero explicitly disables either behavior. Tool activity
+`--request-timeout-ms`. Whole stages also default to a 10-minute deadline, 32
+model calls, 128 tool calls, 500,000 provider-reported input tokens, and $2 of
+provider-reported cost. Override them with `--stage-max-duration-ms`,
+`--stage-max-model-turns`, `--stage-max-tool-turns`,
+`--stage-max-input-tokens`, and `--stage-max-cost-usd`; zero disables the named
+limit. A reached limit durably pauses the incomplete stage with explicit recovery
+guidance. Zero explicitly disables heartbeat or provider-request timeout. Tool activity
 retention, subscriber queues, grouping, projection, event, line, and renderer
 limits use the registry-derived `--tool-activity-*` options and appear in
 `config show`. Zero disables only replay, grouping delay, close draining, and

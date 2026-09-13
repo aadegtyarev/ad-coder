@@ -39,6 +39,7 @@ import {
   resolveRepositoryPublishingConfig,
   resumeImportedLdoWork,
   routeDocumentationFollowUp,
+  StageLimitError,
   startRepositoryPublishing,
   suggestBacklogMigrationOnce,
   validateFollowUp,
@@ -521,6 +522,32 @@ test("RunCoordinator checkpoints aggregation and makes automatic closeout effect
   });
   expect((await resumed.run()).checkpoint).toEqual(result.checkpoint);
   expect(new FileBacklogStore(store).list()).toHaveLength(1);
+});
+
+test("RunCoordinator durably pauses a limited stage and resumes only that stage", async () => {
+  const store = new ProjectStore(root());
+  const base = coordinatorSession(store, []);
+  let attempts = 0;
+  const session: WorkflowSession = {
+    ...base,
+    async step(state) {
+      attempts += 1;
+      if (attempts === 1) throw new StageLimitError("duration", 10, 10);
+      return base.step(state);
+    },
+  };
+  const coordinator = new RunCoordinator(session, store, { runId: "stage-limit-pause" });
+  const paused = await coordinator.run();
+  expect(paused.status).toBe("paused");
+  expect(paused.checkpoint.pause).toEqual({
+    phase: "code",
+    code: "stage_limit",
+    action: "increase or disable the duration stage limit, then resume explicitly",
+  });
+  expect(attempts).toBe(1);
+  coordinator.resumeStage({ source: "operator", action: "retry" });
+  expect((await coordinator.run()).status).toBe("complete");
+  expect(attempts).toBe(2);
 });
 
 test("contract decisions persist, require operator authority, and re-review the current change", async () => {

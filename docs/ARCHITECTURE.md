@@ -155,6 +155,12 @@ resource limits use zero to mean disabled unless a separate mandatory safety
 ceiling is documented. `config show` exposes effective values and their sources
 without returning credential material.
 
+Each pipeline role stage owns a fresh `StageLimitController`. The runner meters
+every model and tool admission, provider-reported input and cost, and elapsed
+time; a deadline closes the active harness. `RunCoordinator` checkpoints a
+`stage_limit` pause before returning, so completed earlier phases remain committed
+and an operator can change the configured limit and resume the incomplete phase.
+
 ## Context, usage, and recovery
 
 ad-coder disables the framework's built-in compaction and owns its context

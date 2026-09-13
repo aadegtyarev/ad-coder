@@ -2,6 +2,7 @@ import * as crypto from "node:crypto";
 import * as path from "node:path";
 import type { WorkflowSession } from "../orchestration/session";
 import { applyTransition, autoDriver, toPipelineResult } from "../orchestration/session";
+import { StageLimitError } from "../orchestration/stage-limits";
 import type {
   Driver,
   PipelineResult,
@@ -61,7 +62,7 @@ export interface RunCheckpoint {
     intent: ResearchDispatchIntent;
     status: "prepared" | "dispatched" | "completed";
   };
-  pause?: { phase: "research"; code: string; action: string };
+  pause?: { phase: WorkflowState["phase"]; code: string; action: string };
 }
 
 export interface RunCoordinatorOptions {
@@ -189,6 +190,16 @@ export class RunCoordinator {
     this.save(next);
   }
 
+  /** Clear a stage-budget pause after the operator supplies a larger/disabled budget. */
+  resumeStage(resolution: ResearchPauseResolution): void {
+    const checkpoint = this.persisted.value;
+    if (resolution.source !== "operator" || checkpoint.pause?.code !== "stage_limit")
+      throw new ProjectOperationsError("unauthorized_resolution", checkpoint.runId);
+    const next = { ...checkpoint };
+    delete next.pause;
+    this.save(next);
+  }
+
   private save(value: RunCheckpoint): void {
     assertCheckpointSize(value, this.checkpointByteLimit);
     try {
@@ -219,9 +230,9 @@ export class RunCoordinator {
   async prepareStep(): Promise<StepResult | undefined> {
     let checkpoint = this.persisted.value;
     if (checkpoint.phase !== "workflow" || checkpoint.workflowState.done) return undefined;
+    if (checkpoint.pause !== undefined) return undefined;
     if (checkpoint.pendingStep !== undefined) return clone(checkpoint.pendingStep);
     if (checkpoint.workflowState.phase === "research") {
-      if (checkpoint.pause !== undefined) return undefined;
       if (checkpoint.researchEffect?.status === "dispatched") {
         this.save({
           ...checkpoint,
@@ -279,6 +290,17 @@ export class RunCoordinator {
     try {
       result = await this.session.step(checkpoint.workflowState);
     } catch (error) {
+      if (error instanceof StageLimitError) {
+        this.save({
+          ...this.persisted.value,
+          pause: {
+            phase: checkpoint.workflowState.phase,
+            code: "stage_limit",
+            action: `increase or disable the ${error.reason} stage limit, then resume explicitly`,
+          },
+        });
+        return undefined;
+      }
       if (checkpoint.workflowState.phase !== "research") throw error;
       this.save({
         ...this.persisted.value,

@@ -16,6 +16,7 @@ import { ContextBudgetError } from "../src/context/budget";
 import type { Summarizer } from "../src/context/compactor";
 import { LEDGER_BASE_DIR } from "../src/ledger/ledger";
 import type { ToolActivityRecord } from "../src/observability/tool-activity";
+import { StageLimitController, StageLimitError } from "../src/orchestration/stage-limits";
 import { ProjectStore } from "../src/project-store/project-store";
 import type { Role } from "../src/role";
 import { defineRole } from "../src/role";
@@ -142,6 +143,25 @@ test("runRole drives one turn to a settled result and lands the ledger under tar
 
   const underCwd = path.join(process.cwd(), LEDGER_BASE_DIR, `${result.runId}.jsonl`);
   expect(fs.existsSync(underCwd)).toBe(false);
+});
+
+test("runRole rejects an expired stage before provider dispatch", async () => {
+  const { faux, models, model, role } = harnessFixture();
+  faux.setResponses([fauxAssistantMessage("must not run")]);
+  let now = 0;
+  const stageLimitController = new StageLimitController({ maxDurationMs: 5 }, () => now);
+  now = 5;
+  await expect(
+    runRole({
+      role,
+      targetDir,
+      models,
+      model,
+      prompt: "do the thing",
+      stageLimitController,
+    }),
+  ).rejects.toBeInstanceOf(StageLimitError);
+  expect(stageLimitController.snapshot().modelTurns).toBe(0);
 });
 
 test("runRole exposes correlated lifecycle events for successful and failed tools", async () => {

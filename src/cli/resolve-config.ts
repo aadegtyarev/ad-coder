@@ -12,6 +12,7 @@ import type {
 } from "../observability/tool-activity";
 import { SUBMIT_FOLLOW_UP_TOOL_NAME } from "../orchestration/follow-up";
 import { DEFAULT_SURFACE_ANALYSIS_LIMITS, SUBMIT_PLAN_TOOL_NAME } from "../orchestration/plan";
+import { StageLimitController, type StageLimits } from "../orchestration/stage-limits";
 import type {
   Complexity,
   PipelineConfig,
@@ -141,6 +142,7 @@ export interface ResolvePipelineConfigOptions {
   visionModel?: string;
   orchestratorThinkingLevel?: ThinkingLevel;
   requestTimeoutMs?: number;
+  stageLimits?: StageLimits;
   compactionMode?: CompactionMode;
   summarizerModel?: string;
   allowCrossProviderSummarization?: boolean;
@@ -230,6 +232,14 @@ function resolveConfig(
   const requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   if (!Number.isSafeInteger(requestTimeoutMs) || requestTimeoutMs < 0)
     throw new Error("requestTimeoutMs must be a non-negative safe integer");
+  const stageLimits: Required<StageLimits> = {
+    maxDurationMs: options.stageLimits?.maxDurationMs ?? 600_000,
+    maxModelTurns: options.stageLimits?.maxModelTurns ?? 32,
+    maxToolTurns: options.stageLimits?.maxToolTurns ?? 128,
+    maxInputTokens: options.stageLimits?.maxInputTokens ?? 500_000,
+    maxCostUsd: options.stageLimits?.maxCostUsd ?? 2,
+  };
+  new StageLimitController(stageLimits);
   if (options.pluginTools !== undefined && options.enabledPlugins !== undefined)
     throw new Error("pluginTools cannot be combined with enabledPlugins");
   const enabledPlugins = options.enabledPlugins ?? ["explore", "web", "vision"];
@@ -601,6 +611,18 @@ function resolveConfig(
         source: options.requestTimeoutMs !== undefined ? "cli" : "built-in-default",
       },
       ...Object.fromEntries(
+        Object.entries(stageLimits).map(([name, value]) => [
+          `stageLimits.${name}`,
+          {
+            value,
+            source:
+              options.stageLimits?.[name as keyof StageLimits] !== undefined
+                ? "cli"
+                : "built-in-default",
+          },
+        ]),
+      ),
+      ...Object.fromEntries(
         Object.entries(surfaceAnalysisLimits).map(([name, value]) => [
           `surfaceAnalysisLimits.${name}`,
           {
@@ -613,6 +635,7 @@ function resolveConfig(
         ]),
       ),
     },
+    stageLimits,
     ...(options.projectStoreConfig !== undefined && {
       projectStoreConfig: options.projectStoreConfig,
     }),

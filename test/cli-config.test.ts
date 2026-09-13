@@ -501,3 +501,45 @@ test("provider request timeout is effective, visible, and zero-disabled", () => 
   expect(disabled.roles.coder.role.requestTimeoutMs).toBe(0);
   expect(disabled.effectiveConfig?.requestTimeoutMs).toEqual({ value: 0, source: "cli" });
 });
+
+test("stage budgets have finite defaults, expose provenance, and are zero-disableable", () => {
+  const base = {
+    task: "x",
+    targetDir: "/tmp",
+    registryConfig: mixedRegistry(),
+    profile: buildDefaultProfile({ strong: "large", mid: "small", cheap: "small" }),
+    summarizerModel: "large",
+    env: fakeEnv({ LOCAL_KEY: "k" }),
+    warn: silent,
+  } as const;
+  const defaults = resolvePipelineConfig(base);
+  expect(defaults.stageLimits).toEqual({
+    maxDurationMs: 600_000,
+    maxModelTurns: 32,
+    maxToolTurns: 128,
+    maxInputTokens: 500_000,
+    maxCostUsd: 2,
+  });
+  expect(defaults.effectiveConfig?.["stageLimits.maxDurationMs"]).toEqual({
+    value: 600_000,
+    source: "built-in-default",
+  });
+  const disabled = resolvePipelineConfig({
+    ...base,
+    stageLimits: {
+      maxDurationMs: 0,
+      maxModelTurns: 0,
+      maxToolTurns: 0,
+      maxInputTokens: 0,
+      maxCostUsd: 0,
+    },
+  });
+  expect(disabled.stageLimits).toEqual({
+    maxDurationMs: 0,
+    maxModelTurns: 0,
+    maxToolTurns: 0,
+    maxInputTokens: 0,
+    maxCostUsd: 0,
+  });
+  expect(disabled.effectiveConfig?.["stageLimits.maxCostUsd"]?.source).toBe("cli");
+});

@@ -7,6 +7,7 @@ import type {
   ToolActivityConfig,
   ToolActivityConsumer,
 } from "../observability/tool-activity";
+import { StageLimitController, type StageLimits } from "../orchestration/stage-limits";
 import type { ProjectStoreConfig } from "../project-store/types";
 import type { Role } from "../role";
 import type { SessionLimitController } from "../session-limits";
@@ -59,6 +60,7 @@ export interface RoleRunnerConfig {
   session?: Session;
   projectStoreConfig?: ProjectStoreConfig;
   sessionLimitController?: SessionLimitController;
+  stageLimits?: StageLimits;
   observability?: { maxReadPaths?: number; maxReadPathBytes?: number };
   activityChannel?: ToolActivityChannel;
   activityConsumer?: ToolActivityConsumer;
@@ -92,6 +94,9 @@ export function createRoleRunner(config: RoleRunnerConfig): RoleRunner {
         ...(config.compaction !== undefined && { compaction: config.compaction }),
         ...(config.sessionLimitController !== undefined && {
           sessionLimitController: config.sessionLimitController,
+        }),
+        ...(config.stageLimits !== undefined && {
+          stageLimitController: new StageLimitController(config.stageLimits, monotonicNow),
         }),
         ...(config.projectStoreConfig !== undefined && {
           projectStoreConfig: config.projectStoreConfig,

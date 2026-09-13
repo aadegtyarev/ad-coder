@@ -1,4 +1,6 @@
 import { expect, test } from "bun:test";
+import type { Models } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import {
   DEFAULT_STAGE_LIMITS,
   StageLimitController,
@@ -78,4 +80,27 @@ test("stage configuration and observed usage reject unsafe numbers", () => {
   const controller = new StageLimitController();
   expect(() => controller.observeUsage(-1, 0)).toThrow(TypeError);
   expect(() => controller.observeUsage(0, Number.NaN)).toThrow(TypeError);
+});
+
+test("models wrapper meters every provider turn and blocks before dispatch", async () => {
+  let calls = 0;
+  const message = fauxAssistantMessage("ok");
+  message.usage.input = 7;
+  message.usage.cacheRead = 3;
+  message.usage.cost.total = 0.2;
+  const models = {
+    completeSimple: async () => {
+      calls += 1;
+      return message;
+    },
+  } as unknown as Models;
+  const controller = new StageLimitController({ maxModelTurns: 1 });
+  const limited = controller.wrap(models);
+  await limited.completeSimple({} as never, {} as never);
+  await expect(limited.completeSimple({} as never, {} as never)).rejects.toMatchObject({
+    code: "stage_limit",
+    reason: "model_turns",
+  });
+  expect(calls).toBe(1);
+  expect(controller.snapshot()).toMatchObject({ inputTokens: 10, costUsd: 0.2 });
 });
