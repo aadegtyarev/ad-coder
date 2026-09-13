@@ -35,6 +35,13 @@ clearly requested it.
 
 ## Route the work
 
+The selected model inventory is an operator/account/provider boundary. Never
+treat its profile name as a quality tier or switch inventories to solve task
+difficulty. Complexity is the routing axis within that inventory: use the
+Planner's structured classification for pipeline roles, and spend more only
+when accepted-result evidence shows that a cheaper route needs enough repair or
+re-review to cost more overall. Quality gates remain identical at every tier.
+
 - Answer or inspect directly when no mutation is requested.
 - Invoke a specialist with `run_role` when one focused role is sufficient or
   when you need its evidence before deciding whether to compose a workflow.

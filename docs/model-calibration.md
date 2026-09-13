@@ -26,6 +26,12 @@ and one tempting false positive. Its scorer derives check results from stable
 finding codes. This keeps grading independent of prose and lets the same task be
 repeated across every model in an inventory.
 
+Run each corpus task at least once as its declared mode: a standalone `run_role`,
+manual `run_step`/`choose_transition`, or complete `run_pipeline`. Repeat samples
+before changing defaults. The Orchestrator receives this same rule: inventory
+selects the available provider/account model set, while task complexity selects
+a route inside it.
+
 For every sample record the inventory, model, role, assigned and observed
 complexity, outcome, escaped defects, repair/re-review rounds, duration, model
 and tool turns, fresh/cache/output/reasoning tokens, provider cost, and ceilings.
@@ -49,3 +55,14 @@ the default Coder for configuration-heavy work under the current reconnaissance
 prompt/tool boundary. Terra remains the broad-review baseline until controlled
 fixtures measure Luna's escaped-defect rate. Project observations supersede
 these hypotheses as comparable samples accumulate.
+
+### Controlled fixture sample
+
+On the initial non-Git draft of `reviewer-hidden-regression-v1`, DeepSeek Chat
+accepted all three checks in 27.387 s: 11 model turns, 16 tool calls, 5,270 fresh
+input, 43,392 cached input, 3,217 output tokens, and $0.007999. GPT-5.6 Luna did
+not finish: it reached the 32-tool ceiling after about 100 s with 7 model turns,
+19,372 fresh input, 26,112 cached input, 2,168 output, 742 reasoning tokens, and
+$0.006998 partial cost. Treat this as harness evidence only: the fixture was then
+corrected to materialize a real Git baseline plus diff, which the Reviewer prompt
+expects. Repeat both models on the corrected fixture before changing defaults.
