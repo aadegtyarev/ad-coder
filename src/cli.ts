@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -32,6 +33,12 @@ import {
   type ToolActivityConsumer,
 } from "./observability/tool-activity";
 import {
+  type BackgroundHostLauncher,
+  BackgroundRunError,
+  type BackgroundRunLimits,
+  BackgroundRunManager,
+} from "./orchestration/background-runs";
+import {
   createOrchestratorControlPlane,
   type DecisionRequest,
   MAX_AUTOMATIC_RETRY_ATTEMPTS,
@@ -48,7 +55,7 @@ import {
   type StageLimitSnapshot,
   type StageLimits,
 } from "./orchestration/stage-limits";
-import type { Complexity, PipelineConfig, RoleSpec } from "./orchestration/types";
+import type { Complexity, PipelineConfig, RoleSpec, WorkflowPhase } from "./orchestration/types";
 import { parseProfile } from "./profiles/validate";
 import {
   createProjectCalibrationSnapshot,
@@ -1396,6 +1403,156 @@ async function controlCommand(
   await operationsCommand(["operations", `control-${action}`], flags);
 }
 
+function backgroundLimits(flags: Record<string, string | undefined>): Partial<BackgroundRunLimits> {
+  const number = (name: string, key: keyof BackgroundRunLimits) => {
+    const value = parseNonNegativeIntegerFlag(name, flags[name]);
+    return value === undefined ? {} : { [key]: value };
+  };
+  const policy = flags["--same-target-policy"];
+  if (policy !== undefined && !["allow", "reject", "serialize"].includes(policy))
+    fail("--same-target-policy must be allow, reject, or serialize");
+  return {
+    ...number("--background-max-active", "maxActiveRuns"),
+    ...number("--background-max-process-active", "maxProcessActiveRuns"),
+    ...number("--background-max-task-bytes", "maxTaskBytes"),
+    ...number("--background-max-events", "maxEventsPerRun"),
+    ...number("--background-max-page-size", "maxPageSize"),
+    ...number("--background-max-page-bytes", "maxPageBytes"),
+    ...number("--background-max-run-ms", "maxRunMs"),
+    ...number("--background-close-drain-ms", "closeDrainMs"),
+    ...number("--lease-ms", "leaseMs"),
+    ...(policy === undefined
+      ? {}
+      : { sameTargetPolicy: policy as BackgroundRunLimits["sameTargetPolicy"] }),
+  };
+}
+
+/** The CLI owns process creation; orchestration only receives this provider. */
+function createBackgroundHostLauncher(targetDir: string, ownerId: string): BackgroundHostLauncher {
+  return async ({ runId, task, limits }) => {
+    const entrypoint = process.argv[1];
+    if (entrypoint === undefined) fail("background worker entrypoint is unavailable");
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn(
+        process.execPath,
+        [
+          entrypoint,
+          "background",
+          "worker",
+          "--target-dir",
+          targetDir,
+          "--id",
+          runId,
+          "--owner-id",
+          ownerId,
+        ],
+        {
+          detached: true,
+          stdio: "ignore",
+          env: {
+            ...process.env,
+            AD_CODER_BACKGROUND_TASK: task,
+            AD_CODER_BACKGROUND_LIMITS: JSON.stringify(limits),
+          },
+        },
+      );
+      child.once("error", () => reject(new Error("background worker failed to start")));
+      child.once("spawn", () => {
+        child.unref();
+        resolve();
+      });
+    });
+  };
+}
+
+/** JSON-only management front for session-owned background pipeline records. */
+async function backgroundCommand(
+  positionals: string[],
+  flags: Record<string, string | undefined>,
+): Promise<void> {
+  const action = positionals[1];
+  const worker = action === "worker";
+  if (!["start", "events", "status", "result", "cancel", "worker"].includes(action ?? ""))
+    fail("background requires one action: start, events, status, result, or cancel");
+  const targetArg = flags["--target-dir"];
+  if (targetArg === undefined) fail("--target-dir is required for the background command");
+  const targetDir = resolveTargetDir(targetArg);
+  const ownerId = flags["--owner-id"] ?? `${process.getuid?.() ?? "user"}:${targetDir}`;
+  const configuredLimits = backgroundLimits(flags);
+  const workerLimits = (() => {
+    const encoded = process.env.AD_CODER_BACKGROUND_LIMITS;
+    if (!worker || encoded === undefined) return configuredLimits;
+    try {
+      return JSON.parse(encoded) as Partial<BackgroundRunLimits>;
+    } catch {
+      fail("background worker limits are invalid");
+    }
+  })();
+  const launcher =
+    action === "start" ? createBackgroundHostLauncher(targetDir, ownerId) : undefined;
+  const manager = new BackgroundRunManager(
+    async (task, runId, control) => {
+      const config = resolvePipelineConfig({ task, ...buildConfigOptions(targetArg, flags) });
+      config.coordinator = { ...config.coordinator, runId };
+      const result = await runPipeline(config);
+      const perStep = result.stageMetrics.map((metric, index) => {
+        const phase = metric.stage.split(":", 1)[0] as WorkflowPhase;
+        if (
+          !(["plan", "research", "security", "code", "review", "done"] as const).includes(
+            phase as never,
+          )
+        )
+          throw new Error("pipeline returned an unknown stage metric");
+        return {
+          phase,
+          step: index + 1,
+          cost: metric.costUsd ?? 0,
+        };
+      });
+      for (const step of perStep) control.onStage(step);
+      return {
+        runId,
+        result,
+        perStep,
+        totalCost: perStep.reduce((sum, step) => sum + step.cost, 0),
+      };
+    },
+    workerLimits,
+    targetDir,
+    ownerId,
+    launcher,
+  );
+  const id = flags["--id"];
+  let output: unknown;
+  if (action === "start") {
+    if (positionals.length !== 3 || positionals[2] === undefined)
+      fail("background start requires exactly one task");
+    output = await manager.startDetached(positionals[2]);
+  } else if (worker) {
+    if (id === undefined) fail("--id is required for this background action");
+    const task = process.env.AD_CODER_BACKGROUND_TASK;
+    if (task === undefined) fail("background worker task is missing");
+    manager.claim(id, task);
+    await manager.wait(id);
+    await manager.close(true);
+    return;
+  } else {
+    if (id === undefined) fail("--id is required for this background action");
+    if (action === "status") output = manager.status(id);
+    else if (action === "result") output = manager.result(id);
+    else if (action === "cancel") output = manager.cancel(id);
+    else {
+      const cursor = flags["--after"] === undefined ? 0 : Number(flags["--after"]);
+      const limit = flags["--limit"] === undefined ? undefined : Number(flags["--limit"]);
+      output = manager.events(id, cursor, limit);
+    }
+  }
+  process.stdout.write(`${JSON.stringify(output)}\n`);
+  // A management invocation must not turn a read/cancel into a worker lifetime.
+  if (action !== "start") await manager.close();
+  else await manager.close(true);
+}
+
 function buildConfigOptions(
   targetDirArg: string,
   flags: Record<string, string | undefined>,
@@ -2299,6 +2456,65 @@ const COMMANDS: readonly CommandDefinition[] = [
     run: ({ positionals, flags }) => profileCommand(positionals, flags),
   },
   {
+    name: "background",
+    description: "Start and inspect isolated background pipeline runs as JSON.",
+    positionals: [
+      { name: "<start|events|status|result|cancel>", description: "Background run action." },
+      { name: "<task>", description: "Task for start (only)." },
+    ],
+    options: [
+      ...PIPELINE_OPTIONS,
+      { name: "--id", value: "<id>", description: "Background run identifier." },
+      { name: "--after", value: "<sequence>", description: "Event cursor (exclusive)." },
+      { name: "--limit", value: "<n>", description: "Maximum events to return." },
+      {
+        name: "--owner-id",
+        value: "<id>",
+        description: "Stable private owner scope for reconnect.",
+      },
+      {
+        name: "--same-target-policy",
+        value: "<allow|reject|serialize>",
+        description: "Admission policy for concurrent target runs.",
+      },
+      {
+        name: "--background-max-active",
+        value: "<n>",
+        description: "Maximum active runs in this owner scope.",
+      },
+      {
+        name: "--background-max-process-active",
+        value: "<n>",
+        description: "Maximum active runs in this process.",
+      },
+      {
+        name: "--background-max-task-bytes",
+        value: "<n>",
+        description: "Maximum UTF-8 task size.",
+      },
+      {
+        name: "--background-max-events",
+        value: "<n>",
+        description: "Maximum retained events per run.",
+      },
+      { name: "--background-max-page-size", value: "<n>", description: "Maximum events per page." },
+      {
+        name: "--background-max-page-bytes",
+        value: "<n>",
+        description: "Maximum serialized page size.",
+      },
+      { name: "--background-max-run-ms", value: "<n>", description: "Run deadline; 0 disables." },
+      { name: "--lease-ms", value: "<n>", description: "Worker lease heartbeat ceiling." },
+      {
+        name: "--background-close-drain-ms",
+        value: "<n>",
+        description: "Shutdown drain deadline.",
+      },
+      { name: "--json", description: "Emit one JSON result (default)." },
+    ],
+    run: ({ positionals, flags }) => backgroundCommand(positionals, flags),
+  },
+  {
     name: "control",
     description: "Control durable daemon-free pipeline runs and emit JSON.",
     positionals: [
@@ -2500,7 +2716,10 @@ async function main(argv: string[]): Promise<void> {
   }
   const commandName = argv[0];
   operationsJsonFront =
-    commandName === "operations" || commandName === "control" || commandName === "profile";
+    commandName === "operations" ||
+    commandName === "control" ||
+    commandName === "background" ||
+    commandName === "profile";
   const command = COMMANDS.find(({ name }) => name === commandName);
   if (command === undefined)
     fail(commandName === undefined ? "missing command" : `unknown command: ${commandName}`);
@@ -2529,7 +2748,9 @@ if (import.meta.main) {
             ? { code: error.code, detail: error.detail }
             : error instanceof ProjectStoreError
               ? { code: error.code, detail: error.path }
-              : { code: "internal_error" };
+              : error instanceof BackgroundRunError
+                ? { code: error.code, detail: error.detail }
+                : { code: "internal_error" };
       process.stderr.write(`${JSON.stringify({ error: payload })}\n`);
     } else {
       process.stderr.write(`ad-coder: ${errorMessage(error)}\n`);

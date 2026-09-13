@@ -212,7 +212,25 @@ ad-coder control list --target-dir ./my-project
 ad-coder control status --target-dir ./my-project --id <run-id>
 ```
 
-There is no daemon: stopped processes leave state for explicit `control resume`.
+There is no daemon: control runs leave state for explicit `control resume`.
+For detached execution, use the background API or CLI. The seven orchestrator
+background tools are `start_pipeline`, `pipeline_status`, `pipeline_events`,
+`pipeline_result`, `cancel_pipeline`, `resume_pipeline`, and the regular
+`run_pipeline` completion path. The CLI equivalent is `background start|status|
+events|result|cancel`; `background start` returns immediately and a detached
+worker continues the run. Reconnect with the same `--owner-id`, consume events
+using the exclusive `--after` cursor, and use the terminal result or
+`resume_pipeline` recovery path after failure or operator attention. Events are
+bounded, content-free lifecycle projections; ownership scopes access to a
+private target-local record. The CLI/API accepts numeric limits. Ordinary
+resource limits use `0` as disabled, while `maxPageSize` defaults to 32 events
+and `maxPageBytes` to 16 KiB; both paging ceilings are mandatory positive
+values. Programmatic detached callers inject a host launcher into
+`BackgroundRunManager`; it receives the task, run ID, and effective limits, and
+`startDetached` succeeds only after that launcher admits the worker. Launcher
+failure records a content-free terminal failure with `inspect_events` recovery.
+These features execute on the invoking host,
+so target/task input is trusted only to the same extent as all other tools.
 `operations` exposes the same control actions plus backlog, LDO import,
 documentation routing, and repository publishing. Both commands are
 machine-oriented JSON fronts; inspect their help before creating input JSON.

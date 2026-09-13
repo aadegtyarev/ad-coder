@@ -51,6 +51,11 @@ Rules the operator declared for ad-coder. A violation is always blocking.
   explicitly configured trusted replacement); checkpoints retain only its ID,
   version, and SHA-256 digest, never its content or path. Missing or empty
   required briefs fail before provider dispatch.
+- 2026-09-13: Background event page count/bytes and worker lease duration are
+  mandatory positive safety ceilings; they cannot be disabled with zero.
+  Close-drain time remains finite by default and may use zero for immediate
+  shutdown. CLI overrides are `--background-max-page-size`,
+  `--background-max-page-bytes`, `--background-close-drain-ms`, and `--lease-ms`.
 
 ## Sources
 
