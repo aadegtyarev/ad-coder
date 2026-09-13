@@ -188,6 +188,9 @@ without returning credential material.
 The Planner instruction derives allowed canonical IDs from validation's
 `CONTRACT_INDEX`, avoiding speculative research and duplicate identifier sources.
 
+Coder omits structural `explore_project` after Planner handoff. Reviewer retains
+independent reconnaissance.
+
 Each pipeline role stage owns a fresh `StageLimitController`. The runner meters
 every model and tool admission, provider-reported input and cost, and elapsed
 time; a deadline closes the active harness. `RunCoordinator` checkpoints a

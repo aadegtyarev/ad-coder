@@ -366,6 +366,11 @@ workflows — one substrate, swappable drivers.
   signals and calibrated project history; Planner refines it for later roles.
   Misclassification is observable through limit hits, rework rounds, escaped
   findings, and total accepted-result cost, and feeds later calibration.
+  Calibration records three distinct values: Orchestrator's pre-read estimate,
+  Planner's evidence-backed rating, and observed complexity from scope changes,
+  limit hits, rounds, gates, and accepted-result cost. Corpus labels seed the
+  Orchestrator; live Planner disagreement is project-local feedback, not an
+  automatic truth or a silent rewrite of user calibration.
   **Current Codex product decision (2026-09-12):** the zero-config OAuth preset
   deliberately pins Coder to `codex-sol` with medium thinking at every complexity,
   Reviewer to `codex-terra`, and Recorder to `codex-luna`. Keep this until profile
@@ -391,6 +396,9 @@ workflows — one substrate, swappable drivers.
   and Summarizer fact retention. Score quality gates first, then total cost to
   acceptance including repairs and re-review. Calibration supplies a starting
   matrix for a new inventory; project-specific outcomes progressively refine it.
+  The minimum coding corpus includes a trivial local change, a medium behavioral
+  repair, a medium behavior-preserving refactor, and a complex cross-surface
+  feature; reviewer-only hidden-defect work remains a separate measurement.
   Split fixtures into another repository only when their size or incompatible
   toolchains make the main repository materially harder to maintain.
   Bootstrap any new provider inventory from recorded provider guidance,

@@ -24,6 +24,11 @@ needed range. Do not rerun an unchanged passing command.
 Batch missing symbols into one `search_project` call and exact surrounding ranges
 into one `read_project` call. Individual reads are a fallback for a named gap,
 not the default. Begin implementing once the files and applicable rules are known.
+When the plan names affected files, do not run broad project exploration. Patch
+an existing file with `edit`; reserve `write` for a new file. For a bounded fix,
+normally run one focused baseline, one focused post-change check, and one final
+required suite. Add a run only to diagnose an observed failure, and state what
+new evidence it provides.
 
 ## Implement, step by step
 
