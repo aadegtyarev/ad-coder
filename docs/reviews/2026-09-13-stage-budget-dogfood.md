@@ -71,3 +71,12 @@ error strings, and contract terms; ranks matching files; and bounds term count,
 per-line excerpts, returned matches, Git output, and final result bytes. It also
 includes untracked files so review can see newly added implementation. The normal
 `read`/`bash` path remains available when the projection is insufficient.
+
+Two focused native Reviewer attempts did not produce a verdict. The first hit
+the 12-tool-turn ceiling after about 40 seconds; a narrower retry hit the
+8-model-turn ceiling after about 90 seconds despite allowing 20 tool turns.
+Both emitted only heartbeat at the standalone CLI. The bounded stops prevented
+another multi-hour run, but they confirm that standalone semantic activity and
+role-turn efficiency remain unresolved. Local review then caught and fixed two
+projection defects: Git search now treats task terms literally, and result
+metadata reports truncation caused by either match-count or byte ceilings.

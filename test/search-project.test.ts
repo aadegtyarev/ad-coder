@@ -29,7 +29,22 @@ test("search_project returns a ranked bounded task projection", async () => {
     expect(text).toContain("matches: 4 (showing 2)");
     expect(text).toContain("src/main.ts:1:");
     expect(text).not.toContain("src/other.ts");
-    expect(result.details).toEqual({ matches: 4, returned: 2, truncated: false });
+    expect(result.details).toEqual({ matches: 4, returned: 2, truncated: true });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("search_project treats task terms as literals", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "ad-coder-search-"));
+  try {
+    await writeFile(path.join(dir, "source.ts"), "axb\na.b\n");
+    Bun.spawnSync(["git", "init", "--quiet"], { cwd: dir });
+    const result = await execute(buildSearchProjectTool(dir), ["a.b"]);
+    const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+    expect(text).toContain("matches: 1");
+    expect(text).toContain("source.ts:2:a.b");
+    expect(text).not.toContain("axb");
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

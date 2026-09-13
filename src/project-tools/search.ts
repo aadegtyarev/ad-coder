@@ -67,7 +67,16 @@ export function buildSearchProjectTool(
         if (terms.length > config.maxTerms) throw new Error("terms_limit");
         if (terms.some((term) => Buffer.byteLength(term) > config.maxTermBytes))
           throw new Error("term_too_long");
-        const args = ["-C", root, "grep", "-n", "-I", "--full-name", "--untracked"];
+        const args = [
+          "-C",
+          root,
+          "grep",
+          "-n",
+          "-I",
+          "--fixed-strings",
+          "--full-name",
+          "--untracked",
+        ];
         for (const term of terms) args.push("-e", term);
         args.push("--", ".");
         let stdout = "";
@@ -111,7 +120,9 @@ export function buildSearchProjectTool(
           details: {
             matches: rows.length,
             returned: matches.length,
-            truncated: Buffer.byteLength(text) < Buffer.byteLength(unbounded),
+            truncated:
+              rows.length > matches.length ||
+              Buffer.byteLength(text) < Buffer.byteLength(unbounded),
           },
         };
       } catch (error) {
