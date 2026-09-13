@@ -105,18 +105,20 @@ snapshot от 2026-09-11. Цены за 1M токенов, в единицах �
   кэша, вычисляемый, не угаданный. fable-5: 12.5/(10−1) = 1.4 → префикс
   должен переиспользоваться ≥2 раз. DeepSeek: 0 → всегда.
 
-## Профили: намерение → матрица → модель
+## Профили и сложность — независимые оси
 
-Профиль не «имя модели на роль», а тройка (модель + бюджет вывода + политика
-кэша), потому что все три зависят от модели:
+Профиль — переключаемый набор моделей конкретного аккаунта или провайдера.
+Внутри него матрица `(роль × сложность)` выбирает модель, бюджет вывода и
+политику кэша. Качество не является тиром: одинаковые gates обязательны всегда,
+а оптимизируется полная стоимость до принятого результата.
 
 ```ts
-profile("cheap", {
+profile("deepseek-primary", {
   locator:  { model: "lmstudio/qwen-14b",          maxOutput: 2_000 },
   coder:    { model: "deepseek/deepseek-v4-flash", maxOutput: 8_000 },
   reviewer: { model: "deepseek/deepseek-v4-pro",   maxOutput: 4_000 },
 });
-profile("max", {
+profile("codex-primary", {
   coder:    { model: "openai-codex/gpt-5.5",       maxOutput: 4_000 }, // out/in=6, жмём вывод
   reviewer: { model: "anthropic/fable-5",          cacheRetention: "long" },
 });
@@ -124,9 +126,8 @@ profile("max", {
 
 Три принципа:
 
-1. **Профиль называет намерение, матрица разрешает в модель.** `{ tier: "cheap" }`
-   вместо жёсткого id → профиль переносим между провайдерами; нет ключа
-   OpenAI — `cheap` уезжает на DeepSeek без правки workflow.
+1. **Профиль выбирает инвентарь, сложность выбирает модель.** Смена аккаунта или
+   провайдера заменяет профиль целиком; workflow и его quality gates не меняются.
 2. **Матрица отказывает, а не молчит.** Роль просит `cacheRetention: "long"`,
    модель формат не поддерживает (DeepSeek!) — `defineRole` говорит это на
    входе, а не глотает молча. Ручка есть, эффекта нет — надо предупредить.
@@ -240,15 +241,17 @@ does not prove automatic mode is universally more efficient. Focused review did
 show a within-run reduction: fresh Reviewer input fell from 46,112 to 32,498,
 cost from $0.173544 to $0.113465, and duration from 124.8s to 93.6s.
 
-Candidate operating tiers for subsequent comparable dogfood are:
+Candidate complexity bands for subsequent comparable dogfood are:
 
-| tier | routing and mode | per-stage ceilings | intended use |
+| complexity | initial candidate routing | per-stage ceilings | task shape |
 |---|---|---|---|
-| economy | standalone role or manual workflow; Luna Planner, Terra Coder/Reviewer | 120s, 12 model turns, 32 tools, 200k input, $0.35 | bounded judgment or already-localized change |
-| balanced | automatic pipeline; Luna Planner, Terra Coder/Reviewer | 240s, 32 model turns, 80 tools, 500k input, $1 | normal feature with one broad review and focused retries |
-| quality | automatic pipeline; Terra Planner, Sol Coder, Terra or Sol Reviewer | 600s, 48 model turns, 128 tools, 750k input, $2 | architectural, elevated-risk, or failed lower-tier work |
+| trivial | Luna decisions and coding; Terra final review when evidence requires it | 120s, 16 model turns, 32 tools, 200k input, $0.35 | localized, mechanically bounded change |
+| medium | Luna initial planning; Terra implementation and review | 240s, 32 model turns, 80 tools, 500k input, $1 | normal feature with bounded cross-module effects |
+| complex | Terra planning/security; Sol implementation; Terra or Sol review by measured risk | 600s, 48 model turns, 128 tools, 750k input, $2 | architectural, elevated-risk, or failed lower-complexity attempt |
 
-These are experiment settings, not new defaults. Always retain hard stage budgets,
+These are experiment settings, not new defaults. Profiles supply the concrete
+models for these relative choices and can be swapped for another account or
+provider. Always retain hard stage budgets,
 incremental handoffs, visible fallback, durable resume, and the same contract/test
 gates across tiers. LDO should adopt the same stage envelopes, scoped handoffs,
 activity events, checkpoint resume, and two-axis efficiency reporting before its

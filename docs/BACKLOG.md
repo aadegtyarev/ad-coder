@@ -11,7 +11,15 @@ Only unresolved work belongs here. Current behavior is in
   Luna, Terra, and Sol where supported, charging repair and re-review to the
   originating choice. Compare final gate quality, escaped findings, rounds,
   duration, fresh/cache/output/reasoning tokens, and provider cost before
-  changing the configurable economy, balanced, and quality defaults.
+  changing configurable `(role, complexity)` defaults. Quality gates remain
+  identical for every routing choice.
+
+- [high] **Named atomic model-inventory profiles** (`src/registry/`,
+  `src/profiles/`, `src/cli/`): let an operator switch the complete registered
+  model/account/provider inventory while keeping the same role-by-complexity
+  routing semantics. Validate the pair before activation, expose the active
+  profile safely, and never migrate an active durable run to another provider
+  without an explicit operator action.
 
 - [high] **Narrow role inputs at the tool and prompt boundaries**
   (`src/project-tools/`, `src/runner/`, `prompts/`, `src/orchestration/`): measure

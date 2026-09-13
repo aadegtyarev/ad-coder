@@ -347,17 +347,25 @@ workflows — one substrate, swappable drivers.
   construction) preferred over LLM regeneration. Large decompositions reshape the
   shared barrel/multiple modules, so they are NOT parallel-safe.
 
-- **Profiles + complexity-aware model routing** — DONE (src/profiles/ + runPipeline routing). On top of the matrix. A profile
-  is intent → matrix → model: `{ tier, maxOutput, cacheRetention }` per role,
-  named intent (`cheap`/`max`) not a hard id, so it ports across providers. But a
-  profile should be a FUNCTION OF COMPLEXITY, not a flat per-role table — route
-  cheap models to simple features and strong models to complex ones, like LDO
-  (a weak Coder on a complex feature buys extra review rounds, and a round is a
-  full Coder+Reviewer pass, so the strong model is cheaper spent upfront where the
-  work is). The planner emits structured complexity (trivial/medium/complex) via
+- **Profiles + complexity-aware model routing** — DONE (src/profiles/ + runPipeline routing).
+  These are two independent axes. A **profile** is a replaceable model inventory
+  for one account/provider setup: it maps relative capabilities (`cheap`/`mid`/
+  `strong`) and role shaping to concrete registered models. Switching an exhausted
+  Codex account or moving to another provider selects another registry/profile
+  pair without changing workflow semantics. **Complexity** selects the most
+  economically efficient model inside that active inventory. Quality is an
+  invariant gate at every complexity, never an economy-versus-quality mode.
+  Optimize expected total cost through acceptance, including repair and re-review;
+  a stronger model is the economical choice whenever it avoids more downstream
+  cost than its price premium. The planner emits structured complexity
+  (trivial/medium/complex) via
   `submit_plan`, surfaced on `result.complexity`; routing selects each post-plan
   role from its `(complexity × role)` profile cell, with the configured default
   complexity as the fallback when the planner emits no structured signal.
+  The Orchestrator supplies the initial/pre-plan complexity from mechanical task
+  signals and calibrated project history; Planner refines it for later roles.
+  Misclassification is observable through limit hits, rework rounds, escaped
+  findings, and total accepted-result cost, and feeds later calibration.
   **Current Codex product decision (2026-09-12):** the zero-config OAuth preset
   deliberately pins Coder to `codex-sol` with medium thinking at every complexity,
   Reviewer to `codex-terra`, and Recorder to `codex-luna`. Keep this until profile
@@ -368,8 +376,9 @@ workflows — one substrate, swappable drivers.
   features, strong 1.1 — which is cheaper end to end?") rather than only declared —
   static table to start, ledger data to refine. Ledger's per-lane attribution
   also lets one workflow run under two profiles and compare two JSONL files.
-  Profiles come AFTER the matrix because they make decisions the matrix must
-  justify.
+  The current single selected profile file is the substrate. Named, atomic
+  registry/profile switching for account or provider exhaustion remains a
+  follow-on; it must never silently move an active durable run across providers.
 - **Project memory** — committed, machine-portable (laptop↔desktop via git).
   Decided: autonomy default `push` (agent commits+pushes), commits on the
   working branch (one `git pull` brings code+memory atomically). Non-negotiable
