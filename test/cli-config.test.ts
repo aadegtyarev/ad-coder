@@ -506,6 +506,41 @@ test("provider request timeout is effective, visible, and zero-disabled", () => 
   expect(disabled.effectiveConfig?.requestTimeoutMs).toEqual({ value: 0, source: "cli" });
 });
 
+test("pipeline context defaults to incremental and exposes validated overrides", () => {
+  const base = {
+    task: "x",
+    targetDir: "/tmp",
+    registryConfig: mixedRegistry(),
+    profile: buildDefaultProfile({ strong: "large", mid: "small", cheap: "small" }),
+    summarizerModel: "large",
+    env: fakeEnv({ LOCAL_KEY: "k" }),
+    warn: silent,
+  } as const;
+  const defaults = resolvePipelineConfig(base);
+  expect(defaults.pipelineContext).toEqual({
+    mode: "incremental",
+    maxFocusedDiffBytes: 65_536,
+    projection: { maxPaths: 128, maxPathBytes: 1024, maxAggregateBytes: 32_768 },
+  });
+  expect(defaults.effectiveConfig?.pipelineContextMode).toEqual({
+    value: "incremental",
+    source: "built-in-default",
+  });
+  const full = resolvePipelineConfig({
+    ...base,
+    pipelineContextMode: "full",
+    pipelineContextMaxDiffBytes: 0,
+    pipelineContextMaxPaths: 4,
+  });
+  expect(full.pipelineContext?.mode).toBe("full");
+  expect(full.pipelineContext?.maxFocusedDiffBytes).toBe(0);
+  expect(full.pipelineContext?.projection?.maxPaths).toBe(4);
+  expect(full.effectiveConfig?.pipelineContextMaxPaths?.source).toBe("cli");
+  expect(() => resolvePipelineConfig({ ...base, pipelineContextMaxPaths: 0 })).toThrow(
+    "positive safe integer",
+  );
+});
+
 test("stage budgets have finite defaults, expose provenance, and are zero-disableable", () => {
   const base = {
     task: "x",

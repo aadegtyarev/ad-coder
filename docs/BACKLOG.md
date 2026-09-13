@@ -43,19 +43,12 @@ Only unresolved work belongs here. Current behavior is in
   characterization-test-pinned refactor executor described in ROADMAP. Raw line
   counts never authorize refactoring.
 
-- [next] **Incremental pipeline context** (`src/orchestration/`,
-  `src/context/`): implement scoped Planner reconnaissance, Coder fix handoffs,
-  and adaptive Reviewer verification. The first review is a broad cold review;
-  after `changes_requested`, pass only the findings, changed diff, preserved
-  evidence, and affected contracts into a focused re-review. Escalate back to a
-  full review only for scope drift, a materially large new diff, changed risk, or
-  insufficient evidence, and report that reason. Match the speed and judgment of
-  an effective conversational Orchestrator rather than blindly repeating whole
-  prompts.
-  Per-stage token/read/diff/context-strategy observability and durable
-  provider-limit pause/resume are already delivered. Acceptance includes lower
-  re-review latency and token cost without a worse escaped-defect rate, measured
-  from the dogfood run rather than asserted.
+- [next] **Incremental-context dogfood evidence** (`docs/cost-economics.md`): run
+  a like-for-like multi-round scenario for the delivered focused handoff policy.
+  Record verdict/gate quality, latency, turns, token categories, provider cost,
+  selected/read files, diff sizes, strategy, and fallback reason. Do not claim
+  savings until the comparison is measured. Scoped Planner reconnaissance and
+  stable per-finding response identifiers remain follow-on work.
 
 ## Security and runtime boundaries
 
@@ -76,6 +69,10 @@ Only unresolved work belongs here. Current behavior is in
   stage, token, duration, and cost evidence. Add Reviewer rounds and an accepted
   result after an independent review; do not estimate unavailable continuation
   worker usage.
+- [medium] **LDO frontend activity and model aliases** (`.codex/ldo/`): relay
+  bounded tool/heartbeat/elapsed/usage events instead of only role boundaries,
+  and resolve current Codex model names instead of the rejected legacy
+  `codex-terra` alias. The 2026-09-13 incremental-context run exposed both gaps.
 - [medium] **Distributed GitHub claims** (`src/project-operations/`): provide a
   built-in shared `GitHubClaimCoordinator`; mutations currently require an
   injected coordinator and fail closed without one.

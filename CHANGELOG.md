@@ -8,6 +8,8 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ### Added
 
+- Added configurable incremental pipeline retry handoffs, deterministic full-context
+  fallback reasons, and durable per-stage handoff-strategy observability.
 - Added `search_project`, a configurable ranked and byte-bounded task
   reconnaissance projection for all native pipeline roles.
 - Added `read_project`, a configurable multi-file line-slice projection with

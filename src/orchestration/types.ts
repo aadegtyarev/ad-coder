@@ -279,6 +279,8 @@ export interface PipelineConfig {
   ledgerSink?: LedgerSink;
   /** Resolved context policy; absent callers receive the core's auto default. */
   compaction?: CompactionPolicy;
+  /** Post-rejection handoff policy. Absent callers receive the efficient incremental default. */
+  pipelineContext?: PipelineContextConfig;
   /**
    * OPTIONAL complexity-aware model routing. When present, each turn's model is
    * chosen by `resolveProfile` and the runner binds to `routing.registry.models`
@@ -391,7 +393,53 @@ export interface PipelineStageMetrics {
   readFilesTotal: number;
   readFilesTruncated: number;
   diffBytes: number;
+  /** Digest and redaction counts only; raw patch text is never durable state. */
+  diffProjectionSha256?: string;
+  diffProjectionBytes?: number;
+  diffProjectionRedactedLines?: number;
   contextStrategy: "auto" | "disabled-then-halt";
+  /** Context supplied to this pipeline stage; distinct from transcript compaction. */
+  pipelineContextStrategy?: PipelineContextSelection;
+  /** Stable reason an incremental re-review was widened. */
+  pipelineContextFallbackReason?: PipelineContextFallbackReason;
+}
+
+export type PipelineContextMode = "incremental" | "full" | "off";
+export type PipelineContextSelection = "broad" | "focused" | "full";
+export type PipelineContextFallbackReason =
+  | "configured_full"
+  | "manual_control"
+  | "scope_drift"
+  | "material_diff"
+  | "risk_changed"
+  | "insufficient_evidence"
+  | "projection_failure"
+  | "projection_redacted";
+
+export interface PipelineContextConfig {
+  mode: PipelineContextMode;
+  /** Zero disables automatic material-diff escalation. */
+  maxFocusedDiffBytes: number;
+  /** Mandatory positive ceilings for repository-derived path projections. */
+  projection?: PipelineContextProjectionLimits;
+}
+
+export interface PipelineContextProjectionLimits {
+  maxPaths: number;
+  maxPathBytes: number;
+  maxAggregateBytes: number;
+}
+
+/** Bounded metadata only; raw patches and prompts never enter durable workflow state. */
+export interface PipelineContextSnapshot {
+  selection: PipelineContextSelection;
+  fallbackReason?: PipelineContextFallbackReason;
+  changedFiles: string[];
+  changedFilesTotal: number;
+  changedFilesTruncated: number;
+  diffBytes: number;
+  /** Bounded digest input used only to notice a changed risk assessment on resume. */
+  riskFingerprint?: string;
 }
 
 export type PipelineOutcome = "approved" | "decomposition_required";
@@ -523,6 +571,8 @@ export interface WorkflowState {
   runIds: string[];
   /** Completed-stage observations, retained in stable execution order. */
   stageMetrics?: PipelineStageMetrics[];
+  /** Most recent safe handoff decision, retained for deterministic resume. */
+  pipelineContext?: PipelineContextSnapshot;
   /** True once a `stop` edge has settled the run; the driver loop stops stepping. */
   done: boolean;
   /** The settled approval outcome, set by `applyTransition` on a `stop` edge. */

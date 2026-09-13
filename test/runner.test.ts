@@ -26,11 +26,48 @@ import {
   RunnerError,
   resolveTargetDir,
 } from "../src/runner/errors";
-import { measureSafeGitDiffBytes, runRole } from "../src/runner/runner";
+import {
+  measureSafeGitDiffBytes,
+  readSafeGitChangedFiles,
+  readSafeGitDiffProjection,
+  runRole,
+} from "../src/runner/runner";
 import { defineTool } from "../src/runner/tool";
 import { SessionLimitController, SessionLimitError } from "../src/session-limits";
 
 const CONTEXT_WINDOW = 200_000;
+
+test("safe Git diff projection is bounded and redacts credential-like additions", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-diff-"));
+  execFileSync("git", ["init", "-q"], { cwd: dir });
+  execFileSync("git", ["config", "user.name", "Test"], { cwd: dir });
+  execFileSync("git", ["config", "user.email", "test@example.invalid"], { cwd: dir });
+  fs.writeFileSync(path.join(dir, "a.txt"), "password=unchanged-context-secret\nbase\n");
+  execFileSync("git", ["add", "a.txt"], { cwd: dir });
+  execFileSync("git", ["commit", "-qm", "base"], { cwd: dir });
+  fs.writeFileSync(
+    path.join(dir, "a.txt"),
+    "password=unchanged-context-secret\nbase\nvisible change\napi_key=super-secret-value\n",
+  );
+
+  const projected = await readSafeGitDiffProjection(dir, 16 * 1024);
+  expect(projected.text).toContain("visible change");
+  expect(projected.text).toContain("[REDACTED: possible credential]");
+  expect(projected.text).not.toContain("super-secret-value");
+  expect(projected.text).not.toContain("unchanged-context-secret");
+  expect(projected.redactedLines).toBe(2);
+  expect(projected.sha256).toHaveLength(64);
+  fs.writeFileSync(path.join(dir, "new.ts"), "export const added = true;\n");
+  const changed = await readSafeGitChangedFiles(dir);
+  expect(changed.files).toEqual(["a.txt", "new.ts"]);
+  expect(changed.requiresFullDiff).toBe(true);
+  execFileSync("git", ["add", "a.txt"], { cwd: dir });
+  const staged = await readSafeGitDiffProjection(dir, 16 * 1024);
+  expect(staged.text).toContain("visible change");
+  await expect(readSafeGitDiffProjection(dir, 8)).rejects.toMatchObject({
+    code: "diff_metric_failed",
+  });
+});
 
 /** A faux provider + models pair and the role validated against its window. */
 function harnessFixture() {
@@ -338,7 +375,7 @@ test("safe diff measurement disables repository fsmonitor hooks and reports byte
 
   const expected = execFileSync(
     "git",
-    ["-c", "core.fsmonitor=false", "diff", "--no-ext-diff", "--no-textconv"],
+    ["-c", "core.fsmonitor=false", "diff", "--no-ext-diff", "--no-textconv", "HEAD", "--"],
     { cwd: repository },
   ).byteLength;
   expect(await measureSafeGitDiffBytes(repository)).toBe(expected);
@@ -364,7 +401,7 @@ test("safe diff measurement streams bytes with the exact fixed git argv", async 
   expect(await measureSafeGitDiffBytes(targetDir, spawnGit)).toBe(12);
   expect(invocation).toEqual({
     command: "git",
-    args: ["diff", "--no-ext-diff", "--no-textconv"],
+    args: ["diff", "--no-ext-diff", "--no-textconv", "HEAD", "--"],
     shell: false,
   });
 });

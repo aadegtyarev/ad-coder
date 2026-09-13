@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type {
@@ -165,7 +166,19 @@ export interface RoleObservations {
   contextStrategy: "auto" | "disabled-then-halt";
 }
 
-const SAFE_DIFF_ARGV = ["diff", "--no-ext-diff", "--no-textconv"] as const;
+const SAFE_DIFF_ARGV = ["diff", "--no-ext-diff", "--no-textconv", "HEAD", "--"] as const;
+const SAFE_DIFF_NAMES_ARGV = [
+  "status",
+  "--porcelain=v1",
+  "-z",
+  "--untracked-files=all",
+  "--no-renames",
+] as const;
+export const DEFAULT_CHANGED_PATH_PROJECTION_LIMITS = {
+  maxPaths: 128,
+  maxPathBytes: 1024,
+  maxAggregateBytes: 32 * 1024,
+} as const;
 const MAX_USAGE_INTEGER = 1_000_000_000_000;
 const MAX_USAGE_NUMBER = 1_000_000_000;
 
@@ -248,6 +261,162 @@ export function measureSafeGitDiffBytes(
       else if (code === 129)
         resolve(0); // A target without a Git worktree has no measurable diff.
       else reject(new RunnerError("diff_metric_failed", targetDir, "git diff metric failed"));
+    });
+  });
+}
+
+export interface SafeGitChangedFiles {
+  files: string[];
+  total: number;
+  truncated: number;
+  /** True when the ordinary diff projection cannot contain all changed content. */
+  requiresFullDiff?: boolean;
+}
+
+export interface SafeGitDiffProjection {
+  text: string;
+  bytes: number;
+  sha256: string;
+  redactedLines: number;
+}
+
+const DIFF_SECRET =
+  /(?:bearer\s+|api[_-]?key\s*[:=]|password\s*[:=]|secret\s*[:=]|(?:^|\W)sk-[a-z0-9_-]{8,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)/i;
+
+/** Read one bounded patch projection and redact credential-like added lines. */
+export function readSafeGitDiffProjection(
+  targetDir: string,
+  maxBytes: number,
+  spawnGit: typeof spawn = spawn,
+): Promise<SafeGitDiffProjection> {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0)
+    return Promise.reject(new RangeError("maxBytes must be a positive safe integer"));
+  return new Promise((resolve, reject) => {
+    const child = spawnGit("git", [...SAFE_DIFF_ARGV], {
+      cwd: targetDir,
+      env: safeGitEnvironment(),
+      shell: false,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const chunks: Buffer[] = [];
+    let bytes = 0;
+    let overflow = false;
+    child.stdout.on("data", (chunk: Buffer) => {
+      bytes += chunk.byteLength;
+      if (bytes <= maxBytes) chunks.push(chunk);
+      else overflow = true;
+    });
+    child.once("error", () =>
+      reject(new RunnerError("diff_metric_failed", targetDir, "git diff projection failed")),
+    );
+    child.once("close", (code) => {
+      if (code === 129)
+        return resolve({
+          text: "",
+          bytes: 0,
+          sha256: createHash("sha256").digest("hex"),
+          redactedLines: 0,
+        });
+      if (code !== 0 || overflow)
+        return reject(
+          new RunnerError("diff_metric_failed", targetDir, "git diff projection failed"),
+        );
+      let decoded: string;
+      try {
+        decoded = new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks));
+      } catch {
+        return reject(new RunnerError("diff_metric_failed", targetDir, "git diff is not UTF-8"));
+      }
+      let redactedLines = 0;
+      const text = decoded
+        .split("\n")
+        .map((line) => {
+          const isHeader =
+            line.startsWith("diff --git ") ||
+            line.startsWith("index ") ||
+            line.startsWith("--- ") ||
+            line.startsWith("+++ ") ||
+            line.startsWith("@@ ");
+          if (!isHeader && DIFF_SECRET.test(line)) {
+            redactedLines += 1;
+            return "+[REDACTED: possible credential]";
+          }
+          return line;
+        })
+        .join("\n");
+      resolve({
+        text,
+        bytes: Buffer.byteLength(text),
+        sha256: createHash("sha256").update(text).digest("hex"),
+        redactedLines,
+      });
+    });
+  });
+}
+
+/** Read changed names with NUL framing and mandatory positive safety ceilings. */
+export function readSafeGitChangedFiles(
+  targetDir: string,
+  spawnGit: typeof spawn = spawn,
+  limits: {
+    maxPaths: number;
+    maxPathBytes: number;
+    maxAggregateBytes: number;
+  } = DEFAULT_CHANGED_PATH_PROJECTION_LIMITS,
+): Promise<SafeGitChangedFiles> {
+  for (const [name, value] of Object.entries(limits)) {
+    if (!Number.isSafeInteger(value) || value <= 0)
+      return Promise.reject(new RangeError(`${name} must be a positive safe integer`));
+  }
+  return new Promise((resolve, reject) => {
+    const child = spawnGit("git", [...SAFE_DIFF_NAMES_ARGV], {
+      cwd: targetDir,
+      env: safeGitEnvironment(),
+      shell: false,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const chunks: Buffer[] = [];
+    let bytes = 0;
+    let overflow = false;
+    child.stdout.on("data", (chunk: Buffer) => {
+      bytes += chunk.byteLength;
+      if (bytes <= limits.maxAggregateBytes) chunks.push(chunk);
+      else overflow = true;
+    });
+    child.once("error", () =>
+      reject(new RunnerError("diff_metric_failed", targetDir, "git changed paths failed")),
+    );
+    child.once("close", (code) => {
+      if (code === 129) return resolve({ files: [], total: 0, truncated: 0 });
+      if (code !== 0 || overflow)
+        return reject(new RunnerError("diff_metric_failed", targetDir, "git changed paths failed"));
+      let decoded: string;
+      try {
+        decoded = new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks));
+      } catch {
+        return reject(
+          new RunnerError("diff_metric_failed", targetDir, "git changed path is not UTF-8"),
+        );
+      }
+      const entries = decoded.split("\0").filter(Boolean);
+      const names = entries.map((entry) => entry.slice(3));
+      const safe = names.filter(
+        (name) =>
+          Buffer.byteLength(name) <= limits.maxPathBytes &&
+          !path.isAbsolute(name) &&
+          !name.split("/").includes("..") &&
+          isSafeReportedPath(name),
+      );
+      if (safe.length !== names.length)
+        return reject(
+          new RunnerError("diff_metric_failed", targetDir, "git changed path is unsafe"),
+        );
+      resolve({
+        files: safe.slice(0, limits.maxPaths),
+        total: safe.length,
+        truncated: Math.max(0, safe.length - limits.maxPaths),
+        ...(entries.some((entry) => entry.startsWith("?? ")) && { requiresFullDiff: true }),
+      });
     });
   });
 }

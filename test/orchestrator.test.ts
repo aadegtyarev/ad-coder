@@ -1024,6 +1024,8 @@ test("stage metrics survive reconstruction and model reports expose counts, not 
         readFilesTruncated: 0,
         diffBytes: 42,
         contextStrategy: "auto",
+        pipelineContextStrategy: "full",
+        pipelineContextFallbackReason: "risk_changed",
       },
     ],
   };
@@ -1054,6 +1056,8 @@ test("stage metrics survive reconstruction and model reports expose counts, not 
   expect(safeReport).toContain('"durationMs":123');
   expect(safeReport).toContain('"reasoning":2');
   expect(safeReport).toContain('"costUsd":0.012');
+  expect(safeReport).toContain('"pipelineContextStrategy":"full"');
+  expect(safeReport).toContain('"pipelineContextFallbackReason":"risk_changed"');
   expect(safeReport).not.toContain("private-name");
 });
 

@@ -41,6 +41,7 @@ export type {
   ResolvePipelineConfigOptions,
 } from "./cli/resolve-config";
 export {
+  DEFAULT_PIPELINE_CONTEXT_CONFIG,
   DEFAULT_REQUEST_TIMEOUT_MS,
   resolveOrchestratorSeed,
   resolvePipelineConfig,
@@ -185,8 +186,13 @@ export {
   parsePlan,
   SUBMIT_PLAN_TOOL_NAME,
 } from "./orchestration/plan";
-export type { WorkflowSession } from "./orchestration/session";
-export { applyTransition, autoDriver, createWorkflowSession } from "./orchestration/session";
+export type { PipelineContextDecisionInput, WorkflowSession } from "./orchestration/session";
+export {
+  applyTransition,
+  autoDriver,
+  createWorkflowSession,
+  selectPipelineContext,
+} from "./orchestration/session";
 export type {
   StageLimitReason,
   StageLimitSnapshot,
@@ -206,6 +212,11 @@ export type {
   IssueSeverity,
   OrchestrationErrorCode,
   PipelineConfig,
+  PipelineContextConfig,
+  PipelineContextFallbackReason,
+  PipelineContextMode,
+  PipelineContextSelection,
+  PipelineContextSnapshot,
   PipelineOutcome,
   PipelineResult,
   PipelineRouting,
@@ -433,8 +444,19 @@ export {
 } from "./runner/errors";
 export type { RoleRunner, RoleRunnerConfig, RunRoleOptions } from "./runner/role-runner";
 export { createRoleRunner } from "./runner/role-runner";
-export type { RoleObservations, RunRoleParams, RunRoleResult } from "./runner/runner";
-export { measureSafeGitDiffBytes, runRole } from "./runner/runner";
+export type {
+  RoleObservations,
+  RunRoleParams,
+  RunRoleResult,
+  SafeGitChangedFiles,
+  SafeGitDiffProjection,
+} from "./runner/runner";
+export {
+  measureSafeGitDiffBytes,
+  readSafeGitChangedFiles,
+  readSafeGitDiffProjection,
+  runRole,
+} from "./runner/runner";
 export type { Tool } from "./runner/tool";
 export { defineTool } from "./runner/tool";
 export type {

@@ -365,6 +365,12 @@ function parseNonNegativeIntegerFlag(name: string, value: string | undefined): n
   return Number(value);
 }
 
+function parsePositiveIntegerFlag(name: string, value: string | undefined): number | undefined {
+  const parsed = parseNonNegativeIntegerFlag(name, value);
+  if (parsed === 0) fail(`${name} expects a positive integer`);
+  return parsed;
+}
+
 async function withCliProgress<T>(
   label: string,
   heartbeatMs: number,
@@ -1179,6 +1185,31 @@ function buildConfigOptions(
   ) {
     fail(`invalid --compaction-mode: ${compactionMode}`);
   }
+  const pipelineContextMode = flags["--pipeline-context"];
+  if (
+    pipelineContextMode !== undefined &&
+    pipelineContextMode !== "incremental" &&
+    pipelineContextMode !== "full" &&
+    pipelineContextMode !== "off"
+  ) {
+    fail(`invalid --pipeline-context: ${pipelineContextMode}`);
+  }
+  const pipelineContextMaxDiffBytes = parseNonNegativeIntegerFlag(
+    "--pipeline-context-max-diff-bytes",
+    flags["--pipeline-context-max-diff-bytes"],
+  );
+  const pipelineContextMaxPaths = parsePositiveIntegerFlag(
+    "--pipeline-context-max-paths",
+    flags["--pipeline-context-max-paths"],
+  );
+  const pipelineContextMaxPathBytes = parsePositiveIntegerFlag(
+    "--pipeline-context-max-path-bytes",
+    flags["--pipeline-context-max-path-bytes"],
+  );
+  const pipelineContextMaxAggregateBytes = parsePositiveIntegerFlag(
+    "--pipeline-context-max-aggregate-bytes",
+    flags["--pipeline-context-max-aggregate-bytes"],
+  );
   const crossProvider = flags["--allow-cross-provider-summarization"];
   if (crossProvider !== undefined && crossProvider !== "true" && crossProvider !== "false") {
     fail("--allow-cross-provider-summarization expects true or false");
@@ -1232,6 +1263,11 @@ function buildConfigOptions(
       summarizerModel: flags["--summarizer-model"],
     }),
     ...(compactionMode !== undefined && { compactionMode }),
+    ...(pipelineContextMode !== undefined && { pipelineContextMode }),
+    ...(pipelineContextMaxDiffBytes !== undefined && { pipelineContextMaxDiffBytes }),
+    ...(pipelineContextMaxPaths !== undefined && { pipelineContextMaxPaths }),
+    ...(pipelineContextMaxPathBytes !== undefined && { pipelineContextMaxPathBytes }),
+    ...(pipelineContextMaxAggregateBytes !== undefined && { pipelineContextMaxAggregateBytes }),
     ...(crossProvider !== undefined && {
       allowCrossProviderSummarization: crossProvider === "true",
     }),
@@ -1607,6 +1643,31 @@ const PIPELINE_OPTIONS: CommandDefinition["options"] = [
     name: "--compaction-mode",
     value: "<mode>",
     description: "Set auto or disabled-then-halt context handling.",
+  },
+  {
+    name: "--pipeline-context",
+    value: "<incremental|full|off>",
+    description: "Set focused retry handoffs, always-full review, or manual context control.",
+  },
+  {
+    name: "--pipeline-context-max-diff-bytes",
+    value: "<n>",
+    description: "Escalate focused re-review above this diff size; 0 disables this trigger.",
+  },
+  {
+    name: "--pipeline-context-max-paths",
+    value: "<n>",
+    description: "Set the mandatory positive changed-path count ceiling.",
+  },
+  {
+    name: "--pipeline-context-max-path-bytes",
+    value: "<n>",
+    description: "Set the mandatory positive per-path byte ceiling.",
+  },
+  {
+    name: "--pipeline-context-max-aggregate-bytes",
+    value: "<n>",
+    description: "Set the mandatory positive aggregate changed-path byte ceiling.",
   },
   {
     name: "--allow-cross-provider-summarization",
