@@ -72,6 +72,7 @@ export type {
   ConversationTurnResult,
 } from "./conversation/conversation";
 export { startConversation } from "./conversation/conversation";
+export * from "./evaluation/calibration";
 export type { GateRunnerConfig } from "./gates/runner";
 export { DEFAULT_GATE_RUNNER_CONFIG, GateRunner } from "./gates/runner";
 export type {

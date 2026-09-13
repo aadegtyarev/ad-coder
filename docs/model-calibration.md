@@ -14,6 +14,18 @@ run state belong in gitignored `.ad-coder/evals/`. Cover planning localization,
 research evidence, seeded security defects, three coding complexities, hidden
 review regressions, orchestration choices, and summarizer fact retention.
 
+The first executable scorer is `bun run calibration:score -- <task.json>
+<ledger.jsonl> <checks.json> <inventory> <duration-ms>`. It consumes the real
+safe ledger and emits one machine-readable measurement. `costEfficiency` is
+quality points per provider dollar; it is diagnostic only (and `null` for free
+runs). Routing requires full acceptance and zero escaped defects before cost or
+wall time can break ties.
+
+The initial `reviewer-hidden-regression-v1` fixture contains two seeded defects
+and one tempting false positive. Its scorer derives check results from stable
+finding codes. This keeps grading independent of prose and lets the same task be
+repeated across every model in an inventory.
+
 For every sample record the inventory, model, role, assigned and observed
 complexity, outcome, escaped defects, repair/re-review rounds, duration, model
 and tool turns, fresh/cache/output/reasoning tokens, provider cost, and ceilings.

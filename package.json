@@ -31,6 +31,8 @@
     "check:fix": "biome check --write src test scripts",
     "check:release": "bun run scripts/check-release.ts",
     "check:docs": "bun run scripts/check-docs.ts",
+    "calibration:score": "bun run scripts/calibration-score.ts",
+    "calibration:check-reviewer": "bun run evals/scorers/reviewer-hidden-regression.ts",
     "smoke:artifact": "bun run scripts/artifact-smoke.ts",
     "format": "biome format --write src test",
     "lint": "biome lint src test",
