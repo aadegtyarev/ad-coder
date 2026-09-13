@@ -1495,6 +1495,30 @@ function buildConfigOptions(
   ) {
     fail(`invalid --compaction-mode: ${compactionMode}`);
   }
+  const researchPurpose = flags["--research-purpose"];
+  if (
+    researchPurpose !== undefined &&
+    researchPurpose !== "model-inventory-bootstrap" &&
+    researchPurpose !== "model-inventory-refresh"
+  ) {
+    fail(`invalid --research-purpose: ${researchPurpose}`);
+  }
+  const researchBriefValues = [
+    flags["--research-brief-id"],
+    flags["--research-brief-version"],
+    flags["--research-brief-path"],
+  ];
+  if (
+    researchBriefValues.some((value) => value !== undefined) &&
+    researchBriefValues.some((value) => value === undefined)
+  ) {
+    fail(
+      "--research-brief-id, --research-brief-version, and --research-brief-path must be supplied together",
+    );
+  }
+  if (researchBriefValues[0] !== undefined && researchPurpose === undefined) {
+    fail("--research-brief-id requires --research-purpose");
+  }
   const pipelineContextMode = flags["--pipeline-context"];
   if (
     pipelineContextMode !== undefined &&
@@ -1577,6 +1601,14 @@ function buildConfigOptions(
       summarizerModel: flags["--summarizer-model"],
     }),
     ...(compactionMode !== undefined && { compactionMode }),
+    ...(researchPurpose !== undefined && { researchPurpose }),
+    ...(researchBriefValues[0] !== undefined && {
+      researchBrief: {
+        id: researchBriefValues[0],
+        version: researchBriefValues[1] as string,
+        path: researchBriefValues[2] as string,
+      },
+    }),
     ...(pipelineContextMode !== undefined && { pipelineContextMode }),
     ...(pipelineContextMaxDiffBytes !== undefined && { pipelineContextMaxDiffBytes }),
     ...(pipelineContextMaxPaths !== undefined && { pipelineContextMaxPaths }),
@@ -1862,6 +1894,26 @@ const PIPELINE_OPTIONS: CommandDefinition["options"] = [
     name: "--inventory-profile",
     value: "<name>",
     description: "Select one profile from --inventory-config.",
+  },
+  {
+    name: "--research-purpose",
+    value: "<model-inventory-bootstrap|model-inventory-refresh>",
+    description: "Attach the versioned model-inventory brief to the Researcher stage.",
+  },
+  {
+    name: "--research-brief-id",
+    value: "<id>",
+    description: "Trusted replacement brief ID; requires all --research-brief-* flags.",
+  },
+  {
+    name: "--research-brief-version",
+    value: "<version>",
+    description: "Trusted replacement brief version; requires all --research-brief-* flags.",
+  },
+  {
+    name: "--research-brief-path",
+    value: "<path>",
+    description: "Trusted replacement brief path; requires all --research-brief-* flags.",
   },
   {
     name: "--profile-config",

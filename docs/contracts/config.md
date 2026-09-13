@@ -42,11 +42,20 @@ Rules the operator declared for ad-coder. A violation is always blocking.
 - 2026-09-13: Model research and calibration evidence that influences routing is
   durable and portable. Projects retain source-linked research notes and bounded
   anonymous aggregate samples, never raw provider content or account activity.
+- 2026-09-14: Model-inventory bootstrap and refresh runs declare their research
+  purpose explicitly. They receive a versioned trusted Researcher brief (or an
+  explicitly configured trusted replacement); checkpoints retain only its ID,
+  version, and SHA-256 digest, never its content or path. Missing or empty
+  required briefs fail before provider dispatch.
 
 ## Sources
 
 The 2026-09-11 rules implement “good out of the box, everything overridable.”
 The 2026-09-12 rules govern session turn and USD limits in programmatic and
-console surfaces without changing the existing context-window safeguards.
+console surfaces without changing the existing context-window safeguards. The
+2026-09-14 rule exposes `researchPurpose` and an optional three-part trusted
+`researchBrief` source through the API and `--research-purpose` plus
+`--research-brief-id`, `--research-brief-version`, and `--research-brief-path`
+through pipeline-capable CLI commands.
 The decomposition-depth exception implements the operation-mode contract's
 default stop after a child pipeline asks for decomposition again.

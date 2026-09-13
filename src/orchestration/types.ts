@@ -11,6 +11,7 @@ import type { Profile, ProfileRole, SpawnOverride } from "../profiles/types";
 import type { RunCoordinatorOptions } from "../project-operations/run-coordinator";
 import type { FollowUp } from "../project-operations/types";
 import type { ProjectStoreConfig } from "../project-store/types";
+import type { ResearchPurpose, RoleBriefSource } from "../prompts/role-briefs";
 import type { ResolvedRegistry } from "../registry/types";
 import type { Role } from "../role";
 import type { Tool } from "../runner/tool";
@@ -311,6 +312,10 @@ export interface PipelineConfig {
   toolActivity?: Partial<ToolActivityConfig>;
   /** Monotonic milliseconds seam for deterministic per-stage durations. */
   monotonicNow?: () => number;
+  /** Explicit task purpose that requires the model-inventory Researcher brief. */
+  researchPurpose?: ResearchPurpose;
+  /** Trusted configurable replacement for the shipped model-inventory brief. */
+  researchBrief?: RoleBriefSource;
   observability?: {
     /** Maximum retained read-path sample; zero disables the limit. */
     maxReadPaths?: number;
@@ -395,6 +400,12 @@ export interface PipelineStageMetrics {
   readFilesTotal: number;
   readFilesTruncated: number;
   diffBytes: number;
+  /** Attached task brief identity; content and path never enter durable state. */
+  roleBrief?: {
+    id: string;
+    version: string;
+    sha256: string;
+  };
   /** Digest and redaction counts only; raw patch text is never durable state. */
   diffProjectionSha256?: string;
   diffProjectionBytes?: number;

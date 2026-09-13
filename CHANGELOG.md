@@ -8,6 +8,7 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ### Added
 
+- Added explicit model-inventory Researcher brief composition, trusted replacement-source configuration, and digest-only durable stage metadata.
 - Added versioned portable user profiles with append-only economics history and
   always-JSON `profile show|export|import-preview|import-apply` CLI access.
 - Added bounded `.ad-coder/calibration.json` snapshots, `profile snapshot`, and

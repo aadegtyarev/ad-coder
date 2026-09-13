@@ -430,6 +430,18 @@ export type { PromptErrorCode } from "./prompts/errors";
 export { PromptError } from "./prompts/errors";
 export type { ResolvePromptOptions } from "./prompts/prompts";
 export { resolvePrompt } from "./prompts/prompts";
+export type {
+  ResearchPurpose,
+  ResolvedRoleBrief,
+  RoleBriefErrorCode,
+  RoleBriefSource,
+} from "./prompts/role-briefs";
+export {
+  composeRoleBrief,
+  MODEL_INVENTORY_RESEARCH_BRIEF,
+  RoleBriefError,
+  resolveResearchRoleBrief,
+} from "./prompts/role-briefs";
 export type { RegistryErrorCode } from "./registry/errors";
 export { RegistryError } from "./registry/errors";
 export {

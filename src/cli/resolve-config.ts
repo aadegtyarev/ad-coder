@@ -34,6 +34,7 @@ import { buildExploreProjectTool, EXPLORE_PROJECT_TOOL_NAME } from "../project-t
 import { buildReadProjectTool, READ_PROJECT_TOOL_NAME } from "../project-tools/read";
 import { buildSearchProjectTool, SEARCH_PROJECT_TOOL_NAME } from "../project-tools/search";
 import { resolvePrompt } from "../prompts/prompts";
+import type { ResearchPurpose, RoleBriefSource } from "../prompts/role-briefs";
 import { deepseekPreset, openaiCodexPreset, openrouterPreset } from "../registry/presets";
 import { resolveRegistry } from "../registry/resolve";
 import type { ProviderConfig, RegistryConfig, ResolvedRegistry } from "../registry/types";
@@ -186,6 +187,10 @@ export interface ResolvePipelineConfigOptions {
   toolActivity?: Partial<ToolActivityConfig>;
   /** Monotonic milliseconds seam for deterministic stage metrics. */
   monotonicNow?: () => number;
+  /** Explicit model-inventory operation that receives the shipped Researcher brief. */
+  researchPurpose?: ResearchPurpose;
+  /** Trusted replacement source for the versioned model-inventory Researcher brief. */
+  researchBrief?: RoleBriefSource;
 }
 
 /** Env-var names whose PRESENCE selects a provider, in precedence order. */
@@ -275,6 +280,15 @@ function resolveConfig(
   if (new Set(enabledPlugins).size !== enabledPlugins.length)
     throw new Error("enabledPlugins must not contain duplicates");
   validateRoleBudgetPercents(options.roleBudgetPercents);
+  if (
+    options.researchPurpose !== undefined &&
+    options.researchPurpose !== "model-inventory-bootstrap" &&
+    options.researchPurpose !== "model-inventory-refresh"
+  ) {
+    throw new Error(`unsupported research purpose: ${String(options.researchPurpose)}`);
+  }
+  if (options.researchBrief !== undefined && options.researchPurpose === undefined)
+    throw new Error("researchBrief requires an explicit researchPurpose");
   const surfaceAnalysisLimits: SurfaceAnalysisLimits = {
     ...DEFAULT_SURFACE_ANALYSIS_LIMITS,
     ...options.surfaceAnalysisLimits,
@@ -648,6 +662,8 @@ function resolveConfig(
     ...(options.activityConsumer !== undefined && { activityConsumer: options.activityConsumer }),
     ...(options.toolActivity !== undefined && { toolActivity: options.toolActivity }),
     ...(options.monotonicNow !== undefined && { monotonicNow: options.monotonicNow }),
+    ...(options.researchPurpose !== undefined && { researchPurpose: options.researchPurpose }),
+    ...(options.researchBrief !== undefined && { researchBrief: options.researchBrief }),
     roles:
       pipelineRoles === undefined
         ? { coder: orchestrator, reviewer: orchestrator, orchestrator }
