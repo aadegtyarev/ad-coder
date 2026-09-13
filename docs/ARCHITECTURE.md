@@ -25,6 +25,7 @@ work lives in `docs/BACKLOG.md`.
 |---|---|---|
 | CLI | `src/cli.ts`, `src/cli/` | Parse commands, render human or JSON output, and call headless APIs. |
 | Authentication | `src/auth/` | Store credentials outside target projects and expose secret-free status. |
+| Model inventories | `src/inventory/` | Validate and resolve a named atomic registry plus complexity-routing profile. |
 | Registry and profiles | `src/registry/`, `src/profiles/` | Resolve providers, models, role routing, and effective configuration. |
 | Roles and prompts | `src/role.ts`, `src/prompts/`, `prompts/` | Validate roles and resolve built-in or project prompts. |
 | Runner | `src/runner/` | Execute one role turn with tools rooted at the target directory. |
@@ -153,6 +154,12 @@ permissions, and updated atomically without following symlinks.
 The CLI cannot recover environment provenance after Bun's startup dotenv load.
 It therefore disables the environment credential accessor whenever process cwd
 is inside `targetDir`; OAuth and the external private store remain usable.
+
+Named model inventories compose the existing registry and role-routing profile
+without copying either implementation. Only the selected entry resolves provider
+credentials. The CLI refuses to combine an inventory with independent provider,
+registry, or profile sources, and its effective projection reports the selected
+name without URLs or credential metadata.
 
 ### Persistent content
 

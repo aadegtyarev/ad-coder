@@ -18,12 +18,11 @@ Only unresolved work belongs here. Current behavior is in
   machine gates, gitignored raw outputs, and durable aggregate conclusions in
   `docs/model-calibration.md`.
 
-- [high] **Named atomic model-inventory profiles** (`src/registry/`,
-  `src/profiles/`, `src/cli/`): let an operator switch the complete registered
-  model/account/provider inventory while keeping the same role-by-complexity
-  routing semantics. Validate the pair before activation, expose the active
-  profile safely, and never migrate an active durable run to another provider
-  without an explicit operator action.
+- [high] **Explicit durable-run inventory migration** (`src/inventory/`,
+  `src/project-operations/`): named atomic registry/profile selection and safe
+  inspection are delivered. Add an explicit audited action for moving a paused
+  provider-limited run to another inventory; ordinary resume must never switch
+  provider/model identity implicitly.
 
 - [high] **Narrow role inputs at the tool and prompt boundaries**
   (`src/project-tools/`, `src/runner/`, `prompts/`, `src/orchestration/`): measure

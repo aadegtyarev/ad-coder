@@ -5,6 +5,7 @@ import * as path from "node:path";
 import type { CredentialStore } from "@earendil-works/pi-ai";
 import { resolvePipelineConfig } from "../src/cli/resolve-config";
 import { deriveContextBudget } from "../src/context/budget";
+import type { ModelInventoryConfig } from "../src/inventory/types";
 import { buildDefaultProfile } from "../src/profiles/default-profile";
 import { resolveProfile } from "../src/profiles/resolve";
 import { RegistryError } from "../src/registry/errors";
@@ -581,4 +582,73 @@ test("stage budgets have finite defaults, expose provenance, and are zero-disabl
     maxCostUsd: 0,
   });
   expect(disabled.effectiveConfig?.["stageLimits.maxCostUsd"]?.source).toBe("cli");
+});
+
+test("named inventory selects one atomic registry/profile pair and rejects source mixing", () => {
+  const inventory: ModelInventoryConfig = {
+    profiles: [
+      {
+        name: "primary",
+        registry: mixedRegistry(),
+        profile: buildDefaultProfile({ strong: "large", mid: "small", cheap: "small" }),
+      },
+    ],
+    default: "primary",
+  };
+  const config = resolvePipelineConfig({
+    task: "x",
+    targetDir: "/tmp",
+    inventoryConfig: inventory,
+    compactionMode: "disabled-then-halt",
+    env: fakeEnv({ LOCAL_KEY: "k" }),
+    warn: silent,
+  });
+  expect(config.roles.planner?.model.id).toBe("large");
+  expect(config.roles.coder.model.id).toBe("small");
+  expect(config.effectiveConfig?.inventoryProfile).toEqual({
+    value: "primary",
+    source: "default",
+  });
+  expect(() =>
+    resolvePipelineConfig({
+      task: "x",
+      targetDir: "/tmp",
+      inventoryConfig: inventory,
+      registryConfig: mixedRegistry(),
+      env: fakeEnv({ LOCAL_KEY: "k" }),
+      warn: silent,
+    }),
+  ).toThrow("cannot be combined");
+  expect(() =>
+    resolvePipelineConfig({
+      task: "x",
+      targetDir: "/tmp",
+      inventoryConfig: inventory,
+      coderModel: "large",
+      env: fakeEnv({ LOCAL_KEY: "k" }),
+      warn: silent,
+    }),
+  ).toThrow("cannot be combined");
+  expect(() =>
+    resolvePipelineConfig({
+      task: "x",
+      targetDir: "/tmp",
+      inventoryConfig: inventory,
+      overrides: { coder: { model: "large" } },
+      env: fakeEnv({ LOCAL_KEY: "k" }),
+      warn: silent,
+    }),
+  ).toThrow("cannot be combined");
+  expect(
+    resolvePipelineConfig({
+      task: "x",
+      targetDir: "/tmp",
+      inventoryConfig: inventory,
+      compactionMode: "disabled-then-halt",
+      pipelineContextMode: "full",
+      stageLimits: { maxInputTokens: 123_456 },
+      env: fakeEnv({ LOCAL_KEY: "k" }),
+      warn: silent,
+    }).stageLimits?.maxInputTokens,
+  ).toBe(123_456);
 });
