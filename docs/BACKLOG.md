@@ -78,6 +78,12 @@ Only unresolved work belongs here. Current behavior is in
 
 ## Reliability and observability
 
+- [high] **Resume rejected research from every front** (`src/cli.ts`,
+  `src/project-operations/run-coordinator.ts`): the core exposes the authorized
+  `resumeResearch` transition, but `drive --resume-run` retries only stage-limit
+  pauses. Add an explicit operator action that re-prepares rejected research and
+  resumes the same run without repeating Planner.
+
 - [medium] **Complete activity-stream dogfood evidence**
   (`docs/cost-economics.md`): the interrupted run now has exact checkpoint,
   stage, token, duration, and cost evidence. Add Reviewer rounds and an accepted
