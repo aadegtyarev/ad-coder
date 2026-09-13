@@ -18,13 +18,13 @@
       {
         "role": "planner",
         "complexity": "trivial",
-        "model": "codex-luna",
+        "model": "codex-terra",
         "thinkingLevel": "low"
       },
       {
         "role": "planner",
         "complexity": "medium",
-        "model": "codex-luna",
+        "model": "codex-terra",
         "thinkingLevel": "low"
       },
       {
@@ -72,7 +72,7 @@
       {
         "role": "reviewer",
         "complexity": "trivial",
-        "model": "codex-luna",
+        "model": "codex-terra",
         "thinkingLevel": "low"
       },
       {

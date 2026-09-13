@@ -121,7 +121,7 @@ async function safeChangedFilesWithConfig(config: PipelineConfig): Promise<{
       undefined,
       config.pipelineContext?.projection,
     );
-    if (files.files.some((file) => SENSITIVE_PATH.test(file)) || files.requiresFullDiff === true)
+    if (files.files.some((file) => SENSITIVE_PATH.test(file)))
       return { ...files, truncated: Math.max(1, files.truncated) };
     const maxBytes = config.pipelineContext?.projection?.maxAggregateBytes ?? 32 * 1024;
     return { ...files, diff: await readSafeGitDiffProjection(config.targetDir, maxBytes) };

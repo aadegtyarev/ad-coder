@@ -60,7 +60,6 @@ test("safe Git diff projection is bounded and redacts credential-like additions"
   fs.writeFileSync(path.join(dir, "new.ts"), "export const added = true;\n");
   const changed = await readSafeGitChangedFiles(dir);
   expect(changed.files).toEqual(["a.txt", "new.ts"]);
-  expect(changed.requiresFullDiff).toBe(true);
   execFileSync("git", ["add", "a.txt"], { cwd: dir });
   const staged = await readSafeGitDiffProjection(dir, 16 * 1024);
   expect(staged.text).toContain("visible change");

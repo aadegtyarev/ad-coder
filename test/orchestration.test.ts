@@ -760,6 +760,9 @@ test("two rounds: reviewer round-1 issue is threaded into the coder round-2 prom
     (label: string): FauxResponseFactory =>
     (context) => {
       coderPrompts.push(lastUserText(context));
+      if (label === "round1") {
+        fs.writeFileSync(path.join(fx.targetDir, "new-test.ts"), "export const covered = true;\n");
+      }
       return fauxAssistantMessage(`coded ${label}`);
     };
   const coder = fx.role("coder", "You code.");
@@ -797,6 +800,8 @@ test("two rounds: reviewer round-1 issue is threaded into the coder round-2 prom
   expect(result.rounds).toBe(2);
   expect(coderPrompts).toHaveLength(2);
   expect(coderPrompts[1]).toContain("add a null check on the input");
+  expect(coderPrompts[1]).toContain('"new-test.ts"');
+  expect(coderPrompts[1]).not.toContain("Full-context retry fallback");
   expect(reviewerPrompts).toHaveLength(2);
   expect(reviewerPrompts[0]).toContain("implement Y");
   expect(reviewerPrompts[1]).toContain("Focused re-review");
