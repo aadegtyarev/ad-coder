@@ -42,3 +42,13 @@ fault` and no verdict or cost envelope; its durable session artifact was about
 666 KB. Do not repeat this review. The bounded stop is an improvement, while the
 missing typed terminal projection and standalone usage envelope remain covered
 by the existing activity/usage backlog item.
+
+A subsequent full `drive --auto` dogfood used a 180-second, 16-model-turn,
+48-tool-turn, 400,000-input-token, $1 per-stage envelope. Planner reached the
+duration boundary before submitting a plan. The coordinator correctly preserved
+a `stage_limit` pause at `plan` with no committed later work, but the `drive`
+front mislabeled it `pending_decision`. Investigation showed the Models-boundary
+limit had also been hidden by the harness fault wrapper. The runner now rethrows
+the captured typed stage error, and `drive` projects the checkpoint's recovery
+guidance before considering pending decisions. Focused regression tests reproduce
+both boundaries without a live provider.

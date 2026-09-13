@@ -394,6 +394,28 @@ test("runRole rethrows a shared controller rejection after a tool follow-up", as
   expect(controller.snapshot().admittedTurns).toBe(1);
 });
 
+test("runRole preserves a typed stage rejection across the harness boundary", async () => {
+  const { faux, models, model, role } = harnessFixture();
+  faux.setResponses([
+    fauxAssistantMessage(fauxToolCall("bash", { command: "printf one" })),
+    fauxAssistantMessage("must not dispatch"),
+  ]);
+  const controller = new StageLimitController({ maxModelTurns: 1 });
+
+  await expect(
+    runRole({
+      role,
+      targetDir,
+      models,
+      model,
+      prompt: "use the tool",
+      stageLimitController: controller,
+    }),
+  ).rejects.toMatchObject({ code: "stage_limit", reason: "model_turns" });
+  expect(faux.state.callCount).toBe(1);
+  expect(controller.snapshot().modelTurns).toBe(1);
+});
+
 test("disabled compaction rejects an oversized turn before calling the provider", async () => {
   const { faux, models, model } = harnessFixture();
   const role = defineRole(

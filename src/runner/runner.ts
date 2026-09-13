@@ -485,6 +485,7 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
         if (deadline !== undefined) clearTimeout(deadline);
       })
       .catch((error) => {
+        params.stageLimitController?.assertNoBoundaryFailure();
         controller?.assertNoBoundaryFailure();
         const providerLimit = providerLimitFrom(error);
         if (providerLimit !== undefined) throw providerLimit;

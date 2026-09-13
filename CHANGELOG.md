@@ -26,6 +26,8 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ### Fixed
 
+- Preserved typed stage-limit failures across the model harness boundary and
+  made `drive` report actionable stage pauses instead of pending decisions.
 - Made `submit_follow_up` advertise discriminated variants and prevented invalid
   optional follow-up metadata from discarding a completed primary role result.
 

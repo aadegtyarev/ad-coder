@@ -4,6 +4,7 @@ import type { WorkflowSession } from "../orchestration/session";
 import { autoDriver } from "../orchestration/session";
 import { assertTransitionOffered } from "../orchestration/transition-guard";
 import type { AvailableTransition, PipelineResult } from "../orchestration/types";
+import { OrchestrationError } from "../orchestration/types";
 import { ProjectOperationsError } from "../project-operations/errors";
 import { RunCoordinator, type RunCoordinatorOptions } from "../project-operations/run-coordinator";
 import { EmptyTurnError } from "../runner/errors";
@@ -232,6 +233,12 @@ export async function driveWorkflow(params: DriveWorkflowParams): Promise<Pipeli
       },
     );
     if (completed.result === undefined) {
+      if (completed.status === "paused" && completed.checkpoint.pause !== undefined)
+        throw new OrchestrationError(
+          "requirements_unresolved",
+          completed.checkpoint.runId,
+          completed.checkpoint.pause.action,
+        );
       const pending = completed.checkpoint.decisions.find(
         (decision) => decision.status === "pending",
       );

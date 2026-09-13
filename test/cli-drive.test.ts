@@ -27,6 +27,7 @@ import type {
   RoleSpec,
   Verdict,
 } from "../src/orchestration/types";
+import { OrchestrationError } from "../src/orchestration/types";
 import { SUBMIT_VERDICT_TOOL_NAME } from "../src/orchestration/verdict";
 import type { Role } from "../src/role";
 import { defineRole } from "../src/role";
@@ -142,6 +143,39 @@ test("a scripted choice sequence drives the loop and settles on the chosen stop"
   expect(output.text()).toContain("[code]");
   expect(output.text()).toContain("[review]");
   expect(output.text()).toContain("approved: false");
+});
+
+test("a stage-limit pause is reported as recovery guidance, not a pending decision", async () => {
+  const fx = fixture();
+  const coder = fx.role("coder", "You code.");
+  const reviewer = reviewerRole(fx);
+  fx.faux.setResponses([
+    fauxAssistantMessage(fauxToolCall("bash", { command: "printf one" })),
+    fauxAssistantMessage("must not dispatch"),
+  ]);
+  const ledgerSink = new MemoryLedgerSink();
+  const pipeline = config(fx, { coder, reviewer }, ledgerSink);
+  pipeline.stageLimits = { maxModelTurns: 1 };
+  const session = createWorkflowSession(pipeline);
+
+  let caught: unknown;
+  try {
+    await driveWorkflow({
+      session,
+      ledgerSink,
+      auto: true,
+      input: Readable.from(""),
+      output: new Capture(),
+      error: new Capture(),
+    });
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught).toBeInstanceOf(OrchestrationError);
+  expect(caught).toMatchObject({ code: "requirements_unresolved" });
+  expect((caught as Error).message).toBe(
+    "increase or disable the model_turns stage limit, then resume explicitly",
+  );
 });
 
 test("a scripted rework choice re-runs the coder without a review in between", async () => {
