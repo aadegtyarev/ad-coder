@@ -26,6 +26,8 @@ All notable changes to ad-coder are recorded here. The format follows
 
 - Standalone `role` runs now persist their numeric usage ledger, print a safe
   usage envelope, stream semantic tool activity, and retain selected plugin tools.
+- Pipeline `drive` runs now stream the same bounded semantic tool activity for
+  every role stage.
 - Bounded normal Planner reconnaissance by batching independent reads and
   converting unresolved evidence into a research gate before Coder dispatch.
 

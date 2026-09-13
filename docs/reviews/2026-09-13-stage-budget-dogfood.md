@@ -94,3 +94,12 @@ $0.05212120, and requested-tool counts of one `search_project`, twelve `read`,
 and four `bash`. This both validates the wiring and shows the remaining waste:
 the role still broadens from one projection into many reads. Failed standalone
 runs now print their known partial-ledger path for immediate diagnosis.
+
+A full native `drive --auto` validation of request-assembly telemetry stopped
+the Planner at its eight-model-turn ceiling after about 117 seconds. The durable
+session reached roughly 963 KB and the front again exposed only heartbeat,
+revealing that activity had been wired to standalone and console fronts but not
+pipeline drive. `drive` now consumes the same bounded activity stream for every
+stage. Per-stage metrics also report effective system-prompt, handoff-prompt,
+tool-definition, and total pre-serialization bytes, so subsequent reductions can
+be attributed across the whole pipeline.
