@@ -9,6 +9,7 @@ export interface StageLimits {
   finalResponseReserveModelTurns?: number;
   finalResponseReserveDurationMs?: number;
   finalResponseReserveToolTurns?: number;
+  finalResponseReserveInputTokens?: number;
 }
 
 export type StageLimitReason =
@@ -43,7 +44,7 @@ export class StageLimitError extends Error {
   }
 }
 
-export type StageCloseoutReason = "duration" | "model_turns" | "tool_turns";
+export type StageCloseoutReason = "duration" | "model_turns" | "tool_turns" | "input";
 
 /** A non-terminal tool rejection that preserves capacity for the role's final answer. */
 export class StageCloseoutError extends Error {
@@ -69,6 +70,7 @@ export const DEFAULT_STAGE_LIMITS: Readonly<Required<StageLimits>> = Object.free
   finalResponseReserveModelTurns: 0,
   finalResponseReserveDurationMs: 0,
   finalResponseReserveToolTurns: 0,
+  finalResponseReserveInputTokens: 0,
 });
 
 function resolveStageLimits(input: StageLimits = {}): Required<StageLimits> {
@@ -81,6 +83,7 @@ function resolveStageLimits(input: StageLimits = {}): Required<StageLimits> {
     "finalResponseReserveModelTurns",
     "finalResponseReserveDurationMs",
     "finalResponseReserveToolTurns",
+    "finalResponseReserveInputTokens",
   ] as const) {
     if (!Number.isSafeInteger(limits[key]) || limits[key] < 0)
       throw new TypeError(`${key} must be a non-negative safe integer`);
@@ -180,6 +183,8 @@ export class StageLimitController {
       finalResponseReserveDurationMs,
       finalResponseReserveModelTurns,
       finalResponseReserveToolTurns,
+      finalResponseReserveInputTokens,
+      maxInputTokens,
       maxToolTurns,
     } = this.limits;
     if (
@@ -199,6 +204,15 @@ export class StageLimitController {
       throw new StageCloseoutError(
         "model_turns",
         `${this.modelTurns}/${maxModelTurns} model turns used, ${finalResponseReserveModelTurns} reserved`,
+      );
+    if (
+      maxInputTokens > 0 &&
+      finalResponseReserveInputTokens > 0 &&
+      this.inputTokens >= Math.max(0, maxInputTokens - finalResponseReserveInputTokens)
+    )
+      throw new StageCloseoutError(
+        "input",
+        `${this.inputTokens}/${maxInputTokens} input tokens used, ${finalResponseReserveInputTokens} reserved`,
       );
     if (
       maxToolTurns > 0 &&

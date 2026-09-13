@@ -1,8 +1,9 @@
 # Configuration contract
 
 Stage budgets are cumulative across durable resume. The configurable
-the `finalResponseReserveModelTurns`, `finalResponseReserveDurationMs`, and
-`finalResponseReserveToolTurns` settings protect closeout capacity. Once a
+`finalResponseReserveModelTurns`, `finalResponseReserveDurationMs`,
+`finalResponseReserveToolTurns`, and `finalResponseReserveInputTokens` settings
+protect closeout capacity. Once a
 bounded stage enters any enabled reserve, new tool calls fail with an instruction
 to return the final response while the reserved capacity remains available.
 Zero disables each reserve independently.
@@ -14,8 +15,9 @@ Rules the operator declared for ad-coder. A violation is always blocking.
 - 2026-09-11: Context mode, window percentage, reply reserve, and summarization percentage are configurable end to end.
 - 2026-09-12: Numeric resource limits default to `0`; `0` disables and only a positive value enables them.
 - 2026-09-13: Final-response reserves are an explicit exception: their efficient
-  defaults protect 2 model turns, 30 seconds, and 8 tool turns inside an enabled
-  stage budget. Each reserve remains independently configurable and zero-disableable.
+  defaults protect 4 model turns, 30 seconds, 8 tool turns, and 100,000
+  provider-reported input tokens inside an enabled stage budget. Each reserve
+  remains independently configurable and zero-disableable.
 - 2026-09-12: Context-window enforcement, summarization percentage, the
   decomposition guards, and mandatory tool-activity projection/event/rendering
   safety ceilings are explicit exceptions to the zero-disabled default policy.

@@ -560,9 +560,10 @@ test("stage budgets have finite defaults, expose provenance, and are zero-disabl
     maxToolTurns: 128,
     maxInputTokens: 500_000,
     maxCostUsd: 2,
-    finalResponseReserveModelTurns: 2,
+    finalResponseReserveModelTurns: 4,
     finalResponseReserveDurationMs: 30_000,
     finalResponseReserveToolTurns: 8,
+    finalResponseReserveInputTokens: 100_000,
   });
   expect(defaults.effectiveConfig?.["stageLimits.maxDurationMs"]).toEqual({
     value: 600_000,
@@ -579,6 +580,7 @@ test("stage budgets have finite defaults, expose provenance, and are zero-disabl
       finalResponseReserveModelTurns: 0,
       finalResponseReserveDurationMs: 0,
       finalResponseReserveToolTurns: 0,
+      finalResponseReserveInputTokens: 0,
     },
   });
   expect(disabled.stageLimits).toEqual({
@@ -590,6 +592,7 @@ test("stage budgets have finite defaults, expose provenance, and are zero-disabl
     finalResponseReserveModelTurns: 0,
     finalResponseReserveDurationMs: 0,
     finalResponseReserveToolTurns: 0,
+    finalResponseReserveInputTokens: 0,
   });
   expect(disabled.effectiveConfig?.["stageLimits.maxCostUsd"]?.source).toBe("cli");
 });

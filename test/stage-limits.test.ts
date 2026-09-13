@@ -96,6 +96,24 @@ test("tool closeout reserve stops batches before the hard tool limit", () => {
   expect(() => controller.admitModelTurn()).not.toThrow();
 });
 
+test("input closeout reserve stops tools while preserving the hard input boundary", () => {
+  const controller = new StageLimitController({
+    maxInputTokens: 100,
+    finalResponseReserveInputTokens: 25,
+  });
+  controller.observeUsage(74, 0);
+  expect(() => controller.admitToolTurn()).not.toThrow();
+  controller.observeUsage(1, 0);
+  expect(() => controller.admitToolTurn()).toThrow(
+    /stop using tools and return the final response/,
+  );
+  expect(controller.snapshot()).toMatchObject({
+    inputTokens: 75,
+    finalResponseReserveInputTokens: 25,
+  });
+  expect(() => controller.admitModelTurn()).not.toThrow();
+});
+
 test("an enabled cost budget permits only one unsettled model admission", () => {
   const controller = new StageLimitController({ maxCostUsd: 1 });
   controller.admitModelTurn();

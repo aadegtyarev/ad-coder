@@ -266,7 +266,9 @@ provider-reported cost. Override them with `--stage-max-duration-ms`,
 `--stage-max-model-turns`, `--stage-max-tool-turns`,
 `--stage-max-input-tokens`, and `--stage-max-cost-usd`; zero disables the named
 limit. A reached limit durably pauses the incomplete stage with explicit recovery
-guidance. Zero explicitly disables heartbeat or provider-request timeout. Tool activity
+guidance. Final-response reserves stop new tools before the hard limits; configure
+them with the `--stage-final-response-reserve-*` options, including the default
+100,000-token input reserve. Zero explicitly disables heartbeat or provider-request timeout. Tool activity
 retention, subscriber queues, grouping, projection, event, line, and renderer
 limits use the registry-derived `--tool-activity-*` options and appear in
 `config show`. Zero disables only replay, grouping delay, close draining, and

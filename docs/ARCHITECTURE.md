@@ -110,7 +110,7 @@ worktree it discovers tracked and untracked files through Git's standard exclude
 rules; a bounded filesystem fallback is used outside Git. It reports metadata
 and decomposition signals, never file contents. Web tools are plugin-shaped and
 replaceable. `web_read` preserves normalized page and content-image links.
-`inspect_image` returns pixels directly to an image-capable active model; for a
+`inspect_image` returns pixels to an image-capable model; for a
 text-only model it makes a bounded one-shot call to the configured vision model
 and returns the description as text. Default web transport pins each request to
 its validated DNS address, checks the connected peer, and repeats validation for
@@ -183,9 +183,11 @@ The Planner instruction derives allowed canonical IDs from validation's
 Coder omits `explore_project`; Planner uses bounded projections; Reviewer retains
 independent reconnaissance.
 
-Each pipeline role stage owns a fresh `StageLimitController`. The runner meters
-every model and tool admission, provider-reported input and cost, and elapsed
-time; a deadline closes the active harness. `RunCoordinator` checkpoints a
+Each role has a `StageLimitController` metering model/tool admission,
+provider-reported input and cost, and elapsed time. Closeout reserves
+stop tools before hard limits, preserving 30 seconds, 4 model turns, 8 tool turns,
+and 100,000 input tokens by default; zero disables a reserve.
+`RunCoordinator` checkpoints a
 `stage_limit` pause before returning, so completed earlier phases remain committed
 and an operator can change the configured limit and resume the incomplete phase
 with `drive --resume-run <id>`. The CLI prints the coordinator run ID and checkpoint

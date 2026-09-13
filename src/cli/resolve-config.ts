@@ -260,9 +260,11 @@ function resolveConfig(
     maxToolTurns: options.stageLimits?.maxToolTurns ?? 128,
     maxInputTokens: options.stageLimits?.maxInputTokens ?? 500_000,
     maxCostUsd: options.stageLimits?.maxCostUsd ?? 2,
-    finalResponseReserveModelTurns: options.stageLimits?.finalResponseReserveModelTurns ?? 2,
+    finalResponseReserveModelTurns: options.stageLimits?.finalResponseReserveModelTurns ?? 4,
     finalResponseReserveDurationMs: options.stageLimits?.finalResponseReserveDurationMs ?? 30_000,
     finalResponseReserveToolTurns: options.stageLimits?.finalResponseReserveToolTurns ?? 8,
+    finalResponseReserveInputTokens:
+      options.stageLimits?.finalResponseReserveInputTokens ?? 100_000,
   };
   new StageLimitController(stageLimits);
   if (options.pluginTools !== undefined && options.enabledPlugins !== undefined)
