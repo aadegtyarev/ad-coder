@@ -370,6 +370,8 @@ export interface PipelineResult {
 
 export interface PipelineStageMetrics {
   stage: string;
+  /** Paused attempts remain visible so terminal economics include failed work. */
+  status?: "complete" | "paused";
   /** Canonical public labels; `unknown` when an identifier is unsafe or unavailable. */
   provider?: string;
   model?: string;

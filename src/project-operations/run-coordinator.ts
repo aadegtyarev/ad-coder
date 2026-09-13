@@ -1,7 +1,12 @@
 import * as crypto from "node:crypto";
 import * as path from "node:path";
 import type { WorkflowSession } from "../orchestration/session";
-import { applyTransition, autoDriver, toPipelineResult } from "../orchestration/session";
+import {
+  applyTransition,
+  autoDriver,
+  toPipelineResult,
+  WorkflowStageLimitError,
+} from "../orchestration/session";
 import { StageLimitError, type StageLimitReason } from "../orchestration/stage-limits";
 import type {
   Driver,
@@ -347,8 +352,17 @@ export class RunCoordinator {
       result = await this.session.step(checkpoint.workflowState);
     } catch (error) {
       if (error instanceof StageLimitError) {
+        const failedState =
+          error instanceof WorkflowStageLimitError
+            ? {
+                ...checkpoint.workflowState,
+                runIds: [...checkpoint.workflowState.runIds, error.runId],
+                stageMetrics: [...(checkpoint.workflowState.stageMetrics ?? []), error.metrics],
+              }
+            : checkpoint.workflowState;
         this.save({
           ...this.persisted.value,
+          workflowState: failedState,
           pause: {
             phase: checkpoint.workflowState.phase,
             code: "stage_limit",

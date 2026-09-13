@@ -205,6 +205,7 @@ export {
   autoDriver,
   createWorkflowSession,
   selectPipelineContext,
+  WorkflowStageLimitError,
 } from "./orchestration/session";
 export type {
   StageCloseoutReason,
