@@ -22,7 +22,11 @@ import {
   SUBMIT_FOLLOW_UP_TOOL_NAME,
 } from "../src/orchestration/follow-up";
 import { runPipeline } from "../src/orchestration/pipeline";
-import { parsePlan, SUBMIT_PLAN_TOOL_NAME } from "../src/orchestration/plan";
+import {
+  formatPlannerInstruction,
+  parsePlan,
+  SUBMIT_PLAN_TOOL_NAME,
+} from "../src/orchestration/plan";
 import {
   applyTransition,
   autoDriver,
@@ -666,9 +670,9 @@ test("pipeline aggregates exact multi-response stage observations in stable orde
       model: "faux-1",
       thinkingLevel: "unknown",
       durationMs: 100,
-      input: 1361,
-      cachedInput: 339,
-      freshInput: 1022,
+      input: 1882,
+      cachedInput: 599,
+      freshInput: 1283,
       output: 124,
       reasoning: 0,
       costUsd: 0,
@@ -1215,6 +1219,13 @@ test("parsePlan rejects invented contract IDs and covered entries without eviden
   base.surfaceAnalysis.coverage[0]!.contractIds = ["cli:thin-front"];
   base.surfaceAnalysis.coverage[0]!.evidence = [];
   expect(() => parsePlan(base, "run-id")).toThrow(OrchestrationError);
+});
+
+test("planner instruction exposes canonical IDs accepted by validation", () => {
+  const instruction = formatPlannerInstruction();
+  expect(instruction).toContain("Canonical contract IDs accepted by this pipeline:");
+  expect(instruction).toContain("errors:typed-actionable");
+  expect(instruction).toContain("quality:clean-check");
 });
 
 test("surface analysis limits are zero-disabled and independently enforced", () => {

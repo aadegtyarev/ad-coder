@@ -329,12 +329,14 @@ export function buildSubmitPlanTool(
  * configured; free text alone cannot authorize a coder turn.
  */
 export function formatPlannerInstruction(): string {
+  const canonicalIds = Object.keys(CONTRACT_INDEX).join(", ");
   return [
     `When your plan is ready, record it by calling the ${SUBMIT_PLAN_TOOL_NAME} tool.`,
     "Call it with this shape:",
     '{ "complexity": "trivial" | "medium" | "complex", "securitySurface": "none" | "low" | "elevated", "summary": "<short summary>", "contractRequirements": ["<rule>"], "surfaceAnalysis": { "projectType": "<type>", "surfaces": [{"id":"<stable-id>","name":"<surface>","rationale":"<why affected>"}], "coverage": [{"surfaceId":"<stable-id>","status":"covered|not_applicable|research_required","contractIds":["<canonical id>"],"evidence":["<source or gap evidence>"],"rationale":"<decision>"}] } }',
     "This structured submission is mandatory. Identify every affected product surface before coding.",
     'For status "covered", contractIds and evidence must both be non-empty. Use only canonical contract IDs.',
+    `Canonical contract IDs accepted by this pipeline: ${canonicalIds}.`,
     'For status "not_applicable", contractIds must be empty and evidence must explain why no contract applies.',
     'For status "research_required", evidence must name the missing contract knowledge; do not claim "covered" with empty arrays.',
     'Choose "trivial" for a one-liner, "medium" for a routine multi-file change, "complex" for a cross-cutting or high-risk one.',

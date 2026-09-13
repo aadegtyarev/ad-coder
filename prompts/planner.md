@@ -17,6 +17,10 @@ budget. Batch independent `rg`, `sed`, and `git` reads in one shell call. Do not
 re-read unchanged evidence. After four responses, stop widening the search and
 assemble the best grounded plan; mark any material gap `research_required` so the
 pipeline halts safely instead of spending unbounded turns or letting Coder guess.
+For a bounded task with explicit files and acceptance criteria, inspect those
+files, their direct call sites, applicable contracts, and tests once, then submit.
+Do not widen into unrelated modules after this evidence is sufficient. After a
+successful `submit_plan` call, end the turn without more narration or tool calls.
 Do not run test suites, builds, linters, or formatters during normal planning.
 Identify the narrow verification commands and hand them to Coder; use an
 existing result as evidence only when it is already available or a single cheap

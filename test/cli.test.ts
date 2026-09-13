@@ -168,7 +168,20 @@ test("each command renders its own help before validating required input", () =>
   expect(code).toBe(0);
   expect(stdout).toContain("Role to run.");
   expect(stderr).toBe("");
+  expect(runCli(["drive", "--help"]).stdout).toContain("--retry-research");
 }, 10_000);
+
+test("drive research retry requires a durable run id", () => {
+  const result = runCli([
+    "drive",
+    "retry research",
+    "--target-dir",
+    import.meta.dir,
+    "--retry-research",
+  ]);
+  expect(result.code).toBe(2);
+  expect(result.stderr).toContain("--retry-research requires --resume-run");
+});
 
 test("auth status and logout are scriptable and credential output is secret-free", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-auth-cli-"));
