@@ -29,7 +29,7 @@ describe("ProjectStore", () => {
       process.umask(previousUmask);
     }
     expect(fs.readFileSync(path.join(root, ".gitignore"), "utf8")).toBe("user-owned\n");
-    expect(fs.readFileSync(store.layout.gitignore, "utf8")).toBe("*\n");
+    expect(fs.readFileSync(store.layout.gitignore, "utf8")).toBe("*\n!calibration.json\n");
     for (const directory of [
       store.layout.root,
       store.layout.sessions,

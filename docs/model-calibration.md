@@ -26,6 +26,15 @@ and one tempting false positive. Its scorer derives check results from stable
 finding codes. This keeps grading independent of prose and lets the same task be
 repeated across every model in an inventory.
 
+The version-one corpus manifest now contains six task shapes: trivial bounded
+normalization, medium behavior-preserving refactoring, hidden-defect review,
+medium pipeline repair, complex concurrent-state repair, and manual
+orchestrator tool use. `bun run calibration:corpus -- smoke` materializes and
+executes every target-based scorer; artifact/report scorers declare their input
+kind explicitly. Measurements retain the orchestrator and Planner complexity
+votes plus correctness and agreement, so live Planner feedback can calibrate
+project-local triage without silently changing the user baseline.
+
 Run each corpus task at least once as its declared mode: a standalone `run_role`,
 manual `run_step`/`choose_transition`, or complete `run_pipeline`. Repeat samples
 before changing defaults. The Orchestrator receives this same rule: inventory
@@ -132,3 +141,39 @@ in one round and passed all four machine checks: 170.9 s, 58,140 fresh plus
 58,880 cached input, 6,687 output, 2,367 reasoning tokens, and $0.078138 total.
 This seeds medium behavioral repair with Luna for those three roles and Terra for
 Reviewer; broader task classes must pass before this becomes a general default.
+
+### Expanded corpus samples — 2026-09-13
+
+On `trivial-normalize-v1`, Luna low Coder passed all three machine checks and an
+independent Terra mutation review with no repair. Coder cost was $0.00380988;
+Terra review cost was $0.03120320, so full accepted-result cost was $0.03501308.
+This makes review routing, rather than coding, the dominant trivial-task cost.
+
+On `refactor-config-v1`, a manually driven Luna Planner → Luna Coder → Terra
+Reviewer workflow passed all four corrected machine checks and independent
+review in one coding round. Successful stages reported $0.07620220, but a
+paused first Planner attempt added $0.00690724, making actual cost $0.08310944.
+The run used 67,505 fresh, 89,600 cached, 8,349 output, and 3,400 reasoning
+tokens. The discrepancy is harness evidence: resumed attempts must remain in
+terminal metrics and accepted-result economics.
+
+On the corrected `reviewer-hidden-regression-v1` Git diff, Luna low found both
+seeded blockers and avoided the tempting false positive: 59.36 s, 9 model turns,
+17 tool turns, 15,013 fresh plus 18,432 cached input, 2,365 output, 1,044
+reasoning tokens, and $0.00620924. This supports Luna for bounded review, but the
+first sample is insufficient to replace Terra for complex or broad review. The
+run also exposed an invalid scorer assumption that models would guess hidden
+exact defect codes; the scorer now accepts equivalent stable codes and the CLI's
+documented trailing cost line.
+
+On `complex-reservation-v1`, the first Luna Planner → Sol Coder ⇄ Terra Reviewer
+automatic run exhausted two rounds despite passing the original 5/5 scorer.
+Terra found negative and then NaN constructor-capacity holes. A continuation run
+closed both and was approved in one round; the strengthened scorer passes 6/6.
+Across both runs: 607.10 s of stage time, 152,680 fresh plus 223,744 cached input,
+17,995 output, 8,621 reasoning tokens, and $0.83711116. Both Luna Planner samples
+classified the corpus-labelled complex task as medium, so complex planning moves
+provisionally to Terra. Sol remains the complex Coder candidate, while Terra is
+retained for medium/complex review. The committed `codex-5.6-calibrated` snapshot
+uses Luna for trivial/bounded cells and medium coding, and Sol for deep research
+and complex coding; cells without controlled role samples remain hypotheses.

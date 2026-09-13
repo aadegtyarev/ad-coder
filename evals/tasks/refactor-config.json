@@ -1,0 +1,28 @@
+{
+  "id": "refactor-config-v1",
+  "role": "coder",
+  "complexity": "medium",
+  "mode": "manual-workflow",
+  "fixture": "refactor-config",
+  "scorer": "refactor-config.ts",
+  "prompt": "Remove the duplicated APP_HOST parsing while preserving both public functions and exact behavior. Extract one reusable pure parser and add regression tests for missing, blank, padded, and normal values.",
+  "checks": [
+    {
+      "id": "preserves-host-api",
+      "weight": 4
+    },
+    {
+      "id": "preserves-worker-api",
+      "weight": 3
+    },
+    {
+      "id": "extracts-shared-parser",
+      "weight": 2
+    },
+    {
+      "id": "has-regression-tests",
+      "weight": 1
+    }
+  ],
+  "scorerInput": "target"
+}

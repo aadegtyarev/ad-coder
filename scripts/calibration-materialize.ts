@@ -22,8 +22,9 @@ git(["config", "user.name", "ad-coder calibration"]);
 git(["config", "user.email", "calibration@invalid"]);
 git(["add", "."]);
 git(["commit", "-qm", "fixture baseline"]);
-git(["apply", path.resolve(fixtureDir, "change.patch")]);
-if (mode === "--commit-defect") {
+const patchFile = path.resolve(fixtureDir, "change.patch");
+if (fs.existsSync(patchFile)) git(["apply", patchFile]);
+if (mode === "--commit-defect" && fs.existsSync(patchFile)) {
   git(["add", "."]);
   git(["commit", "-qm", "seed benchmark defect"]);
 }

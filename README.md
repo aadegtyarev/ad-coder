@@ -105,6 +105,24 @@ role and task with `--resume-run <id>` and a larger or disabled reported limit;
 ad-coder reuses the existing session and ledger.
 Provider/model identity and cumulative stage usage remain bound across resumes.
 
+Portable user profiles have an always-JSON machine front. `show` includes the
+private store path, `export` emits only the portable document, and imports are
+explicitly previewed or applied:
+
+```sh
+ad-coder profile export > profile.json
+ad-coder profile import-preview --input profile.json --mode merge
+ad-coder profile import-apply --input profile.json --mode merge
+ad-coder profile snapshot --inventory work --target-dir ./my-project
+```
+
+The snapshot contains only the selected inventory, calibrated routing, current
+economics, and capacity ranges. A matching named inventory automatically uses
+its project routing; API callers can set `useProjectCalibration: false`.
+
+Validate and smoke-test the calibration corpus with
+`bun run calibration:corpus -- smoke`.
+
 Then run the built-in reviewed pipeline. `--auto` takes default transitions and
 is the non-interactive/scripted mode:
 

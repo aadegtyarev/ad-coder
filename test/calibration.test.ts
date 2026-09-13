@@ -58,7 +58,25 @@ describe("model calibration", () => {
       inputTokens: 200,
       costUsd: 0.5,
       costEfficiency: 1.5,
+      orchestratorComplexity: null,
+      plannerComplexity: null,
+      complexityCorrect: null,
+      plannerAgreement: null,
     });
+  });
+
+  test("scores orchestrator complexity and planner feedback independently", () => {
+    const result = scoreCalibrationRun({
+      task,
+      checks: task.checks.map(({ id }) => ({ id, passed: true })),
+      ledger: [row(0.1)],
+      inventory: "codex",
+      thinkingLevel: "low",
+      durationMs: 100,
+      orchestratorComplexity: "trivial",
+      plannerComplexity: "medium",
+    });
+    expect(result).toMatchObject({ complexityCorrect: false, plannerAgreement: false });
   });
 
   test("ranks accepted runs by cost then duration", () => {

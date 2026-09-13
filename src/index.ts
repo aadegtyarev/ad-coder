@@ -205,14 +205,17 @@ export {
   autoDriver,
   createWorkflowSession,
   selectPipelineContext,
+  WorkflowStageLimitError,
 } from "./orchestration/session";
 export type {
+  StageCloseoutReason,
   StageLimitReason,
   StageLimitSnapshot,
   StageLimits,
 } from "./orchestration/stage-limits";
 export {
   DEFAULT_STAGE_LIMITS,
+  StageCloseoutError,
   StageLimitController,
   StageLimitError,
 } from "./orchestration/stage-limits";
@@ -268,6 +271,7 @@ export type {
   SpawnOverride,
 } from "./profiles/types";
 export { parseProfile } from "./profiles/validate";
+export * from "./project-calibration";
 export type {
   BacklogClaim,
   BacklogItem,
@@ -478,6 +482,7 @@ export type {
   SessionLimits,
 } from "./session-limits";
 export { SessionLimitController, SessionLimitError } from "./session-limits";
+export * from "./user-profile";
 export type {
   ExtractedPage,
   ImageInspectionConfig,

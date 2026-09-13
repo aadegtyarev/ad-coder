@@ -5,8 +5,20 @@
   "mode": "role",
   "prompt": "Review the fixture implementation. Return a JSON array of findings with code and blocking fields plus concrete evidence. Use concise stable defect codes.",
   "checks": [
-    { "id": "detects-path-escape", "weight": 5 },
-    { "id": "detects-silent-fallback", "weight": 3 },
-    { "id": "avoids-false-positive", "weight": 2 }
-  ]
+    {
+      "id": "detects-path-escape",
+      "weight": 5
+    },
+    {
+      "id": "detects-silent-fallback",
+      "weight": 3
+    },
+    {
+      "id": "avoids-false-positive",
+      "weight": 2
+    }
+  ],
+  "fixture": "reviewer-hidden-regression",
+  "scorer": "reviewer-hidden-regression.ts",
+  "scorerInput": "artifact"
 }

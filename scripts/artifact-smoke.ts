@@ -23,6 +23,7 @@ const MAX_AUDITED_FILE_BYTES = 1_000_000;
 const PACKED_ROOTS = new Set(["src", "prompts", "examples"]);
 const PACKED_FILES = new Set(["package.json", "README.md", "CHANGELOG.md", "LICENSE"]);
 const TRACKED_ROOTS = new Set([
+  ".ad-coder", // bounded anonymous project calibration; intentionally excluded from package files
   ".claude", // reviewed developer-only LDO harness; intentionally excluded from package files
   ".github",
   "docs",

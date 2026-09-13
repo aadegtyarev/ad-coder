@@ -27,6 +27,9 @@ work lives in `docs/BACKLOG.md`.
 | Authentication | `src/auth/` | Store credentials outside target projects and expose secret-free status. |
 | Model inventories | `src/inventory/` | Validate and resolve a named atomic registry plus complexity-routing profile. |
 | Registry and profiles | `src/registry/`, `src/profiles/` | Resolve providers, models, role routing, and effective configuration. |
+| Portable user profile | `src/user-profile/` | Persist validated inventories, calibrated routing, and append-only economics behind atomic writes and a cross-process lock; expose deterministic import/export through the package and JSON CLI. |
+| Project calibration | `src/project-calibration/` | Materialize a bounded anonymous current snapshot at `.ad-coder/calibration.json`; matching named inventories consume its routing automatically, with an API switch to disable the override. |
+| Stage-attempt accounting | `src/orchestration/session.ts`, `src/project-operations/run-coordinator.ts` | Tee every role response into a readable ledger and persist partial metrics/run identity before a stage-limit pause, so resumed terminal economics include failed attempts. |
 | Roles and prompts | `src/role.ts`, `src/prompts/`, `prompts/` | Validate roles and resolve built-in or project prompts. |
 | Runner | `src/runner/` | Execute one role turn with tools rooted at the target directory. |
 | Context | `src/context/` | Enforce context budgets and optional ad-coder-owned compaction. |
@@ -41,30 +44,19 @@ work lives in `docs/BACKLOG.md`.
 
 ### One role
 
-`runRole` validates the target directory and role, creates tools and a ledger,
-builds an agent harness, drives one model turn, and closes resources. The target
-directory is a starting working directory, not a security sandbox.
-
-The standalone `role` front uses the same target-local durable numeric ledger,
-prints a narrowed usage envelope after completion, and streams the shared
-bounded tool-activity projection while work is in flight. It exposes selected
-built-in plugin tools but removes structured pipeline submission tools.
-It checkpoints role, provider/model identity, task digest, status, cumulative
-stage usage, and stage-limit pauses under
-`.ad-coder/runs/standalone-<runId>.json`. `role --resume-run <id>` validates the
-same role, model, and task, requires the exhausted limit to change, and resumes
-the active durable lane operation under cumulative whole-stage budgets.
+`runRole` drives one validated role with target-rooted tools and a numeric
+ledger. The target is a working directory, not a sandbox. The standalone `role`
+front streams bounded activity and removes pipeline submission tools. It
+checkpoints identity, task digest, status, usage, and pauses under
+`.ad-coder/runs/standalone-<runId>.json`; resume validates identity and task,
+requires the exhausted limit to change, and retains cumulative budgets.
 
 ### Tool activity flow
 
-Runner and conversation adapters attach to harness events before a turn starts.
-The observability core assigns semantic categories, correlation and sequence,
-uses category-only projection for raw tool arguments, then publishes through
-bounded replay and subscriber queues. Activity remains ephemeral; only its drop
-count and safe aggregate stage metrics cross result or checkpoint boundaries.
-Those metrics include separate byte counts for the effective system prompt,
-stage handoff prompt, and tool definitions, exposing every role's request weight
-before provider-specific serialization.
+Runner and conversation adapters publish categorized, correlated harness events
+through bounded replay and subscriber queues. Activity stays ephemeral; only
+drop counts and safe aggregate metrics reach results or checkpoints. Metrics
+separate system-prompt, handoff, and tool-definition bytes.
 
 Console rendering subscribes to that same channel. Human mode groups repeated
 semantic activity, while JSON mode transports schema-v1 records as NDJSON on
@@ -188,7 +180,7 @@ without returning credential material.
 The Planner instruction derives allowed canonical IDs from validation's
 `CONTRACT_INDEX`, avoiding speculative research and duplicate identifier sources.
 
-Coder omits structural `explore_project` after Planner handoff. Reviewer retains
+Coder omits `explore_project`; Planner uses bounded projections; Reviewer retains
 independent reconnaissance.
 
 Each pipeline role stage owns a fresh `StageLimitController`. The runner meters

@@ -38,6 +38,10 @@ export interface CalibrationMeasurement {
   costUsd: number;
   repairs: number;
   escapedDefects: number;
+  orchestratorComplexity: CalibrationTask["complexity"] | null;
+  plannerComplexity: CalibrationTask["complexity"] | null;
+  complexityCorrect: boolean | null;
+  plannerAgreement: boolean | null;
   costEfficiency: number | null;
 }
 
@@ -51,6 +55,8 @@ export function scoreCalibrationRun(input: {
   toolTurns?: number;
   repairs?: number;
   escapedDefects?: number;
+  orchestratorComplexity?: CalibrationTask["complexity"];
+  plannerComplexity?: CalibrationTask["complexity"];
 }): CalibrationMeasurement {
   if (!Number.isFinite(input.durationMs) || input.durationMs < 0)
     throw new Error("durationMs must be a non-negative number");
@@ -101,6 +107,16 @@ export function scoreCalibrationRun(input: {
     costUsd: usage.cost,
     repairs: input.repairs ?? 0,
     escapedDefects: input.escapedDefects ?? 0,
+    orchestratorComplexity: input.orchestratorComplexity ?? null,
+    plannerComplexity: input.plannerComplexity ?? null,
+    complexityCorrect:
+      input.orchestratorComplexity === undefined
+        ? null
+        : input.orchestratorComplexity === input.task.complexity,
+    plannerAgreement:
+      input.orchestratorComplexity === undefined || input.plannerComplexity === undefined
+        ? null
+        : input.orchestratorComplexity === input.plannerComplexity,
     costEfficiency: usage.cost > 0 ? quality / usage.cost : null,
   };
 }

@@ -43,6 +43,7 @@ import {
   startRepositoryPublishing,
   suggestBacklogMigrationOnce,
   validateFollowUp,
+  WorkflowStageLimitError,
 } from "../src";
 import { SUBMIT_VERDICT_TOOL_NAME } from "../src/orchestration/verdict";
 import { defineRole } from "../src/role";
@@ -534,7 +535,39 @@ test("RunCoordinator durably pauses a limited stage and resumes only that stage"
     stageLimits: { maxDurationMs: 10 },
     async step(state) {
       attempts += 1;
-      if (attempts === 1) throw new StageLimitError("duration", 10, 10);
+      if (attempts === 1) {
+        const limit = new StageLimitError("duration", 10, 10, {
+          maxDurationMs: 10,
+          maxModelTurns: 0,
+          maxToolTurns: 0,
+          maxInputTokens: 0,
+          maxCostUsd: 0,
+          finalResponseReserveModelTurns: 0,
+          finalResponseReserveDurationMs: 0,
+          finalResponseReserveToolTurns: 0,
+          elapsedMs: 10,
+          modelTurns: 1,
+          toolTurns: 1,
+          inputTokens: 7,
+          costUsd: 0.25,
+          costInFlight: false,
+        });
+        throw new WorkflowStageLimitError(limit, "paused-code", {
+          stage: "code:1",
+          status: "paused",
+          input: 7,
+          cachedInput: 2,
+          freshInput: 5,
+          output: 3,
+          costUsd: 0.25,
+          requestBytes: { systemPrompt: 0, prompt: 0, toolDefinitions: 0, total: 0 },
+          readFiles: [],
+          readFilesTotal: 0,
+          readFilesTruncated: 0,
+          diffBytes: 0,
+          contextStrategy: "auto",
+        });
+      }
       return base.step(state);
     },
   };
@@ -549,6 +582,10 @@ test("RunCoordinator durably pauses a limited stage and resumes only that stage"
     limit: 10,
   });
   expect(attempts).toBe(1);
+  expect(paused.checkpoint.workflowState.runIds).toEqual(["paused-code"]);
+  expect(paused.checkpoint.workflowState.stageMetrics).toEqual([
+    expect.objectContaining({ stage: "code:1", status: "paused", costUsd: 0.25 }),
+  ]);
   expect(() => coordinator.resumeStage({ source: "operator", action: "retry" })).toThrow(
     "unchanged duration stage limit",
   );
@@ -558,7 +595,11 @@ test("RunCoordinator durably pauses a limited stage and resumes only that stage"
     { runId: "stage-limit-pause", resumeExisting: true },
   );
   resumed.resumeStage({ source: "operator", action: "retry" });
-  expect((await resumed.run()).status).toBe("complete");
+  const completed = await resumed.run();
+  expect(completed.status).toBe("complete");
+  expect(completed.checkpoint.workflowState.stageMetrics).toEqual(
+    paused.checkpoint.workflowState.stageMetrics,
+  );
   expect(attempts).toBe(2);
 });
 

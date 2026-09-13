@@ -1,0 +1,8 @@
+{
+  "name": "calibration-trivial-normalize",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun test"
+  }
+}

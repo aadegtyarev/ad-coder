@@ -50,6 +50,10 @@ import {
 } from "./orchestration/stage-limits";
 import type { Complexity, PipelineConfig, RoleSpec } from "./orchestration/types";
 import { parseProfile } from "./profiles/validate";
+import {
+  createProjectCalibrationSnapshot,
+  writeProjectCalibrationSnapshot,
+} from "./project-calibration";
 import type { ClaimInput } from "./project-operations/backlog";
 import { routeDocumentationFollowUp } from "./project-operations/documentation";
 import { ProjectOperationsError } from "./project-operations/errors";
@@ -89,6 +93,13 @@ import { createRoleRunner } from "./runner/role-runner";
 import type { Tool } from "./runner/tool";
 import type { SessionLimits } from "./session-limits";
 import { SessionLimitController } from "./session-limits";
+import {
+  createDefaultUserProfileStore,
+  exportUserProfile,
+  FileUserProfileStore,
+  parseUserProfileJson,
+  UserProfileError,
+} from "./user-profile";
 import type { WorkflowContext } from "./workflow";
 import { isWorkflowModule } from "./workflow";
 import {
@@ -289,6 +300,12 @@ export async function runRoleStandalone(params: {
       "elapsedMs" | "modelTurns" | "toolTurns" | "inputTokens" | "costUsd"
     >;
     status: "running" | "paused" | "complete";
+    result?: {
+      text: string;
+      cost: number;
+      ledgerPath?: string;
+      observations: import("./runner/runner").RoleObservations;
+    };
     pause?: {
       code: "stage_limit";
       reason: StageLimitReason;
@@ -449,12 +466,6 @@ export async function runRoleStandalone(params: {
     }
     throw error;
   }
-  const { pause: _pause, ...completed } = checkpoint.value;
-  store.writeVersionedJson(
-    checkpointPath,
-    { ...completed, status: "complete" },
-    checkpoint.version,
-  );
   // runRole closes the session facade it was handed; reopen a fresh readable
   // facade from the durable store to scan the settled transcript.
   const readable = await store.resumeSession(runId, BACKGROUND_CONTEXT);
@@ -464,9 +475,21 @@ export async function runRoleStandalone(params: {
   } finally {
     await readable.close(BACKGROUND_CONTEXT);
   }
-  return {
+  const durableResult = {
     text,
     cost: result.observations.costUsd ?? 0,
+    ...(result.ledgerPath !== undefined && { ledgerPath: result.ledgerPath }),
+    observations: result.observations,
+  };
+  const { pause: _pause, ...completed } = checkpoint.value;
+  store.writeVersionedJson(
+    checkpointPath,
+    { ...completed, status: "complete", result: durableResult },
+    checkpoint.version,
+  );
+  return {
+    text,
+    cost: durableResult.cost,
     ledgerPath: result.ledgerPath,
     observations: result.observations,
   };
@@ -909,6 +932,90 @@ function readJsonInput(input: string | undefined): unknown {
   }
 }
 
+function readProfileJsonInput(input: string | undefined): unknown {
+  if (input === undefined) fail("--input is required for profile import");
+  let contents: string;
+  try {
+    if (input === "-") contents = fs.readFileSync(0, "utf8");
+    else {
+      const file = path.resolve(input);
+      const stat = fs.lstatSync(file);
+      if (stat.isSymbolicLink() || !stat.isFile())
+        throw new UserProfileError(
+          "invalid_path",
+          "input",
+          "profile import must be a regular file",
+        );
+      contents = fs.readFileSync(file, "utf8");
+    }
+  } catch (error) {
+    if (error instanceof UserProfileError) throw error;
+    throw new UserProfileError("io_error", "input", "could not read profile import", {
+      cause: error,
+    });
+  }
+  try {
+    return JSON.parse(contents);
+  } catch (error) {
+    throw new UserProfileError("invalid_profile", "input", "profile import JSON is invalid", {
+      cause: error,
+    });
+  }
+}
+
+async function profileCommand(positionals: string[], flags: Record<string, string | undefined>) {
+  const action = positionals[1];
+  if (
+    action !== "show" &&
+    action !== "export" &&
+    action !== "snapshot" &&
+    action !== "import-preview" &&
+    action !== "import-apply"
+  )
+    fail("profile requires show, export, snapshot, import-preview, or import-apply");
+  if (positionals[2] !== undefined) fail("profile accepts exactly one action");
+  const profilePath = flags["--profile-path"];
+  const store =
+    profilePath === undefined
+      ? createDefaultUserProfileStore()
+      : new FileUserProfileStore({ userHome: os.homedir(), path: path.resolve(profilePath) });
+  const current = await store.read();
+  if (action === "show") {
+    process.stdout.write(`${JSON.stringify({ path: store.path, profile: current })}\n`);
+    return;
+  }
+  if (action === "export") {
+    process.stdout.write(exportUserProfile(current));
+    return;
+  }
+  if (action === "snapshot") {
+    const targetDir = flags["--target-dir"];
+    const inventory = flags["--inventory"];
+    if (targetDir === undefined || inventory === undefined)
+      fail("profile snapshot requires --target-dir and --inventory");
+    const snapshot = createProjectCalibrationSnapshot(current, inventory);
+    const file = writeProjectCalibrationSnapshot(resolveTargetDir(targetDir), snapshot);
+    process.stdout.write(`${JSON.stringify({ file, snapshot })}\n`);
+    return;
+  }
+  const mode = flags["--mode"];
+  if (mode !== "merge" && mode !== "replace") fail("--mode must be merge or replace");
+  let raw: unknown;
+  try {
+    raw = readProfileJsonInput(flags["--input"]);
+  } catch (error) {
+    if (error instanceof SyntaxError)
+      throw new UserProfileError("invalid_profile", "input", "profile import JSON is invalid");
+    throw error;
+  }
+  const incoming = parseUserProfileJson(JSON.stringify(raw));
+  const result =
+    action === "import-preview"
+      ? await store.previewImport(incoming, mode)
+      : await store.import(incoming, mode);
+  process.stdout.write(`${JSON.stringify(result)}\n`);
+}
+
 function githubExecutor(): GitHubCommandExecutor {
   return {
     execute(request) {
@@ -1294,6 +1401,18 @@ function buildConfigOptions(
     "--stage-max-input-tokens",
     flags["--stage-max-input-tokens"],
   );
+  const finalResponseReserveModelTurns = parseNonNegativeIntegerFlag(
+    "--stage-final-response-reserve-model-turns",
+    flags["--stage-final-response-reserve-model-turns"],
+  );
+  const finalResponseReserveDurationMs = parseNonNegativeIntegerFlag(
+    "--stage-final-response-reserve-duration-ms",
+    flags["--stage-final-response-reserve-duration-ms"],
+  );
+  const finalResponseReserveToolTurns = parseNonNegativeIntegerFlag(
+    "--stage-final-response-reserve-tool-turns",
+    flags["--stage-final-response-reserve-tool-turns"],
+  );
   const stageMaxCostUsd =
     flags["--stage-max-cost-usd"] === undefined ? undefined : Number(flags["--stage-max-cost-usd"]);
   const stageLimits = {
@@ -1302,6 +1421,15 @@ function buildConfigOptions(
     ...(stageMaxToolTurns !== undefined && { maxToolTurns: stageMaxToolTurns }),
     ...(stageMaxInputTokens !== undefined && { maxInputTokens: stageMaxInputTokens }),
     ...(stageMaxCostUsd !== undefined && { maxCostUsd: stageMaxCostUsd }),
+    ...(finalResponseReserveModelTurns !== undefined && {
+      finalResponseReserveModelTurns,
+    }),
+    ...(finalResponseReserveDurationMs !== undefined && {
+      finalResponseReserveDurationMs,
+    }),
+    ...(finalResponseReserveToolTurns !== undefined && {
+      finalResponseReserveToolTurns,
+    }),
   };
   if (stageMaxCostUsd !== undefined && (!Number.isFinite(stageMaxCostUsd) || stageMaxCostUsd < 0))
     fail("--stage-max-cost-usd expects a non-negative finite number");
@@ -1769,27 +1897,46 @@ const PIPELINE_OPTIONS: CommandDefinition["options"] = [
   {
     name: "--stage-max-duration-ms",
     value: "<n>",
-    description: "Whole-stage elapsed-time budget; defaults to 600000, 0 disables.",
+    description: "Cumulative whole-stage time across resumes; defaults to 600000, 0 disables.",
   },
   {
     name: "--stage-max-model-turns",
     value: "<n>",
-    description: "Model calls per stage; defaults to 32, 0 disables.",
+    description: "Cumulative model calls across stage resumes; defaults to 32, 0 disables.",
   },
   {
     name: "--stage-max-tool-turns",
     value: "<n>",
-    description: "Tool calls per stage; defaults to 128, 0 disables.",
+    description: "Cumulative tool calls across stage resumes; defaults to 128, 0 disables.",
   },
   {
     name: "--stage-max-input-tokens",
     value: "<n>",
-    description: "Provider-reported input tokens per stage; defaults to 500000, 0 disables.",
+    description:
+      "Cumulative provider-reported input across resumes; defaults to 500000, 0 disables.",
   },
   {
     name: "--stage-max-cost-usd",
     value: "<n>",
-    description: "Provider-reported cost per stage; defaults to 2, 0 disables.",
+    description:
+      "Cumulative provider-reported stage cost across resumes; defaults to 2, 0 disables.",
+  },
+  {
+    name: "--stage-final-response-reserve-tool-turns",
+    value: "<n>",
+    description: "Tool turns protected for stage closeout; defaults to 8, 0 disables.",
+  },
+  {
+    name: "--stage-final-response-reserve-duration-ms",
+    value: "<n>",
+    description:
+      "Milliseconds protected from further tool calls for stage closeout; defaults to 30000, 0 disables.",
+  },
+  {
+    name: "--stage-final-response-reserve-model-turns",
+    value: "<n>",
+    description:
+      "Model turns protected from further tool calls for stage closeout; defaults to 2, 0 disables.",
   },
   {
     name: "--heartbeat-ms",
@@ -2041,6 +2188,29 @@ const COMMANDS: readonly CommandDefinition[] = [
     },
   },
   {
+    name: "profile",
+    description: "Show, export, snapshot, preview, or import the portable user profile.",
+    positionals: [
+      {
+        name: "<show|export|snapshot|import-preview|import-apply>",
+        description: "Profile action.",
+      },
+    ],
+    options: [
+      { name: "--input", value: "<file|->", description: "Read an import document." },
+      { name: "--target-dir", value: "<dir>", description: "Project receiving a snapshot." },
+      { name: "--inventory", value: "<name>", description: "Inventory to snapshot." },
+      { name: "--mode", value: "<merge|replace>", description: "Select import semantics." },
+      {
+        name: "--profile-path",
+        value: "<absolute-path>",
+        description: "Override the private user-profile store path.",
+      },
+      { name: "--json", description: "Accepted for machine-mode parity; output is always JSON." },
+    ],
+    run: ({ positionals, flags }) => profileCommand(positionals, flags),
+  },
+  {
     name: "control",
     description: "Control durable daemon-free pipeline runs and emit JSON.",
     positionals: [
@@ -2241,7 +2411,8 @@ async function main(argv: string[]): Promise<void> {
     return;
   }
   const commandName = argv[0];
-  operationsJsonFront = commandName === "operations" || commandName === "control";
+  operationsJsonFront =
+    commandName === "operations" || commandName === "control" || commandName === "profile";
   const command = COMMANDS.find(({ name }) => name === commandName);
   if (command === undefined)
     fail(commandName === undefined ? "missing command" : `unknown command: ${commandName}`);
@@ -2264,11 +2435,13 @@ if (import.meta.main) {
   } catch (error) {
     if (operationsJsonFront) {
       const payload =
-        error instanceof ProjectOperationsError
+        error instanceof UserProfileError
           ? { code: error.code, detail: error.detail }
-          : error instanceof ProjectStoreError
-            ? { code: error.code, detail: error.path }
-            : { code: "internal_error" };
+          : error instanceof ProjectOperationsError
+            ? { code: error.code, detail: error.detail }
+            : error instanceof ProjectStoreError
+              ? { code: error.code, detail: error.path }
+              : { code: "internal_error" };
       process.stderr.write(`${JSON.stringify({ error: payload })}\n`);
     } else {
       process.stderr.write(`ad-coder: ${errorMessage(error)}\n`);

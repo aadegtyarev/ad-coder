@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "tasks": [
+    "tasks/trivial-normalize.json",
+    "tasks/refactor-config.json",
+    "tasks/reviewer-hidden-regression.json",
+    "tasks/pipeline-repair-regressions.json",
+    "tasks/complex-reservation.json",
+    "tasks/orchestrator-tool-use.json"
+  ]
+}

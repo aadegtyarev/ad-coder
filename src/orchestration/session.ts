@@ -7,13 +7,14 @@ import type { Api, Model, TextContent } from "@earendil-works/pi-ai";
 import { deriveContextBudget } from "../context/budget";
 import { assertSummarizerWindow } from "../context/compactor";
 import { MemoryLedgerSink } from "../ledger/ledger";
+import type { LedgerRecord } from "../ledger/types";
 import { resolveProfile } from "../profiles/resolve";
 import type { ProfileRole, ResolvedSelection } from "../profiles/types";
 import { parseProfile } from "../profiles/validate";
 import type { FollowUp } from "../project-operations/types";
 import { ProjectStore } from "../project-store/project-store";
 import { defineRole } from "../role";
-import { createRoleRunner } from "../runner/role-runner";
+import { createRoleRunner, type RoleRunner } from "../runner/role-runner";
 import { readSafeGitChangedFiles, readSafeGitDiffProjection } from "../runner/runner";
 import type { Tool } from "../runner/tool";
 import {
@@ -29,6 +30,7 @@ import {
   formatPlannerInstruction,
   SUBMIT_PLAN_TOOL_NAME,
 } from "./plan";
+import { StageLimitError } from "./stage-limits";
 import type {
   AvailableTransition,
   Complexity,
@@ -225,6 +227,29 @@ export interface WorkflowSession {
   readonly stageLimits?: PipelineConfig["stageLimits"];
 }
 
+export class WorkflowStageLimitError extends StageLimitError {
+  constructor(
+    source: StageLimitError,
+    readonly runId: string,
+    readonly metrics: PipelineStageMetrics,
+  ) {
+    super(source.reason, source.limit, source.observed, source.snapshot);
+  }
+}
+
+function aggregateLedgerRecords(records: readonly LedgerRecord[]) {
+  return records.reduce(
+    (sum, record) => ({
+      freshInput: sum.freshInput + record.usage.input,
+      cachedInput: sum.cachedInput + record.usage.cacheRead,
+      output: sum.output + record.usage.output,
+      reasoning: sum.reasoning + (record.usage.reasoning ?? 0),
+      costUsd: sum.costUsd + record.usage.cost.total,
+    }),
+    { freshInput: 0, cachedInput: 0, output: 0, reasoning: 0, costUsd: 0 },
+  );
+}
+
 /** The resolved transition-policy knobs, each already defaulted to today's behavior. */
 interface ResolvedDefaults {
   onChangesRequested: "advance" | "stop";
@@ -398,16 +423,52 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
             },
             model,
           );
-    const run = await runner.runRole(role, model, prompt, {
-      runId,
-      step,
-      session,
-      // exactOptionalPropertyTypes: spread each optional only when present.
-      ...(durable
-        ? config.ledgerSink !== undefined && { ledgerSink: config.ledgerSink }
-        : { ledgerSink: new MemoryLedgerSink() }),
-      ...(tools !== undefined && { tools }),
-    });
+    const readableLedger =
+      config.ledgerSink instanceof MemoryLedgerSink ? config.ledgerSink : new MemoryLedgerSink();
+    const turnLedger =
+      durable && config.ledgerSink !== undefined && config.ledgerSink !== readableLedger
+        ? {
+            write(record: LedgerRecord) {
+              config.ledgerSink?.write(record);
+              readableLedger.write(record);
+            },
+          }
+        : readableLedger;
+    const ledgerStart = readableLedger.records().length;
+    let run: Awaited<ReturnType<RoleRunner["runRole"]>>;
+    try {
+      run = await runner.runRole(role, model, prompt, {
+        runId,
+        step,
+        session,
+        ...(turnLedger !== undefined && { ledgerSink: turnLedger }),
+        ...(tools !== undefined && { tools }),
+      });
+    } catch (error) {
+      if (!(error instanceof StageLimitError)) throw error;
+      const usage = aggregateLedgerRecords(readableLedger.records().slice(ledgerStart));
+      throw new WorkflowStageLimitError(error, runId, {
+        stage: step,
+        status: "paused",
+        provider: model.provider,
+        model: model.id,
+        thinkingLevel: role.thinkingLevel ?? "unknown",
+        durationMs: error.snapshot?.elapsedMs ?? 0,
+        input: usage.freshInput + usage.cachedInput,
+        cachedInput: usage.cachedInput,
+        freshInput: usage.freshInput,
+        output: usage.output,
+        reasoning: usage.reasoning,
+        costUsd: usage.costUsd,
+        requestBytes: { systemPrompt: 0, prompt: 0, toolDefinitions: 0, total: 0 },
+        readFiles: [],
+        readFilesTotal: 0,
+        readFilesTruncated: 0,
+        diffBytes: 0,
+        contextStrategy:
+          config.compaction?.mode === "disabled-then-halt" ? "disabled-then-halt" : "auto",
+      });
+    }
     // runRole closes the session facade it was handed (harness.close ->
     // session.close), while the durable store survives. Reopen a fresh readable
     // facade to scan the settled transcript.

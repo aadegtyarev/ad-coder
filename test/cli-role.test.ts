@@ -58,6 +58,7 @@ test("runRoleStandalone drives one faux turn and returns the assistant text plus
   const { faux, models, model, role } = fixture();
   faux.setResponses([fauxAssistantMessage("looks good to me")]);
   const ledgerSink = new MemoryLedgerSink();
+  const runId = `durable-result-${crypto.randomUUID()}`;
 
   const { text, cost } = await runRoleStandalone({
     role,
@@ -65,12 +66,20 @@ test("runRoleStandalone drives one faux turn and returns the assistant text plus
     models,
     targetDir,
     task: "review the change",
+    runId,
     ledgerSink,
   });
 
   expect(text).toContain("looks good to me");
   expect(typeof cost).toBe("number");
   expect(cost).toBeGreaterThanOrEqual(0);
+  const durable = JSON.parse(
+    fs.readFileSync(path.join(targetDir, ".ad-coder", "runs", `standalone-${runId}.json`), "utf8"),
+  ).value;
+  expect(durable).toMatchObject({
+    status: "complete",
+    result: { text: expect.stringContaining("looks good to me"), cost },
+  });
   // The ledger recorded the turn, and the cost is summed from it.
   expect(ledgerSink.records().length).toBeGreaterThan(0);
 });
