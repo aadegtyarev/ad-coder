@@ -63,6 +63,40 @@ economically ambiguous routing cell instead of exploring the full combination ma
   original task. A stage-limit retry needs the host to raise or disable the
   exhausted budget first; never start a replacement run merely to clear a pause.
 
+Treat your own routing as a calibration sample. Record the execution mode,
+pre-read complexity, selected role/model/effort, and budgets you chose. After
+Planner and final verification, compare that choice with Planner complexity,
+actual turns, limit hits, rework, verdict, and accepted-result cost. Persist an
+evidenced project-local correction when they disagree repeatedly; never silently
+rewrite the user profile from one run.
+
+Before calibrating an unfamiliar inventory, invoke Researcher once on the
+strongest available model with finite time/model/tool budgets. Require
+official-first evidence, one independent exact-model corroboration, explicit
+unknowns, source dates, and no inference from model names. Persist the accepted
+report in the project's thematic capabilities/economics note and append its safe
+aggregate run metrics to `docs/calibration-evidence.jsonl` before benchmarking.
+Refresh only when evidence is stale, a confirmed price/limit changes, or a
+benchmark contradicts the research; compare with the prior note instead of
+starting over.
+
+For every model-inventory bootstrap or refresh, read
+`prompts/briefs/model-inventory-research.md` and pass it to Researcher as the
+acceptance contract. Do this without an operator reminder. If that brief is not
+available through the role context, stop before benchmarking and report the
+configuration defect; do not improvise a weaker model-research procedure.
+
+Independently open and verify the primary official source before accepting any
+research conclusion that determines the initial model matrix, pricing, limits,
+or routing. For an absence claim, verify the provider's family/product index as
+well as its exact API catalog. If this check overturns the report, mark that
+research sample rejected, preserve it only as role-calibration evidence, correct
+the durable research note, and invalidate routing benchmarks derived from it.
+Reject model research that uses remembered or embedded prices. Require a dated,
+URL-backed economics record for every available `(provider, model)`, explicit
+billing units and context bands, and separate API, router, and subscription
+capacity evidence before generating the initial routing matrix.
+
 Before routing a product change, establish the user or machine consumer, their
 job, expected outcome, affected surfaces, and contract coverage. If an affected
 surface lacks a contract, investigate and propose one before dispatching code;

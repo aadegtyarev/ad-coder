@@ -6,6 +6,46 @@ Only unresolved work belongs here. Current behavior is in
 
 ## Current priority
 
+- [high] **Reserve stage capacity for synthesis and verification**: expose
+  remaining cumulative time/model/tool/token/cost budgets to the active role
+  after tool turns and make the configurable reserve threshold trigger concise
+  synthesis instead of another tool call. A counter-only reserve is insufficient
+  because the runtime must distinguish tool continuation from the final model
+  response.
+
+- [high] **Compose task-specific role briefs in runtime**: model inventory
+  bootstrap currently relies on Orchestrator reading
+  `prompts/briefs/model-inventory-research.md`. Add deterministic prompt
+  composition so Researcher receives the versioned brief automatically and the
+  run records its digest; missing required briefs must block dependent benchmark
+  execution.
+
+- [high] **Bound Researcher network fallbacks and expose deadlines**: dogfood run
+  `590cb775-8e9d-43a1-944b-4cc9873b9538` spent 60s and 120s in opaque failed
+  `Run` operations while only heartbeat activity was visible. Apply per-request
+  connect/read ceilings, remember failed domains for the run, and show the target
+  plus remaining deadline in activity events.
+
+- [high] **Make CLI signals cancel active roles durably**: SIGINT/SIGTERM must
+  abort the in-process harness/WebSocket, close ledger/session state, and leave a
+  terminal or resumable checkpoint. Separately, launcher integrations must kill
+  their full `npm -> sh -> bun` process group; ad-coder has no provider child
+  process to signal, and cannot enforce the parent harness's process policy.
+
+- [high] **Portable economic profile store** (`src/user-profile/`, `src/cli.ts`):
+  add a private user-level store for named inventories, calibrated routing,
+  append-only confirmed price/context/limit history, and observed subscription
+  capacity ranges. Add secret-free versioned export, preview, and atomic import
+  with explicit merge/replace conflict handling. Expose current values and
+  provenance through the headless API and `config show`; keep credentials in the
+  existing credential store.
+
+- [high] **Portable project calibration snapshot** (`src/profiles/`,
+  `.ad-coder/`): layer a bounded anonymous current economics snapshot and
+  project routing override over the user baseline, retaining per-cell provenance.
+  Never commit account identifiers, exact private activity timestamps, raw
+  provider responses, or full user history.
+
 - [high] **Calibrate role routing by accepted-result efficiency**
   (`src/profiles/`, `docs/cost-economics.md`): run like-for-like tasks through
   Luna, Terra, and Sol where supported, charging repair and re-review to the
@@ -77,6 +117,13 @@ Only unresolved work belongs here. Current behavior is in
   must not be returned or logged wholesale.
 
 ## Reliability and observability
+
+- [high] **Role-specific stage-budget defaults** (`src/cli/resolve-config.ts`,
+  `src/orchestration/stage-limits.ts`): global defaults currently allow Planner
+  far beyond its prompt's normal budget. Add configurable per-role overlays and
+  efficient defaults, preserving zero-disabled semantics. Dogfood evidence:
+  Luna Planner produced no plan after 72.1 s, 13 model turns, 35 tool turns,
+  293,212 input tokens, and $0.019080; its prompt expected roughly 12 tools.
 
 - [high] **Account for failed-stage usage** (`src/runner/`,
   `src/project-operations/run-coordinator.ts`): a rejected Researcher consumes

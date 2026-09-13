@@ -257,6 +257,9 @@ function resolveConfig(
     maxToolTurns: options.stageLimits?.maxToolTurns ?? 128,
     maxInputTokens: options.stageLimits?.maxInputTokens ?? 500_000,
     maxCostUsd: options.stageLimits?.maxCostUsd ?? 2,
+    finalResponseReserveModelTurns: options.stageLimits?.finalResponseReserveModelTurns ?? 2,
+    finalResponseReserveDurationMs: options.stageLimits?.finalResponseReserveDurationMs ?? 30_000,
+    finalResponseReserveToolTurns: options.stageLimits?.finalResponseReserveToolTurns ?? 8,
   };
   new StageLimitController(stageLimits);
   if (options.pluginTools !== undefined && options.enabledPlugins !== undefined)
@@ -518,8 +521,6 @@ function resolveConfig(
     ? undefined
     : {
         planner: buildRole("planner", [
-          "read",
-          "bash",
           EXPLORE_PROJECT_TOOL_NAME,
           SEARCH_PROJECT_TOOL_NAME,
           READ_PROJECT_TOOL_NAME,

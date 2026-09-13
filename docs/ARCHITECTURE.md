@@ -188,7 +188,7 @@ without returning credential material.
 The Planner instruction derives allowed canonical IDs from validation's
 `CONTRACT_INDEX`, avoiding speculative research and duplicate identifier sources.
 
-Coder omits structural `explore_project` after Planner handoff. Reviewer retains
+Coder omits `explore_project`; Planner uses bounded projections; Reviewer retains
 independent reconnaissance.
 
 Each pipeline role stage owns a fresh `StageLimitController`. The runner meters

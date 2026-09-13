@@ -8,6 +8,11 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ### Added
 
+- Added versioned portable user profiles with append-only economics history and
+  always-JSON `profile show|export|import-preview|import-apply` CLI access.
+- Added typed, configurable closeout reserves for duration, model turns, and
+  tool turns so bounded roles retain capacity to return their final result.
+
 - Added a headless named model-inventory layer and CLI selection that atomically
   pairs a provider/model registry with its role-by-complexity routing profile.
 
@@ -52,6 +57,8 @@ All notable changes to ad-coder are recorded here. The format follows
   explicit files and acceptance criteria, and ends immediately after submission.
 - Coder now skips broad exploration after a concrete Planner handoff, edits
   existing files in place, and bounds repeated verification runs.
+- Planner now uses only bounded structural, search, and batched-read project
+  tools, removing redundant raw shell/read paths from its reconnaissance loop.
 - Bounded normal Planner reconnaissance by batching independent reads and
   converting unresolved evidence into a research gate before Coder dispatch.
 - Planner now specifies verification commands without executing suites, builds,

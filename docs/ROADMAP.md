@@ -411,6 +411,18 @@ workflows — one substrate, swappable drivers.
   available to reduce correlated blind spots, and use provider-recommended
   within-family variants when an inventory cannot span families. Routing never
   reaches outside the operator-authored inventory.
+  Economic calibration keeps token-billed API cost separate from subscription
+  capacity. Prefer provider-reported request cost, retain a token-price estimate
+  for reconciliation, and model context-window price tiers explicitly. For
+  subscriptions, retain published limits when available and bounded observed
+  ranges between confirmed rate-limit/reset events. Each confirmed change is an
+  append-only dated record with source and confidence. The user profile owns the
+  full history; a project stores only the current anonymous snapshot and its
+  local routing override.
+  Export/import moves a versioned user profile between machines. Export omits
+  credentials, account identity, raw responses, transcripts, and precise private
+  activity times. Import is previewable, validates the full artifact before an
+  atomic write, and requires an explicit replace/merge conflict policy.
 - **Project memory** — committed, machine-portable (laptop↔desktop via git).
   Decided: autonomy default `push` (agent commits+pushes), commits on the
   working branch (one `git pull` brings code+memory atomically). Non-negotiable

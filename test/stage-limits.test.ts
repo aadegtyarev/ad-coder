@@ -3,6 +3,7 @@ import type { Models } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import {
   DEFAULT_STAGE_LIMITS,
+  StageCloseoutError,
   StageLimitController,
   StageLimitError,
 } from "../src/orchestration/stage-limits";
@@ -45,6 +46,54 @@ test("each stage boundary blocks the next admission at equality", () => {
   const cost = new StageLimitController({ maxCostUsd: 0.25 });
   cost.observeUsage(0, 0.25);
   expectStageLimit(cost, "cost");
+});
+
+test("closeout reserve rejects tools while preserving final model capacity", () => {
+  const controller = new StageLimitController({
+    maxModelTurns: 4,
+    finalResponseReserveModelTurns: 2,
+  });
+  controller.admitModelTurn();
+  controller.observeUsage(1, 0);
+  controller.admitToolTurn();
+  controller.admitModelTurn();
+  controller.observeUsage(1, 0);
+  expect(() => controller.admitToolTurn()).toThrow(
+    /stop using tools and return the final response/,
+  );
+  expect(() => controller.admitModelTurn()).not.toThrow();
+});
+
+test("duration closeout reserve rejects tools before the hard deadline", () => {
+  let now = 0;
+  const controller = new StageLimitController(
+    { maxDurationMs: 100, finalResponseReserveDurationMs: 20 },
+    () => now,
+  );
+  now = 79;
+  expect(() => controller.admitToolTurn()).not.toThrow();
+  now = 80;
+  expect(() => controller.admitToolTurn()).toThrow(
+    /stop using tools and return the final response/,
+  );
+  expect(() => controller.admitModelTurn()).not.toThrow();
+});
+
+test("tool closeout reserve stops batches before the hard tool limit", () => {
+  const controller = new StageLimitController({
+    maxToolTurns: 4,
+    finalResponseReserveToolTurns: 2,
+  });
+  controller.admitToolTurn();
+  controller.admitToolTurn();
+  try {
+    controller.admitToolTurn();
+    throw new Error("expected closeout reserve");
+  } catch (error) {
+    expect(error).toBeInstanceOf(StageCloseoutError);
+    expect(error).toMatchObject({ code: "stage_closeout", reason: "tool_turns" });
+  }
+  expect(() => controller.admitModelTurn()).not.toThrow();
 });
 
 test("an enabled cost budget permits only one unsettled model admission", () => {

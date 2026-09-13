@@ -117,6 +117,116 @@ decisions in `docs/ROADMAP.md` and research in its relevant research note.
 There is no parallel checkpoint file. Do not leave project knowledge only in a
 chat transcript or ignored harness runtime state.
 
+## Native dogfood and calibration program
+
+### Finish this program end to end
+
+The active dogfood/calibration program is one continuous project objective, not a
+series of optional chat tasks. Keep moving autonomously through research,
+ad-coder repairs, prompt/tool/profile changes, benchmark construction, reruns,
+calibration, review, documentation, PR, CI, and merge until the whole accepted
+scope is complete. A progress report is never a stopping point: after reporting,
+immediately execute the next unblocked step in the same turn. Do not emit a final
+answer merely because one role, slice, test, review, or research report finished.
+
+When dogfood exposes a benchmark-blocking ad-coder defect, stop the affected
+benchmark generation, preserve its evidence as rejected/diagnostic, fix and test
+the product defect, then rerun every invalidated cell under a new versioned
+generation. Non-blocking defects may wait only until the current bounded round
+finishes. Never trade research quality for a superficially cheaper run when its
+decision controls architecture, dependencies, provider economics, or model
+routing.
+
+If the host forcibly ends a turn or process, persist a cold-session handoff before
+the boundary: current branch/commit, accepted and rejected evidence, exact active
+checkpoint/run IDs, token/cost totals, files changed, verified commands, blockers,
+and the exact next command. On the next turn, resume from that handoff without
+asking the operator to restate scope and without repeating completed work.
+
+The completion condition for this program is all of: blocking pipeline defects
+fixed; model research independently verified and durable; role briefs and native
+Orchestrator behavior updated; portable profiles/economics history/import/export
+implemented; representative benchmark corpus built; manual-role, manual-workflow,
+and automatic-pipeline modes exercised; model/role/complexity calibration recorded
+with accepted-result economics; full checks and independent review clean; and the
+resulting PR merged. Until all conditions hold, report at most 99% and continue.
+
+For the active ad-coder optimization and model-calibration program, do not use
+LDO. Develop directly or through ad-coder's native Planner, Researcher, Security,
+Coder, Reviewer, Auditor, and Orchestrator roles. Exercise standalone roles,
+manual workflow stepping, and the fully automatic built-in pipeline so product
+failures remain visible. This explicit operator instruction overrides the generic
+LDO guidance below for this program.
+
+Optimize accepted-result efficiency, never token count alone. Charge planning,
+research, security, coding, repair, re-review, failed stages, and recovery to the
+route being evaluated. Preserve identical quality gates. Record duration,
+model/tool turns, fresh/cache/output/reasoning tokens, provider-reported and
+estimated cost, context size/tier, stage limits, verdict, escaped defects, and
+operator interventions. Keep API token billing separate from subscription
+capacity and rate-limit/reset observations.
+
+Calibrate against small realistic repositories covering trivial changes, medium
+repairs, behavior-preserving refactors, complex cross-surface features, hidden
+review defects, and orchestration/recovery choices. Start unfamiliar inventories
+from documented provider guidance and independent evidence, then test the
+cheapest plausible models at one effort level. Vary effort or an adjacent model
+only around failed or unstable cells. Prefer a different model family for Coder
+and Reviewer when the operator-authored inventory permits it; within a Codex-only
+inventory use distinct recommended variants such as Sol and Terra.
+
+Treat Orchestrator, Planner, and observed complexity as separate calibration
+signals. Planner disagreement and actual rounds, scope changes, limit hits,
+quality gates, and accepted-result cost refine only an explicit project-local
+override. The reusable calibrated base and full price/limit history belong to the
+user profile. A project may retain a bounded anonymous current snapshot so it is
+portable. Export/import must be versioned, validated before atomic mutation, and
+must exclude credentials, account identity, raw provider responses, transcripts,
+and precise private activity history.
+Use the root agent's own routing decisions as shadow Orchestrator samples: before
+dispatch, note the mode, estimated complexity, model/effort, and finite budgets;
+afterward compare them with Planner and observed outcomes. A role prompt's soft
+turn guidance is not a runtime limit. Apply an explicit ceiling during dogfood
+and treat overruns as evidence for role-specific defaults.
+
+Write durable decisions to `docs/ROADMAP.md`, unresolved implementation to
+`docs/BACKLOG.md`, provider/economic evidence to the relevant research note, and
+aggregate benchmark conclusions to `docs/model-calibration.md`. Raw runs remain
+gitignored. After finding pipeline waste or failure, fix and verify it before
+expanding the benchmark matrix; do not run a broad suite until the targeted fix
+passes focused checks.
+
+Every bootstrap or refresh research run that can affect routing must leave a
+dated, source-linked note in the developed project's `docs/`; preserve verified
+facts, unknowns, confidence, model/effort, run ID, and aggregate usage so a later
+Researcher can compare rather than start over. Update the existing thematic note
+instead of scattering equivalent research. Never leave useful research only in
+`.ad-coder/` or chat.
+For model bootstrap, use the strongest available Researcher with finite budgets.
+The active Orchestrator must independently open the primary official source before
+accepting a conclusion that sets the initial model matrix, price, limit, or route.
+Claims that documentation does not exist require a family/product-index search,
+an exact catalog check, and a provider-domain web search; one empty search result
+is never enough. If verification overturns the report, retain it only as rejected
+role-calibration evidence and rerun every benchmark whose routing premise depended
+on it.
+Check exact identifiers in official provider material first. If they are absent,
+confirm against one official catalog and stop variant-specific web expansion;
+mark specifications unknown and proceed to empirical calibration. If present,
+collect only routing-relevant capability, effort, context/cache, price-tier,
+subscription/rate-limit, and published-eval facts, then seek one independent
+exact-model source. Never infer a tier from a model name.
+
+Append every meaningful role or benchmark sample to
+`docs/calibration-evidence.jsonl`. Keep one bounded secret-free JSON object per
+sample: schema version, date, task/corpus ID, mode, role, assigned and observed
+complexity, provider/model/effort, accepted/verdict, rounds, duration, model/tool
+turns, fresh/cache/output/reasoning tokens, reported/estimated cost, limit event,
+escaped-defect count, and a short behavioral observation. Omit unavailable
+values rather than estimating them. This compact ledger is committed for later
+statistics; raw outputs, prompts, transcripts, exact private activity times, and
+account identity remain gitignored.
+
 ## Working-tree and harness notes
 
 - Changes go through a feature branch/worktree and PR; the operator merges. Do

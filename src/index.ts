@@ -207,12 +207,14 @@ export {
   selectPipelineContext,
 } from "./orchestration/session";
 export type {
+  StageCloseoutReason,
   StageLimitReason,
   StageLimitSnapshot,
   StageLimits,
 } from "./orchestration/stage-limits";
 export {
   DEFAULT_STAGE_LIMITS,
+  StageCloseoutError,
   StageLimitController,
   StageLimitError,
 } from "./orchestration/stage-limits";
@@ -478,6 +480,7 @@ export type {
   SessionLimits,
 } from "./session-limits";
 export { SessionLimitController, SessionLimitError } from "./session-limits";
+export * from "./user-profile";
 export type {
   ExtractedPage,
   ImageInspectionConfig,

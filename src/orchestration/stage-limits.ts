@@ -6,6 +6,9 @@ export interface StageLimits {
   maxToolTurns?: number;
   maxInputTokens?: number;
   maxCostUsd?: number;
+  finalResponseReserveModelTurns?: number;
+  finalResponseReserveDurationMs?: number;
+  finalResponseReserveToolTurns?: number;
 }
 
 export type StageLimitReason =
@@ -40,17 +43,45 @@ export class StageLimitError extends Error {
   }
 }
 
+export type StageCloseoutReason = "duration" | "model_turns" | "tool_turns";
+
+/** A non-terminal tool rejection that preserves capacity for the role's final answer. */
+export class StageCloseoutError extends Error {
+  override readonly name = "StageCloseoutError";
+  readonly code = "stage_closeout" as const;
+
+  constructor(
+    readonly reason: StageCloseoutReason,
+    detail: string,
+  ) {
+    super(
+      `stage closeout reserve reached; stop using tools and return the final response (${detail})`,
+    );
+  }
+}
+
 export const DEFAULT_STAGE_LIMITS: Readonly<Required<StageLimits>> = Object.freeze({
   maxDurationMs: 0,
   maxModelTurns: 0,
   maxToolTurns: 0,
   maxInputTokens: 0,
   maxCostUsd: 0,
+  finalResponseReserveModelTurns: 0,
+  finalResponseReserveDurationMs: 0,
+  finalResponseReserveToolTurns: 0,
 });
 
 function resolveStageLimits(input: StageLimits = {}): Required<StageLimits> {
   const limits = { ...DEFAULT_STAGE_LIMITS, ...input };
-  for (const key of ["maxDurationMs", "maxModelTurns", "maxToolTurns", "maxInputTokens"] as const) {
+  for (const key of [
+    "maxDurationMs",
+    "maxModelTurns",
+    "maxToolTurns",
+    "maxInputTokens",
+    "finalResponseReserveModelTurns",
+    "finalResponseReserveDurationMs",
+    "finalResponseReserveToolTurns",
+  ] as const) {
     if (!Number.isSafeInteger(limits[key]) || limits[key] < 0)
       throw new TypeError(`${key} must be a non-negative safe integer`);
   }
@@ -143,6 +174,41 @@ export class StageLimitController {
 
   admitToolTurn(): void {
     this.assertActive();
+    const {
+      maxDurationMs,
+      maxModelTurns,
+      finalResponseReserveDurationMs,
+      finalResponseReserveModelTurns,
+      finalResponseReserveToolTurns,
+      maxToolTurns,
+    } = this.limits;
+    if (
+      maxDurationMs > 0 &&
+      finalResponseReserveDurationMs > 0 &&
+      this.elapsedMs() >= Math.max(0, maxDurationMs - finalResponseReserveDurationMs)
+    )
+      throw new StageCloseoutError(
+        "duration",
+        `${Math.round(this.elapsedMs())}/${maxDurationMs} ms used, ${finalResponseReserveDurationMs} ms reserved`,
+      );
+    if (
+      maxModelTurns > 0 &&
+      finalResponseReserveModelTurns > 0 &&
+      this.modelTurns >= Math.max(0, maxModelTurns - finalResponseReserveModelTurns)
+    )
+      throw new StageCloseoutError(
+        "model_turns",
+        `${this.modelTurns}/${maxModelTurns} model turns used, ${finalResponseReserveModelTurns} reserved`,
+      );
+    if (
+      maxToolTurns > 0 &&
+      finalResponseReserveToolTurns > 0 &&
+      this.toolTurns >= Math.max(0, maxToolTurns - finalResponseReserveToolTurns)
+    )
+      throw new StageCloseoutError(
+        "tool_turns",
+        `${this.toolTurns}/${maxToolTurns} tool turns used, ${finalResponseReserveToolTurns} reserved`,
+      );
     this.toolTurns += 1;
     this.onSnapshot?.(this.snapshot());
   }

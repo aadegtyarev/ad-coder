@@ -51,6 +51,101 @@ test("target dotenv cannot supply provider credentials", () => {
   expect(external.stderr).not.toContain("operator-owned-value");
 });
 
+test("profile CLI previews and applies a portable import before exporting it", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-profile-cli-"));
+  try {
+    const profilePath = path.join(root, "private", "profile.json");
+    const inputPath = path.join(root, "portable.json");
+    const portable = {
+      version: 1,
+      inventories: [{ name: "work", providers: [{ id: "codex", models: ["codex-terra"] }] }],
+      calibratedRouting: [],
+      economicRecords: [],
+      subscriptionCapacityRanges: [],
+    };
+    fs.writeFileSync(inputPath, `${JSON.stringify(portable)}\n`);
+    const args = ["--input", inputPath, "--mode", "merge", "--profile-path", profilePath];
+    const preview = runCli(["profile", "import-preview", ...args]);
+    expect(preview.code).toBe(0);
+    expect(JSON.parse(preview.stdout)).toMatchObject({
+      mode: "merge",
+      creates: ["inventory:work"],
+    });
+    expect(fs.existsSync(profilePath)).toBe(false);
+
+    const apply = runCli(["profile", "import-apply", ...args]);
+    expect(apply.code).toBe(0);
+    expect(JSON.parse(apply.stdout)).toEqual(portable);
+    const exported = runCli(["profile", "export", "--profile-path", profilePath]);
+    expect(exported.code).toBe(0);
+    expect(JSON.parse(exported.stdout)).toEqual(portable);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("profile CLI returns stable JSON errors for invalid input, conflicts, and unsafe stores", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-profile-errors-"));
+  try {
+    const profilePath = path.join(root, "private", "profile.json");
+    const runImport = (name: string, contents: string, action = "import-preview") => {
+      const input = path.join(root, name);
+      fs.writeFileSync(input, contents);
+      return runCli([
+        "profile",
+        action,
+        "--input",
+        input,
+        "--mode",
+        "merge",
+        "--profile-path",
+        profilePath,
+      ]);
+    };
+    for (const result of [runImport("bad-json", "{"), runImport("bad-profile", "{}")]) {
+      expect(result.code).toBe(1);
+      expect(JSON.parse(result.stderr).error.code).toBe("invalid_profile");
+    }
+
+    const first = JSON.stringify({
+      version: 1,
+      inventories: [{ name: "work", providers: [{ id: "codex", models: ["terra"] }] }],
+      calibratedRouting: [],
+      economicRecords: [],
+      subscriptionCapacityRanges: [],
+    });
+    expect(runImport("first", first, "import-apply").code).toBe(0);
+    const conflicting = first.replace('"terra"', '"sol"');
+    const conflict = runImport("conflict", conflicting);
+    expect(conflict.code).toBe(0);
+    expect(JSON.parse(conflict.stdout).conflicts).toEqual(["inventory:work"]);
+    const applyConflict = runImport("conflict-apply", conflicting, "import-apply");
+    expect(applyConflict.code).toBe(1);
+    expect(JSON.parse(applyConflict.stderr).error.code).toBe("conflict");
+
+    const unsafe = runCli(["profile", "show", "--profile-path", root]);
+    expect(unsafe.code).toBe(1);
+    expect(JSON.parse(unsafe.stderr).error.code).toBe("unsafe_file");
+
+    const unreadable = path.join(root, "unreadable.json");
+    fs.writeFileSync(unreadable, "{}", { mode: 0o000 });
+    const ioFailure = runCli([
+      "profile",
+      "import-preview",
+      "--input",
+      unreadable,
+      "--mode",
+      "merge",
+      "--profile-path",
+      profilePath,
+    ]);
+    expect(ioFailure.code).toBe(1);
+    expect(JSON.parse(ioFailure.stderr).error.code).toBe("io_error");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 function cliLdoPlan(id: string): Record<string, unknown> {
   return {
     version: 1,
