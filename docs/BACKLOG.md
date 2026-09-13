@@ -6,10 +6,12 @@ Only unresolved work belongs here. Current behavior is in
 
 ## Current priority
 
-- [high] **Remove target `.env` from the provider credential boundary**: the
-  standalone Reviewer warned that running inside `targetDir` auto-loaded the
-  project's `.env`. Provider credentials must come only from the explicit
-  operator credential boundary.
+- [high] **Calibrate role routing by accepted-result efficiency**
+  (`src/profiles/`, `docs/cost-economics.md`): run like-for-like tasks through
+  Luna, Terra, and Sol where supported, charging repair and re-review to the
+  originating choice. Compare final gate quality, escaped findings, rounds,
+  duration, fresh/cache/output/reasoning tokens, and provider cost before
+  changing the configurable economy, balanced, and quality defaults.
 
 - [high] **Narrow role inputs at the tool and prompt boundaries**
   (`src/project-tools/`, `src/runner/`, `prompts/`, `src/orchestration/`): measure
@@ -55,20 +57,12 @@ Only unresolved work belongs here. Current behavior is in
 - [high] **Real tool sandboxing** (`src/runner/`): `targetDir` is only a
   starting cwd. Add out-of-process filesystem/network isolation for untrusted
   tasks; tool allow-lists are not a host sandbox.
-- [medium] **Process-cwd credential exposure** (`src/cli.ts`): ensure a target
-  `.env` cannot become provider credentials through Bun's cwd loading; resolve
-  credentials independently and refuse or clearly warn on unsafe overlap.
 - [low] **Result-content handling** (`src/runner/role-runner.ts`): document or
   narrow `RunRoleResult.result`, which can contain prompt/response detail and
   must not be returned or logged wholesale.
 
 ## Reliability and observability
 
-- [medium] **Checkpoint standalone role runs** (`src/cli.ts`, `src/runner/`): a
-  standalone Reviewer stopped at its input budget after 448,939 tokens and could
-  not resume, so the narrowed replacement repeated reconnaissance. Persist role
-  session state and usage, then resume only the incomplete turn under a changed
-  budget with the same task-binding and ownership rules as pipeline runs.
 - [medium] **Complete activity-stream dogfood evidence**
   (`docs/cost-economics.md`): the interrupted run now has exact checkpoint,
   stage, token, duration, and cost evidence. Add Reviewer rounds and an accepted

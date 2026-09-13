@@ -34,6 +34,7 @@ export class StageLimitError extends Error {
     readonly reason: StageLimitReason,
     readonly limit: number,
     readonly observed: number,
+    readonly snapshot?: Readonly<StageLimitSnapshot>,
   ) {
     super(`stage ${reason} limit reached (${observed}/${limit})`);
   }
@@ -72,9 +73,26 @@ export class StageLimitController {
   constructor(
     limits: StageLimits = {},
     private readonly now: () => number = () => performance.now(),
+    initial: Partial<
+      Pick<StageLimitSnapshot, "elapsedMs" | "modelTurns" | "toolTurns" | "inputTokens" | "costUsd">
+    > = {},
+    private readonly onSnapshot?: (snapshot: Readonly<StageLimitSnapshot>) => void,
   ) {
     this.limits = Object.freeze(resolveStageLimits(limits));
-    this.startedAt = now();
+    if (!Number.isFinite(initial.elapsedMs ?? 0) || (initial.elapsedMs ?? 0) < 0)
+      throw new TypeError("elapsedMs must be a non-negative finite number");
+    for (const key of ["modelTurns", "toolTurns", "inputTokens"] as const) {
+      const value = initial[key] ?? 0;
+      if (!Number.isSafeInteger(value) || value < 0)
+        throw new TypeError(`${key} must be a non-negative safe integer`);
+    }
+    if (!Number.isFinite(initial.costUsd ?? 0) || (initial.costUsd ?? 0) < 0)
+      throw new TypeError("costUsd must be a non-negative finite number");
+    this.startedAt = now() - (initial.elapsedMs ?? 0);
+    this.modelTurns = initial.modelTurns ?? 0;
+    this.toolTurns = initial.toolTurns ?? 0;
+    this.inputTokens = initial.inputTokens ?? 0;
+    this.costUsd = initial.costUsd ?? 0;
   }
 
   snapshot(): Readonly<StageLimitSnapshot> {
@@ -91,14 +109,24 @@ export class StageLimitController {
 
   assertActive(): void {
     if (this.terminalReason !== undefined)
-      throw new StageLimitError(this.terminalReason, this.limits.maxCostUsd, this.costUsd);
+      throw new StageLimitError(
+        this.terminalReason,
+        this.limits.maxCostUsd,
+        this.costUsd,
+        this.snapshot(),
+      );
     this.assertBelow("duration", this.limits.maxDurationMs, this.elapsedMs());
     this.assertBelow("model_turns", this.limits.maxModelTurns, this.modelTurns);
     this.assertBelow("tool_turns", this.limits.maxToolTurns, this.toolTurns);
     this.assertBelow("input", this.limits.maxInputTokens, this.inputTokens);
     this.assertBelow("cost", this.limits.maxCostUsd, this.costUsd);
     if (this.limits.maxCostUsd > 0 && this.costInFlight)
-      throw new StageLimitError("cost_in_flight", this.limits.maxCostUsd, this.costUsd);
+      throw new StageLimitError(
+        "cost_in_flight",
+        this.limits.maxCostUsd,
+        this.costUsd,
+        this.snapshot(),
+      );
   }
 
   /** Rethrow a model-boundary rejection that the harness converted to its generic fault. */
@@ -110,11 +138,13 @@ export class StageLimitController {
     this.assertActive();
     this.modelTurns += 1;
     if (this.limits.maxCostUsd > 0) this.costInFlight = true;
+    this.onSnapshot?.(this.snapshot());
   }
 
   admitToolTurn(): void {
     this.assertActive();
     this.toolTurns += 1;
+    this.onSnapshot?.(this.snapshot());
   }
 
   observeUsage(inputTokens: number, costUsd: number): void {
@@ -129,12 +159,14 @@ export class StageLimitController {
     this.inputTokens = totalInput;
     this.costUsd = totalCost;
     this.costInFlight = false;
+    this.onSnapshot?.(this.snapshot());
   }
 
   failUnknownCost(): void {
     if (this.limits.maxCostUsd > 0) {
       this.costInFlight = false;
       this.terminalReason = "cost_unknown";
+      this.onSnapshot?.(this.snapshot());
     }
   }
 
@@ -211,6 +243,7 @@ export class StageLimitController {
   }
 
   private assertBelow(reason: StageLimitReason, limit: number, observed: number): void {
-    if (limit > 0 && observed >= limit) throw new StageLimitError(reason, limit, observed);
+    if (limit > 0 && observed >= limit)
+      throw new StageLimitError(reason, limit, observed, this.snapshot());
   }
 }

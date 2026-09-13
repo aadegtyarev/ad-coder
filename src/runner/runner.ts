@@ -17,7 +17,6 @@ import {
   createEditTool,
   createReadTool,
   createWriteTool,
-  getOrThrow,
 } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/harness/env/nodejs";
 import type { Api, Model, Models, TextContent } from "@earendil-works/pi-ai";
@@ -73,6 +72,8 @@ export interface RunRoleParams {
   models: Models;
   model: Model<Api>;
   prompt: string;
+  /** Continue the durable active lane operation instead of admitting a new prompt. */
+  resumeActiveOperation?: boolean;
   /** Defaults to a fresh UUID. Validated as a file-name-safe token before any path is built. */
   runId?: string;
   /** Ledger attribution dimension. Defaults to "run". */
@@ -520,7 +521,7 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
     toolContext,
   };
   const systemPromptBytes = Buffer.byteLength(effectiveSystemPrompt);
-  const promptBytes = Buffer.byteLength(params.prompt);
+  const promptBytes = params.resumeActiveOperation === true ? 0 : Buffer.byteLength(params.prompt);
   const toolDefinitionBytes = Buffer.byteLength(
     JSON.stringify(
       tools.map(({ name, description, parameters }) => ({ name, description, parameters })),
@@ -630,24 +631,39 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
 
   try {
     const lane = await harness.lane(params.laneName ?? "main", context);
-    const entries = await lane.findEntries({ type: "message", order: "oldestFirst" }, context);
-    const pending = {
-      role: "user" as const,
-      content: params.prompt,
-      timestamp: Date.now(),
-    };
-    const messages = [
-      ...entries.flatMap((entry) => (entry.type === "message" ? [entry.message] : [])),
-      pending,
-    ];
-    if (compaction.mode === "auto") {
-      compactor?.assertHealthy(params.role.name, params.model.contextWindow);
-      assertTurnFitsBudget(params.role, messages, params.model);
-    } else {
-      assertContextFitsBudget(params.role, messages, params.model);
+    if (params.resumeActiveOperation !== true) {
+      const entries = await lane.findEntries({ type: "message", order: "oldestFirst" }, context);
+      const pending = {
+        role: "user" as const,
+        content: params.prompt,
+        timestamp: Date.now(),
+      };
+      const messages = [
+        ...entries.flatMap((entry) => (entry.type === "message" ? [entry.message] : [])),
+        pending,
+      ];
+      if (compaction.mode === "auto") {
+        compactor?.assertHealthy(params.role.name, params.model.contextWindow);
+        assertTurnFitsBudget(params.role, messages, params.model);
+      } else {
+        assertContextFitsBudget(params.role, messages, params.model);
+      }
     }
     params.stageLimitController?.assertActive();
-    const promptOperation = lane.prompt(params.prompt, undefined, context);
+    const promptOperation =
+      params.resumeActiveOperation === true
+        ? (async () => {
+            const execution = await lane.inspectExecution(context);
+            if (execution.current !== null) return lane.resume(context);
+            const settled =
+              execution.lastOperationId === null
+                ? undefined
+                : await lane.getResult(execution.lastOperationId, context);
+            return settled === undefined
+              ? lane.resume(context)
+              : ({ ok: true, value: settled } as const);
+          })()
+        : lane.prompt(params.prompt, undefined, context);
     const maxDurationMs = params.stageLimitController?.limits.maxDurationMs ?? 0;
     const remainingDurationMs =
       maxDurationMs === 0
@@ -660,7 +676,15 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
           promptOperation,
           new Promise<never>((_, reject) => {
             deadline = setTimeout(
-              () => reject(new StageLimitError("duration", maxDurationMs, maxDurationMs)),
+              () =>
+                reject(
+                  new StageLimitError(
+                    "duration",
+                    maxDurationMs,
+                    maxDurationMs,
+                    params.stageLimitController?.snapshot(),
+                  ),
+                ),
               remainingDurationMs,
             );
           }),
@@ -681,7 +705,8 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
     if (providerLimitObservation !== undefined) throw providerLimitObservation;
     const result = (() => {
       try {
-        return getOrThrow(prompted);
+        if (!prompted.ok) throw prompted.error;
+        return prompted.value;
       } catch (error) {
         const providerLimit = providerLimitFrom(error);
         if (providerLimit !== undefined) throw providerLimit;

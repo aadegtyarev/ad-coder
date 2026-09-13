@@ -33,6 +33,10 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ### Changed
 
+- Standalone roles now checkpoint their run and can resume the same durable
+  session and ledger with `role --resume-run` after a stage-limit pause or crash.
+- CLI runs from inside `targetDir` now disable environment credentials so Bun's
+  startup dotenv loading cannot import provider keys from the target project.
 - Context-budget refusals now report their effective ceiling when a runtime model
   window is smaller than the role budget.
 - Standalone `role` runs now persist their numeric usage ledger, print a safe

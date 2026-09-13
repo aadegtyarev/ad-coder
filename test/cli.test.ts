@@ -10,14 +10,46 @@ import { ProjectStore } from "../src/project-store/project-store";
 const REPO_ROOT = path.resolve(import.meta.dir, "..");
 const CLI = path.join(REPO_ROOT, "src/cli.ts");
 
-function runCli(args: string[]): { code: number; stdout: string; stderr: string } {
-  const proc = Bun.spawnSync(["bun", "run", CLI, ...args], { cwd: REPO_ROOT, env: process.env });
+function runCli(
+  args: string[],
+  options: { cwd?: string; env?: Record<string, string | undefined> } = {},
+): { code: number; stdout: string; stderr: string } {
+  const proc = Bun.spawnSync(["bun", "run", CLI, ...args], {
+    cwd: options.cwd ?? REPO_ROOT,
+    env: options.env ?? process.env,
+  });
   return {
     code: proc.exitCode,
     stdout: proc.stdout.toString(),
     stderr: proc.stderr.toString(),
   };
 }
+
+test("target dotenv cannot supply provider credentials", () => {
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-target-env-"));
+  fs.writeFileSync(path.join(target, ".env"), "DEEPSEEK_API_KEY=target-owned-value\n");
+  const env = { ...process.env };
+  delete env.DEEPSEEK_API_KEY;
+  delete env.OPENROUTER_API_KEY;
+
+  const result = runCli(
+    ["role", "planner", "test", "--provider", "deepseek", "--target-dir", target],
+    { cwd: target, env },
+  );
+  expect(result.code).toBe(1);
+  expect(result.stderr).toContain("environment credentials disabled");
+  expect(result.stderr).toContain('environment variable "DEEPSEEK_API_KEY"');
+  expect(result.stderr).not.toContain("target-owned-value");
+
+  const explicitEnv = { ...env, DEEPSEEK_API_KEY: "operator-owned-value" };
+  const external = runCli(
+    ["config", "show", "--provider", "deepseek", "--target-dir", target, "--json"],
+    { cwd: REPO_ROOT, env: explicitEnv },
+  );
+  expect(external.code).toBe(0);
+  expect(external.stderr).toContain('provider destination "deepseek"');
+  expect(external.stderr).not.toContain("operator-owned-value");
+});
 
 function cliLdoPlan(id: string): Record<string, unknown> {
   return {
