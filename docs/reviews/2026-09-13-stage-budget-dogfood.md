@@ -52,3 +52,13 @@ limit had also been hidden by the harness fault wrapper. The runner now rethrows
 the captured typed stage error, and `drive` projects the checkpoint's recovery
 guidance before considering pending decisions. Focused regression tests reproduce
 both boundaries without a live provider.
+
+The next comparable standalone Planner run used the revised batching prompt and
+hard ceilings of 120 seconds, six model turns, twelve executed tool turns,
+200,000 input tokens, and $0.50. It stopped with the correctly typed
+`stage tool_turns limit reached (12/12)` after about 50 seconds. The model had
+requested fourteen `bash` calls in its transcript, but only the configured twelve
+were admitted; the session artifact was about 462 KB. This is materially bounded
+versus the earlier 180-second/26-command attempt, but it still produced no usable
+plan. Further savings therefore require a task-specific reconnaissance tool/result
+projection rather than more prompt wording or a larger limit.

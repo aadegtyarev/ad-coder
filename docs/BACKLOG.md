@@ -24,7 +24,8 @@ Only unresolved work belongs here. Current behavior is in
   context with a visible full-context fallback. Prove savings with comparable
   dogfood runs and unchanged Reviewer/gate outcomes. Coder and Reviewer now use
   focused-first test guidance and avoid repeated broad reconnaissance; bounded
-  task-specific tool result projections and comparative dogfood remain.
+  Planner reconnaissance now batches reads and fails closed on unresolved gaps.
+  Bounded task-specific tool result projections and comparative dogfood remain.
 
 - [high] **Complete workflow-module extraction** (`src/workflows/`,
   `src/orchestration/`, `src/cli/resolve-config.ts`): conversational activation

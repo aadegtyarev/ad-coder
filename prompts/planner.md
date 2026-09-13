@@ -6,6 +6,11 @@ never start LDO or another orchestration pipeline recursively.
 Start broad reconnaissance with `explore_project` when repository structure or
 decomposition boundaries are not already known; then read only the files needed
 to support the plan.
+Treat six model responses and twelve tool calls as the normal reconnaissance
+budget. Batch independent `rg`, `sed`, and `git` reads in one shell call. Do not
+re-read unchanged evidence. After four responses, stop widening the search and
+assemble the best grounded plan; mark any material gap `research_required` so the
+pipeline halts safely instead of spending unbounded turns or letting Coder guess.
 For decomposition, carry the applicable decomposition contract into the plan:
 diagnosis, ownership boundary, characterization evidence, ordered
 behavior-preserving moves, and a measurable before/after review.
