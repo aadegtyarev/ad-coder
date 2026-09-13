@@ -9,13 +9,17 @@ Only unresolved work belongs here. Current behavior is in
 - [high] **Reserve stage capacity for synthesis and verification**: expose
   remaining cumulative time/model/tool/token/cost budgets to the active role
   after tool turns and make the configurable reserve threshold trigger concise
-  synthesis instead of another tool call. A counter-only reserve is insufficient
+  synthesis instead of another tool call. Input-token reserve and a four-turn
+  model reserve are delivered; a counter-only reserve remains insufficient
   because the runtime must distinguish tool continuation from the final model
-  response. Add input-token reserve or predictive admission: the 2026-09-13
-  role-brief dogfood repeatedly admitted a context-heavy turn past its cumulative
-  input ceiling. Rejected batched tool calls then consumed the reserved model
-  turns, so a 6-turn Reviewer reached 6/6 without a verdict despite the existing
-  model/tool reserve.
+  response and collapse repeated rejected calls from one batch.
+
+- [high] **Compose task-specific role briefs in runtime**: model inventory
+  bootstrap currently relies on Orchestrator reading
+  `prompts/briefs/model-inventory-research.md`. Add deterministic prompt
+  composition so Researcher receives the versioned brief automatically and the
+  run records its digest; missing required briefs must block dependent benchmark
+  execution.
 
 - [high] **Bound Researcher network fallbacks and expose deadlines**: dogfood run
   `590cb775-8e9d-43a1-944b-4cc9873b9538` spent 60s and 120s in opaque failed

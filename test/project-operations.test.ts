@@ -545,6 +545,7 @@ test("RunCoordinator durably pauses a limited stage and resumes only that stage"
           finalResponseReserveModelTurns: 0,
           finalResponseReserveDurationMs: 0,
           finalResponseReserveToolTurns: 0,
+          finalResponseReserveInputTokens: 0,
           elapsedMs: 10,
           modelTurns: 1,
           toolTurns: 1,

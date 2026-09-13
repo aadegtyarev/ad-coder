@@ -1413,6 +1413,10 @@ function buildConfigOptions(
     "--stage-final-response-reserve-tool-turns",
     flags["--stage-final-response-reserve-tool-turns"],
   );
+  const finalResponseReserveInputTokens = parseNonNegativeIntegerFlag(
+    "--stage-final-response-reserve-input-tokens",
+    flags["--stage-final-response-reserve-input-tokens"],
+  );
   const stageMaxCostUsd =
     flags["--stage-max-cost-usd"] === undefined ? undefined : Number(flags["--stage-max-cost-usd"]);
   const stageLimits = {
@@ -1429,6 +1433,9 @@ function buildConfigOptions(
     }),
     ...(finalResponseReserveToolTurns !== undefined && {
       finalResponseReserveToolTurns,
+    }),
+    ...(finalResponseReserveInputTokens !== undefined && {
+      finalResponseReserveInputTokens,
     }),
   };
   if (stageMaxCostUsd !== undefined && (!Number.isFinite(stageMaxCostUsd) || stageMaxCostUsd < 0))
@@ -1862,6 +1869,12 @@ async function runCommand(
 
 const PIPELINE_OPTIONS: CommandDefinition["options"] = [
   {
+    name: "--stage-final-response-reserve-input-tokens",
+    value: "<n>",
+    description:
+      "Input tokens protected from further tool calls for stage closeout; defaults to 100000, 0 disables.",
+  },
+  {
     name: "--credential-path",
     value: "<absolute-path>",
     description: "Override the private user-local OAuth credential file.",
@@ -1988,7 +2001,7 @@ const PIPELINE_OPTIONS: CommandDefinition["options"] = [
     name: "--stage-final-response-reserve-model-turns",
     value: "<n>",
     description:
-      "Model turns protected from further tool calls for stage closeout; defaults to 2, 0 disables.",
+      "Model turns protected from further tool calls for stage closeout; defaults to 4, 0 disables.",
   },
   {
     name: "--heartbeat-ms",
