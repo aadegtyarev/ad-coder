@@ -64,6 +64,11 @@ Only unresolved work belongs here. Current behavior is in
 
 ## Reliability and observability
 
+- [medium] **Checkpoint standalone role runs** (`src/cli.ts`, `src/runner/`): a
+  standalone Reviewer stopped at its input budget after 448,939 tokens and could
+  not resume, so the narrowed replacement repeated reconnaissance. Persist role
+  session state and usage, then resume only the incomplete turn under a changed
+  budget with the same task-binding and ownership rules as pipeline runs.
 - [medium] **Complete activity-stream dogfood evidence**
   (`docs/cost-economics.md`): the interrupted run now has exact checkpoint,
   stage, token, duration, and cost evidence. Add Reviewer rounds and an accepted
@@ -76,8 +81,6 @@ Only unresolved work belongs here. Current behavior is in
   unique `UsageDeltaTracker` stream keys, or document why per-run lifetime is safe.
 - [low] **Ledger retention** (`src/ledger/`, README): define an operator-facing
   retention/pruning policy for target `.ad-coder/ledger` files.
-- [minor] **Context-budget diagnostics** (`src/context/budget.ts`): include the
-  effective ceiling in `ContextBudgetError`.
 
 ## Product follow-ups
 

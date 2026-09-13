@@ -182,11 +182,12 @@ export class ContextCompactor {
     return this.failures;
   }
 
-  assertHealthy(role: string): void {
+  assertHealthy(role: string, contextWindow = this.budget.maxTokens): void {
     if (this.failures > 0) {
       throw new ContextBudgetError({
         role,
         maxTokens: this.budget.maxTokens,
+        effectiveCeiling: Math.min(this.budget.maxTokens, contextWindow),
         reserveTokens: this.budget.reserveTokens,
         keepRecentTokens: this.budget.keepRecentTokens,
         measuredTokens: this.budget.maxTokens,

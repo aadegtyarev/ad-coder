@@ -8,8 +8,11 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ### Added
 
+- Added native Orchestrator `resume_pipeline` support and safe aggregate stage
+  usage/run identity in automatic pipeline results.
 - Added `drive --resume-run` for stage-limit pauses, with actionable checkpoint
-  output, unknown-run failure, and task-binding protection.
+  output, unknown-run failure, task-binding protection, and rejection when the
+  exhausted host budget was not raised or disabled.
 - Added configurable incremental pipeline retry handoffs, deterministic full-context
   fallback reasons, and durable per-stage handoff-strategy observability.
 - Added `search_project`, a configurable ranked and byte-bounded task
@@ -30,6 +33,8 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ### Changed
 
+- Context-budget refusals now report their effective ceiling when a runtime model
+  window is smaller than the role budget.
 - Standalone `role` runs now persist their numeric usage ledger, print a safe
   usage envelope, stream semantic tool activity, and retain selected plugin tools.
 - Pipeline `drive` runs now stream the same bounded semantic tool activity for

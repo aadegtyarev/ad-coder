@@ -555,16 +555,16 @@ workflows — one substrate, swappable drivers.
   genuinely NEW primitive it needed — a multi-turn CONVERSATION LOOP — landed
   earlier as `startConversation`; this cut composes it. `createOrchestrator(deps)`
   is the headless core (the THIRD driver of the stepped engine, reachable WITHOUT
-  the chat front): `runPipeline`/`beginStepping`/`stepOnce`/`chooseTransition`/
+  the chat front): `runPipeline`/`resumePipeline`/`beginStepping`/`stepOnce`/`chooseTransition`/
   `showCost`/`isStepping`, with the untrusted model-supplied transition KIND
   validated against the engine-authored offered set via `assertTransitionOffered`
   before `applyTransition` (the requirement the stepped-engine review surfaced).
-  `buildOrchestratorTools(core)` is the four `defineTool` tools (run_pipeline,
-  run_step, choose_transition, show_cost) via the tools-seam, profile-switchable
+  `buildOrchestratorTools(core)` exposes run_pipeline, resume_pipeline,
+  decompose_task, run_step, choose_transition, and show_cost via the tools-seam, profile-switchable
   like any role; `startOrchestrator(config)` assembles the conversational front over
   `resolvePipelineConfig` + `resolvePrompt('orchestrator')` + `startConversation`,
   sharing ONE ledger sink. The orchestrator prompt carries JUDGMENT only; mechanics
-  (resume tracking, model routing, git staging) stay in the harness/config — gates
+  (model routing, git staging) stay in the harness/config — gates
   over prompts. The transition guard (`DriveError`/`DriveErrorCode`/`assertTransitionOffered`)
   relocated DOWN to `src/orchestration/transition-guard.ts` so the headless core can
   depend on the guard without the CLI front; both drivers share one implementation,

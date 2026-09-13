@@ -26,6 +26,7 @@ import {
   CHOOSE_TRANSITION_TOOL_NAME,
   createOrchestrator,
   DECOMPOSE_TASK_TOOL_NAME,
+  RESUME_PIPELINE_TOOL_NAME,
   RUN_PIPELINE_TOOL_NAME,
   RUN_ROLE_TOOL_NAME,
   RUN_STEP_TOOL_NAME,
@@ -200,6 +201,7 @@ test("startOrchestrator preserves the resolved seed thinking level", async () =>
     INSPECT_IMAGE_TOOL_NAME,
     RUN_ROLE_TOOL_NAME,
     RUN_PIPELINE_TOOL_NAME,
+    RESUME_PIPELINE_TOOL_NAME,
     DECOMPOSE_TASK_TOOL_NAME,
     RUN_STEP_TOOL_NAME,
     CHOOSE_TRANSITION_TOOL_NAME,
@@ -389,6 +391,7 @@ test("built-in pipeline tools are absent until its workflow module is enabled", 
     buildOrchestratorTools(core, [], [BUILT_IN_PIPELINE_WORKFLOW]).map(({ name }) => name),
   ).toEqual([
     RUN_PIPELINE_TOOL_NAME,
+    RESUME_PIPELINE_TOOL_NAME,
     DECOMPOSE_TASK_TOOL_NAME,
     RUN_STEP_TOOL_NAME,
     CHOOSE_TRANSITION_TOOL_NAME,
@@ -591,7 +594,36 @@ test("run_pipeline tool reports approval, rounds, and cost", async () => {
   const text = await callTool(runPipelineTool, { task: "implement X" });
   expect(text).toContain("approved=true");
   expect(text).toContain("rounds=1");
+  expect(text).toContain("runId=");
+  expect(text).toContain("stage metrics:");
   expect(text).toContain("total cost:");
+});
+
+test("resume_pipeline reopens a durable stage pause and completes it", async () => {
+  const fx = fixture();
+  let stageMaxModelTurns = 1;
+  const buildConfig = (task: string): PipelineConfig => ({
+    ...fx.buildConfig(task),
+    coordinator: { runId: "orchestrator-resume" },
+    stageLimits: { maxModelTurns: stageMaxModelTurns },
+  });
+  const core = createOrchestrator({ buildConfig, ledgerSink: fx.sink });
+  fx.faux.setResponses(governedPlanTurn());
+  await expect(core.runPipeline("implement X")).rejects.toMatchObject({
+    code: "requirements_unresolved",
+    detail: "orchestrator-resume",
+  });
+
+  stageMaxModelTurns = 8;
+  approveScenario(fx, { status: "approved", issues: [], summary: "ok" });
+  const resumed = await core.resumePipeline("implement X", "orchestrator-resume");
+  expect(resumed.runId).toBe("orchestrator-resume");
+  expect(resumed.result.approved).toBe(true);
+
+  const resumeTool = buildBuiltInPipelineTools(core).find(
+    (tool) => tool.name === RESUME_PIPELINE_TOOL_NAME,
+  );
+  expect(resumeTool).toBeDefined();
 });
 
 const approvedPipeline: PipelineResult = {

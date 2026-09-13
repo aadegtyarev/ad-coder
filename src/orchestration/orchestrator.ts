@@ -30,9 +30,11 @@ import type {
   WorkflowPhase,
   WorkflowState,
 } from "./types";
+import { OrchestrationError } from "./types";
 
 /** The four tool names the orchestrator model drives the workflow through. */
 export const RUN_PIPELINE_TOOL_NAME = "run_pipeline";
+export const RESUME_PIPELINE_TOOL_NAME = "resume_pipeline";
 export const DECOMPOSE_TASK_TOOL_NAME = "decompose_task";
 export const RUN_STEP_TOOL_NAME = "run_step";
 export const CHOOSE_TRANSITION_TOOL_NAME = "choose_transition";
@@ -102,6 +104,8 @@ export interface StepCost {
 
 /** The settled outcome of one autonomous `runPipeline`, plus its per-step cost. */
 export interface RunPipelineResult {
+  /** Durable coordinator identity used to resume an interrupted execution. */
+  runId: string;
   result: PipelineResult;
   /** Per-step cost for THIS run only, in step order. */
   perStep: StepCost[];
@@ -176,6 +180,7 @@ export interface OrchestratorDeps {
  */
 export interface Orchestrator {
   runPipeline(task: string): Promise<RunPipelineResult>;
+  resumePipeline(task: string, runId: string): Promise<RunPipelineResult>;
   decomposeTask(task: string): Promise<DecompositionResult>;
   beginStepping(task: string): void;
   stepOnce(): Promise<StepView>;
@@ -229,10 +234,19 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     return entry;
   };
 
-  const runPipeline = async (task: string): Promise<RunPipelineResult> => {
+  const executePipeline = async (
+    task: string,
+    resumeRunId?: string,
+  ): Promise<RunPipelineResult> => {
     const config = buildConfig(task);
     const wf = createWorkflowSession(config);
-    const runCoordinator = new RunCoordinator(wf, wf.projectStore, config.coordinator);
+    const runCoordinator = new RunCoordinator(wf, wf.projectStore, {
+      ...config.coordinator,
+      task,
+      ...(resumeRunId === undefined ? {} : { runId: resumeRunId, resumeExisting: true }),
+    });
+    if (resumeRunId !== undefined && runCoordinator.checkpoint.pause?.code === "stage_limit")
+      runCoordinator.resumeStage({ source: "host_config", action: "retry" });
     const perStep: StepCost[] = [];
     let costCursor = sink.records().length;
     const completed = await runCoordinator.run(autoDriver, ({ result }) => {
@@ -241,6 +255,12 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       costCursor = after;
     });
     if (completed.result === undefined) {
+      if (completed.status === "paused" && completed.checkpoint.pause !== undefined)
+        throw new OrchestrationError(
+          "requirements_unresolved",
+          completed.checkpoint.runId,
+          completed.checkpoint.pause.action,
+        );
       const decision = completed.checkpoint.decisions.find((item) => item.status === "pending");
       throw new ProjectOperationsError(
         "pending_decision",
@@ -248,8 +268,12 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       );
     }
     const totalCost = perStep.reduce((sum, e) => sum + e.cost, 0);
-    return { result: completed.result, perStep, totalCost };
+    return { runId: completed.checkpoint.runId, result: completed.result, perStep, totalCost };
   };
+
+  const runPipeline = (task: string): Promise<RunPipelineResult> => executePipeline(task);
+  const resumePipeline = (task: string, runId: string): Promise<RunPipelineResult> =>
+    executePipeline(task, runId);
 
   const decomposeTask = async (task: string): Promise<DecompositionResult> => {
     const config = buildConfig(task);
@@ -372,6 +396,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
 
   return {
     runPipeline,
+    resumePipeline,
     decomposeTask,
     beginStepping,
     stepOnce,
@@ -427,6 +452,27 @@ function formatCost(
 /** The last verdict's status, or `none` when a run settled without one. */
 function lastVerdictStatus(result: PipelineResult): string {
   return result.verdicts[result.verdicts.length - 1]?.status ?? "none";
+}
+
+/** Compact provider-reported stage totals; no prompts, paths, or model text. */
+function formatStageMetrics(result: PipelineResult): string {
+  const totals = result.stageMetrics.reduce(
+    (sum, metric) => ({
+      durationMs: sum.durationMs + (metric.durationMs ?? 0),
+      input: sum.input + metric.input,
+      cached: sum.cached + metric.cachedInput,
+      fresh: sum.fresh + metric.freshInput,
+      output: sum.output + metric.output,
+      reasoning: sum.reasoning + (metric.reasoning ?? 0),
+      cost: sum.cost + (metric.costUsd ?? 0),
+    }),
+    { durationMs: 0, input: 0, cached: 0, fresh: 0, output: 0, reasoning: 0, cost: 0 },
+  );
+  return (
+    `stage metrics: durationMs=${totals.durationMs} input=${totals.input} ` +
+    `fresh=${totals.fresh} cached=${totals.cached} output=${totals.output} ` +
+    `reasoning=${totals.reasoning} providerCost=${totals.cost}`
+  );
 }
 
 /** Build general role delegation; unlike workflow tools this remains available with no module. */
@@ -519,11 +565,41 @@ export function buildBuiltInPipelineTools(core: Orchestrator): Tool[] {
       try {
         const run = await core.runPipeline(params.task);
         const summary =
-          `pipeline complete: approved=${run.result.approved} ` +
+          `pipeline complete: runId=${run.runId} approved=${run.result.approved} ` +
           `rounds=${run.result.rounds} verdict=${lastVerdictStatus(run.result)}`;
         return {
           content: [
-            { type: "text", text: `${summary}\n${formatCost(run.perStep, run.totalCost)}` },
+            {
+              type: "text",
+              text: `${summary}\n${formatStageMetrics(run.result)}\n${formatCost(run.perStep, run.totalCost)}`,
+            },
+          ],
+          details: undefined,
+        };
+      } catch (error) {
+        return { content: [{ type: "text", text: safeErrorText(error) }], details: undefined };
+      }
+    },
+  });
+
+  const resumePipelineTool = defineTool({
+    name: RESUME_PIPELINE_TOOL_NAME,
+    description:
+      "Resume an interrupted built-in pipeline from its durable run ID using the original task. Completed stages are reused; host-configured budgets still apply.",
+    label: "resume pipeline",
+    parameters: Type.Object({ task: Type.String(), runId: Type.String() }),
+    async execute(_toolCallId, params) {
+      try {
+        const run = await core.resumePipeline(params.task, params.runId);
+        const summary =
+          `pipeline complete: runId=${run.runId} approved=${run.result.approved} ` +
+          `rounds=${run.result.rounds} verdict=${lastVerdictStatus(run.result)}`;
+        return {
+          content: [
+            {
+              type: "text",
+              text: `${summary}\n${formatStageMetrics(run.result)}\n${formatCost(run.perStep, run.totalCost)}`,
+            },
           ],
           details: undefined,
         };
@@ -615,7 +691,14 @@ export function buildBuiltInPipelineTools(core: Orchestrator): Tool[] {
     },
   });
 
-  return [runPipelineTool, decomposeTaskTool, runStepTool, chooseTransitionTool, showCostTool];
+  return [
+    runPipelineTool,
+    resumePipelineTool,
+    decomposeTaskTool,
+    runStepTool,
+    chooseTransitionTool,
+    showCostTool,
+  ];
 }
 
 /** Compose general plugins with only the workflow modules explicitly enabled by the host. */

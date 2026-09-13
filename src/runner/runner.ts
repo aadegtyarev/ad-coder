@@ -641,7 +641,7 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
       pending,
     ];
     if (compaction.mode === "auto") {
-      compactor?.assertHealthy(params.role.name);
+      compactor?.assertHealthy(params.role.name, params.model.contextWindow);
       assertTurnFitsBudget(params.role, messages, params.model);
     } else {
       assertContextFitsBudget(params.role, messages, params.model);

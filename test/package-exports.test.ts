@@ -168,6 +168,7 @@ import {
   probeBacklogMigration,
   probeGitHubBacklogCapability,
   projectBacklogFollowUp,
+  RESUME_PIPELINE_TOOL_NAME,
   RegistryError,
   RUN_PIPELINE_TOOL_NAME,
   RUN_STEP_TOOL_NAME,
@@ -302,6 +303,7 @@ test("the package is importable by its published name", () => {
   expect(typeof SessionLimitError).toBe("function");
   expect(typeof OrchestratorError).toBe("function");
   expect(typeof RUN_PIPELINE_TOOL_NAME).toBe("string");
+  expect(typeof RESUME_PIPELINE_TOOL_NAME).toBe("string");
   expect(typeof RUN_STEP_TOOL_NAME).toBe("string");
   expect(typeof CHOOSE_TRANSITION_TOOL_NAME).toBe("string");
   expect(typeof SHOW_COST_TOOL_NAME).toBe("string");

@@ -13,7 +13,7 @@ import {
   Type,
 } from "@earendil-works/pi-ai";
 import { ContextBudgetError } from "../src/context/budget";
-import type { Summarizer } from "../src/context/compactor";
+import { ContextCompactor, type Summarizer } from "../src/context/compactor";
 import { LEDGER_BASE_DIR } from "../src/ledger/ledger";
 import type { ToolActivityRecord } from "../src/observability/tool-activity";
 import { StageLimitController, StageLimitError } from "../src/orchestration/stage-limits";
@@ -415,6 +415,44 @@ test("runRole does not invoke the summarizer when the turn fits the budget", asy
 
   const result = await runRole({ role, targetDir, models, model, prompt: "small", summarizer });
   expect(result.result.status).toBe("completed");
+});
+
+test("runRole supplies the active runtime context window to the compactor health check", async () => {
+  const { faux, models, model } = harnessFixture();
+  const role = defineRole(
+    {
+      name: "coder",
+      provider: model.provider,
+      modelId: model.id,
+      systemPrompt: "You code.",
+      activeToolNames: [],
+      cacheRetention: "none",
+      contextBudget: { maxTokens: 1100, reserveTokens: 100, keepRecentTokens: 250 },
+    },
+    model,
+  );
+  const smallerRuntimeModel = { ...model, contextWindow: 500 } as Model<Api>;
+  const originalAssertHealthy = ContextCompactor.prototype.assertHealthy;
+  let receivedContextWindow: number | undefined;
+  ContextCompactor.prototype.assertHealthy = function (roleName, contextWindow) {
+    receivedContextWindow = contextWindow;
+    return originalAssertHealthy.call(this, roleName, contextWindow);
+  };
+  faux.setResponses([fauxAssistantMessage("done")]);
+  try {
+    await runRole({
+      role,
+      targetDir,
+      models,
+      model: smallerRuntimeModel,
+      prompt: "small",
+      summarizer: async () => "summary",
+    });
+  } finally {
+    ContextCompactor.prototype.assertHealthy = originalAssertHealthy;
+  }
+  expect(receivedContextWindow).toBe(smallerRuntimeModel.contextWindow);
+  expect(faux.state.callCount).toBe(1);
 });
 
 test("runRole rethrows a shared controller rejection after a tool follow-up", async () => {

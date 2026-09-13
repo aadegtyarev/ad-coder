@@ -2,7 +2,7 @@ import * as crypto from "node:crypto";
 import * as path from "node:path";
 import type { WorkflowSession } from "../orchestration/session";
 import { applyTransition, autoDriver, toPipelineResult } from "../orchestration/session";
-import { StageLimitError } from "../orchestration/stage-limits";
+import { StageLimitError, type StageLimitReason } from "../orchestration/stage-limits";
 import type {
   Driver,
   PipelineResult,
@@ -64,7 +64,13 @@ export interface RunCheckpoint {
     intent: ResearchDispatchIntent;
     status: "prepared" | "dispatched" | "completed";
   };
-  pause?: { phase: WorkflowState["phase"]; code: string; action: string };
+  pause?: {
+    phase: WorkflowState["phase"];
+    code: string;
+    action: string;
+    limitReason?: StageLimitReason;
+    limit?: number;
+  };
 }
 
 export interface RunCoordinatorOptions {
@@ -109,7 +115,7 @@ export interface DecisionResolution {
 }
 
 export interface ResearchPauseResolution {
-  source: "operator";
+  source: "operator" | "host_config";
   action: "retry";
 }
 
@@ -223,8 +229,28 @@ export class RunCoordinator {
   /** Clear a stage-budget pause after the operator supplies a larger/disabled budget. */
   resumeStage(resolution: ResearchPauseResolution): void {
     const checkpoint = this.persisted.value;
-    if (resolution.source !== "operator" || checkpoint.pause?.code !== "stage_limit")
+    if (
+      (resolution.source !== "operator" && resolution.source !== "host_config") ||
+      checkpoint.pause?.code !== "stage_limit"
+    )
       throw new ProjectOperationsError("unauthorized_resolution", checkpoint.runId);
+    const reason = checkpoint.pause.limitReason;
+    const priorLimit = checkpoint.pause.limit;
+    if (reason === undefined || priorLimit === undefined)
+      throw new ProjectOperationsError("invalid_config", "stage pause lacks limit evidence");
+    const key =
+      reason === "duration"
+        ? "maxDurationMs"
+        : reason === "model_turns"
+          ? "maxModelTurns"
+          : reason === "tool_turns"
+            ? "maxToolTurns"
+            : reason === "input"
+              ? "maxInputTokens"
+              : "maxCostUsd";
+    const resumedLimit = this.session.stageLimits?.[key] ?? 0;
+    if (resumedLimit !== 0 && resumedLimit <= priorLimit)
+      throw new ProjectOperationsError("invalid_config", `unchanged ${reason} stage limit`);
     const next = { ...checkpoint };
     delete next.pause;
     this.save(next);
@@ -327,6 +353,8 @@ export class RunCoordinator {
             phase: checkpoint.workflowState.phase,
             code: "stage_limit",
             action: `increase or disable the ${error.reason} stage limit, then resume explicitly`,
+            limitReason: error.reason,
+            limit: error.limit,
           },
         });
         return undefined;

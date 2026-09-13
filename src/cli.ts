@@ -1405,7 +1405,8 @@ async function driveCommand(
       ...(resumeRun === undefined ? {} : { runId: resumeRun, resumeExisting: true }),
       task,
     });
-    if (resumeRun !== undefined) coordinator.resumeStage({ source: "operator", action: "retry" });
+    if (resumeRun !== undefined && coordinator.checkpoint.pause?.code === "stage_limit")
+      coordinator.resumeStage({ source: "operator", action: "retry" });
     await driveWorkflow({
       session,
       ledgerSink,

@@ -356,6 +356,60 @@ test("auto compaction consumes a distinct provider summary before the normal res
   }
 });
 
+test("failed compaction reports the smaller runtime window and blocks later provider dispatch", async () => {
+  const { faux, models, model } = harnessFixture();
+  const role = defineRole(
+    {
+      name: "coder",
+      provider: model.provider,
+      modelId: model.id,
+      systemPrompt: "You code.",
+      activeToolNames: [],
+      cacheRetention: "none",
+      contextBudget: { maxTokens: 1100, reserveTokens: 100, keepRecentTokens: 250 },
+    },
+    model,
+  );
+  const smallerRuntimeModel = { ...model, contextWindow: 500 } as Model<Api>;
+  const secret = `compaction-secret:${"z".repeat(4000)}`;
+  const summarizer: Summarizer = async () => {
+    throw new Error(secret);
+  };
+  faux.setResponses(Array.from({ length: 8 }, () => fauxAssistantMessage("reply")));
+  const conversation = await startConversation({
+    role,
+    targetDir,
+    models,
+    model: smallerRuntimeModel,
+    summarizer,
+  });
+  try {
+    let caught: unknown;
+    for (let turn = 0; turn < 8; turn++) {
+      try {
+        await conversation.step(`${turn}:${"x".repeat(900)}`);
+      } catch (error) {
+        caught = error;
+        break;
+      }
+    }
+    expect(caught).toBeInstanceOf(ContextBudgetError);
+    const error = caught as ContextBudgetError;
+    expect(error.effectiveCeiling).toBe(500);
+    expect(error.message).toContain("summarization failed previously");
+    expect(error.message).toContain("effective ceiling 500");
+    expect(error.message).not.toContain(secret);
+
+    const providerDispatches = faux.state.callCount;
+    await expect(conversation.step(`retry:${"x".repeat(900)}`)).rejects.toBeInstanceOf(
+      ContextBudgetError,
+    );
+    expect(faux.state.callCount).toBe(providerDispatches);
+  } finally {
+    await conversation.close();
+  }
+});
+
 test("disabled conversation halts an oversized later turn without summarizing and remains closable", async () => {
   const { faux, models, model } = harnessFixture();
   const role = defineRole(

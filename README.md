@@ -222,9 +222,12 @@ heartbeat; mandatory safety ceilings stay positive. Progress never pollutes
 machine-result stdout.
 
 Context compaction defaults to `auto`. `disabled-then-halt` refuses an
-over-budget turn rather than summarizing it. Cross-provider summarization needs
-`--allow-cross-provider-summarization true`; unsupported `cache-aware`
-configuration fails loudly rather than degrading.
+over-budget turn rather than summarizing it. Every refusal measures the request
+against the effective ceiling `min(maxTokens, contextWindow)`, so a runtime model
+with a smaller window is reported accurately. Choose a model with a sufficiently
+large context window or reduce the role's context-budget settings, then retry.
+Cross-provider summarization needs `--allow-cross-provider-summarization true`;
+unsupported `cache-aware` configuration fails loudly rather than degrading.
 
 Target-local `.ad-coder/prompts/<role>.md` overrides are trusted operator
 configuration, not an isolation boundary. Runtime state lives in

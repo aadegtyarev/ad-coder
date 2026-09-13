@@ -204,6 +204,56 @@ DeepSeek paths had completed end-to-end at that time. The broader LDO-versus
 DeepSeek comparison below also records the earlier `add.js` pipeline range of
 $0.0018–0.0043.
 
+## Native pipeline mode comparison (2026-09-13)
+
+A self-hosted `ContextBudgetError` diagnostic change exercised three native modes.
+These are directional observations over related but non-identical tasks, not a
+like-for-like benchmark.
+
+| mode | outcome | stage time | fresh / cached input | output / reasoning | provider cost |
+|---|---|---:|---:|---:|---:|
+| standalone Planner, Terra | usable plan | 58.2s | unavailable separately; 59,986 total | 2,696 / 741 | $0.089655 |
+| manual pipeline, Luna Planner + Terra | approved in two review rounds; a later independent review found one blocker | 568.9s | 285,806 / 600,304 | 16,300 / 6,596 | $0.574809 |
+| standalone Reviewer, Terra | found the escaped failed-compaction diagnostic blocker | 144.4s | unavailable separately; 264,937 total | 4,446 / 2,235 | $0.194311 |
+| automatic pipeline fixing that blocker, Luna + Terra | approved in one review round | 471.5s | 196,549 / 942,592 | 16,215 / 7,605 | $0.543393 |
+
+The manual run also proved durable stage recovery: its Coder hit 16 model turns,
+then `--resume-run` continued the same checkpoint without repeating its $0.017926
+Planner stage. Two external interruptions of the automatic run preserved completed
+Coder/Planner work. A competing stale Reviewer was rejected by checkpoint CAS.
+
+For tuning comparisons, record two scores rather than hiding quality inside cost:
+
+- `Q` is the fraction of four evidence gates satisfied: usable implementation,
+  focused regression, full project gates, and no blocker in the final independent
+  review. A detected blocker stays failed until a later run fixes and reviews it.
+- Weighted tokens `W = fresh + 0.1 × cached + 4 × (output + reasoning)`. The cache
+  factor is a comparison convention, not provider billing. Report provider cost
+  separately.
+- Token efficiency `E_token = 1,000,000 × Q / W`; cost efficiency
+  `E_cost = Q / providerCostUsd`. Higher is better.
+
+On this evidence the manual run scored `Q=0.75`, `E_token=1.71`, `E_cost=1.30`.
+The blocker-fix automatic run scored `Q=1`, `E_token=2.59`, `E_cost=1.84`. The
+second task was narrower, so the difference justifies further controlled runs; it
+does not prove automatic mode is universally more efficient. Focused review did
+show a within-run reduction: fresh Reviewer input fell from 46,112 to 32,498,
+cost from $0.173544 to $0.113465, and duration from 124.8s to 93.6s.
+
+Candidate operating tiers for subsequent comparable dogfood are:
+
+| tier | routing and mode | per-stage ceilings | intended use |
+|---|---|---|---|
+| economy | standalone role or manual workflow; Luna Planner, Terra Coder/Reviewer | 120s, 12 model turns, 32 tools, 200k input, $0.35 | bounded judgment or already-localized change |
+| balanced | automatic pipeline; Luna Planner, Terra Coder/Reviewer | 240s, 32 model turns, 80 tools, 500k input, $1 | normal feature with one broad review and focused retries |
+| quality | automatic pipeline; Terra Planner, Sol Coder, Terra or Sol Reviewer | 600s, 48 model turns, 128 tools, 750k input, $2 | architectural, elevated-risk, or failed lower-tier work |
+
+These are experiment settings, not new defaults. Always retain hard stage budgets,
+incremental handoffs, visible fallback, durable resume, and the same contract/test
+gates across tiers. LDO should adopt the same stage envelopes, scoped handoffs,
+activity events, checkpoint resume, and two-axis efficiency reporting before its
+next comparison run.
+
 ## Измерено на себе: реальная стоимость постройки ad-coder через LDO (2026-09-11)
 
 Прогнали `scripts/ldo-cost.sh` по транскриптам собственных implement-прогонов
