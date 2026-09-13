@@ -162,3 +162,10 @@ Only unresolved work belongs here. Current behavior is in
   driver after the daemon-free control plane settles.
 - [planned] **TUI**: build a richer human front over the headless workflow/control
   APIs; it must not be the only path to any capability.
+
+- [high] **Preserve paused-stage context and accounting across resume**
+  (`src/orchestration/`, `src/runner/`): a manually driven Luna Planner paused at
+  12 model turns, then repeated reconnaissance in a fresh role session after
+  resume. Its $0.00690724 usage was absent from terminal `stageMetrics` and
+  `total cost`. Persist partial stage metrics and resumable role context, or
+  explicitly aggregate every attempt before reporting accepted-result cost.

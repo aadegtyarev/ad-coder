@@ -141,3 +141,18 @@ in one round and passed all four machine checks: 170.9 s, 58,140 fresh plus
 58,880 cached input, 6,687 output, 2,367 reasoning tokens, and $0.078138 total.
 This seeds medium behavioral repair with Luna for those three roles and Terra for
 Reviewer; broader task classes must pass before this becomes a general default.
+
+### Expanded corpus samples — 2026-09-13
+
+On `trivial-normalize-v1`, Luna low Coder passed all three machine checks and an
+independent Terra mutation review with no repair. Coder cost was $0.00380988;
+Terra review cost was $0.03120320, so full accepted-result cost was $0.03501308.
+This makes review routing, rather than coding, the dominant trivial-task cost.
+
+On `refactor-config-v1`, a manually driven Luna Planner → Luna Coder → Terra
+Reviewer workflow passed all four corrected machine checks and independent
+review in one coding round. Successful stages reported $0.07620220, but a
+paused first Planner attempt added $0.00690724, making actual cost $0.08310944.
+The run used 67,505 fresh, 89,600 cached, 8,349 output, and 3,400 reasoning
+tokens. The discrepancy is harness evidence: resumed attempts must remain in
+terminal metrics and accepted-result economics.

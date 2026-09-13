@@ -27,7 +27,9 @@ console.log(
       { id: "preserves-worker-api", passed: ok("loadWorkerHost") },
       {
         id: "extracts-shared-parser",
-        passed: /export\s+function\s+parse|export\s+const\s+parse/.test(text),
+        passed:
+          /function\s+parse[A-Za-z0-9_]*\s*\(/.test(text) &&
+          (text.match(/return\s+parse[A-Za-z0-9_]*\s*\(/g)?.length ?? 0) >= 2,
       },
       { id: "has-regression-tests", passed: files.some((f) => /test|spec/.test(f)) },
     ],
