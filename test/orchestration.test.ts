@@ -38,7 +38,12 @@ import type {
   WorkflowState,
 } from "../src/orchestration/types";
 import { OrchestrationError } from "../src/orchestration/types";
-import { parseVerdict, SUBMIT_VERDICT_TOOL_NAME } from "../src/orchestration/verdict";
+import {
+  buildSubmitVerdictTool,
+  formatReviewerInstruction,
+  parseVerdict,
+  SUBMIT_VERDICT_TOOL_NAME,
+} from "../src/orchestration/verdict";
 import { buildDefaultProfile } from "../src/profiles/default-profile";
 import type { Profile } from "../src/profiles/types";
 import { ProjectOperationsError } from "../src/project-operations/errors";
@@ -930,6 +935,123 @@ test("a malformed submission throws OrchestrationError malformed_verdict", async
   }
   expect(caught).toBeInstanceOf(OrchestrationError);
   expect((caught as OrchestrationError).code).toBe("malformed_verdict");
+});
+
+test("documentation-surface verdict guidance names exact contracts and validation self-corrects", () => {
+  const expected = {
+    projectType: "docs",
+    surfaces: [{ id: "docs", name: "Documentation", rationale: "changed" }],
+    coverage: [
+      {
+        surfaceId: "docs",
+        status: "covered" as const,
+        contractIds: ["documentation:human-first", "quality:clean-check"],
+        evidence: ["docs/contracts/documentation.md"],
+        rationale: "applies",
+      },
+    ],
+  };
+  const instruction = formatReviewerInstruction(expected);
+  expect(instruction).toContain(
+    'Cover exactly these surface contracts: [{"surfaceId":"docs","contractIds":["documentation:human-first","quality:clean-check"]}].',
+  );
+
+  const base = { status: "approved", issues: [], summary: "ok" };
+  let contractError: unknown;
+  try {
+    parseVerdict(
+      {
+        ...base,
+        coverage: [{ surfaceId: "docs", contractIds: ["untrusted-contract"], evidence: ["gate"] }],
+      },
+      "run",
+      expected,
+    );
+  } catch (error) {
+    contractError = error;
+  }
+  expect(contractError).toBeInstanceOf(OrchestrationError);
+  expect((contractError as OrchestrationError).code).toBe("malformed_verdict");
+  expect((contractError as Error).message).toBe(
+    "verdict.coverage[0].contractIds must exactly match required contract IDs: documentation:human-first, quality:clean-check; resubmit the verdict with those IDs",
+  );
+  expect((contractError as Error).message).not.toContain("untrusted-contract");
+
+  let evidenceError: unknown;
+  try {
+    parseVerdict(
+      {
+        ...base,
+        coverage: [
+          {
+            surfaceId: "docs",
+            contractIds: ["documentation:human-first", "quality:clean-check"],
+            evidence: [],
+          },
+        ],
+      },
+      "run",
+      expected,
+    );
+  } catch (error) {
+    evidenceError = error;
+  }
+  expect(evidenceError).toBeInstanceOf(OrchestrationError);
+  expect((evidenceError as OrchestrationError).code).toBe("malformed_verdict");
+  expect((evidenceError as Error).message).toBe(
+    "verdict.coverage[0].evidence must include at least one verification result; resubmit the verdict with evidence",
+  );
+});
+
+test("submit_verdict exposes safe correction guidance and accepts a corrected retry", async () => {
+  const expected = {
+    projectType: "docs",
+    surfaces: [{ id: "docs", name: "Documentation", rationale: "changed" }],
+    coverage: [
+      {
+        surfaceId: "docs",
+        status: "covered" as const,
+        contractIds: ["documentation:human-first"],
+        evidence: ["contract"],
+        rationale: "applies",
+      },
+    ],
+  };
+  const capture: { verdict?: Verdict; error?: OrchestrationError } = {};
+  const tool = buildSubmitVerdictTool(capture, "review-run", expected);
+  const execute = tool.execute as unknown as (
+    id: string,
+    params: Record<string, unknown>,
+  ) => Promise<{ content: Array<{ text: string }> }>;
+  const mismatch = await execute("call-1", {
+    status: "approved",
+    issues: [],
+    summary: "ok",
+    coverage: [{ surfaceId: "docs", contractIds: ["attacker-controlled"], evidence: ["gate"] }],
+  });
+  const mismatchText = mismatch.content.map(({ text }) => text).join("");
+  expect(mismatchText).toContain("documentation:human-first");
+  expect(mismatchText).toContain("resubmit the verdict");
+  expect(mismatchText).not.toContain("attacker-controlled");
+  const missingEvidence = await execute("call-2", {
+    status: "approved",
+    issues: [],
+    summary: "ok",
+    coverage: [{ surfaceId: "docs", contractIds: ["documentation:human-first"], evidence: [] }],
+  });
+  expect(missingEvidence.content.map(({ text }) => text).join("")).toContain(
+    "include at least one verification result",
+  );
+  await execute("call-3", {
+    status: "approved",
+    issues: [],
+    summary: "ok",
+    coverage: [
+      { surfaceId: "docs", contractIds: ["documentation:human-first"], evidence: ["gate"] },
+    ],
+  });
+  expect(capture.error).toBeUndefined();
+  expect(capture.verdict?.status).toBe("approved");
 });
 
 test("parsePlan accepts a well-formed plan and rejects bad complexity / bad securitySurface / non-string summary / non-object", () => {

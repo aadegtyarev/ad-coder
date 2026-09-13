@@ -74,3 +74,20 @@ broad independent review used 355,514 input tokens (297,984 cached) and 3,583
 output tokens, so the focused pass used 59.3% fewer input tokens. These reviews
 had different scopes, so the result supports the mechanism but is not the
 like-for-like A/B evidence still tracked in the backlog.
+
+A final native `drive --auto` run then verified live Search/Read/Run/Tool events
+and 10-second heartbeats across Planner, Coder, and Reviewer. It exposed two more
+issues. First, Reviewer instructions named surface IDs but omitted their exact
+required contract IDs, causing repeated `malformed_verdict` submissions for a
+documentation surface; the instruction and model-visible safe diagnostics now
+carry the exact mapping and have a tool-level corrected-retry regression test.
+Second, a Coder tool-turn pause wrote
+a `coordinator-<id>.json` checkpoint but the advertised `operations
+control-resume` path looked for `control-<id>.json`; the missing matching CLI
+resume path remains explicitly tracked in `docs/BACKLOG.md`.
+
+Using `codex-terra` for the second native Planner produced a correct medium plan
+in 83.2 seconds for $0.14172920, with 39,345 fresh and 96,256 cached input tokens.
+The earlier Sol Planner took about 140 seconds and cost $0.47316300 on the smaller
+documentation-only task. The tasks differ, so this is operational evidence for
+model routing rather than a controlled A/B result.
