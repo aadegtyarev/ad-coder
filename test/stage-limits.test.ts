@@ -19,6 +19,7 @@ test("stage limits default to zero-disabled and count admitted work", () => {
     modelTurns: 1,
     toolTurns: 1,
     inputTokens: 25,
+    lastInputTokens: 25,
     costUsd: 0.5,
     costInFlight: false,
   });
@@ -170,4 +171,56 @@ test("models wrapper meters every provider turn and blocks before dispatch", asy
   });
   expect(calls).toBe(1);
   expect(controller.snapshot()).toMatchObject({ inputTokens: 10, costUsd: 0.2 });
+});
+
+test("input closeout predicts the next request from prior provider usage", async () => {
+  const visibleToolCounts: number[] = [];
+  const message = fauxAssistantMessage("ok");
+  message.usage.input = 100;
+  message.usage.cacheRead = 0;
+  const models = {
+    completeSimple: async (_model: unknown, context: { tools?: unknown[] }) => {
+      visibleToolCounts.push(context.tools?.length ?? 0);
+      return message;
+    },
+  } as unknown as Models;
+  const controller = new StageLimitController({
+    maxInputTokens: 300,
+    finalResponseReserveInputTokens: 100,
+  });
+  const limited = controller.wrap(models);
+  const context = { messages: [], tools: [{}] } as never;
+
+  await limited.completeSimple({} as never, context);
+  await limited.completeSimple({} as never, context);
+
+  expect(visibleToolCounts).toEqual([1, 0]);
+  expect(controller.snapshot().inputTokens).toBe(200);
+});
+
+test("input closeout prediction survives controller reconstruction", async () => {
+  const message = fauxAssistantMessage("ok");
+  message.usage.input = 100;
+  message.usage.cacheRead = 0;
+  const firstModels = {
+    completeSimple: async () => message,
+  } as unknown as Models;
+  const limits = { maxInputTokens: 300, finalResponseReserveInputTokens: 100 };
+  const first = new StageLimitController(limits);
+  await first.wrap(firstModels).completeSimple({} as never, { messages: [], tools: [{}] } as never);
+
+  let resumedTools: number | undefined;
+  const resumedModels = {
+    completeSimple: async (_model: unknown, context: { tools?: unknown[] }) => {
+      resumedTools = context.tools?.length ?? 0;
+      return message;
+    },
+  } as unknown as Models;
+  const resumed = new StageLimitController(limits, undefined, first.snapshot());
+  await resumed
+    .wrap(resumedModels)
+    .completeSimple({} as never, { messages: [], tools: [{}] } as never);
+
+  expect(resumedTools).toBe(0);
+  expect(resumed.snapshot()).toMatchObject({ inputTokens: 200, lastInputTokens: 100 });
 });

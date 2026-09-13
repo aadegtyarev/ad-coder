@@ -215,6 +215,70 @@ test("standalone role resumes the same durable run only after its exhausted budg
   expect(resumed.ledgerPath).toBe(path.join(store.layout.ledger, `${runId}.jsonl`));
 });
 
+test("legacy standalone checkpoint restores conservative input prediction", async () => {
+  const { faux, models, model, role } = fixture();
+  fs.writeFileSync(path.join(targetDir, "legacy-resume.txt"), "safe\n");
+  faux.setResponses([
+    fauxAssistantMessage([
+      fauxToolCall("read", { path: "legacy-resume.txt" }),
+      fauxToolCall("read", { path: "legacy-resume.txt" }),
+    ]),
+  ]);
+  const runId = `legacy-resume-${crypto.randomUUID()}`;
+  const task = "review legacy resume";
+
+  await expect(
+    runRoleStandalone({
+      role,
+      model,
+      models,
+      targetDir,
+      task,
+      runId,
+      stageLimits: { maxToolTurns: 1 },
+    }),
+  ).rejects.toBeInstanceOf(StageLimitError);
+
+  const store = new ProjectStore(targetDir);
+  const checkpointPath = path.join(store.layout.runs, `standalone-${runId}.json`);
+  const legacy = store.readVersionedJson<Record<string, unknown>>(checkpointPath);
+  const cumulativeUsage: Record<string, unknown> = {
+    ...(legacy.value.cumulativeUsage as Record<string, unknown>),
+    inputTokens: 100,
+  };
+  delete cumulativeUsage.lastInputTokens;
+  store.writeVersionedJson(checkpointPath, { ...legacy.value, cumulativeUsage }, legacy.version);
+
+  let resumedTools: number | undefined;
+  faux.setResponses([
+    (context) => {
+      resumedTools = context.tools?.length ?? 0;
+      return fauxAssistantMessage("legacy resume completed");
+    },
+  ]);
+  const resumed = await runRoleStandalone({
+    role,
+    model,
+    models,
+    targetDir,
+    task,
+    runId,
+    resumeExisting: true,
+    stageLimits: {
+      maxToolTurns: 4,
+      maxInputTokens: 300,
+      finalResponseReserveInputTokens: 100,
+    },
+  });
+
+  expect(resumed.text).toContain("legacy resume completed");
+  expect(resumedTools).toBe(0);
+  expect(
+    store.readVersionedJson<{ cumulativeUsage: { lastInputTokens: number } }>(checkpointPath).value
+      .cumulativeUsage.lastInputTokens,
+  ).toBeGreaterThan(0);
+});
+
 test("standalone roles persist usage and emit semantic tool activity by default", async () => {
   const { faux, models, model, role } = fixture();
   fs.writeFileSync(path.join(targetDir, "observed.txt"), "hello\n");

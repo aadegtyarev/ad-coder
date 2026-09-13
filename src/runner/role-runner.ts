@@ -28,7 +28,10 @@ export interface RunRoleOptions {
   /** Resume the durable lane operation already admitted in `session`. */
   resumeActiveOperation?: boolean;
   stageLimitInitial?: Partial<
-    Pick<StageLimitSnapshot, "elapsedMs" | "modelTurns" | "toolTurns" | "inputTokens" | "costUsd">
+    Pick<
+      StageLimitSnapshot,
+      "elapsedMs" | "modelTurns" | "toolTurns" | "inputTokens" | "lastInputTokens" | "costUsd"
+    >
   >;
   stageLimitObserver?: (snapshot: Readonly<StageLimitSnapshot>) => void;
   ledgerSink?: LedgerSink;

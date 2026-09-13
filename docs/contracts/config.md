@@ -5,7 +5,9 @@ Stage budgets are cumulative across durable resume. The configurable
 `finalResponseReserveToolTurns`, and `finalResponseReserveInputTokens` settings
 protect closeout capacity. Once a
 bounded stage enters any enabled reserve, new tool calls fail with an instruction
-to return the final response while the reserved capacity remains available.
+to return the final response and following provider requests expose no tools while
+the reserved capacity remains available. Input admission uses the preceding
+provider request as its conservative next-request estimate.
 Zero disables each reserve independently.
 
 Rules the operator declared for ad-coder. A violation is always blocking.

@@ -17,7 +17,9 @@ All notable changes to ad-coder are recorded here. The format follows
   tool turns so bounded roles retain capacity to return their final result.
 - Added an input-token closeout reserve and increased the default model-turn
   reserve from two to four after dogfood showed context-heavy turns and retried
-  tool batches exhausting the prior closeout allowance.
+  tool batches exhausting the prior closeout allowance. Final reserved requests
+  now expose no tools, preventing another rejected tool loop; input closeout uses
+  the preceding request to anticipate context growth.
 
 - Added a headless named model-inventory layer and CLI selection that atomically
   pairs a provider/model registry with its role-by-complexity routing profile.

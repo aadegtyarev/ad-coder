@@ -297,7 +297,7 @@ export async function runRoleStandalone(params: {
     taskDigest: string;
     cumulativeUsage: Pick<
       StageLimitSnapshot,
-      "elapsedMs" | "modelTurns" | "toolTurns" | "inputTokens" | "costUsd"
+      "elapsedMs" | "modelTurns" | "toolTurns" | "inputTokens" | "lastInputTokens" | "costUsd"
     >;
     status: "running" | "paused" | "complete";
     result?: {
@@ -319,7 +319,7 @@ export async function runRoleStandalone(params: {
     ?
         | Pick<
             StageLimitSnapshot,
-            "elapsedMs" | "modelTurns" | "toolTurns" | "inputTokens" | "costUsd"
+            "elapsedMs" | "modelTurns" | "toolTurns" | "inputTokens" | "lastInputTokens" | "costUsd"
           >
         | undefined
     : never;
@@ -351,7 +351,13 @@ export async function runRoleStandalone(params: {
         checkpointPath,
         "standalone role is already complete",
       );
-    stageLimitInitial = prior.cumulativeUsage;
+    const cumulativeUsage = {
+      ...prior.cumulativeUsage,
+      lastInputTokens:
+        (prior.cumulativeUsage as { lastInputTokens?: number }).lastInputTokens ??
+        prior.cumulativeUsage.inputTokens,
+    };
+    stageLimitInitial = cumulativeUsage;
     if (prior.pause !== undefined) {
       const key: Record<StageLimitReason, keyof StageLimits | undefined> = {
         duration: "maxDurationMs",
@@ -376,7 +382,7 @@ export async function runRoleStandalone(params: {
     const { pause: _pause, ...resumed } = prior;
     checkpoint = store.writeVersionedJson(
       checkpointPath,
-      { ...resumed, status: "running" },
+      { ...resumed, cumulativeUsage, status: "running" },
       checkpoint.version,
     );
     session = await store.resumeSession(runId, BACKGROUND_CONTEXT);
@@ -395,6 +401,7 @@ export async function runRoleStandalone(params: {
           modelTurns: 0,
           toolTurns: 0,
           inputTokens: 0,
+          lastInputTokens: 0,
           costUsd: 0,
         },
         status: "running",
@@ -421,12 +428,20 @@ export async function runRoleStandalone(params: {
       ...(params.resumeExisting === true && { resumeActiveOperation: true }),
       ...(stageLimitInitial !== undefined && { stageLimitInitial }),
       stageLimitObserver: (snapshot) => {
-        const { elapsedMs, modelTurns, toolTurns, inputTokens, costUsd } = snapshot;
+        const { elapsedMs, modelTurns, toolTurns, inputTokens, lastInputTokens, costUsd } =
+          snapshot;
         checkpoint = store.writeVersionedJson(
           checkpointPath,
           {
             ...checkpoint.value,
-            cumulativeUsage: { elapsedMs, modelTurns, toolTurns, inputTokens, costUsd },
+            cumulativeUsage: {
+              elapsedMs,
+              modelTurns,
+              toolTurns,
+              inputTokens,
+              lastInputTokens,
+              costUsd,
+            },
           },
           checkpoint.version,
         );
@@ -447,13 +462,21 @@ export async function runRoleStandalone(params: {
           checkpointPath,
           "stage-limit failure did not provide resumable cumulative usage",
         );
-      const { elapsedMs, modelTurns, toolTurns, inputTokens, costUsd } = error.snapshot;
+      const { elapsedMs, modelTurns, toolTurns, inputTokens, lastInputTokens, costUsd } =
+        error.snapshot;
       store.writeVersionedJson(
         checkpointPath,
         {
           ...checkpoint.value,
           status: "paused",
-          cumulativeUsage: { elapsedMs, modelTurns, toolTurns, inputTokens, costUsd },
+          cumulativeUsage: {
+            elapsedMs,
+            modelTurns,
+            toolTurns,
+            inputTokens,
+            lastInputTokens,
+            costUsd,
+          },
           pause: {
             code: "stage_limit",
             reason: error.reason,

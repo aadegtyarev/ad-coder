@@ -8,18 +8,9 @@ Only unresolved work belongs here. Current behavior is in
 
 - [high] **Reserve stage capacity for synthesis and verification**: expose
   remaining cumulative time/model/tool/token/cost budgets to the active role
-  after tool turns and make the configurable reserve threshold trigger concise
-  synthesis instead of another tool call. Input-token reserve and a four-turn
-  model reserve are delivered; a counter-only reserve remains insufficient
-  because the runtime must distinguish tool continuation from the final model
-  response and collapse repeated rejected calls from one batch.
-
-- [high] **Compose task-specific role briefs in runtime**: model inventory
-  bootstrap currently relies on Orchestrator reading
-  `prompts/briefs/model-inventory-research.md`. Add deterministic prompt
-  composition so Researcher receives the versioned brief automatically and the
-  run records its digest; missing required briefs must block dependent benchmark
-  execution.
+  after tool turns. Input-token and four-turn reserves are delivered, and final
+  requests expose no tools after closeout. The remaining work is a concise live
+  budget projection for the role and activity stream.
 
 - [high] **Bound Researcher network fallbacks and expose deadlines**: dogfood run
   `590cb775-8e9d-43a1-944b-4cc9873b9538` spent 60s and 120s in opaque failed
