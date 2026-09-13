@@ -177,3 +177,16 @@ provisionally to Terra. Sol remains the complex Coder candidate, while Terra is
 retained for medium/complex review. The committed `codex-5.6-calibrated` snapshot
 uses Luna for trivial/bounded cells and medium coding, and Sol for deep research
 and complex coding; cells without controlled role samples remain hypotheses.
+
+
+On a repeated `pipeline-repair-regressions-v1` sample, Sol low Coder with Terra
+low Reviewer was accepted only after three coding rounds. All four machine checks
+passed, but Terra twice found regression tests that did not independently fail
+against HEAD. The eight stages used 439.54 s, 121,506 fresh plus 189,056 cached
+input, 15,655 output, 7,607 reasoning tokens, and $0.69747004. Sol coding alone
+cost $0.4120 and did not reduce review rounds, so medium coding stays on Luna low;
+Sol remains only the complex-coding hypothesis. Two retry handoffs fell back from
+incremental projection to full context, so projection failure is a separate
+harness cost defect. The task prompt now names its existing canonical contract
+and requires independently executable HEAD-failing tests, preventing Planner
+surface-name drift and masked assertions from consuming calibration rounds.
