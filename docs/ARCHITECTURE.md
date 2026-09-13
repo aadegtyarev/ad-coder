@@ -27,6 +27,7 @@ work lives in `docs/BACKLOG.md`.
 | Authentication | `src/auth/` | Store credentials outside target projects and expose secret-free status. |
 | Model inventories | `src/inventory/` | Validate and resolve a named atomic registry plus complexity-routing profile. |
 | Registry and profiles | `src/registry/`, `src/profiles/` | Resolve providers, models, role routing, and effective configuration. |
+| Portable user profile | `src/user-profile/` | Persist validated inventories, calibrated routing, and append-only economics behind atomic writes and a cross-process lock; expose deterministic import/export through the package and JSON CLI. |
 | Roles and prompts | `src/role.ts`, `src/prompts/`, `prompts/` | Validate roles and resolve built-in or project prompts. |
 | Runner | `src/runner/` | Execute one role turn with tools rooted at the target directory. |
 | Context | `src/context/` | Enforce context budgets and optional ad-coder-owned compaction. |

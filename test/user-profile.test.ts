@@ -115,6 +115,21 @@ test("appends economics records and rejects every history rewrite", async () => 
   expect((await profileStore.read()).economicRecords).toEqual([record, second]);
 });
 
+test("independent stores serialize concurrent economic appends", async () => {
+  const { file, store: first } = createStore();
+  const second = new FileUserProfileStore({ userHome: path.dirname(file), path: file });
+  await first.write(profile());
+  await Promise.all([
+    first.appendEconomicRecord(record),
+    second.appendEconomicRecord({ ...record, id: "price-2", value: 3 }),
+  ]);
+  expect((await first.read()).economicRecords.map(({ id }) => id).sort()).toEqual([
+    "price-1",
+    "price-2",
+  ]);
+  expect(fs.existsSync(`${file}.lock`)).toBe(false);
+});
+
 test("round-trips valid source URLs and imports them", () => {
   const expected = profile([record]);
   expected.economicRecords[0]!.source = "https://example.test/pricing";

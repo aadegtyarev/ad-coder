@@ -20,9 +20,13 @@ import type {
 const DIRECTORY_MODE = 0o700;
 const FILE_MODE = 0o600;
 const NOFOLLOW = fs.constants.O_NOFOLLOW ?? 0;
+const LOCK_WAIT_MS = 10_000;
+const STALE_LOCK_MS = 5 * 60_000;
 
 export interface FileUserProfileStoreOptions extends UserProfileStoreOptions {
   path?: string;
+  lockWaitMs?: number;
+  staleLockMs?: number;
 }
 
 export function defaultUserProfilePath(options: UserProfileStoreOptions): string {
@@ -70,6 +74,8 @@ async function removeTemporary(file: string): Promise<void> {
 /** A private, atomic user-level profile store. Its file is never an export target. */
 export class FileUserProfileStore {
   readonly path: string;
+  private readonly lockWaitMs: number;
+  private readonly staleLockMs: number;
   private queue: Promise<unknown> = Promise.resolve();
 
   constructor(options: FileUserProfileStoreOptions) {
@@ -87,6 +93,14 @@ export class FileUserProfileStore {
     if (!path.isAbsolute(selected))
       throw new UserProfileError("invalid_path", "profile", "user profile path must be absolute");
     this.path = path.resolve(selected);
+    this.lockWaitMs = options.lockWaitMs ?? LOCK_WAIT_MS;
+    this.staleLockMs = options.staleLockMs ?? STALE_LOCK_MS;
+    for (const [name, value] of [
+      ["lockWaitMs", this.lockWaitMs],
+      ["staleLockMs", this.staleLockMs],
+    ] as const)
+      if (!Number.isSafeInteger(value) || value < 0)
+        throw new UserProfileError("invalid_profile", name, `${name} must be non-negative`);
   }
 
   async read(): Promise<UserProfile> {
@@ -113,27 +127,31 @@ export class FileUserProfileStore {
 
   async write(value: unknown): Promise<UserProfile> {
     const profile = parseUserProfile(value);
-    return this.serial(async () => {
-      const current = await this.read();
-      this.assertJournalPrefix(current, profile);
-      if (encodeUserProfile(current) !== encodeUserProfile(profile)) await this.publish(profile);
-      return profile;
-    });
+    return this.serial(() =>
+      this.withLock(async () => {
+        const current = await this.read();
+        this.assertJournalPrefix(current, profile);
+        if (encodeUserProfile(current) !== encodeUserProfile(profile)) await this.publish(profile);
+        return profile;
+      }),
+    );
   }
 
   async appendEconomicRecord(value: unknown): Promise<UserProfile> {
     const record = parseEconomicRecord(value);
-    return this.serial(async () => {
-      const current = await this.read();
-      if (current.economicRecords.some((entry) => entry.id === record.id))
-        throw new UserProfileError("conflict", record.id, "economic record id already exists");
-      const next = parseUserProfile({
-        ...current,
-        economicRecords: [...current.economicRecords, record],
-      });
-      await this.publish(next);
-      return next;
-    });
+    return this.serial(() =>
+      this.withLock(async () => {
+        const current = await this.read();
+        if (current.economicRecords.some((entry) => entry.id === record.id))
+          throw new UserProfileError("conflict", record.id, "economic record id already exists");
+        const next = parseUserProfile({
+          ...current,
+          economicRecords: [...current.economicRecords, record],
+        });
+        await this.publish(next);
+        return next;
+      }),
+    );
   }
 
   async previewImport(value: unknown, mode: ImportMode): Promise<UserProfileImportPreview> {
@@ -141,14 +159,16 @@ export class FileUserProfileStore {
   }
 
   async import(value: unknown, mode: ImportMode): Promise<UserProfile> {
-    return this.serial(async () => {
-      const current = await this.read();
-      const result = requireImportResult(previewUserProfileImport(current, value, mode));
-      const validated = parseUserProfile(result);
-      if (encodeUserProfile(current) !== encodeUserProfile(validated))
-        await this.publish(validated);
-      return validated;
-    });
+    return this.serial(() =>
+      this.withLock(async () => {
+        const current = await this.read();
+        const result = requireImportResult(previewUserProfileImport(current, value, mode));
+        const validated = parseUserProfile(result);
+        if (encodeUserProfile(current) !== encodeUserProfile(validated))
+          await this.publish(validated);
+        return validated;
+      }),
+    );
   }
 
   /** A failure-injection seam for subclasses; publication has not occurred when this runs. */
@@ -168,6 +188,75 @@ export class FileUserProfileStore {
     const next = this.queue.then(operation, operation);
     this.queue = next.catch(() => undefined);
     return next;
+  }
+
+  private async withLock<T>(operation: () => Promise<T>): Promise<T> {
+    await this.ensureDirectory();
+    const lockPath = `${this.path}.lock`;
+    const started = Date.now();
+    while (true) {
+      let handle: fs.promises.FileHandle | undefined;
+      try {
+        handle = await fs.promises.open(
+          lockPath,
+          fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | NOFOLLOW,
+          FILE_MODE,
+        );
+        const stat = await handle.stat();
+        if (!stat.isFile() || stat.nlink !== 1)
+          throw new UserProfileError("unsafe_file", "lock", "user profile lock is unsafe");
+        await handle.writeFile(`${JSON.stringify({ pid: process.pid, createdAt: Date.now() })}\n`);
+        await handle.sync();
+        return await operation();
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+          if (error instanceof UserProfileError) throw error;
+          throw storeError(error);
+        }
+        if (await this.removeAbandonedLock(lockPath)) continue;
+        if (Date.now() - started >= this.lockWaitMs)
+          throw new UserProfileError("io_error", "lock", "timed out waiting for user profile lock");
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      } finally {
+        if (handle !== undefined) {
+          const stat = await handle.stat().catch(() => undefined);
+          await handle.close().catch(() => undefined);
+          if (stat !== undefined) {
+            const current = await fs.promises.lstat(lockPath).catch(() => undefined);
+            if (current?.dev === stat.dev && current.ino === stat.ino)
+              await fs.promises.unlink(lockPath).catch(() => undefined);
+          }
+        }
+      }
+    }
+  }
+
+  private async removeAbandonedLock(lockPath: string): Promise<boolean> {
+    try {
+      const handle = await fs.promises.open(lockPath, fs.constants.O_RDONLY | NOFOLLOW);
+      try {
+        const stat = await handle.stat();
+        if (!stat.isFile() || stat.nlink !== 1)
+          throw new UserProfileError("unsafe_file", "lock", "user profile lock is unsafe");
+        if (Date.now() - stat.mtimeMs < this.staleLockMs) return false;
+        const metadata = JSON.parse(await handle.readFile("utf8")) as { pid?: unknown };
+        if (typeof metadata.pid !== "number" || metadata.pid <= 0) return false;
+        try {
+          process.kill(metadata.pid, 0);
+          return false;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ESRCH") return false;
+        }
+      } finally {
+        await handle.close();
+      }
+      await fs.promises.unlink(lockPath);
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
+      if (error instanceof UserProfileError) throw error;
+      throw storeError(error);
+    }
   }
 
   private async ensureDirectory(): Promise<void> {
