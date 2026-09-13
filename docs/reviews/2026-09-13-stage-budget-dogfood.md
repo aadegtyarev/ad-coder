@@ -62,3 +62,21 @@ were admitted; the session artifact was about 462 KB. This is materially bounded
 versus the earlier 180-second/26-command attempt, but it still produced no usable
 plan. Further savings therefore require a task-specific reconnaissance tool/result
 projection rather than more prompt wording or a larger limit.
+### Task-specific reconnaissance projection
+
+After the bounded Planner still spent 12 admitted tool calls without producing a
+plan, the next optimization moved task lookup into a native tool instead of adding
+more prompt instructions. `search_project` batches literal symbols, config keys,
+error strings, and contract terms; ranks matching files; and bounds term count,
+per-line excerpts, returned matches, Git output, and final result bytes. It also
+includes untracked files so review can see newly added implementation. The normal
+`read`/`bash` path remains available when the projection is insufficient.
+
+Two focused native Reviewer attempts did not produce a verdict. The first hit
+the 12-tool-turn ceiling after about 40 seconds; a narrower retry hit the
+8-model-turn ceiling after about 90 seconds despite allowing 20 tool turns.
+Both emitted only heartbeat at the standalone CLI. The bounded stops prevented
+another multi-hour run, but they confirm that standalone semantic activity and
+role-turn efficiency remain unresolved. Local review then caught and fixed two
+projection defects: Git search now treats task terms literally, and result
+metadata reports truncation caused by either match-count or byte ceilings.

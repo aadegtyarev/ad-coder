@@ -46,6 +46,7 @@ import { SUBMIT_VERDICT_TOOL_NAME } from "../src/orchestration/verdict";
 import { RunCoordinator } from "../src/project-operations/run-coordinator";
 import { ProjectStore } from "../src/project-store/project-store";
 import { EXPLORE_PROJECT_TOOL_NAME } from "../src/project-tools/explore";
+import { SEARCH_PROJECT_TOOL_NAME } from "../src/project-tools/search";
 import type { Role } from "../src/role";
 import { defineRole } from "../src/role";
 import { ProviderLimitError } from "../src/runner/errors";
@@ -191,6 +192,7 @@ test("startOrchestrator preserves the resolved seed thinking level", async () =>
   expect(captured?.activeToolNames).toBeUndefined();
   expect(capturedToolNames).toEqual([
     EXPLORE_PROJECT_TOOL_NAME,
+    SEARCH_PROJECT_TOOL_NAME,
     WEB_SEARCH_TOOL_NAME,
     WEB_READ_TOOL_NAME,
     INSPECT_IMAGE_TOOL_NAME,

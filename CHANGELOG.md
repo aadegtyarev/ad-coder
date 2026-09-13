@@ -8,6 +8,8 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ### Added
 
+- Added `search_project`, a configurable ranked and byte-bounded task
+  reconnaissance projection for all native pipeline roles.
 - Added a zero-disabled per-stage limit controller for duration, model turns,
   tool turns, input tokens, and provider-reported cost.
 - Wired finite stage-budget defaults through the runner, durable coordinator,

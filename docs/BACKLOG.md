@@ -25,7 +25,9 @@ Only unresolved work belongs here. Current behavior is in
   dogfood runs and unchanged Reviewer/gate outcomes. Coder and Reviewer now use
   focused-first test guidance and avoid repeated broad reconnaissance; bounded
   Planner reconnaissance now batches reads and fails closed on unresolved gaps.
-  Bounded task-specific tool result projections and comparative dogfood remain.
+  `search_project` now supplies a ranked, byte-bounded task projection including
+  tracked modifications and untracked additions. Comparative dogfood and broader
+  role-specific handoff projections remain.
 
 - [high] **Complete workflow-module extraction** (`src/workflows/`,
   `src/orchestration/`, `src/cli/resolve-config.ts`): conversational activation
