@@ -211,3 +211,20 @@ $0.21419568. Orchestrator added 8,268 fresh plus 9,600 cached input, 661 output,
 correct but the route and duplicate verification were inefficient for a bounded
 refactor. Orchestrator now treats a terminal approved report with named passing
 checks as sufficient evidence unless it is missing, stale, or contradictory.
+
+
+### Polyglot holdouts — 2026-09-13
+
+Two repository-independent trivial repairs extend the corpus beyond TypeScript.
+For Python stable label normalization, Luna low Coder passed all five machine
+checks and Terra low approved independently: 74,515 input, 3,991 output, 1,896
+reasoning tokens, and $0.06893012 total. For Rust Unicode-safe prefixing, the
+same pairing passed all four checks and independent review: 46,404 input, 3,062
+output, 1,470 reasoning tokens, and $0.06204084 total. Both completed in one
+coding round.
+
+Luna is therefore the supported trivial Coder default across TypeScript,
+Python, and Rust samples. Terra remains a reliable Reviewer, but its share was
+91% of Python cost and 95% of Rust cost. This supports an adaptive compact
+review path for truly trivial tasks after risk classification; it does not
+support removing independent review from security-sensitive or broad changes.
