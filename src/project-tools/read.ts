@@ -54,7 +54,7 @@ function clip(value: string, maxBytes: number): string {
 }
 
 function safeSegments(requestedPath: string): string[] {
-  if (requestedPath === "" || path.isAbsolute(requestedPath))
+  if (requestedPath === "" || requestedPath.includes("\0") || path.isAbsolute(requestedPath))
     throw new Error("path_outside_target");
   const segments = requestedPath.split(/[\\/]/u);
   if (segments.some((segment) => segment === "" || segment === "." || segment === ".."))

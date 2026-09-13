@@ -125,3 +125,10 @@ The completed mitigation opens every component descriptor-relative with
 `O_NOFOLLOW`, retains opened parents across pathname swaps, `fstat`s the opened
 file, and reads at most `maxFileBytes + 1` from that same descriptor. Deterministic
 tests cover ancestor replacement and post-stat growth.
+
+The final native Reviewer completed in about 98 seconds for $0.12798840 after
+running all gates in one combined shell call. It found one blocker: a NUL inside
+a path segment was truncated at the FFI boundary, so `..\0ignored` reached
+`openat` as `..`. The tool now rejects NUL before native traversal and a direct
+regression test preserves the boundary. Reviewer otherwise confirmed telemetry
+propagation, renderer cleanup, exports, contracts, and 406 passing tests.

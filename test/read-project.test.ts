@@ -80,6 +80,19 @@ test("read_project caps growth after descriptor stat", async () => {
   }
 });
 
+test("read_project rejects NUL before native path traversal", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "ad-coder-read-"));
+  try {
+    const result = await execute(buildReadProjectTool(dir), [{ path: "..\0ignored/secret.txt" }]);
+    expect(result.content[0]).toEqual({
+      type: "text",
+      text: "project read failed: path_outside_target",
+    });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("read_project keeps an opened parent when its pathname is swapped", async () => {
   if (process.platform !== "linux" && process.platform !== "darwin") return;
   const dir = await mkdtemp(path.join(tmpdir(), "ad-coder-read-"));
