@@ -1296,7 +1296,9 @@ async function roleCommand(
         targetDir: configOptions.targetDir,
         task,
         runId: standaloneRunId,
-        tools: config.pluginToolsForModel?.(spec.model) ?? config.pluginTools,
+        ...((config.pluginToolsForModel?.(spec.model) ?? config.pluginTools) !== undefined && {
+          tools: config.pluginToolsForModel?.(spec.model) ?? config.pluginTools,
+        }),
         activityConsumer: renderer.consume,
         ...(config.compaction !== undefined && { compaction: config.compaction }),
         ...(config.projectStoreConfig !== undefined && {
