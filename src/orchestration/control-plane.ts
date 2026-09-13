@@ -1482,6 +1482,12 @@ export function buildControlPlaneTools(control: OrchestratorControlPlane): Tool[
               readFilesTruncated: metric.readFilesTruncated,
               diffBytes: metric.diffBytes,
               contextStrategy: metric.contextStrategy,
+              ...(metric.pipelineContextStrategy !== undefined && {
+                pipelineContextStrategy: metric.pipelineContextStrategy,
+              }),
+              ...(metric.pipelineContextFallbackReason !== undefined && {
+                pipelineContextFallbackReason: metric.pipelineContextFallbackReason,
+              }),
             })),
             retryAfterMs: report.run.externalLimit?.retryAfterMs,
             backlogCount: report.backlog.count,

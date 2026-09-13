@@ -146,9 +146,9 @@ arguments, or headers. Tool-activity projections enter no ledger or checkpoint;
 every externally sourced event string and complete record is bounded before
 retention or delivery. Workflow checkpoints persist validated state, bounded
 normalized research provenance, and safe per-stage provider/model labels,
-duration, token categories, provider-reported cost, and context strategy. Conversation transcripts may contain user and
-assistant content and must be treated as sensitive local runtime data; they are
-ignored by Git.
+duration, token categories, provider-reported cost, and context strategy.
+Conversation transcripts may contain user and assistant content and must be
+treated as sensitive local runtime data; they are ignored by Git.
 
 ## Configuration model
 
@@ -175,6 +175,17 @@ ad-coder disables the framework's built-in compaction and owns its context
 policy. Auto mode summarizes only the evicted head through a configured
 summarizer. Disabled mode never summarizes and halts when the full branch no
 longer fits. Cross-provider summarization requires explicit authorization.
+
+Pipeline handoff context is a separate policy from transcript compaction. The
+first Reviewer remains broad. Later Coder and Reviewer turns default to bounded
+focused handoffs containing unresolved findings, the Coder response, affected
+contracts, safe path/count metadata, and a bounded credential-redacted diff.
+`incremental`, `full`, and `off` modes are configurable; `off` leaves breadth
+under manual workflow control. Missing/truncated evidence, sensitive or untracked
+paths, review-control changes, risk changes, and configured material-diff
+thresholds widen the handoff with a stable reason. Only bounded metadata, a diff
+digest, and the decision persist in workflow state and reports; raw patches do
+not.
 
 The ledger records provider-reported cost rather than recomputing it. Session
 limits are enforced at the shared model-call boundary, including tool follow-up

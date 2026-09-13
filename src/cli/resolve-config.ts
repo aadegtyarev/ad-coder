@@ -16,6 +16,8 @@ import { StageLimitController, type StageLimits } from "../orchestration/stage-l
 import type {
   Complexity,
   PipelineConfig,
+  PipelineContextConfig,
+  PipelineContextMode,
   RoleSpec,
   SurfaceAnalysisLimits,
 } from "../orchestration/types";
@@ -69,6 +71,11 @@ export type BuiltInPluginName = "explore" | "web" | "vision";
 
 /** maxRounds default when the caller does not override it. */
 const DEFAULT_MAX_ROUNDS = 2;
+export const DEFAULT_PIPELINE_CONTEXT_CONFIG = {
+  mode: "incremental",
+  maxFocusedDiffBytes: 64 * 1024,
+  projection: { maxPaths: 128, maxPathBytes: 1024, maxAggregateBytes: 32 * 1024 },
+} as const satisfies PipelineContextConfig;
 /** The complexity every pre-plan role and later fallback routes on by default. */
 const DEFAULT_COMPLEXITY: Complexity = "medium";
 export const DEFAULT_REQUEST_TIMEOUT_MS = 120_000;
@@ -146,6 +153,12 @@ export interface ResolvePipelineConfigOptions {
   requestTimeoutMs?: number;
   stageLimits?: StageLimits;
   compactionMode?: CompactionMode;
+  pipelineContextMode?: PipelineContextMode;
+  /** Zero disables only the material-diff escalation trigger. */
+  pipelineContextMaxDiffBytes?: number;
+  pipelineContextMaxPaths?: number;
+  pipelineContextMaxPathBytes?: number;
+  pipelineContextMaxAggregateBytes?: number;
   summarizerModel?: string;
   allowCrossProviderSummarization?: boolean;
   maxRounds?: number;
@@ -288,6 +301,29 @@ function resolveConfig(
   const mid = options.midModel ?? (provider === "openai-codex" ? "codex-terra" : defaultModel);
   const cheap = options.cheapModel ?? (provider === "openai-codex" ? "codex-luna" : defaultModel);
   const compactionMode = options.compactionMode ?? "auto";
+  const pipelineContextMode = options.pipelineContextMode ?? DEFAULT_PIPELINE_CONTEXT_CONFIG.mode;
+  if (!(["incremental", "full", "off"] as const).includes(pipelineContextMode)) {
+    throw new Error(`unknown pipeline context mode "${String(pipelineContextMode)}"`);
+  }
+  const pipelineContextMaxDiffBytes =
+    options.pipelineContextMaxDiffBytes ?? DEFAULT_PIPELINE_CONTEXT_CONFIG.maxFocusedDiffBytes;
+  if (!Number.isSafeInteger(pipelineContextMaxDiffBytes) || pipelineContextMaxDiffBytes < 0) {
+    throw new Error("pipelineContextMaxDiffBytes must be a non-negative safe integer");
+  }
+  const projectionValues = {
+    maxPaths:
+      options.pipelineContextMaxPaths ?? DEFAULT_PIPELINE_CONTEXT_CONFIG.projection.maxPaths,
+    maxPathBytes:
+      options.pipelineContextMaxPathBytes ??
+      DEFAULT_PIPELINE_CONTEXT_CONFIG.projection.maxPathBytes,
+    maxAggregateBytes:
+      options.pipelineContextMaxAggregateBytes ??
+      DEFAULT_PIPELINE_CONTEXT_CONFIG.projection.maxAggregateBytes,
+  };
+  for (const [name, value] of Object.entries(projectionValues)) {
+    if (!Number.isSafeInteger(value) || value <= 0)
+      throw new Error(`pipelineContext.${name} must be a positive safe integer`);
+  }
   if (compactionMode === "cache-aware") {
     throw new Error('context compaction mode "cache-aware" is not supported yet');
   }
@@ -568,6 +604,11 @@ function resolveConfig(
               allowCrossProviderSummarization: true,
             }),
           },
+    pipelineContext: {
+      mode: pipelineContextMode,
+      maxFocusedDiffBytes: pipelineContextMaxDiffBytes,
+      projection: projectionValues,
+    },
     routing: {
       profile,
       registry,
@@ -625,6 +666,26 @@ function resolveConfig(
       compactionMode: {
         value: compactionMode,
         source: options.compactionMode !== undefined ? "cli" : "built-in-default",
+      },
+      pipelineContextMode: {
+        value: pipelineContextMode,
+        source: options.pipelineContextMode !== undefined ? "cli" : "built-in-default",
+      },
+      pipelineContextMaxDiffBytes: {
+        value: pipelineContextMaxDiffBytes,
+        source: options.pipelineContextMaxDiffBytes !== undefined ? "cli" : "built-in-default",
+      },
+      pipelineContextMaxPaths: {
+        value: projectionValues.maxPaths,
+        source: options.pipelineContextMaxPaths !== undefined ? "cli" : "built-in-default",
+      },
+      pipelineContextMaxPathBytes: {
+        value: projectionValues.maxPathBytes,
+        source: options.pipelineContextMaxPathBytes !== undefined ? "cli" : "built-in-default",
+      },
+      pipelineContextMaxAggregateBytes: {
+        value: projectionValues.maxAggregateBytes,
+        source: options.pipelineContextMaxAggregateBytes !== undefined ? "cli" : "built-in-default",
       },
       requestTimeoutMs: {
         value: requestTimeoutMs,

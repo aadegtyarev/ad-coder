@@ -23,7 +23,12 @@ import {
 } from "../src/orchestration/follow-up";
 import { runPipeline } from "../src/orchestration/pipeline";
 import { parsePlan, SUBMIT_PLAN_TOOL_NAME } from "../src/orchestration/plan";
-import { applyTransition, autoDriver, createWorkflowSession } from "../src/orchestration/session";
+import {
+  applyTransition,
+  autoDriver,
+  createWorkflowSession,
+  selectPipelineContext,
+} from "../src/orchestration/session";
 import type {
   AvailableTransition,
   PipelineRouting,
@@ -46,6 +51,45 @@ import { SessionLimitController, SessionLimitError } from "../src/session-limits
 
 const CONTEXT_WINDOW = 200_000;
 const BUDGET = { maxTokens: 100_000, reserveTokens: 10_000, keepRecentTokens: 20_000 } as const;
+
+test("incremental pipeline context keeps retries focused and widens deterministic hazards", () => {
+  const base = {
+    round: 2,
+    diffBytes: 100,
+    changedFiles: ["src/a.ts"],
+    changedFilesTruncated: 0,
+    evidencePresent: true,
+  } as const;
+  expect(selectPipelineContext(base)).toEqual({ selection: "focused" });
+  expect(selectPipelineContext({ ...base, changedFiles: ["docs/contracts/quality.md"] })).toEqual({
+    selection: "full",
+    fallbackReason: "scope_drift",
+  });
+  expect(selectPipelineContext({ ...base, changedFiles: [".env.local"] })).toEqual({
+    selection: "full",
+    fallbackReason: "projection_redacted",
+  });
+  expect(selectPipelineContext({ ...base, evidencePresent: false })).toEqual({
+    selection: "full",
+    fallbackReason: "insufficient_evidence",
+  });
+  expect(selectPipelineContext({ ...base, riskChanged: true })).toEqual({
+    selection: "full",
+    fallbackReason: "risk_changed",
+  });
+  expect(
+    selectPipelineContext({
+      ...base,
+      mode: { mode: "incremental", maxFocusedDiffBytes: 99 },
+    }),
+  ).toEqual({ selection: "full", fallbackReason: "material_diff" });
+  expect(
+    selectPipelineContext({
+      ...base,
+      mode: { mode: "incremental", maxFocusedDiffBytes: 0 },
+    }),
+  ).toEqual({ selection: "focused" });
+});
 
 interface Fixture {
   faux: FauxProviderHandle;
@@ -658,6 +702,7 @@ test("pipeline aggregates exact multi-response stage observations in stable orde
       readFilesTruncated: 0,
       diffBytes: cumulativeDiff,
       contextStrategy: "disabled-then-halt",
+      pipelineContextStrategy: "broad",
     },
     {
       stage: "review:1",
@@ -682,6 +727,7 @@ test("pipeline aggregates exact multi-response stage observations in stable orde
       readFilesTruncated: 0,
       diffBytes: cumulativeDiff,
       contextStrategy: "disabled-then-halt",
+      pipelineContextStrategy: "broad",
     },
   ]);
 });
@@ -689,6 +735,15 @@ test("pipeline aggregates exact multi-response stage observations in stable orde
 test("two rounds: reviewer round-1 issue is threaded into the coder round-2 prompt", async () => {
   const fx = fixture();
   const coderPrompts: string[] = [];
+  const reviewerPrompts: string[] = [];
+  execFileSync("git", ["init", "-q"], { cwd: fx.targetDir });
+  execFileSync("git", ["config", "user.name", "Test"], { cwd: fx.targetDir });
+  execFileSync("git", ["config", "user.email", "test@example.invalid"], {
+    cwd: fx.targetDir,
+  });
+  fs.writeFileSync(path.join(fx.targetDir, "baseline.txt"), "baseline\n");
+  execFileSync("git", ["add", "baseline.txt"], { cwd: fx.targetDir });
+  execFileSync("git", ["commit", "-qm", "baseline"], { cwd: fx.targetDir });
   const coderStep =
     (label: string): FauxResponseFactory =>
     (context) => {
@@ -703,11 +758,19 @@ test("two rounds: reviewer round-1 issue is threaded into the coder round-2 prom
     summary: "needs a fix",
   };
   const approve: Verdict = { status: "approved", issues: [], summary: "fixed" };
+  const reviewerStep =
+    (verdict: Verdict): FauxResponseFactory =>
+    (context) => {
+      reviewerPrompts.push(lastUserText(context));
+      return fauxAssistantMessage(fauxToolCall(SUBMIT_VERDICT_TOOL_NAME, verdict));
+    };
   fx.faux.setResponses([
     coderStep("round1"),
-    ...reviewerTurn(changes),
+    reviewerStep(changes),
+    fauxAssistantMessage("review complete"),
     coderStep("round2"),
-    ...reviewerTurn(approve),
+    reviewerStep(approve),
+    fauxAssistantMessage("review complete"),
   ]);
 
   const result = await runPipeline({
@@ -722,6 +785,13 @@ test("two rounds: reviewer round-1 issue is threaded into the coder round-2 prom
   expect(result.rounds).toBe(2);
   expect(coderPrompts).toHaveLength(2);
   expect(coderPrompts[1]).toContain("add a null check on the input");
+  expect(reviewerPrompts).toHaveLength(2);
+  expect(reviewerPrompts[0]).toContain("implement Y");
+  expect(reviewerPrompts[1]).toContain("Focused re-review");
+  expect(reviewerPrompts[1]).toContain("add a null check on the input");
+  expect(reviewerPrompts[1]).toContain("Bounded changed diff");
+  expect(reviewerPrompts[1]).not.toContain("implement Y");
+  expect(result.stageMetrics?.at(-1)?.pipelineContextStrategy).toBe("focused");
 });
 
 test("maxRounds exhausted returns approved:false without throwing", async () => {
