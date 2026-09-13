@@ -30,6 +30,16 @@ export interface BackgroundEventPage {
   nextCursor: number;
   gap: boolean;
 }
+/** A bounded push hint. Callers retain explicit cursor polling for reconnect and backlog reads. */
+export interface BackgroundRunNotice extends BackgroundEventPage {
+  type: "background_events";
+  runId: string;
+  /** Events omitted by retention before this subscriber could observe them. */
+  droppedEvents: number;
+  /** More persisted events exist beyond this bounded notice. */
+  pending: boolean;
+}
+export type BackgroundRunNoticeConsumer = (notice: BackgroundRunNotice) => void | Promise<void>;
 export interface BackgroundRunStatus {
   runId: string;
   lifecycle: BackgroundLifecycle;
@@ -48,7 +58,8 @@ export type BackgroundRunErrorCode =
   | "closed"
   | "invalid_request"
   | "not_terminal"
-  | "launch_failed";
+  | "launch_failed"
+  | "state_unavailable";
 export class BackgroundRunError extends Error {
   override readonly name = "BackgroundRunError";
   readonly detail = "background_run";
@@ -67,6 +78,8 @@ export interface BackgroundRunLimits {
   maxEventsPerRun: number;
   maxPageSize: number;
   maxPageBytes: number;
+  /** Maximum undelivered notice pages retained for each subscriber. */
+  subscriberQueueCapacity: number;
   maxRunMs: number;
   closeDrainMs: number;
   /** Lease heartbeat window used to distinguish a live detached worker from abandonment. */
@@ -80,6 +93,7 @@ export const DEFAULT_BACKGROUND_RUN_LIMITS: Readonly<BackgroundRunLimits> = Obje
   maxEventsPerRun: 0,
   maxPageSize: 32,
   maxPageBytes: 16 * 1024,
+  subscriberQueueCapacity: 16,
   maxRunMs: 0,
   closeDrainMs: 0,
   leaseMs: 15_000,
@@ -111,6 +125,27 @@ interface Entry extends PersistedEntry {
   lease?: { workerId: string; heartbeatAt: number } | undefined;
   leaseTimer?: ReturnType<typeof setInterval>;
 }
+interface BackgroundSubscriber {
+  consumer: BackgroundRunNoticeConsumer;
+  cursors: Map<string, number>;
+  queue: BackgroundRunNotice[];
+  active: boolean;
+  draining: boolean;
+}
+
+const MAX_BACKGROUND_EVENT_PAGE_EVENT: BackgroundRunEvent = {
+  sequence: Number.MAX_SAFE_INTEGER,
+  runId: "x".repeat(256),
+  lifecycle: "stage_changed",
+  timestamp: Number.MAX_SAFE_INTEGER,
+  stage: "security",
+  errorCode: "deadline_exceeded",
+  metrics: { steps: Number.MAX_SAFE_INTEGER, totalCost: Number.MAX_VALUE },
+};
+/** Enough room for every schema-valid event, so cursor polling always advances. */
+export const MIN_BACKGROUND_EVENT_PAGE_BYTES =
+  Buffer.byteLength(JSON.stringify(MAX_BACKGROUND_EVENT_PAGE_EVENT)) + 3;
+
 let processActive = 0;
 const targetTails = new Map<string, Promise<void>>();
 
@@ -121,6 +156,8 @@ export class BackgroundRunManager {
   private readonly ownerId: string;
   private readonly stateDir?: string;
   private readonly store?: ProjectStore;
+  private readonly subscribers = new Set<BackgroundSubscriber>();
+  private watcher: fs.FSWatcher | undefined;
   private closed = false;
   constructor(
     private readonly execute: (
@@ -141,13 +178,19 @@ export class BackgroundRunManager {
       this.limits.maxEventsPerRun,
       this.limits.maxPageSize,
       this.limits.maxPageBytes,
+      this.limits.subscriberQueueCapacity,
       this.limits.maxRunMs,
       this.limits.closeDrainMs,
       this.limits.leaseMs,
     ];
     if (numericLimits.some((value) => !Number.isSafeInteger(value) || value < 0))
       throw new BackgroundRunError("invalid_request");
-    if (this.limits.maxPageSize <= 0 || this.limits.maxPageBytes <= 0 || this.limits.leaseMs <= 0)
+    if (
+      this.limits.maxPageSize <= 0 ||
+      this.limits.maxPageBytes < MIN_BACKGROUND_EVENT_PAGE_BYTES ||
+      this.limits.subscriberQueueCapacity <= 0 ||
+      this.limits.leaseMs <= 0
+    )
       throw new BackgroundRunError("invalid_request");
     if (!(["allow", "reject", "serialize"] as const).includes(this.limits.sameTargetPolicy))
       throw new BackgroundRunError("invalid_request");
@@ -333,6 +376,33 @@ export class BackgroundRunManager {
   async wait(runId: string): Promise<void> {
     await this.owned(runId).promise;
   }
+  /**
+   * Subscribe to future owner-scoped, content-free lifecycle pages.
+   *
+   * Each callback receives pages through an asynchronous bounded per-subscriber queue.
+   * Notifications are hints only: reconnect and backlog consumption continue to use events(runId, cursor).
+   */
+  subscribe(consumer: BackgroundRunNoticeConsumer): () => void {
+    if (this.closed) throw new BackgroundRunError("closed");
+    if (typeof consumer !== "function") throw new BackgroundRunError("invalid_request");
+    const subscriber: BackgroundSubscriber = {
+      consumer,
+      cursors: new Map(),
+      queue: [],
+      active: true,
+      draining: false,
+    };
+    for (const entry of this.entries.values())
+      subscriber.cursors.set(entry.runId, entry.nextSequence - 1);
+    this.subscribers.add(subscriber);
+    try {
+      this.ensureWatcher();
+    } catch (error) {
+      this.subscribers.delete(subscriber);
+      throw error;
+    }
+    return () => this.removeSubscriber(subscriber);
+  }
   status(runId: string): BackgroundRunStatus {
     return this.statusOf(this.owned(runId));
   }
@@ -340,23 +410,7 @@ export class BackgroundRunManager {
     const entry = this.owned(runId);
     if (!Number.isSafeInteger(cursor) || cursor < 0 || !Number.isSafeInteger(limit) || limit < 0)
       throw new BackgroundRunError("invalid_request");
-    const countCap =
-      this.limits.maxPageSize > 0
-        ? Math.min(limit || this.limits.maxPageSize, this.limits.maxPageSize)
-        : limit || Number.MAX_SAFE_INTEGER;
-    const oldest = entry.events[0]?.sequence ?? entry.nextSequence;
-    const gap = cursor + 1 < oldest;
-    const effective = gap ? oldest - 1 : cursor;
-    const events: BackgroundRunEvent[] = [];
-    let bytes = 2;
-    for (const event of entry.events) {
-      if (event.sequence <= effective || events.length >= countCap) continue;
-      const size = Buffer.byteLength(JSON.stringify(event)) + 1;
-      if (this.limits.maxPageBytes > 0 && bytes + size > this.limits.maxPageBytes) break;
-      events.push({ ...event });
-      bytes += size;
-    }
-    return { events: events.map(copyEvent), nextCursor: events.at(-1)?.sequence ?? effective, gap };
+    return this.eventsOf(entry, cursor, limit || this.limits.maxPageSize);
   }
   result(runId: string): BackgroundRunOutcome {
     const entry = this.owned(runId);
@@ -376,6 +430,9 @@ export class BackgroundRunManager {
   async close(preserveWorkers = false): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    this.stopWatcher();
+    for (const subscriber of this.subscribers) this.deactivateSubscriber(subscriber);
+    this.subscribers.clear();
     for (const entry of this.entries.values())
       if (!preserveWorkers && entry.active && !isTerminal(entry.lifecycle))
         this.cancel(entry.runId);
@@ -409,9 +466,11 @@ export class BackgroundRunManager {
     };
   }
   private owned(runId: string): Entry {
-    const e = this.entries.get(runId);
-    if (e === undefined) throw new BackgroundRunError("not_found");
-    return e;
+    const current = this.entries.get(runId);
+    if (current !== undefined && !current.active) this.refresh(runId);
+    const entry = this.entries.get(runId);
+    if (entry === undefined) throw new BackgroundRunError("not_found");
+    return entry;
   }
   private append(
     e: Entry,
@@ -428,6 +487,7 @@ export class BackgroundRunManager {
     if (this.limits.maxEventsPerRun > 0 && e.events.length > this.limits.maxEventsPerRun)
       e.events.splice(0, e.events.length - this.limits.maxEventsPerRun);
     this.persist(e);
+    this.notify(e);
   }
   private persist(e: Entry): void {
     if (this.stateDir === undefined) return;
@@ -450,6 +510,131 @@ export class BackgroundRunManager {
     const temp = `${file}.${crypto.randomUUID()}.tmp`;
     fs.writeFileSync(temp, JSON.stringify(data), { mode: 0o600 });
     fs.renameSync(temp, file);
+  }
+  private refresh(runId: string): void {
+    if (this.stateDir === undefined) return;
+    const file = path.join(this.stateDir, `${runId}.json`);
+    let persisted: PersistedEntry;
+    try {
+      const raw = JSON.parse(fs.readFileSync(file, "utf8"));
+      persisted = parsePersistedEntry(raw.value ?? raw);
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") return;
+      throw new BackgroundRunError("state_unavailable", runId);
+    }
+    if (persisted.ownerId !== this.ownerId) return;
+    const entry = this.entries.get(runId);
+    if (entry === undefined || entry.active) return;
+    const changed = persisted.nextSequence !== entry.nextSequence;
+    entry.lifecycle = persisted.lifecycle;
+    entry.events = persisted.events.map(copyEvent);
+    entry.nextSequence = persisted.nextSequence;
+    entry.metrics = copyMetrics(persisted.metrics);
+    entry.lease = persisted.lease;
+    entry.outcome = persisted.outcome === undefined ? undefined : copyOutcome(persisted.outcome);
+    if (changed) this.notify(entry);
+  }
+  private ensureWatcher(): void {
+    if (this.stateDir === undefined || this.watcher !== undefined) return;
+    try {
+      this.watcher = fs.watch(this.stateDir, (_event, filename) => {
+        try {
+          const name = filename?.toString();
+          if (name?.endsWith(".json")) {
+            const runId = name.slice(0, -5);
+            if (this.entries.has(runId)) this.refresh(runId);
+            return;
+          }
+          for (const runId of this.entries.keys()) this.refresh(runId);
+        } catch {
+          this.stopWatcher();
+          this.subscribers.clear();
+          console.error(
+            "ad-coder: background state became unavailable; use polling after state recovery",
+          );
+        }
+      });
+    } catch {
+      throw new BackgroundRunError("state_unavailable");
+    }
+  }
+  private stopWatcher(): void {
+    this.watcher?.close();
+    this.watcher = undefined;
+  }
+  private notify(entry: Entry): void {
+    for (const subscriber of this.subscribers) {
+      const cursor = subscriber.cursors.get(entry.runId) ?? 0;
+      const page = this.eventsOf(entry, cursor, this.limits.maxPageSize);
+      const pending = page.nextCursor < entry.nextSequence - 1;
+      if (page.events.length === 0 && !page.gap && !pending) continue;
+      const oldest = entry.events[0]?.sequence ?? entry.nextSequence;
+      const droppedEvents = page.gap ? Math.max(0, oldest - cursor - 1) : 0;
+      subscriber.cursors.set(entry.runId, page.nextCursor);
+      this.enqueue(subscriber, {
+        type: "background_events",
+        runId: entry.runId,
+        ...page,
+        droppedEvents,
+        pending,
+      });
+    }
+  }
+  private enqueue(subscriber: BackgroundSubscriber, notice: BackgroundRunNotice): void {
+    if (!subscriber.active) return;
+    if (subscriber.queue.length >= this.limits.subscriberQueueCapacity) {
+      const replaced = subscriber.queue.shift();
+      if (replaced !== undefined) {
+        notice.droppedEvents += replaced.droppedEvents + replaced.events.length;
+        notice.pending = true;
+      }
+    }
+    subscriber.queue.push(notice);
+    this.drainSubscriber(subscriber);
+  }
+  private drainSubscriber(subscriber: BackgroundSubscriber): void {
+    if (!subscriber.active || subscriber.draining) return;
+    subscriber.draining = true;
+    queueMicrotask(async () => {
+      try {
+        while (subscriber.active) {
+          const notice = subscriber.queue.shift();
+          if (notice === undefined) break;
+          await subscriber.consumer(notice);
+        }
+      } catch {
+        this.removeSubscriber(subscriber);
+        console.error("ad-coder: background subscriber failed; subscription removed");
+      } finally {
+        subscriber.draining = false;
+        if (subscriber.active && subscriber.queue.length > 0) this.drainSubscriber(subscriber);
+      }
+    });
+  }
+  private deactivateSubscriber(subscriber: BackgroundSubscriber): void {
+    subscriber.active = false;
+    subscriber.queue.length = 0;
+  }
+  private removeSubscriber(subscriber: BackgroundSubscriber): void {
+    this.deactivateSubscriber(subscriber);
+    this.subscribers.delete(subscriber);
+    if (this.subscribers.size === 0) this.stopWatcher();
+  }
+  private eventsOf(entry: Entry, cursor: number, limit: number): BackgroundEventPage {
+    const countCap = Math.min(limit, this.limits.maxPageSize);
+    const oldest = entry.events[0]?.sequence ?? entry.nextSequence;
+    const gap = cursor + 1 < oldest;
+    const effective = gap ? oldest - 1 : cursor;
+    const events: BackgroundRunEvent[] = [];
+    let bytes = 2;
+    for (const event of entry.events) {
+      if (event.sequence <= effective || events.length >= countCap) continue;
+      const size = Buffer.byteLength(JSON.stringify(event)) + 1;
+      if (bytes + size > this.limits.maxPageBytes) break;
+      events.push(copyEvent(event));
+      bytes += size;
+    }
+    return { events, nextCursor: events.at(-1)?.sequence ?? effective, gap };
   }
   private load(): void {
     if (this.stateDir === undefined) return;

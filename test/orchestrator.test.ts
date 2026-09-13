@@ -165,6 +165,11 @@ test("startOrchestrator preserves the resolved seed thinking level", async () =>
   };
   let captured: Role | undefined;
   let capturedToolNames: string[] | undefined;
+  let capturedBackgroundSubscribe:
+    | NonNullable<
+        import("../src/conversation/conversation").ConversationConfig["subscribeBackgroundRuns"]
+      >
+    | undefined;
 
   const session = await startOrchestrator({
     targetDir,
@@ -177,6 +182,7 @@ test("startOrchestrator preserves the resolved seed thinking level", async () =>
     startConversation: async (config) => {
       captured = config.role;
       capturedToolNames = config.tools?.map(({ name }) => name);
+      capturedBackgroundSubscribe = config.subscribeBackgroundRuns;
       return {
         runId: "test-session",
         ledgerPath: undefined,
@@ -217,6 +223,19 @@ test("startOrchestrator preserves the resolved seed thinking level", async () =>
     CHOOSE_TRANSITION_TOOL_NAME,
     SHOW_COST_TOOL_NAME,
   ]);
+  const notices: string[] = [];
+  const unsubscribe = capturedBackgroundSubscribe?.((notice) => {
+    notices.push(notice.events[0]?.lifecycle ?? "missing");
+  });
+  const backgroundRuns = session as typeof session & {
+    backgroundRuns: import("../src/orchestration/background-runs").BackgroundRunManager;
+  };
+  const run = backgroundRuns.backgroundRuns.start("safe background task");
+  backgroundRuns.backgroundRuns.cancel(run.runId);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  unsubscribe?.();
+  expect(notices).toEqual(["requested", "cancelled"]);
+  await session.close();
 });
 
 test("disabled pipeline does not resolve its role prompts or construct its core tools", async () => {

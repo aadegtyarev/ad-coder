@@ -4,6 +4,7 @@ import type {
   ConversationTurnResult,
 } from "../conversation/conversation";
 import type { ToolActivityConfig } from "../observability/tool-activity";
+import type { BackgroundRunNotice } from "../orchestration/background-runs";
 import { EmptyTurnError } from "../runner/errors";
 import { SessionLimitError } from "../session-limits";
 import { ToolActivityRenderer } from "./tool-activity";
@@ -122,6 +123,84 @@ function renderFormatted(result: ConversationTurnResult): string {
   return `${lines.join("\n")}\n`;
 }
 
+const BACKGROUND_LIFECYCLES = new Set([
+  "requested",
+  "started",
+  "stage_changed",
+  "operator_attention",
+  "failed",
+  "cancelled",
+  "timed_out",
+  "completed",
+]);
+const BACKGROUND_STAGES = new Set(["plan", "research", "security", "code", "review", "done"]);
+
+function safeNoticeText(value: unknown): string {
+  return typeof value === "string" ? sanitizeTerminalText(value) : "unknown";
+}
+function safeNoticeEnum(value: unknown, values: Set<string>): string | undefined {
+  return typeof value === "string" && values.has(value) ? value : undefined;
+}
+function safeNoticeInteger(value: unknown): number {
+  return Number.isSafeInteger(value) && (value as number) >= 0 ? (value as number) : 0;
+}
+
+function renderBackgroundNotice(notice: BackgroundRunNotice, mode: ConsoleOutputMode): string {
+  const runId = safeNoticeText(notice.runId);
+  const events = Array.isArray(notice.events)
+    ? notice.events.flatMap((event) => {
+        const lifecycle = safeNoticeEnum(event.lifecycle, BACKGROUND_LIFECYCLES);
+        if (lifecycle === undefined) return [];
+        const stage = safeNoticeEnum(event.stage, BACKGROUND_STAGES);
+        const errorCode = safeNoticeEnum(
+          event.errorCode,
+          new Set(["internal_failure", "operator_attention", "deadline_exceeded"]),
+        );
+        const metrics = event.metrics;
+        return [
+          {
+            sequence: safeNoticeInteger(event.sequence),
+            runId: safeNoticeText(event.runId),
+            lifecycle,
+            timestamp: safeNoticeInteger(event.timestamp),
+            ...(stage === undefined ? {} : { stage }),
+            ...(errorCode === undefined ? {} : { errorCode }),
+            ...(metrics !== undefined &&
+            Number.isSafeInteger(metrics.steps) &&
+            metrics.steps >= 0 &&
+            typeof metrics.totalCost === "number" &&
+            Number.isFinite(metrics.totalCost) &&
+            metrics.totalCost >= 0
+              ? { metrics: { steps: metrics.steps, totalCost: metrics.totalCost } }
+              : {}),
+          },
+        ];
+      })
+    : [];
+  const droppedEvents = safeNoticeInteger(notice.droppedEvents);
+  const pending = notice.pending === true;
+  if (mode === "json") {
+    return `${JSON.stringify({
+      type: "background_events",
+      runId,
+      events,
+      nextCursor: safeNoticeInteger(notice.nextCursor),
+      gap: notice.gap === true,
+      droppedEvents,
+      pending,
+    })}\n`;
+  }
+  const lines = events.map(({ lifecycle, stage }) => {
+    const renderedStage = stage === undefined ? "" : ` (${stage})`;
+    return `ad-coder: background pipeline ${runId} ${lifecycle}${renderedStage}`;
+  });
+  if (droppedEvents > 0)
+    lines.push(`ad-coder: background pipeline ${runId} dropped ${droppedEvents} events`);
+  if (pending)
+    lines.push(`ad-coder: background pipeline ${runId} has more events; poll pipeline_events`);
+  return lines.length === 0 ? "" : `${lines.join("\n")}\n`;
+}
+
 /** Run the minimal persistent human console over an already assembled conversation session. */
 export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunResult> {
   const mode = params.mode ?? "formatted";
@@ -137,10 +216,10 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
   let completedTurns = 0;
   let lineBytes: number[] = [];
   let stopped = false;
-  const handleLine = async (): Promise<void> => {
-    let line = Buffer.from(lineBytes).toString("utf8");
-    lineBytes = [];
-    if (line.endsWith("\r")) line = line.slice(0, -1);
+  let lineQueue = Promise.resolve();
+  const handleLine = async (rawLine: string): Promise<void> => {
+    if (stopped) return;
+    const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
     if (line.trim() === "") {
       if (mode === "formatted") params.output.write("ad-coder> ");
       return;
@@ -221,6 +300,24 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
       stopped = true;
     }
   };
+  const queueLine = (): void => {
+    const line = Buffer.from(lineBytes).toString("utf8");
+    lineBytes = [];
+    lineQueue = lineQueue.then(() => handleLine(line));
+  };
+
+  let unsubscribeBackground: (() => void) | undefined;
+  try {
+    unsubscribeBackground = params.session.subscribeBackgroundRuns?.((notice) => {
+      params.error.write(renderBackgroundNotice(notice, mode));
+    });
+  } catch {
+    params.error.write(
+      mode === "json"
+        ? '{"type":"background_notice_error","code":"subscription_failed","recovery":"poll"}\n'
+        : "ad-coder: background notices unavailable; use pipeline polling tools\n",
+    );
+  }
 
   try {
     if (mode === "formatted") {
@@ -230,7 +327,7 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
       const chunk = Buffer.isBuffer(rawChunk) ? rawChunk : Buffer.from(rawChunk);
       for (const byte of chunk) {
         if (byte === 0x0a) {
-          await handleLine();
+          queueLine();
           if (stopped) break;
         } else {
           if (
@@ -247,11 +344,13 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
       }
       if (stopped) break;
     }
-    if (!stopped && lineBytes.length > 0) await handleLine();
+    if (!stopped && lineBytes.length > 0) queueLine();
+    await lineQueue;
   } catch {
     params.error.write(INPUT_FAILED_MESSAGE);
     reason = "input_failed";
   } finally {
+    unsubscribeBackground?.();
     try {
       await params.session.close();
     } catch {

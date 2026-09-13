@@ -222,7 +222,26 @@ worker continues the run. Reconnect with the same `--owner-id`, consume events
 using the exclusive `--after` cursor, and use the terminal result or
 `resume_pipeline` recovery path after failure or operator attention. Events are
 bounded, content-free lifecycle projections; ownership scopes access to a
-private target-local record. The CLI/API accepts numeric limits. Ordinary
+private target-local record.
+
+### Live background notices
+
+For an operator who keeps `console` open while a detached pipeline runs, the
+console prints lifecycle, stage, dropped-event, and terminal notices to stderr
+while continuing to accept input. In `--json` mode these are content-free
+`background_events` NDJSON records on stderr; final turn records remain on
+stdout. Notices never submit a model turn. A notice is only a bounded hint: when
+it reports `pending` or `droppedEvents`, recover the complete ordered history
+with `pipeline_events` (or `background events`) and its `nextCursor`; reconnect
+with the same owner ID and poll `pipeline_status`, `pipeline_events`, and
+`pipeline_result` after a console or process reconnect.
+
+Library callers can subscribe with `BackgroundRunManager.subscribe(consumer)`
+or `ConversationSession.subscribeBackgroundRuns(consumer)`. Each owner-scoped
+notice contains only safe lifecycle metadata, is capped by the configured
+mandatory `maxPageSize` and `maxPageBytes`, and returns an unsubscribe function.
+Subscribers begin at the current tail; cursor polling remains the durable,
+reconnect-safe source of truth. The CLI/API accepts numeric limits. Ordinary
 resource limits use `0` as disabled, while `maxPageSize` defaults to 32 events
 and `maxPageBytes` to 16 KiB; both paging ceilings are mandatory positive
 values. Programmatic detached callers inject a host launcher into

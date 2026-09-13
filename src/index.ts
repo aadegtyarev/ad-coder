@@ -127,6 +127,8 @@ export type {
   BackgroundRunErrorCode,
   BackgroundRunEvent,
   BackgroundRunLimits,
+  BackgroundRunNotice,
+  BackgroundRunNoticeConsumer,
   BackgroundRunOutcome,
   BackgroundRunStatus,
   BackgroundTerminalLifecycle,

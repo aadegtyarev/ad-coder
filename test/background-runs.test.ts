@@ -2,7 +2,11 @@ import { expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { BackgroundRunError, BackgroundRunManager } from "../src/orchestration/background-runs";
+import {
+  BackgroundRunError,
+  BackgroundRunManager,
+  MIN_BACKGROUND_EVENT_PAGE_BYTES,
+} from "../src/orchestration/background-runs";
 import type { RunPipelineResult } from "../src/orchestration/orchestrator";
 
 function deferred<T>(): {
@@ -43,6 +47,14 @@ function completedResult(runId: string): RunPipelineResult {
 
 async function settle(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+async function waitUntil(predicate: () => boolean, timeoutMs = 500): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error("timed out waiting for background state");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
 }
 
 test("background run returns immediately while foreground work remains available", async () => {
@@ -170,6 +182,12 @@ test("default paging bounds a run with 503 events and rejects zero paging ceilin
     () => new BackgroundRunManager(async () => completedResult("unused"), { maxPageBytes: 0 }),
   ).toThrow(new BackgroundRunError("invalid_request"));
   expect(
+    () =>
+      new BackgroundRunManager(async () => completedResult("unused"), {
+        maxPageBytes: MIN_BACKGROUND_EVENT_PAGE_BYTES - 1,
+      }),
+  ).toThrow(new BackgroundRunError("invalid_request"));
+  expect(
     () => new BackgroundRunManager(async () => completedResult("unused"), { leaseMs: 0 }),
   ).toThrow(new BackgroundRunError("invalid_request"));
   const manager = new BackgroundRunManager(
@@ -184,6 +202,40 @@ test("default paging bounds a run with 503 events and rejects zero paging ceilin
   const page = manager.events(runId, 0);
   expect(page.events).toHaveLength(32);
   expect(Buffer.byteLength(JSON.stringify(page.events))).toBeLessThanOrEqual(16 * 1024);
+  await manager.close();
+});
+
+test("subscriber queues isolate slow consumers, expose loss, and close without waiting", async () => {
+  const release = deferred<void>();
+  const received: import("../src/orchestration/background-runs").BackgroundRunNotice[] = [];
+  const manager = new BackgroundRunManager(async (_task, runId) => completedResult(runId), {
+    subscriberQueueCapacity: 1,
+  });
+  manager.subscribe(async (notice) => {
+    received.push(notice);
+    if (received.length === 1) await release.promise;
+  });
+
+  manager.start("first");
+  await waitUntil(() => received.length === 1);
+  const before = performance.now();
+  manager.start("second");
+  expect(performance.now() - before).toBeLessThan(50);
+  await settle();
+  expect(received).toHaveLength(1);
+
+  release.resolve();
+  await waitUntil(() => received.length === 2);
+  expect(received[1]?.droppedEvents).toBeGreaterThan(0);
+  expect(received[1]?.pending).toBe(true);
+
+  const stuck = new BackgroundRunManager(async (_task, runId) => completedResult(runId));
+  stuck.subscribe(async () => new Promise<void>(() => {}));
+  stuck.start("stuck subscriber");
+  await settle();
+  const closeStarted = performance.now();
+  await stuck.close();
+  expect(performance.now() - closeStarted).toBeLessThan(50);
   await manager.close();
 });
 
@@ -271,6 +323,188 @@ test("durable claim admits exactly one worker across managers", async () => {
   expect(executions).toBe(1);
   await first.close();
   await second.close();
+});
+
+test("live owner refreshes detached worker state and emits bounded reconnect hints", async () => {
+  const targetDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-live-owner-")));
+  const ownerId = "live-owner";
+  const limits = { maxEventsPerRun: 3, maxPageSize: 1, maxPageBytes: 4_096 };
+  const owner = new BackgroundRunManager(
+    async () => completedResult("unused"),
+    limits,
+    targetDir,
+    ownerId,
+    () => undefined,
+  );
+  const requested = await owner.startDetached("SECRET detached task");
+  const notices: import("../src/orchestration/background-runs").BackgroundRunNotice[] = [];
+  const unsubscribe = owner.subscribe((notice) => {
+    notices.push(notice);
+  });
+
+  const worker = new BackgroundRunManager(
+    async (_task, runId, control) => {
+      for (let step = 1; step <= 6; step += 1) control.onStage({ phase: "code", step, cost: 0.25 });
+      return completedResult(runId);
+    },
+    limits,
+    targetDir,
+    ownerId,
+  );
+  worker.claim(requested.runId, "SECRET detached task");
+  await worker.wait(requested.runId);
+
+  expect(owner.status(requested.runId)).toMatchObject({
+    lifecycle: "completed",
+    metrics: { steps: 2, totalCost: 1 },
+  });
+  await waitUntil(() => notices.length > 0);
+  const notice = notices.at(-1)!;
+  expect(notice.events).toHaveLength(1);
+  expect(Buffer.byteLength(JSON.stringify(notice.events))).toBeLessThanOrEqual(limits.maxPageBytes);
+  expect(notice.droppedEvents).toBeGreaterThan(0);
+  expect(notice.gap).toBe(true);
+  expect(notice.pending).toBe(true);
+  expect(JSON.stringify(notice)).not.toContain("SECRET");
+
+  const page = owner.events(requested.runId, notice.nextCursor);
+  expect(page.events.length).toBeGreaterThan(0);
+  expect(owner.result(requested.runId).lifecycle).toBe("completed");
+
+  unsubscribe();
+  const delivered = notices.length;
+  const local = owner.start("another task");
+  await owner.wait(local.runId);
+  expect(notices).toHaveLength(delivered);
+
+  const reconnect = new BackgroundRunManager(
+    async () => completedResult("unused"),
+    limits,
+    targetDir,
+    ownerId,
+  );
+  expect(reconnect.result(requested.runId).lifecycle).toBe("completed");
+  expect(reconnect.events(requested.runId, 0).gap).toBe(true);
+  await reconnect.close();
+  await worker.close();
+  await owner.close();
+});
+
+test("separate worker process refreshes owner subscription with bounded recovery hints", async () => {
+  const targetDir = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-worker-owner-")),
+  );
+  const ownerId = "separate-process-owner";
+  const limits = { maxEventsPerRun: 3, maxPageSize: 1, maxPageBytes: 4_096 };
+  const owner = new BackgroundRunManager(
+    async () => completedResult("unused"),
+    limits,
+    targetDir,
+    ownerId,
+    () => undefined,
+  );
+  const requested = await owner.startDetached("SECRET separate-process task");
+  const notices: import("../src/orchestration/background-runs").BackgroundRunNotice[] = [];
+  const unsubscribe = owner.subscribe((notice) => {
+    notices.push(notice);
+  });
+  const workerModule = new URL("../src/orchestration/background-runs.ts", import.meta.url).href;
+  const workerSource = `
+    import { BackgroundRunManager } from ${JSON.stringify(workerModule)};
+    const manager = new BackgroundRunManager(async (_task, runId, control) => {
+      for (let step = 1; step <= 6; step += 1)
+        control.onStage({ phase: "code", step, cost: 0.25 });
+      return {
+        runId,
+        result: { outcome: "approved", approved: true, rounds: 1, verdicts: [], runIds: [], stageMetrics: [] },
+        perStep: [{ phase: "plan", step: 1, cost: 0.25 }, { phase: "code", step: 2, cost: 0.75 }],
+        totalCost: 1,
+      };
+    }, ${JSON.stringify(limits)}, ${JSON.stringify(targetDir)}, ${JSON.stringify(ownerId)});
+    manager.claim(${JSON.stringify(requested.runId)}, "worker task");
+    await manager.wait(${JSON.stringify(requested.runId)});
+    await manager.close();
+  `;
+  const worker = Bun.spawn([process.execPath, "-e", workerSource], {
+    cwd: process.cwd(),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  // Let the separate worker outrun this owner once, proving a retained backlog
+  // becomes one dropped/pending watcher hint rather than an unbounded callback loop.
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
+  expect(await worker.exited).toBe(0);
+  await waitUntil(() => notices.length > 0, 2_000);
+
+  const notice = notices[0]!;
+  expect(notice.events).toHaveLength(1);
+  expect(Buffer.byteLength(JSON.stringify(notice.events))).toBeLessThanOrEqual(limits.maxPageBytes);
+  expect(notice.droppedEvents).toBeGreaterThan(0);
+  expect(notice.gap).toBe(true);
+  expect(notice.pending).toBe(true);
+  expect(JSON.stringify(notice)).not.toContain("SECRET");
+  expect(owner.status(requested.runId).lifecycle).toBe("completed");
+  expect(owner.result(requested.runId).lifecycle).toBe("completed");
+  expect(owner.events(requested.runId, notice.nextCursor).events.length).toBeGreaterThan(0);
+
+  unsubscribe();
+  const delivered = notices.length;
+  const local = owner.start("local task");
+  await owner.wait(local.runId);
+  expect(notices).toHaveLength(delivered);
+
+  const reconnect = new BackgroundRunManager(
+    async () => completedResult("unused"),
+    limits,
+    targetDir,
+    ownerId,
+  );
+  expect(reconnect.status(requested.runId).lifecycle).toBe("completed");
+  expect(reconnect.events(requested.runId, 0).gap).toBe(true);
+  expect(reconnect.result(requested.runId).lifecycle).toBe("completed");
+  await reconnect.close();
+  await owner.close();
+});
+
+test("subscription consumer and persisted-state failures are safe and typed", async () => {
+  const logged: string[] = [];
+  const originalError = console.error;
+  console.error = (message?: unknown) => logged.push(String(message));
+  try {
+    const manager = new BackgroundRunManager(async (_task, runId) => completedResult(runId));
+    manager.subscribe(() => {
+      throw new Error("SECRET subscriber failure");
+    });
+    const run = manager.start("SECRET task");
+    await manager.wait(run.runId);
+    expect(logged).toEqual(["ad-coder: background subscriber failed; subscription removed"]);
+    expect(logged.join(" ")).not.toContain("SECRET");
+    await manager.close();
+  } finally {
+    console.error = originalError;
+  }
+
+  const targetDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-bad-state-")));
+  const owner = new BackgroundRunManager(
+    async () => completedResult("unused"),
+    {},
+    targetDir,
+    "bad-state-owner",
+    () => undefined,
+  );
+  const requested = await owner.startDetached("task");
+  const stateFile = path.join(
+    targetDir,
+    ".ad-coder",
+    "runs",
+    "background",
+    `${requested.runId}.json`,
+  );
+  fs.writeFileSync(stateFile, "not json");
+  expect(() => owner.status(requested.runId)).toThrow(
+    new BackgroundRunError("state_unavailable", requested.runId),
+  );
+  await owner.close();
 });
 
 test("zero disables active-run and event-retention limits", async () => {

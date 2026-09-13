@@ -36,6 +36,7 @@ import {
   type ToolActivityConsumer,
   type ToolActivitySnapshot,
 } from "../observability/tool-activity";
+import type { BackgroundRunNoticeConsumer } from "../orchestration/background-runs";
 import { ProjectStore } from "../project-store/project-store";
 import type { ProjectStoreConfig } from "../project-store/types";
 import type { Role } from "../role";
@@ -92,6 +93,8 @@ export interface ConversationConfig {
   activityChannel?: ToolActivityChannel;
   activityConsumer?: ToolActivityConsumer;
   toolActivity?: Partial<ToolActivityConfig>;
+  /** Optional headless source of content-free background lifecycle notices. */
+  subscribeBackgroundRuns?: (consumer: BackgroundRunNoticeConsumer) => () => void;
 }
 
 /** A tool invocation observed during a single turn: names only, never args or content. */
@@ -143,6 +146,8 @@ export interface ConversationSession {
     options?: { replay?: boolean },
   ): () => void;
   toolActivitySnapshot?(): ToolActivitySnapshot;
+  /** Optional content-free pipeline notices; subscribing never starts a model turn. */
+  subscribeBackgroundRuns?(consumer: BackgroundRunNoticeConsumer): () => void;
   readonly runId: string;
   /** Absolute ledger path when the default file sink was used; undefined for a custom sink. */
   readonly ledgerPath: string | undefined;
@@ -410,6 +415,9 @@ export async function startConversation(config: ConversationConfig): Promise<Con
     close,
     subscribeToolActivity: (consumer, options) => activityChannel.subscribe(consumer, options),
     toolActivitySnapshot: () => activityChannel.snapshot(),
+    ...(config.subscribeBackgroundRuns !== undefined && {
+      subscribeBackgroundRuns: config.subscribeBackgroundRuns,
+    }),
     runId,
     ledgerPath,
   };
