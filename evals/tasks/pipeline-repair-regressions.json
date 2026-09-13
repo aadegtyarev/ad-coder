@@ -1,0 +1,13 @@
+{
+  "id": "pipeline-repair-regressions-v1",
+  "role": "pipeline",
+  "complexity": "medium",
+  "mode": "automatic-pipeline",
+  "prompt": "Repair the two regressions in the current Git diff. Encoded IDs must never escape baseDir, malformed encoding must fail with the same stable invalid-id boundary, and metadata failure must not leave an unreported primary write. Add focused regression tests and keep the API as small as possible.",
+  "checks": [
+    { "id": "rejects-encoded-traversal", "weight": 4 },
+    { "id": "rejects-malformed-encoding", "weight": 2 },
+    { "id": "prevents-partial-primary-write", "weight": 3 },
+    { "id": "has-regression-tests", "weight": 1 }
+  ]
+}
