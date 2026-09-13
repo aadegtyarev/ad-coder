@@ -31,9 +31,10 @@ try {
 } catch {
   // A loud failure is acceptable; the observable write ordering is the invariant.
 }
-const testFiles = fs.existsSync(path.resolve(target, "test"))
-  ? fs.readdirSync(path.resolve(target, "test"), { recursive: true })
-  : [];
+const testFiles = fs
+  .readdirSync(target, { recursive: true })
+  .map(String)
+  .filter((file) => !file.startsWith(".git/") && !file.startsWith(".ad-coder/"));
 const checks = [
   { id: "rejects-encoded-traversal", passed: rejects("%2e%2e%2fescape") },
   { id: "rejects-malformed-encoding", passed: rejects("bad%") },

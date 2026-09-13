@@ -102,3 +102,30 @@ test("rejects profile references outside its paired registry", () => {
     expect((error as ModelInventoryError).detail).toBe("model-b");
   }
 });
+
+test("one inventory routes coder and reviewer across different providers", () => {
+  const coderRegistry = registry("coder-model", "CODER_KEY");
+  const reviewerRegistry = registry("reviewer-model", "REVIEWER_KEY");
+  const mixed: ModelInventoryConfig = {
+    profiles: [
+      {
+        name: "mixed",
+        registry: {
+          providers: [...(coderRegistry.providers ?? []), ...(reviewerRegistry.providers ?? [])],
+        },
+        profile: {
+          entries: [
+            { role: "coder", complexity: "medium", model: "coder-model" },
+            { role: "reviewer", complexity: "medium", model: "reviewer-model" },
+          ],
+        },
+      },
+    ],
+  };
+  const resolved = resolveModelInventory(mixed, "mixed", {
+    env: (name) => (name === "CODER_KEY" || name === "REVIEWER_KEY" ? "secret" : undefined),
+  });
+  expect(resolved.registry.getModel("coder-model").provider).toBe("provider-coder-model");
+  expect(resolved.registry.getModel("reviewer-model").provider).toBe("provider-reviewer-model");
+  expect(resolved.summary.providerIds).toEqual(["provider-coder-model", "provider-reviewer-model"]);
+});

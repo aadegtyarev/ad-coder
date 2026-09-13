@@ -34,12 +34,31 @@ a route inside it.
 
 ## Sampling policy
 
-Start every available model at `low` effort. Assign provisional role/complexity
-cells from those accepted-result samples. Test `medium` only for boundary cells
+Before the first run for an unfamiliar inventory, Researcher records three kinds
+of evidence: provider guidance, provider-published benchmarks, and independent
+benchmarks. Use them only to seed a falsifiable `(role, complexity)` matrix; they
+do not outrank accepted-result measurements from this corpus.
+
+Start with the cheapest plausible model in every role at `low` effort. Assign
+provisional role/complexity cells from accepted-result samples. Test `medium`
+only for boundary cells
 where `low` misses a gate or repair and re-review erase its price advantage;
 compare an adjacent model only when results are close or unstable. Reserve
 `high` for diagnosing difficult failures. This keeps calibration bounded while
 still allowing effort to move when it lowers total accepted-result cost.
+
+Persist the corpus-calibrated inventory as user configuration so it can seed
+multiple projects for the same account/provider. Persist later project evidence
+as an explicit `.ad-coder/` override layered over that base. Never rewrite the
+user baseline from one project's observations, and keep the effective source of
+every routing cell visible in resolved configuration.
+
+Prefer different model families for Coder and Reviewer when the selected
+inventory offers them: correlated blind spots are part of accepted-result risk.
+For a single-family inventory such as a Codex subscription, seed the pair from
+the provider's role recommendations (for example Sol as Coder and Terra as
+Reviewer), then verify it with the same corpus and gates. The user, not the
+router, defines which models and providers the inventory contains.
 
 For every sample record the inventory, model, role, assigned and observed
 complexity, outcome, escaped defects, repair/re-review rounds, duration, model
