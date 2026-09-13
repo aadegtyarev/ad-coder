@@ -15,7 +15,7 @@ research evidence, seeded security defects, three coding complexities, hidden
 review regressions, orchestration choices, and summarizer fact retention.
 
 The first executable scorer is `bun run calibration:score -- <task.json>
-<ledger.jsonl> <checks.json> <inventory> <duration-ms>`. It consumes the real
+<ledger.jsonl> <checks.json> <inventory> <duration-ms> <thinking-level>`. It consumes the real
 safe ledger and emits one machine-readable measurement. `costEfficiency` is
 quality points per provider dollar; it is diagnostic only (and `null` for free
 runs). Routing requires full acceptance and zero escaped defects before cost or
@@ -31,6 +31,15 @@ manual `run_step`/`choose_transition`, or complete `run_pipeline`. Repeat sample
 before changing defaults. The Orchestrator receives this same rule: inventory
 selects the available provider/account model set, while task complexity selects
 a route inside it.
+
+## Sampling policy
+
+Start every available model at `low` effort. Assign provisional role/complexity
+cells from those accepted-result samples. Test `medium` only for boundary cells
+where `low` misses a gate or repair and re-review erase its price advantage;
+compare an adjacent model only when results are close or unstable. Reserve
+`high` for diagnosing difficult failures. This keeps calibration bounded while
+still allowing effort to move when it lowers total accepted-result cost.
 
 For every sample record the inventory, model, role, assigned and observed
 complexity, outcome, escaped defects, repair/re-review rounds, duration, model

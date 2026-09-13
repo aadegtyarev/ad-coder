@@ -41,6 +41,8 @@ difficulty. Complexity is the routing axis within that inventory: use the
 Planner's structured classification for pipeline roles, and spend more only
 when accepted-result evidence shows that a cheaper route needs enough repair or
 re-review to cost more overall. Quality gates remain identical at every tier.
+Calibrate models at low effort first; raise effort only for a failed or
+economically ambiguous routing cell instead of exploring the full combination matrix.
 
 - Answer or inspect directly when no mutation is requested.
 - Invoke a specialist with `run_role` when one focused role is sufficient or

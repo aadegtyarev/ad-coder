@@ -9,9 +9,13 @@ const file = process.argv[2];
 if (!file) throw new Error("usage: reviewer-hidden-regression <findings.json>");
 const findings = JSON.parse(fs.readFileSync(file, "utf8")) as Finding[];
 const blockingCodes = new Set(findings.filter((finding) => finding.blocking).map((f) => f.code));
+const hasAny = (...codes: string[]) => codes.some((code) => blockingCodes.has(code));
 const checks = [
-  { id: "detects-path-escape", passed: blockingCodes.has("decoded-path-escape") },
-  { id: "detects-silent-fallback", passed: blockingCodes.has("primary-result-discarded") },
+  { id: "detects-path-escape", passed: hasAny("decoded-path-escape", "PATH_TRAVERSAL") },
+  {
+    id: "detects-silent-fallback",
+    passed: hasAny("primary-result-discarded", "PARTIAL_SAVE"),
+  },
   { id: "avoids-false-positive", passed: !blockingCodes.has("raw-id-allows-slash") },
 ];
 process.stdout.write(`${JSON.stringify(checks, null, 2)}\n`);

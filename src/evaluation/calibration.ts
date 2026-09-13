@@ -21,6 +21,7 @@ export interface CalibrationMeasurement {
   taskId: string;
   inventory: string;
   model: string;
+  thinkingLevel: string;
   role: string;
   complexity: CalibrationTask["complexity"];
   mode: CalibrationMode;
@@ -45,6 +46,7 @@ export function scoreCalibrationRun(input: {
   checks: CalibrationCheckResult[];
   ledger: readonly LedgerRecord[];
   inventory: string;
+  thinkingLevel: string;
   durationMs: number;
   toolTurns?: number;
   repairs?: number;
@@ -82,6 +84,7 @@ export function scoreCalibrationRun(input: {
     taskId: input.task.id,
     inventory: input.inventory,
     model: input.ledger[0]?.model ?? "unknown",
+    thinkingLevel: input.thinkingLevel,
     role: input.task.role,
     complexity: input.task.complexity,
     mode: input.task.mode,

@@ -47,6 +47,7 @@ describe("model calibration", () => {
       ],
       ledger: [row(0.25), row(0.25)],
       inventory: "codex",
+      thinkingLevel: "low",
       durationMs: 1500,
     });
     expect(result).toMatchObject({
@@ -65,6 +66,7 @@ describe("model calibration", () => {
       task,
       checks: task.checks.map(({ id }) => ({ id, passed: true })),
       inventory: "codex",
+      thinkingLevel: "low",
     };
     const cheap = scoreCalibrationRun({ ...common, ledger: [row(0.1)], durationMs: 2000 });
     const costly = scoreCalibrationRun({ ...common, ledger: [row(0.2)], durationMs: 100 });
@@ -78,6 +80,7 @@ describe("model calibration", () => {
         checks: [{ id: "invented", passed: true }],
         ledger: [],
         inventory: "codex",
+        thinkingLevel: "low",
         durationMs: 1,
       }),
     ).toThrow("unknown or duplicate checks");

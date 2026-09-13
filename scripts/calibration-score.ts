@@ -7,10 +7,11 @@ function readJson<T>(file: string): T {
   return JSON.parse(fs.readFileSync(file, "utf8")) as T;
 }
 
-const [taskFile, ledgerFile, checksFile, inventory, duration] = process.argv.slice(2);
-if (!taskFile || !ledgerFile || !checksFile || !inventory || !duration)
+const [taskFile, ledgerFile, checksFile, inventory, duration, thinkingLevel] =
+  process.argv.slice(2);
+if (!taskFile || !ledgerFile || !checksFile || !inventory || !duration || !thinkingLevel)
   throw new Error(
-    "usage: calibration-score <task.json> <ledger.jsonl> <checks.json> <inventory> <duration-ms>",
+    "usage: calibration-score <task.json> <ledger.jsonl> <checks.json> <inventory> <duration-ms> <thinking-level>",
   );
 const ledger = fs
   .readFileSync(ledgerFile, "utf8")
@@ -22,6 +23,7 @@ const result = scoreCalibrationRun({
   ledger,
   checks: readJson(checksFile),
   inventory,
+  thinkingLevel,
   durationMs: Number(duration),
 });
 process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
