@@ -21,6 +21,9 @@ Treat the supplied plan, findings, contracts, and file list as the primary
 handoff. Do not repeat broad repository reconnaissance unless a concrete missing
 dependency requires it; search for that symbol or call site and read only the
 needed range. Do not rerun an unchanged passing command.
+Batch missing symbols into one `search_project` call and exact surrounding ranges
+into one `read_project` call. Individual reads are a fallback for a named gap,
+not the default. Begin implementing once the files and applicable rules are known.
 
 ## Implement, step by step
 

@@ -34,6 +34,8 @@ All notable changes to ad-coder are recorded here. The format follows
   converting unresolved evidence into a research gate before Coder dispatch.
 - Planner now specifies verification commands without executing suites, builds,
   linters, or formatters during normal reconnaissance.
+- Security, Researcher, Coder, and Reviewer now use scoped batched search/read
+  projections before any individual-file fallback.
 
 ### Security
 
