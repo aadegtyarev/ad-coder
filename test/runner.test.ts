@@ -499,6 +499,39 @@ test("runRole preserves a typed stage rejection across the harness boundary", as
   expect(controller.snapshot().modelTurns).toBe(1);
 });
 
+test("stage closeout removes tools for the reserved final model turn", async () => {
+  const { faux, models, model, role } = harnessFixture();
+  let finalTurnTools: number | undefined;
+  faux.setResponses([
+    fauxAssistantMessage([
+      fauxToolCall("bash", { command: "printf one" }, { id: "first" }),
+      fauxToolCall("read", { path: "package.json" }, { id: "second" }),
+    ]),
+    (context) => {
+      finalTurnTools = context.tools?.length ?? 0;
+      return fauxAssistantMessage("final synthesis");
+    },
+  ]);
+  const controller = new StageLimitController({
+    maxModelTurns: 4,
+    finalResponseReserveModelTurns: 2,
+  });
+
+  const result = await runRole({
+    role,
+    targetDir,
+    models,
+    model,
+    prompt: "attempt a batch, then finish",
+    stageLimitController: controller,
+  });
+
+  expect(finalTurnTools).toBe(0);
+  expect(faux.state.callCount).toBe(2);
+  expect(controller.snapshot()).toMatchObject({ modelTurns: 2, toolTurns: 2 });
+  expect(result.result.status).toBe("completed");
+});
+
 test("disabled compaction rejects an oversized turn before calling the provider", async () => {
   const { faux, models, model } = harnessFixture();
   const role = defineRole(

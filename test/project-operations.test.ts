@@ -550,6 +550,7 @@ test("RunCoordinator durably pauses a limited stage and resumes only that stage"
           modelTurns: 1,
           toolTurns: 1,
           inputTokens: 7,
+          lastInputTokens: 7,
           costUsd: 0.25,
           costInFlight: false,
         });

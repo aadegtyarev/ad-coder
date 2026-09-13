@@ -26,6 +26,7 @@ export interface StageLimitSnapshot extends Required<StageLimits> {
   modelTurns: number;
   toolTurns: number;
   inputTokens: number;
+  lastInputTokens: number;
   costUsd: number;
   costInFlight: boolean;
 }
@@ -99,8 +100,10 @@ export class StageLimitController {
   private modelTurns = 0;
   private toolTurns = 0;
   private inputTokens = 0;
+  private lastInputTokens = 0;
   private costUsd = 0;
   private costInFlight = false;
+  private closeoutReason: StageCloseoutReason | undefined;
   private terminalReason: StageLimitReason | undefined;
   private boundaryFailure: StageLimitError | undefined;
 
@@ -108,14 +111,17 @@ export class StageLimitController {
     limits: StageLimits = {},
     private readonly now: () => number = () => performance.now(),
     initial: Partial<
-      Pick<StageLimitSnapshot, "elapsedMs" | "modelTurns" | "toolTurns" | "inputTokens" | "costUsd">
+      Pick<
+        StageLimitSnapshot,
+        "elapsedMs" | "modelTurns" | "toolTurns" | "inputTokens" | "lastInputTokens" | "costUsd"
+      >
     > = {},
     private readonly onSnapshot?: (snapshot: Readonly<StageLimitSnapshot>) => void,
   ) {
     this.limits = Object.freeze(resolveStageLimits(limits));
     if (!Number.isFinite(initial.elapsedMs ?? 0) || (initial.elapsedMs ?? 0) < 0)
       throw new TypeError("elapsedMs must be a non-negative finite number");
-    for (const key of ["modelTurns", "toolTurns", "inputTokens"] as const) {
+    for (const key of ["modelTurns", "toolTurns", "inputTokens", "lastInputTokens"] as const) {
       const value = initial[key] ?? 0;
       if (!Number.isSafeInteger(value) || value < 0)
         throw new TypeError(`${key} must be a non-negative safe integer`);
@@ -126,6 +132,7 @@ export class StageLimitController {
     this.modelTurns = initial.modelTurns ?? 0;
     this.toolTurns = initial.toolTurns ?? 0;
     this.inputTokens = initial.inputTokens ?? 0;
+    this.lastInputTokens = initial.lastInputTokens ?? 0;
     this.costUsd = initial.costUsd ?? 0;
   }
 
@@ -136,6 +143,7 @@ export class StageLimitController {
       modelTurns: this.modelTurns,
       toolTurns: this.toolTurns,
       inputTokens: this.inputTokens,
+      lastInputTokens: this.lastInputTokens,
       costUsd: this.costUsd,
       costInFlight: this.costInFlight,
     });
@@ -191,38 +199,46 @@ export class StageLimitController {
       maxDurationMs > 0 &&
       finalResponseReserveDurationMs > 0 &&
       this.elapsedMs() >= Math.max(0, maxDurationMs - finalResponseReserveDurationMs)
-    )
+    ) {
+      this.closeoutReason = "duration";
       throw new StageCloseoutError(
         "duration",
         `${Math.round(this.elapsedMs())}/${maxDurationMs} ms used, ${finalResponseReserveDurationMs} ms reserved`,
       );
+    }
     if (
       maxModelTurns > 0 &&
       finalResponseReserveModelTurns > 0 &&
       this.modelTurns >= Math.max(0, maxModelTurns - finalResponseReserveModelTurns)
-    )
+    ) {
+      this.closeoutReason = "model_turns";
       throw new StageCloseoutError(
         "model_turns",
         `${this.modelTurns}/${maxModelTurns} model turns used, ${finalResponseReserveModelTurns} reserved`,
       );
+    }
     if (
       maxInputTokens > 0 &&
       finalResponseReserveInputTokens > 0 &&
       this.inputTokens >= Math.max(0, maxInputTokens - finalResponseReserveInputTokens)
-    )
+    ) {
+      this.closeoutReason = "input";
       throw new StageCloseoutError(
         "input",
         `${this.inputTokens}/${maxInputTokens} input tokens used, ${finalResponseReserveInputTokens} reserved`,
       );
+    }
     if (
       maxToolTurns > 0 &&
       finalResponseReserveToolTurns > 0 &&
       this.toolTurns >= Math.max(0, maxToolTurns - finalResponseReserveToolTurns)
-    )
+    ) {
+      this.closeoutReason = "tool_turns";
       throw new StageCloseoutError(
         "tool_turns",
         `${this.toolTurns}/${maxToolTurns} tool turns used, ${finalResponseReserveToolTurns} reserved`,
       );
+    }
     this.toolTurns += 1;
     this.onSnapshot?.(this.snapshot());
   }
@@ -237,6 +253,7 @@ export class StageLimitController {
     if (!Number.isSafeInteger(totalInput)) throw new TypeError("inputTokens total is unsafe");
     if (!Number.isFinite(totalCost)) throw new TypeError("costUsd total is unsafe");
     this.inputTokens = totalInput;
+    this.lastInputTokens = inputTokens;
     this.costUsd = totalCost;
     this.costInFlight = false;
     this.onSnapshot?.(this.snapshot());
@@ -261,6 +278,57 @@ export class StageLimitController {
         throw error;
       }
     };
+    const prepareCloseout = () => {
+      if (this.closeoutReason !== undefined) return;
+      const {
+        maxDurationMs,
+        maxModelTurns,
+        maxToolTurns,
+        maxInputTokens,
+        finalResponseReserveDurationMs,
+        finalResponseReserveModelTurns,
+        finalResponseReserveToolTurns,
+        finalResponseReserveInputTokens,
+      } = this.limits;
+      if (
+        maxDurationMs > 0 &&
+        finalResponseReserveDurationMs > 0 &&
+        this.elapsedMs() >= maxDurationMs - finalResponseReserveDurationMs
+      )
+        this.closeoutReason = "duration";
+      else if (
+        maxModelTurns > 0 &&
+        finalResponseReserveModelTurns > 0 &&
+        this.modelTurns >= maxModelTurns - finalResponseReserveModelTurns
+      )
+        this.closeoutReason = "model_turns";
+      else if (
+        maxInputTokens > 0 &&
+        finalResponseReserveInputTokens > 0 &&
+        this.inputTokens + this.lastInputTokens >= maxInputTokens - finalResponseReserveInputTokens
+      )
+        this.closeoutReason = "input";
+      else if (
+        maxToolTurns > 0 &&
+        finalResponseReserveToolTurns > 0 &&
+        this.toolTurns >= maxToolTurns - finalResponseReserveToolTurns
+      )
+        this.closeoutReason = "tool_turns";
+    };
+    const withoutToolsDuringCloseout = (args: unknown[]): unknown[] => {
+      if (this.closeoutReason === undefined) return args;
+      const context = args[1];
+      if (
+        context === null ||
+        typeof context !== "object" ||
+        !("messages" in context) ||
+        !Array.isArray(context.messages)
+      )
+        return args;
+      const next = [...args];
+      next[1] = { ...context, tools: [] };
+      return next;
+    };
     const settle = (message: AssistantMessage | undefined) => {
       if (message === undefined) return this.failUnknownCost();
       this.observeUsage(message.usage.input + message.usage.cacheRead, message.usage.cost.total);
@@ -273,12 +341,17 @@ export class StageLimitController {
           return (...args: unknown[]) => {
             try {
               reserve();
+              prepareCloseout();
             } catch (error) {
               return Promise.reject(error);
             }
             let operation: Promise<AssistantMessage>;
             try {
-              operation = Reflect.apply(value, target, args) as Promise<AssistantMessage>;
+              operation = Reflect.apply(
+                value,
+                target,
+                withoutToolsDuringCloseout(args),
+              ) as Promise<AssistantMessage>;
             } catch (error) {
               settle(undefined);
               throw error;
@@ -297,9 +370,14 @@ export class StageLimitController {
         if (streamMethods.has(property))
           return (...args: unknown[]) => {
             reserve();
+            prepareCloseout();
             let stream: { result(): Promise<AssistantMessage> };
             try {
-              stream = Reflect.apply(value, target, args) as typeof stream;
+              stream = Reflect.apply(
+                value,
+                target,
+                withoutToolsDuringCloseout(args),
+              ) as typeof stream;
             } catch (error) {
               settle(undefined);
               throw error;
