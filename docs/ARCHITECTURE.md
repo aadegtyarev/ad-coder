@@ -56,6 +56,9 @@ The observability core assigns semantic categories, correlation and sequence,
 uses category-only projection for raw tool arguments, then publishes through
 bounded replay and subscriber queues. Activity remains ephemeral; only its drop
 count and safe aggregate stage metrics cross result or checkpoint boundaries.
+Those metrics include separate byte counts for the effective system prompt,
+stage handoff prompt, and tool definitions, exposing every role's request weight
+before provider-specific serialization.
 
 Console rendering subscribes to that same channel. Human mode groups repeated
 semantic activity, while JSON mode transports schema-v1 records as NDJSON on

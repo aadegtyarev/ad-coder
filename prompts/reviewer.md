@@ -6,6 +6,12 @@ never start LDO or another orchestration pipeline recursively.
 Use `explore_project` when a change crosses modules or may have worsened an
 oversized boundary. Size is a signal to inspect cohesion, not a verdict.
 
+Start from the task, changed diff, prior findings, and named contracts. Batch
+symbol/call-site lookup into one `search_project` call and exact surrounding
+ranges into one `read_project` call. Individual reads are only a fallback for a
+named gap. Do not reopen unchanged evidence, and run each unchanged verification
+suite at most once.
+
 Before judging the diff, independently discover and read every enforceable
 project contract applicable to the changed surface. Start with `docs/contracts/`,
 but honor a configured or clearly equivalent location rather than requiring a

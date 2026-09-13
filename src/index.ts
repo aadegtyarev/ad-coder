@@ -386,6 +386,12 @@ export {
   DEFAULT_EXPLORE_PROJECT_CONFIG,
   EXPLORE_PROJECT_TOOL_NAME,
 } from "./project-tools/explore";
+export type { ReadProjectConfig } from "./project-tools/read";
+export {
+  buildReadProjectTool,
+  DEFAULT_READ_PROJECT_CONFIG,
+  READ_PROJECT_TOOL_NAME,
+} from "./project-tools/read";
 export type { SearchProjectConfig } from "./project-tools/search";
 export {
   buildSearchProjectTool,

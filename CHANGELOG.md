@@ -10,6 +10,8 @@ All notable changes to ad-coder are recorded here. The format follows
 
 - Added `search_project`, a configurable ranked and byte-bounded task
   reconnaissance projection for all native pipeline roles.
+- Added `read_project`, a configurable multi-file line-slice projection with
+  one aggregate byte ceiling for every native pipeline role.
 - Added a zero-disabled per-stage limit controller for duration, model turns,
   tool turns, input tokens, and provider-reported cost.
 - Wired finite stage-budget defaults through the runner, durable coordinator,
@@ -19,16 +21,26 @@ All notable changes to ad-coder are recorded here. The format follows
   stderr with visible backpressure and subscriber drops.
 - Added safe per-stage provider/model, thinking, duration, reasoning-token, cost,
   and context-strategy metrics to pipeline results and durable reports.
+- Added per-stage UTF-8 byte measurements for the effective system prompt,
+  stage handoff prompt, tool definitions, and their request-assembly total.
 
 ### Changed
 
 - Standalone `role` runs now persist their numeric usage ledger, print a safe
   usage envelope, stream semantic tool activity, and retain selected plugin tools.
+- Pipeline `drive` runs now stream the same bounded semantic tool activity for
+  every role stage.
 - Bounded normal Planner reconnaissance by batching independent reads and
   converting unresolved evidence into a research gate before Coder dispatch.
+- Planner now specifies verification commands without executing suites, builds,
+  linters, or formatters during normal reconnaissance.
+- Security, Researcher, Coder, and Reviewer now use scoped batched search/read
+  projections before any individual-file fallback.
 
 ### Security
 
+- Hardened `read_project` against path replacement and post-stat file growth by
+  using descriptor-relative no-follow traversal and a bounded descriptor read.
 - Hardened activity projection against argument, identifier, terminal-control,
   custom-tool-name, and oversized-record disclosure; default web transport now
   pins validated public addresses and revalidates redirects.

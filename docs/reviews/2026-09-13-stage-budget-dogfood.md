@@ -94,3 +94,45 @@ $0.05212120, and requested-tool counts of one `search_project`, twelve `read`,
 and four `bash`. This both validates the wiring and shows the remaining waste:
 the role still broadens from one projection into many reads. Failed standalone
 runs now print their known partial-ledger path for immediate diagnosis.
+
+A full native `drive --auto` validation of request-assembly telemetry stopped
+the Planner at its eight-model-turn ceiling after about 117 seconds. The durable
+session reached roughly 963 KB and the front again exposed only heartbeat,
+revealing that activity had been wired to standalone and console fronts but not
+pipeline drive. `drive` now consumes the same bounded activity stream for every
+stage. Per-stage metrics also report effective system-prompt, handoff-prompt,
+tool-definition, and total pre-serialization bytes, so subsequent reductions can
+be attributed across the whole pipeline.
+
+The first activity-visible retry showed why Planner still reached its 120-second
+duration ceiling: it launched a shell operation lasting about 41 seconds and
+continued reconnaissance afterward. Planner guidance now leaves suites, builds,
+linters, and formatters to Coder and permits only a single cheap probe when
+needed to establish the problem. Verification commands remain part of the plan.
+
+The next retry removed the long verification command but stopped at the
+20-tool-turn ceiling after about 42 seconds: Planner fanned out sixteen separate
+`read` calls after bounded search. `read_project` now replaces that pattern with
+up to eight exact line slices under one configurable 16 KB aggregate ceiling,
+while retaining ordinary `read` as a visible correctness fallback.
+
+The first full run to reach later stages completed Planner in about 130 seconds
+for $0.19778680 and Security in about 120 seconds for $0.42746700. Security found
+that the initial `read_project` implementation authorized a pathname before
+reopening it and could allocate beyond `maxFileBytes` if a file changed between
+`stat` and `readFile`. Coder reached its 20-tool ceiling after one partial edit.
+The completed mitigation opens every component descriptor-relative with
+`O_NOFOLLOW`, retains opened parents across pathname swaps, `fstat`s the opened
+file, and reads at most `maxFileBytes + 1` from that same descriptor. Deterministic
+tests cover ancestor replacement and post-stat growth.
+
+The final native Reviewer completed in about 98 seconds for $0.12798840 after
+running all gates in one combined shell call. It found one blocker: a NUL inside
+a path segment was truncated at the FFI boundary, so `..\0ignored` reached
+`openat` as `..`. The tool now rejects NUL before native traversal and a direct
+regression test preserves the boundary. Reviewer otherwise confirmed telemetry
+propagation, renderer cleanup, exports, contracts, and 406 passing tests.
+
+The focused NUL fix re-review approved in about 27.6 seconds for $0.03508040.
+It ran only `test/read-project.test.ts` (5/5) and mutation-checked the guard:
+removing it made the regression fail at the native traversal boundary.

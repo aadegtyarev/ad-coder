@@ -121,6 +121,14 @@ test("runRole drives one turn to a settled result and lands the ledger under tar
     (result.observations?.freshInput ?? 0) + (result.observations?.cachedInput ?? 0),
   );
   expect(result.observations?.contextStrategy).toBe("auto");
+  expect(result.observations.requestBytes.systemPrompt).toBeGreaterThan(0);
+  expect(result.observations.requestBytes.prompt).toBe(Buffer.byteLength("do the thing"));
+  expect(result.observations.requestBytes.toolDefinitions).toBeGreaterThan(0);
+  expect(result.observations.requestBytes.total).toBe(
+    result.observations.requestBytes.systemPrompt +
+      result.observations.requestBytes.prompt +
+      result.observations.requestBytes.toolDefinitions,
+  );
 
   // Exactly one after_response record under targetDir, and nothing under cwd.
   const lines = fs

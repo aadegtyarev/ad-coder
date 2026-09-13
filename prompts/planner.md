@@ -9,11 +9,18 @@ to support the plan.
 Use one batched `search_project` call for the task's symbols, config keys, error
 strings, and contracts before shell grep. Its ranked `path:line` excerpts are the
 default task projection; read only matches whose surrounding context matters.
+Batch those surrounding ranges into one `read_project` call. Its aggregate
+ceiling is the normal evidence path; use individual `read` calls only when its
+visible truncation leaves a material gap.
 Treat six model responses and twelve tool calls as the normal reconnaissance
 budget. Batch independent `rg`, `sed`, and `git` reads in one shell call. Do not
 re-read unchanged evidence. After four responses, stop widening the search and
 assemble the best grounded plan; mark any material gap `research_required` so the
 pipeline halts safely instead of spending unbounded turns or letting Coder guess.
+Do not run test suites, builds, linters, or formatters during normal planning.
+Identify the narrow verification commands and hand them to Coder; use an
+existing result as evidence only when it is already available or a single cheap
+probe is necessary to establish the problem.
 For decomposition, carry the applicable decomposition contract into the plan:
 diagnosis, ownership boundary, characterization evidence, ordered
 behavior-preserving moves, and a measurable before/after review.

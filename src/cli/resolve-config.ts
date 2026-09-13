@@ -26,6 +26,7 @@ import type { Profile, ProfileRole, ResolvedSelection } from "../profiles/types"
 import { parseProfile } from "../profiles/validate";
 import type { ProjectStoreConfig } from "../project-store/types";
 import { buildExploreProjectTool, EXPLORE_PROJECT_TOOL_NAME } from "../project-tools/explore";
+import { buildReadProjectTool, READ_PROJECT_TOOL_NAME } from "../project-tools/read";
 import { buildSearchProjectTool, SEARCH_PROJECT_TOOL_NAME } from "../project-tools/search";
 import { resolvePrompt } from "../prompts/prompts";
 import { deepseekPreset, openaiCodexPreset, openrouterPreset } from "../registry/presets";
@@ -402,7 +403,11 @@ function resolveConfig(
   }
   const commonBuiltInTools = [
     ...(enabledPlugins.includes("explore")
-      ? [buildExploreProjectTool(options.targetDir), buildSearchProjectTool(options.targetDir)]
+      ? [
+          buildExploreProjectTool(options.targetDir),
+          buildSearchProjectTool(options.targetDir),
+          buildReadProjectTool(options.targetDir),
+        ]
       : []),
     ...(enabledPlugins.includes("web") ? buildWebTools() : []),
   ];
@@ -438,6 +443,7 @@ function resolveConfig(
           "bash",
           EXPLORE_PROJECT_TOOL_NAME,
           SEARCH_PROJECT_TOOL_NAME,
+          READ_PROJECT_TOOL_NAME,
           SUBMIT_PLAN_TOOL_NAME,
           SUBMIT_FOLLOW_UP_TOOL_NAME,
         ]),
@@ -446,6 +452,7 @@ function resolveConfig(
           "bash",
           EXPLORE_PROJECT_TOOL_NAME,
           SEARCH_PROJECT_TOOL_NAME,
+          READ_PROJECT_TOOL_NAME,
           "web_search",
           "web_read",
           SUBMIT_FOLLOW_UP_TOOL_NAME,
@@ -455,6 +462,7 @@ function resolveConfig(
           "bash",
           EXPLORE_PROJECT_TOOL_NAME,
           SEARCH_PROJECT_TOOL_NAME,
+          READ_PROJECT_TOOL_NAME,
           SUBMIT_FOLLOW_UP_TOOL_NAME,
         ]),
         coder: buildRole("coder", [
@@ -464,6 +472,7 @@ function resolveConfig(
           "bash",
           EXPLORE_PROJECT_TOOL_NAME,
           SEARCH_PROJECT_TOOL_NAME,
+          READ_PROJECT_TOOL_NAME,
           SUBMIT_FOLLOW_UP_TOOL_NAME,
         ]),
         reviewer: buildRole("reviewer", [
@@ -471,6 +480,7 @@ function resolveConfig(
           "bash",
           EXPLORE_PROJECT_TOOL_NAME,
           SEARCH_PROJECT_TOOL_NAME,
+          READ_PROJECT_TOOL_NAME,
           SUBMIT_VERDICT_TOOL_NAME,
           SUBMIT_FOLLOW_UP_TOOL_NAME,
         ]),
@@ -479,6 +489,7 @@ function resolveConfig(
           "bash",
           EXPLORE_PROJECT_TOOL_NAME,
           SEARCH_PROJECT_TOOL_NAME,
+          READ_PROJECT_TOOL_NAME,
           "web_search",
           "web_read",
           SUBMIT_FOLLOW_UP_TOOL_NAME,

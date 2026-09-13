@@ -381,6 +381,12 @@ export interface PipelineStageMetrics {
   reasoning?: number;
   /** Provider-reported total; never recomputed. */
   costUsd?: number;
+  requestBytes: {
+    systemPrompt: number;
+    prompt: number;
+    toolDefinitions: number;
+    total: number;
+  };
   readFiles: string[];
   readFilesTotal: number;
   readFilesTruncated: number;

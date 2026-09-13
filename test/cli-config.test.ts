@@ -477,6 +477,7 @@ test("built-in plugin groups are selectable, visible, and mutually exclusive wit
   expect(selected.pluginTools?.map(({ name }) => name)).toEqual([
     "explore_project",
     "search_project",
+    "read_project",
   ]);
   expect(selected.effectiveConfig?.enabledPlugins).toEqual({ value: "explore", source: "cli" });
   expect(() => resolvePipelineConfig({ ...base, enabledPlugins: [], pluginTools: [] })).toThrow(

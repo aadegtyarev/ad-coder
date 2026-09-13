@@ -46,6 +46,7 @@ import { SUBMIT_VERDICT_TOOL_NAME } from "../src/orchestration/verdict";
 import { RunCoordinator } from "../src/project-operations/run-coordinator";
 import { ProjectStore } from "../src/project-store/project-store";
 import { EXPLORE_PROJECT_TOOL_NAME } from "../src/project-tools/explore";
+import { READ_PROJECT_TOOL_NAME } from "../src/project-tools/read";
 import { SEARCH_PROJECT_TOOL_NAME } from "../src/project-tools/search";
 import type { Role } from "../src/role";
 import { defineRole } from "../src/role";
@@ -193,6 +194,7 @@ test("startOrchestrator preserves the resolved seed thinking level", async () =>
   expect(capturedToolNames).toEqual([
     EXPLORE_PROJECT_TOOL_NAME,
     SEARCH_PROJECT_TOOL_NAME,
+    READ_PROJECT_TOOL_NAME,
     WEB_SEARCH_TOOL_NAME,
     WEB_READ_TOOL_NAME,
     INSPECT_IMAGE_TOOL_NAME,
@@ -1016,6 +1018,7 @@ test("stage metrics survive reconstruction and model reports expose counts, not 
         output: 3,
         reasoning: 2,
         costUsd: 0.012,
+        requestBytes: { systemPrompt: 10, prompt: 20, toolDefinitions: 30, total: 60 },
         readFiles: ["src/private-name.ts"],
         readFilesTotal: 1,
         readFilesTruncated: 0,

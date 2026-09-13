@@ -1359,15 +1359,21 @@ async function driveCommand(
   // sums per-step and total cost from, and drive against that same instance.
   const ledgerSink = new MemoryLedgerSink();
   config.ledgerSink = ledgerSink;
+  const renderer = new ToolActivityRenderer(process.stderr, "human", config.toolActivity);
+  config.activityConsumer = renderer.consume;
   const session = createWorkflowSession(config);
-  await driveWorkflow({
-    session,
-    ledgerSink,
-    auto,
-    input: process.stdin,
-    output: process.stdout,
-    error: process.stderr,
-  });
+  try {
+    await driveWorkflow({
+      session,
+      ledgerSink,
+      auto,
+      input: process.stdin,
+      output: process.stdout,
+      error: process.stderr,
+    });
+  } finally {
+    renderer.close();
+  }
 }
 
 async function consoleCommand(

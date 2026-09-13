@@ -170,6 +170,7 @@ const KNOWN_TOOLS: Readonly<Record<string, { activity: ToolActivityKind; publicN
   bash: { activity: "Run", publicName: "bash" },
   explore_project: { activity: "Search", publicName: "explore_project" },
   search_project: { activity: "Search", publicName: "search_project" },
+  read_project: { activity: "Read", publicName: "read_project" },
   web_search: { activity: "Web", publicName: "web_search" },
   web_read: { activity: "Web", publicName: "web_read" },
   inspect_image: { activity: "Inspect image", publicName: "inspect_image" },
