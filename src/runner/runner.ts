@@ -37,6 +37,7 @@ import {
   type ToolActivityConfig,
   type ToolActivityConsumer,
 } from "../observability/tool-activity";
+import { type StageLimitController, StageLimitError } from "../orchestration/stage-limits";
 import { ProjectStore } from "../project-store/project-store";
 import type { ProjectStoreConfig } from "../project-store/types";
 import type { Role } from "../role";
@@ -103,6 +104,8 @@ export interface RunRoleParams {
   tools?: Tool[];
   /** Shared model-call controller for a larger session. */
   sessionLimitController?: SessionLimitController;
+  /** Per-role-stage controller; zero-valued limits preserve prior behavior. */
+  stageLimitController?: StageLimitController;
   /** Zero disables each legacy read-observation limit. */
   observability?: { maxReadPaths?: number; maxReadPathBytes?: number };
   /** Optional shared activity channel. A private channel is created when only a consumer is supplied. */
@@ -283,11 +286,22 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
   // Concatenate before validating so the collision guard sees the full set
   // (built-in-vs-custom and custom-vs-custom). `?? []` avoids ever registering
   // `undefined` when no custom tools were supplied -- prior behavior byte-for-byte.
-  const tools = [...builtin, ...(params.tools ?? [])];
+  const tools = [...builtin, ...(params.tools ?? [])].map((tool) =>
+    params.stageLimitController === undefined
+      ? tool
+      : {
+          ...tool,
+          execute: async (...args: Parameters<typeof tool.execute>) => {
+            params.stageLimitController?.admitToolTurn();
+            return tool.execute(...args);
+          },
+        },
+  );
   assertUniqueToolNames(tools);
 
   const controller = params.sessionLimitController;
-  const models = controller?.wrap(params.models) ?? params.models;
+  const sessionModels = controller?.wrap(params.models) ?? params.models;
+  const models = params.stageLimitController?.wrap(sessionModels) ?? sessionModels;
   const explicitPolicy =
     params.compaction ??
     (params.summarizer === undefined ? undefined : { mode: "auto", summarizer: params.summarizer });
@@ -447,12 +461,35 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
     } else {
       assertContextFitsBudget(params.role, messages, params.model);
     }
-    const prompted = await lane.prompt(params.prompt, undefined, context).catch((error) => {
-      controller?.assertNoBoundaryFailure();
-      const providerLimit = providerLimitFrom(error);
-      if (providerLimit !== undefined) throw providerLimit;
-      throw error;
-    });
+    params.stageLimitController?.assertActive();
+    const promptOperation = lane.prompt(params.prompt, undefined, context);
+    const maxDurationMs = params.stageLimitController?.limits.maxDurationMs ?? 0;
+    const remainingDurationMs =
+      maxDurationMs === 0
+        ? 0
+        : Math.max(0, maxDurationMs - (params.stageLimitController?.snapshot().elapsedMs ?? 0));
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    const prompted = await (maxDurationMs === 0
+      ? promptOperation
+      : Promise.race([
+          promptOperation,
+          new Promise<never>((_, reject) => {
+            deadline = setTimeout(
+              () => reject(new StageLimitError("duration", maxDurationMs, maxDurationMs)),
+              remainingDurationMs,
+            );
+          }),
+        ])
+    )
+      .finally(() => {
+        if (deadline !== undefined) clearTimeout(deadline);
+      })
+      .catch((error) => {
+        controller?.assertNoBoundaryFailure();
+        const providerLimit = providerLimitFrom(error);
+        if (providerLimit !== undefined) throw providerLimit;
+        throw error;
+      });
     controller?.assertNoBoundaryFailure();
     if (usageFailure !== undefined) throw usageFailure;
     if (providerLimitObservation !== undefined) throw providerLimitObservation;
@@ -506,6 +543,7 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
       );
     }
     const diffBytes = await measureSafeGitDiffBytes(absTargetDir);
+    params.stageLimitController?.assertActive();
     const totalInput = boundedUsageInteger(usage.freshInput + usage.cachedInput, "total input");
     return {
       runId,

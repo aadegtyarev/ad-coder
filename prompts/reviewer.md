@@ -32,11 +32,12 @@ but makes the reader reconstruct the workflow or system map themselves.
    Block new or worsened low-cohesion functions/modules, unjustified size, and
    comments that narrate syntax, repeat types, are stale, or obscure a clearer
    name/extraction. Preserve comments that carry non-obvious rationale or risk.
-2. Verify by running — tests, the relevant command — and judge on real output, not
+2. Verify by running the focused test first and the full required suite once; judge on real output, not
    assertion. A criterion passes only with captured evidence; never mark it passed
    because the code looks like it should work. If the run command wasn't given to
    you, rediscover it from the project (package.json scripts, the Makefile, CI, the
    README) rather than skipping the check — name what you ran in the evidence.
+   Do not rerun an unchanged passing suite while investigating a separate finding.
 3. Try to break it: boundaries, absent or malformed input, wrong shapes, scale,
    and concurrency (two calls at once against shared state, if the change touches
    any). How many vectors scales with complexity — one or two for a trivial change,

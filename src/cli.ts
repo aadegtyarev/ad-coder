@@ -247,6 +247,7 @@ export async function runRoleStandalone(params: {
   compaction?: CompactionPolicy;
   projectStoreConfig?: ProjectStoreConfig;
   toolActivity?: Partial<ToolActivityConfig>;
+  stageLimits?: import("./orchestration/stage-limits").StageLimits;
 }): Promise<{ text: string; cost: number }> {
   const runId = crypto.randomUUID();
   const store = new ProjectStore(params.targetDir, params.projectStoreConfig);
@@ -259,6 +260,7 @@ export async function runRoleStandalone(params: {
       projectStoreConfig: params.projectStoreConfig,
     }),
     ...(params.toolActivity !== undefined && { toolActivity: params.toolActivity }),
+    ...(params.stageLimits !== undefined && { stageLimits: params.stageLimits }),
   }).runRole(params.role, params.model, params.task, {
     runId,
     session,
@@ -1080,6 +1082,33 @@ function buildConfigOptions(
     "--request-timeout-ms",
     flags["--request-timeout-ms"],
   );
+  const stageMaxDurationMs = parseNonNegativeIntegerFlag(
+    "--stage-max-duration-ms",
+    flags["--stage-max-duration-ms"],
+  );
+  const stageMaxModelTurns = parseNonNegativeIntegerFlag(
+    "--stage-max-model-turns",
+    flags["--stage-max-model-turns"],
+  );
+  const stageMaxToolTurns = parseNonNegativeIntegerFlag(
+    "--stage-max-tool-turns",
+    flags["--stage-max-tool-turns"],
+  );
+  const stageMaxInputTokens = parseNonNegativeIntegerFlag(
+    "--stage-max-input-tokens",
+    flags["--stage-max-input-tokens"],
+  );
+  const stageMaxCostUsd =
+    flags["--stage-max-cost-usd"] === undefined ? undefined : Number(flags["--stage-max-cost-usd"]);
+  const stageLimits = {
+    ...(stageMaxDurationMs !== undefined && { maxDurationMs: stageMaxDurationMs }),
+    ...(stageMaxModelTurns !== undefined && { maxModelTurns: stageMaxModelTurns }),
+    ...(stageMaxToolTurns !== undefined && { maxToolTurns: stageMaxToolTurns }),
+    ...(stageMaxInputTokens !== undefined && { maxInputTokens: stageMaxInputTokens }),
+    ...(stageMaxCostUsd !== undefined && { maxCostUsd: stageMaxCostUsd }),
+  };
+  if (stageMaxCostUsd !== undefined && (!Number.isFinite(stageMaxCostUsd) || stageMaxCostUsd < 0))
+    fail("--stage-max-cost-usd expects a non-negative finite number");
   const targetDir = resolveTargetDir(targetDirArg);
   const projectStoreConfig = parseProjectStoreConfig(flags["--project-store-config"]);
   const toolActivityEntries = [
@@ -1184,6 +1213,7 @@ function buildConfigOptions(
     ...(flags["--vision-model"] !== undefined && { visionModel: flags["--vision-model"] }),
     ...(orchestratorThinkingLevel !== undefined && { orchestratorThinkingLevel }),
     ...(requestTimeoutMs !== undefined && { requestTimeoutMs }),
+    ...(Object.values(stageLimits).some((value) => value !== undefined) && { stageLimits }),
     ...(flags["--summarizer-model"] !== undefined && {
       summarizerModel: flags["--summarizer-model"],
     }),
@@ -1248,6 +1278,7 @@ async function roleCommand(
       projectStoreConfig: config.projectStoreConfig,
     }),
     ...(config.toolActivity !== undefined && { toolActivity: config.toolActivity }),
+    ...(config.stageLimits !== undefined && { stageLimits: config.stageLimits }),
   });
 
   // The extracted assistant text IS this subcommand's result value, so it is
@@ -1432,6 +1463,31 @@ const PIPELINE_OPTIONS: CommandDefinition["options"] = [
     name: "--request-timeout-ms",
     value: "<n>",
     description: "Provider request timeout; defaults to 120000, 0 disables.",
+  },
+  {
+    name: "--stage-max-duration-ms",
+    value: "<n>",
+    description: "Whole-stage elapsed-time budget; defaults to 600000, 0 disables.",
+  },
+  {
+    name: "--stage-max-model-turns",
+    value: "<n>",
+    description: "Model calls per stage; defaults to 32, 0 disables.",
+  },
+  {
+    name: "--stage-max-tool-turns",
+    value: "<n>",
+    description: "Tool calls per stage; defaults to 128, 0 disables.",
+  },
+  {
+    name: "--stage-max-input-tokens",
+    value: "<n>",
+    description: "Provider-reported input tokens per stage; defaults to 500000, 0 disables.",
+  },
+  {
+    name: "--stage-max-cost-usd",
+    value: "<n>",
+    description: "Provider-reported cost per stage; defaults to 2, 0 disables.",
   },
   {
     name: "--heartbeat-ms",

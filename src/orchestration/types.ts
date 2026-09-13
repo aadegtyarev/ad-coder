@@ -15,6 +15,7 @@ import type { ResolvedRegistry } from "../registry/types";
 import type { Role } from "../role";
 import type { Tool } from "../runner/tool";
 import type { SessionLimitController } from "../session-limits";
+import type { StageLimits } from "./stage-limits";
 
 /**
  * The two verdicts a reviewer round can settle on.
@@ -297,6 +298,8 @@ export interface PipelineConfig {
   effectiveConfig?: Readonly<Record<string, { value: string | number | boolean; source: string }>>;
   /** Shared generation-call accounting for every role in this workflow session. */
   sessionLimitController?: SessionLimitController;
+  /** Per-stage limits. Omitted/zero fields preserve unlimited historical behavior. */
+  stageLimits?: StageLimits;
   /** Retention and byte limits for all durable state created by this run. */
   projectStoreConfig?: ProjectStoreConfig;
   /** Durable coordinator identity; supply runId to resume an interrupted run. */

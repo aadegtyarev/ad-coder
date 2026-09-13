@@ -31,3 +31,14 @@ Continue by implementing and reviewing the stage-limit domain/controller first,
 then runner admission, then coordinator persistence, then CLI/configuration. Run
 each slice through focused tests before using a native role on the next slice. Do
 not repeat this monolithic Coder prompt.
+
+## Wired-budget dogfood
+
+After runner, coordinator, CLI, and prompt integration, one standalone Reviewer
+was launched with explicit ceilings of 180 seconds, 12 model turns, 48 tool
+turns, 250,000 input tokens, and $0.50. It stopped after about 40 seconds instead
+of running for hours, but surfaced the generic `AgentHarness storage or invariant
+fault` and no verdict or cost envelope; its durable session artifact was about
+666 KB. Do not repeat this review. The bounded stop is an improvement, while the
+missing typed terminal projection and standalone usage envelope remain covered
+by the existing activity/usage backlog item.

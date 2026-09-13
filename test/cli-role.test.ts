@@ -6,6 +6,7 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import { createModels, fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 import { runRoleStandalone } from "../src/cli";
 import { MemoryLedgerSink } from "../src/ledger/ledger";
+import { StageLimitError } from "../src/orchestration/stage-limits";
 import type { Role } from "../src/role";
 import { defineRole } from "../src/role";
 
@@ -65,4 +66,22 @@ test("runRoleStandalone drives one faux turn and returns the assistant text plus
   expect(cost).toBeGreaterThanOrEqual(0);
   // The ledger recorded the turn, and the cost is summed from it.
   expect(ledgerSink.records().length).toBeGreaterThan(0);
+});
+
+test("standalone roles enforce the same stage budgets as pipeline roles", async () => {
+  const { faux, models, model, role } = fixture();
+  const response = fauxAssistantMessage("too expensive");
+  response.usage.input = 2;
+  faux.setResponses([response]);
+  await expect(
+    runRoleStandalone({
+      role,
+      model,
+      models,
+      targetDir,
+      task: "review the change",
+      ledgerSink: new MemoryLedgerSink(),
+      stageLimits: { maxInputTokens: 1 },
+    }),
+  ).rejects.toBeInstanceOf(StageLimitError);
 });

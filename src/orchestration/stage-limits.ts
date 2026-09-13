@@ -1,3 +1,5 @@
+import type { AssistantMessage, Models } from "@earendil-works/pi-ai";
+
 export interface StageLimits {
   maxDurationMs?: number;
   maxModelTurns?: number;
@@ -12,7 +14,8 @@ export type StageLimitReason =
   | "tool_turns"
   | "input"
   | "cost"
-  | "cost_in_flight";
+  | "cost_in_flight"
+  | "cost_unknown";
 
 export interface StageLimitSnapshot extends Required<StageLimits> {
   elapsedMs: number;
@@ -63,6 +66,7 @@ export class StageLimitController {
   private inputTokens = 0;
   private costUsd = 0;
   private costInFlight = false;
+  private terminalReason: StageLimitReason | undefined;
 
   constructor(
     limits: StageLimits = {},
@@ -85,6 +89,8 @@ export class StageLimitController {
   }
 
   assertActive(): void {
+    if (this.terminalReason !== undefined)
+      throw new StageLimitError(this.terminalReason, this.limits.maxCostUsd, this.costUsd);
     this.assertBelow("duration", this.limits.maxDurationMs, this.elapsedMs());
     this.assertBelow("model_turns", this.limits.maxModelTurns, this.modelTurns);
     this.assertBelow("tool_turns", this.limits.maxToolTurns, this.toolTurns);
@@ -117,6 +123,74 @@ export class StageLimitController {
     this.inputTokens = totalInput;
     this.costUsd = totalCost;
     this.costInFlight = false;
+  }
+
+  failUnknownCost(): void {
+    if (this.limits.maxCostUsd > 0) {
+      this.costInFlight = false;
+      this.terminalReason = "cost_unknown";
+    }
+  }
+
+  wrap(models: Models): Models {
+    const controller = this;
+    const promiseMethods = new Set(["complete", "completeSimple", "fetchDeferred"]);
+    const streamMethods = new Set(["stream", "streamSimple", "streamDeferred"]);
+    const settle = (message: AssistantMessage | undefined) => {
+      if (message === undefined) return controller.failUnknownCost();
+      controller.observeUsage(
+        message.usage.input + message.usage.cacheRead,
+        message.usage.cost.total,
+      );
+    };
+    return new Proxy(models, {
+      get(target, property, receiver) {
+        const value = Reflect.get(target, property, receiver);
+        if (typeof property !== "string" || typeof value !== "function") return value;
+        if (promiseMethods.has(property))
+          return (...args: unknown[]) => {
+            try {
+              controller.admitModelTurn();
+            } catch (error) {
+              return Promise.reject(error);
+            }
+            let operation: Promise<AssistantMessage>;
+            try {
+              operation = Reflect.apply(value, target, args) as Promise<AssistantMessage>;
+            } catch (error) {
+              settle(undefined);
+              throw error;
+            }
+            return operation.then(
+              (message) => {
+                settle(message);
+                return message;
+              },
+              (error: unknown) => {
+                settle(undefined);
+                throw error;
+              },
+            );
+          };
+        if (streamMethods.has(property))
+          return (...args: unknown[]) => {
+            controller.admitModelTurn();
+            let stream: { result(): Promise<AssistantMessage> };
+            try {
+              stream = Reflect.apply(value, target, args) as typeof stream;
+            } catch (error) {
+              settle(undefined);
+              throw error;
+            }
+            void stream.result().then(
+              (message) => settle(message),
+              () => settle(undefined),
+            );
+            return stream;
+          };
+        return value.bind(target);
+      },
+    });
   }
 
   private elapsedMs(): number {

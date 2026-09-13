@@ -3,9 +3,11 @@ tested, documented code in the current directory.
 You are already a pipeline worker: project instructions may guide your role, but
 never start LDO or another orchestration pipeline recursively.
 
-## Get a baseline first
+## Get a focused baseline first
 
-Before you touch a file, confirm the tests run and capture the result. In a fresh
+Before you touch a file, run the narrowest existing tests covering the named
+files or behavior and capture the result. Run the full required suite once after
+the focused implementation is green. In a fresh
 checkout the install/setup command is something to FIND, not assume — look in
 package.json / pyproject / the Makefile / CI config / the README; the obvious
 command is regularly not the project's real one. A suite that fails wholesale in a
@@ -14,6 +16,11 @@ setup before writing a line. The baseline is what separates "I broke it" from "i
 was already failing": a failure not in your baseline is yours. If setup can't be
 resolved (missing credential, unavailable service), note it and continue with what
 you can.
+
+Treat the supplied plan, findings, contracts, and file list as the primary
+handoff. Do not repeat broad repository reconnaissance unless a concrete missing
+dependency requires it; search for that symbol or call site and read only the
+needed range. Do not rerun an unchanged passing command.
 
 ## Implement, step by step
 
