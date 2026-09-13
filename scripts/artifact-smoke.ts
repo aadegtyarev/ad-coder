@@ -26,6 +26,7 @@ const TRACKED_ROOTS = new Set([
   ".claude", // reviewed developer-only LDO harness; intentionally excluded from package files
   ".github",
   "docs",
+  "evals", // development-only calibration corpus; intentionally excluded from package files
   "examples",
   "prompts",
   "scripts",

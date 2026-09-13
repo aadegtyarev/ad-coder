@@ -393,6 +393,16 @@ workflows — one substrate, swappable drivers.
   matrix for a new inventory; project-specific outcomes progressively refine it.
   Split fixtures into another repository only when their size or incompatible
   toolchains make the main repository materially harder to maintain.
+  Bootstrap any new provider inventory from recorded provider guidance,
+  provider benchmarks, and independent evals, then falsify that seed against the
+  local corpus from the cheapest plausible model at low effort. Store the
+  corpus-calibrated base in user configuration and layer project-calibrated
+  `(role, complexity)` overrides from `.ad-coder/`, with source provenance in
+  effective configuration and no cross-project mutation of the base.
+  Inventories may span providers; prefer cross-family Coder/Reviewer pairs when
+  available to reduce correlated blind spots, and use provider-recommended
+  within-family variants when an inventory cannot span families. Routing never
+  reaches outside the operator-authored inventory.
 - **Project memory** — committed, machine-portable (laptop↔desktop via git).
   Decided: autonomy default `push` (agent commits+pushes), commits on the
   working branch (one `git pull` brings code+memory atomically). Non-negotiable

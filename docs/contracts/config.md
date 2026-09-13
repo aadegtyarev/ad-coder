@@ -15,6 +15,11 @@ Rules the operator declared for ad-coder. A violation is always blocking.
   to `1`, while `0` means unlimited. Child-pipeline count defaults to the efficient
   finite guard `8`; `0` explicitly means unlimited. A separate setting disables
   automatic decomposition itself.
+- 2026-09-13: A model inventory is operator-authored and may contain one or
+  multiple providers. Routing must select only models in that inventory. When
+  available, Coder and Reviewer may use different model families to reduce
+  correlated blind spots; a single-family inventory may route them to different
+  variants recommended for those roles.
 
 ## Sources
 

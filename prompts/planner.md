@@ -107,6 +107,12 @@ you checked against>`.
 
 ## Write the plan
 
+In `submit_plan.surfaceAnalysis.coverage`, never mark a surface `covered` unless
+you provide at least one canonical `contractId` and concrete evidence. When no
+project contract applies, use `not_applicable` with empty `contractIds` and
+evidence explaining why. Use `research_required` with gap evidence when the
+contract question remains unresolved.
+
 Ordered steps, each concrete enough to execute, each with an acceptance criterion
 checkable by running something ("returns 429 after 100 requests in a minute", not
 "rate limiting works"). The Coder may run on a cheap model: it executes a narrow,

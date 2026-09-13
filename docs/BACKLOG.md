@@ -17,6 +17,10 @@ Only unresolved work belongs here. Current behavior is in
   `evals/tasks`, `evals/runner`, `evals/scorers`) with versioned hidden defects,
   machine gates, gitignored raw outputs, and durable aggregate conclusions in
   `docs/model-calibration.md`.
+  Add automatic layered resolution after the corpus stabilizes: a
+  user-local calibrated inventory as the reusable provider/account baseline,
+  then an explicit `.ad-coder/` project override with per-cell provenance in
+  `config show`. Project observations must never silently rewrite the user base.
 
 - [high] **Explicit durable-run inventory migration** (`src/inventory/`,
   `src/project-operations/`): named atomic registry/profile selection and safe
@@ -73,6 +77,12 @@ Only unresolved work belongs here. Current behavior is in
   must not be returned or logged wholesale.
 
 ## Reliability and observability
+
+- [high] **Resume rejected research from every front** (`src/cli.ts`,
+  `src/project-operations/run-coordinator.ts`): the core exposes the authorized
+  `resumeResearch` transition, but `drive --resume-run` retries only stage-limit
+  pauses. Add an explicit operator action that re-prepares rejected research and
+  resumes the same run without repeating Planner.
 
 - [medium] **Complete activity-stream dogfood evidence**
   (`docs/cost-economics.md`): the interrupted run now has exact checkpoint,
