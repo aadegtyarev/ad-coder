@@ -156,3 +156,12 @@ paused first Planner attempt added $0.00690724, making actual cost $0.08310944.
 The run used 67,505 fresh, 89,600 cached, 8,349 output, and 3,400 reasoning
 tokens. The discrepancy is harness evidence: resumed attempts must remain in
 terminal metrics and accepted-result economics.
+
+On the corrected `reviewer-hidden-regression-v1` Git diff, Luna low found both
+seeded blockers and avoided the tempting false positive: 59.36 s, 9 model turns,
+17 tool turns, 15,013 fresh plus 18,432 cached input, 2,365 output, 1,044
+reasoning tokens, and $0.00620924. This supports Luna for bounded review, but the
+first sample is insufficient to replace Terra for complex or broad review. The
+run also exposed an invalid scorer assumption that models would guess hidden
+exact defect codes; the scorer now accepts equivalent stable codes and the CLI's
+documented trailing cost line.
