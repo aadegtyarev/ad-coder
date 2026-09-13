@@ -296,6 +296,9 @@ export function buildSubmitPlanTool(
     name: SUBMIT_PLAN_TOOL_NAME,
     description: "Record the plan's complexity, security surface, contract rules, and summary.",
     label: "submit plan",
+    // Providers that expose strict JSON-schema tool calls can constrain this
+    // mandatory handoff; others retain the normal tool-call fallback.
+    constrainedSampling: { type: "json_schema", strict: "prefer" },
     parameters: Type.Object({
       complexity: Type.String(),
       securitySurface: Type.String(),

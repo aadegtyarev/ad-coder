@@ -31,6 +31,43 @@ export interface StageLimitSnapshot extends Required<StageLimits> {
   costInFlight: boolean;
 }
 
+/** Safe live capacity exposed after a tool turn; zero limits are intentionally omitted. */
+export interface StageBudgetProjection {
+  durationMs?: number;
+  modelTurns?: number;
+  toolTurns?: number;
+  inputTokens?: number;
+  costUsd?: number;
+  /** Tool admissions available before the configured final-response reserve. */
+  toolTurnsBeforeCloseout?: number;
+}
+
+export function projectRemainingStageBudget(
+  snapshot: Readonly<StageLimitSnapshot>,
+): StageBudgetProjection {
+  const remaining = (limit: number, used: number): number | undefined =>
+    limit === 0 ? undefined : Math.max(0, limit - used);
+  const toolCloseoutLimit =
+    snapshot.maxToolTurns === 0
+      ? undefined
+      : Math.max(0, snapshot.maxToolTurns - snapshot.finalResponseReserveToolTurns);
+  const durationMs = remaining(snapshot.maxDurationMs, snapshot.elapsedMs);
+  const modelTurns = remaining(snapshot.maxModelTurns, snapshot.modelTurns);
+  const toolTurns = remaining(snapshot.maxToolTurns, snapshot.toolTurns);
+  const inputTokens = remaining(snapshot.maxInputTokens, snapshot.inputTokens);
+  const costUsd = remaining(snapshot.maxCostUsd, snapshot.costUsd);
+  return {
+    ...(durationMs !== undefined && { durationMs }),
+    ...(modelTurns !== undefined && { modelTurns }),
+    ...(toolTurns !== undefined && { toolTurns }),
+    ...(inputTokens !== undefined && { inputTokens }),
+    ...(costUsd !== undefined && { costUsd }),
+    ...(toolCloseoutLimit !== undefined && {
+      toolTurnsBeforeCloseout: Math.max(0, toolCloseoutLimit - snapshot.toolTurns),
+    }),
+  };
+}
+
 export class StageLimitError extends Error {
   override readonly name = "StageLimitError";
   readonly code = "stage_limit" as const;

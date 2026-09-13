@@ -281,6 +281,9 @@ workflows — one substrate, swappable drivers.
   validator (schema permissive at the leaves). An absent call is a hard
   `missing_plan`; malformed or incomplete coverage is `malformed_plan`; and a
   `research_required` decision enters a durable Research phase before coding.
+  Both mandatory planner/reviewer handoffs now prefer the provider-native strict
+  JSON-schema tool-call mode when available, while retaining portable fallback
+  and authoritative parser validation.
   Inputs are bounded, IDs must be unique, and contract IDs resolve through a
   deterministic exported canonical index. Optional surface-analysis governance
   limits are production-configured with zero-disabled semantics and effective

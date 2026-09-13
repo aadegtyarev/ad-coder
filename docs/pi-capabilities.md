@@ -9,6 +9,22 @@
 `@earendil-works/pi-coding-agent`, `@earendil-works/pi-tui`,
 `@earendil-works/pi-telemetry`, `@earendil-works/chord`.
 
+## Строгие JSON-schema handoff-инструменты
+
+Проверено 2026-09-14 по установленному `pi-ai` 0.85.1:
+`Tool.constrainedSampling` принимает `{ type: "json_schema", strict:
+"prefer" | "require" }`, а `pi-agent-core` передаёт это свойство провайдеру.
+Совместимые OpenAI-compatible адаптеры применяют нативный strict mode;
+`strict: "prefer"` сохраняет обычный tool-call путь для остальных.
+
+Поэтому обязательные `submit_plan` и `submit_verdict` используют
+`{ type: "json_schema", strict: "prefer" }`. Это ограничивает транспортную
+форму там, где провайдер способен её гарантировать, но не заменяет
+`parsePlan`/`parseVerdict`: их доменная проверка намеренно остаётся источником
+истины для enum-значений, контрактного покрытия и коррекционной диагностики.
+`require` здесь не подходит: он сделал бы поддерживаемость провайдера условием
+выполнения pipeline, а не оптимизацией качества.
+
 ## Вывод: строимся на `pi-agent-core`, не на `pi-coding-agent`
 
 `pi-coding-agent` — это готовое приложение (CLI + TUI + сессии на диске).

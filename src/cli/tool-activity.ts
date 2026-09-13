@@ -3,6 +3,13 @@ import { boundToolActivityText, resolveToolActivityConfig } from "../observabili
 
 export type ToolActivityRenderMode = "human" | "json";
 
+/** The console supplies one shared line transport for every stderr producer. */
+export interface LineOutput {
+  write(chunk: string): boolean;
+  on(event: "drain", listener: () => void): unknown;
+  off(event: "drain", listener: () => void): unknown;
+}
+
 interface HumanGroup {
   activity: string;
   label: string;
@@ -23,7 +30,7 @@ export class ToolActivityRenderer {
   private closed = false;
 
   constructor(
-    private readonly output: NodeJS.WritableStream,
+    private readonly output: LineOutput,
     private readonly mode: ToolActivityRenderMode,
     config: Partial<ToolActivityConfig> = {},
   ) {

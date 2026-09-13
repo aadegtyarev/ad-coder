@@ -156,6 +156,9 @@ export function buildSubmitVerdictTool(
     name: SUBMIT_VERDICT_TOOL_NAME,
     description: "Record the review verdict.",
     label: "submit verdict",
+    // Prefer provider-native strict schemas without excluding portable
+    // tool-calling providers from the review workflow.
+    constrainedSampling: { type: "json_schema", strict: "prefer" },
     parameters: Type.Object({
       status: Type.String(),
       issues: Type.Array(Type.Object({ severity: Type.String(), what: Type.String() })),

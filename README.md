@@ -249,9 +249,12 @@ private target-local record.
 
 ### Live background notices
 
-For an operator who keeps `console` open while a detached pipeline runs, the
-console prints lifecycle, stage, dropped-event, and terminal notices to stderr
-while continuing to accept input. In `--json` mode these are content-free
+For an operator who keeps `console` open while a detached pipeline runs, use
+`console --workflows pipeline --owner-id <opaque-id>` (or its stable OS-identity
+default). `--workflows pipeline` is required: workflow authority stays disabled by
+default. The console supplies the detached host launcher, so `start_pipeline` works and lifecycle,
+stage, dropped-event, and terminal notices arrive on stderr while input remains
+usable. In `--json` mode these are content-free
 `background_events` NDJSON records on stderr; final turn records remain on
 stdout. Notices never submit a model turn. A notice is only a bounded hint: when
 it reports `pending` or `droppedEvents`, recover the complete ordered history
@@ -264,7 +267,9 @@ or `ConversationSession.subscribeBackgroundRuns(consumer)`. Each owner-scoped
 notice contains only safe lifecycle metadata, is capped by the configured
 mandatory `maxPageSize` and `maxPageBytes`, and returns an unsubscribe function.
 Subscribers begin at the current tail; cursor polling remains the durable,
-reconnect-safe source of truth. The CLI/API accepts numeric limits. Ordinary
+reconnect-safe source of truth. `--background-subscriber-queue-capacity` is a
+mandatory positive 1–1024 safety ceiling (default 16) to absorb brief stderr
+bursts without unbounded memory. The CLI/API accepts numeric limits. Ordinary
 resource limits use `0` as disabled, while `maxPageSize` defaults to 32 events
 and `maxPageBytes` to 16 KiB; both paging ceilings are mandatory positive
 values. Programmatic detached callers inject a host launcher into
@@ -328,7 +333,13 @@ provider-reported cost. Override them with `--stage-max-duration-ms`,
 limit. A reached limit durably pauses the incomplete stage with explicit recovery
 guidance. Final-response reserves stop new tools before the hard limits; configure
 them with the `--stage-final-response-reserve-*` options, including the default
-100,000-token input reserve. Zero explicitly disables heartbeat or provider-request timeout. Tool activity
+100,000-token input reserve. To constrain one role without changing another, pass
+`--role-stage-limits limits.json`, where `limits.json` is a JSON object such as
+`{"planner":{"maxModelTurns":8},"coder":{"maxCostUsd":4}}`. Valid keys are
+planner, researcher, security, coder, reviewer, auditor, and orchestrator; omitted
+fields inherit the global `--stage-*` value and zero retains its documented
+disable semantics. This is independent of context `--role-budget-percents`.
+Zero explicitly disables heartbeat or provider-request timeout. Tool activity
 retention, subscriber queues, grouping, projection, event, line, and renderer
 limits use the registry-derived `--tool-activity-*` options and appear in
 `config show`. Zero disables only replay, grouping delay, close draining, and

@@ -3,6 +3,7 @@ import type { Models } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import {
   DEFAULT_STAGE_LIMITS,
+  projectRemainingStageBudget,
   StageCloseoutError,
   StageLimitController,
   StageLimitError,
@@ -24,6 +25,33 @@ test("stage limits default to zero-disabled and count admitted work", () => {
     costInFlight: false,
   });
   expect(() => controller.assertActive()).not.toThrow();
+});
+
+test("remaining budget projection is numeric, omits disabled ceilings, and respects tool closeout", () => {
+  let now = 0;
+  const controller = new StageLimitController(
+    {
+      maxDurationMs: 100,
+      maxModelTurns: 4,
+      maxToolTurns: 5,
+      maxInputTokens: 20,
+      maxCostUsd: 1,
+      finalResponseReserveToolTurns: 2,
+    },
+    () => now,
+  );
+  controller.admitModelTurn();
+  controller.observeUsage(6, 0.25);
+  controller.admitToolTurn();
+  now = 40;
+  expect(projectRemainingStageBudget(controller.snapshot())).toEqual({
+    durationMs: 60,
+    modelTurns: 3,
+    toolTurns: 4,
+    inputTokens: 14,
+    costUsd: 0.75,
+    toolTurnsBeforeCloseout: 2,
+  });
 });
 
 test("each stage boundary blocks the next admission at equality", () => {

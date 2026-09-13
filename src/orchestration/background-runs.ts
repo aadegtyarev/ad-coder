@@ -86,6 +86,8 @@ export interface BackgroundRunLimits {
   leaseMs: number;
   sameTargetPolicy: SameTargetPolicy;
 }
+/** Hard cap independent of callers: each subscriber retains up to this many pages. */
+export const MAX_BACKGROUND_SUBSCRIBER_QUEUE_CAPACITY = 1_024;
 export const DEFAULT_BACKGROUND_RUN_LIMITS: Readonly<BackgroundRunLimits> = Object.freeze({
   maxActiveRuns: 0,
   maxProcessActiveRuns: 0,
@@ -149,6 +151,31 @@ export const MIN_BACKGROUND_EVENT_PAGE_BYTES =
 let processActive = 0;
 const targetTails = new Map<string, Promise<void>>();
 
+/** Create each private state ancestor only after rejecting links and foreign permissions. */
+function privateStateDirectory(targetDir: string): string {
+  const uid = process.getuid?.();
+  let current = fs.realpathSync(targetDir);
+  for (const segment of [".ad-coder", "runs", "background"]) {
+    current = path.join(current, segment);
+    try {
+      fs.lstatSync(current);
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+      fs.mkdirSync(current, { recursive: false, mode: 0o700 });
+    }
+    const stat = fs.lstatSync(current);
+    if (
+      !stat.isDirectory() ||
+      stat.isSymbolicLink() ||
+      (stat.mode & 0o077) !== 0 ||
+      (uid !== undefined && stat.uid !== uid)
+    )
+      throw new BackgroundRunError("state_unavailable");
+    fs.chmodSync(current, 0o700);
+  }
+  return current;
+}
+
 /** Session-owned durable, content-free projection over isolated pipeline workers. */
 export class BackgroundRunManager {
   private readonly entries = new Map<string, Entry>();
@@ -189,16 +216,17 @@ export class BackgroundRunManager {
       this.limits.maxPageSize <= 0 ||
       this.limits.maxPageBytes < MIN_BACKGROUND_EVENT_PAGE_BYTES ||
       this.limits.subscriberQueueCapacity <= 0 ||
+      this.limits.subscriberQueueCapacity > MAX_BACKGROUND_SUBSCRIBER_QUEUE_CAPACITY ||
       this.limits.leaseMs <= 0
     )
       throw new BackgroundRunError("invalid_request");
     if (!(["allow", "reject", "serialize"] as const).includes(this.limits.sameTargetPolicy))
       throw new BackgroundRunError("invalid_request");
+    if (!/^[A-Za-z0-9._:-]{1,128}$/.test(ownerId)) throw new BackgroundRunError("invalid_request");
     this.ownerId = ownerId;
     if (targetDir !== undefined) {
       this.store = new ProjectStore(targetDir);
-      this.stateDir = path.join(fs.realpathSync(targetDir), ".ad-coder", "runs", "background");
-      fs.mkdirSync(this.stateDir, { recursive: true, mode: 0o700 });
+      this.stateDir = privateStateDirectory(targetDir);
       this.load();
     }
   }

@@ -22,6 +22,16 @@ export interface ToolActivityProjection {
   path?: string;
 }
 
+/** Numeric-only remaining stage capacity attached after a tool reaches a terminal state. */
+export interface ToolActivityBudget {
+  durationMs?: number;
+  modelTurns?: number;
+  toolTurns?: number;
+  inputTokens?: number;
+  costUsd?: number;
+  toolTurnsBeforeCloseout?: number;
+}
+
 export interface ToolActivityEvent {
   schemaVersion: 1;
   type: "tool_activity";
@@ -39,6 +49,7 @@ export interface ToolActivityEvent {
   droppedCount: number;
   projection?: ToolActivityProjection;
   durationMs?: number;
+  budget?: ToolActivityBudget;
 }
 
 export interface ToolActivityDropNotice {
@@ -312,6 +323,7 @@ export class ToolActivityChannel {
         record.durationMs <= CONFIG_MAX.closeDrainMs * 1_000_000 && {
           durationMs: Math.round(record.durationMs),
         }),
+      ...(record.budget !== undefined && { budget: record.budget }),
     };
     if (!this.fits(event)) {
       this.noteDrop(1);
@@ -429,6 +441,8 @@ export interface AttachToolActivityOptions {
   step: string;
   parentOperation?: string;
   now?: () => number;
+  /** Supplies a content-free stage-budget projection after terminal tool events. */
+  budget?: () => ToolActivityBudget | undefined;
 }
 
 export interface ToolActivityAttachment {
@@ -500,10 +514,12 @@ export function attachToolActivity(options: AttachToolActivityOptions): ToolActi
     const trusted =
       details !== null && typeof details === "object" ? trustedOutcomes.get(details) : undefined;
     const lifecycle: ToolActivityLifecycle = trusted ?? (event.isError ? "failed" : "completed");
+    const budget = options.budget?.();
     options.channel.publish({
       ...base(event),
       lifecycle,
       ...(began !== undefined && { durationMs: Math.max(0, now() - began.at) }),
+      ...(budget !== undefined && { budget }),
     });
   });
   const offRunEnd = options.events.on("run_end", (event) => {

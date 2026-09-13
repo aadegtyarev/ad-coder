@@ -909,6 +909,12 @@ test("console help is registry-derived and invalid input limits fail before prov
     "--role-budget-percents <file.json>",
     "--max-rounds <n>",
     "--default-complexity <complexity>",
+    "--owner-id <id>",
+    "--background-subscriber-queue-capacity <1-1024>",
+    "--background-max-page-size <n>",
+    "--background-max-page-bytes <n>",
+    "--background-close-drain-ms <n>",
+    "--lease-ms <n>",
   ]) {
     expect(help.stdout).toContain(option);
   }
@@ -949,6 +955,21 @@ test("console help is registry-derived and invalid input limits fail before prov
   }
   expect(runCli(["console", "--unknown"]).stderr).toContain("unknown option");
   expect(runCli(["console", "extra"]).stderr).toContain("accepts no positional arguments");
+  for (const value of ["0", "1025", "-1", "1.5", "nope"]) {
+    const result = runCli([
+      "console",
+      "--target-dir",
+      ".",
+      `--background-subscriber-queue-capacity=${value}`,
+    ]);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("--background-subscriber-queue-capacity");
+  }
+  for (const value of ["", "has space", "../escape"]) {
+    const result = runCli(["console", "--target-dir", ".", `--owner-id=${value}`]);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("--owner-id");
+  }
 
   const acceptedThinking = runCli([
     "console",
@@ -972,7 +993,7 @@ test("console help is registry-derived and invalid input limits fail before prov
   ]);
   expect(invalidThinking.code).toBe(2);
   expect(invalidThinking.stderr).toContain("invalid --orchestrator-thinking-level");
-}, 15_000);
+}, 30_000);
 
 test("running the example workflow prints its result and exits 0", () => {
   const { code, stdout } = runCli(["run", "examples/hello.workflow.ts"]);

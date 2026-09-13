@@ -25,6 +25,8 @@ arguments or drowning in implementation noise?
 - Detached background pipelines may additionally emit owner-scoped,
   content-free bounded lifecycle pages through a headless subscription. These
   notices are tail-only hints, expose pending or dropped events visibly, and
-  always preserve explicit cursor polling as reconnect recovery.
+  always preserve explicit cursor polling as reconnect recovery. Console notice
+  callbacks are rendering-only: they never enqueue conversational input or call a
+  model/session turn, and JSON notices stay on complete stderr lines.
 - Every configurable grouping, refresh, retention, and output limit has an
   efficient default and remains overridable under the configuration contract.
