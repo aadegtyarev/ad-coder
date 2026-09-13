@@ -115,3 +115,13 @@ The next retry removed the long verification command but stopped at the
 `read` calls after bounded search. `read_project` now replaces that pattern with
 up to eight exact line slices under one configurable 16 KB aggregate ceiling,
 while retaining ordinary `read` as a visible correctness fallback.
+
+The first full run to reach later stages completed Planner in about 130 seconds
+for $0.19778680 and Security in about 120 seconds for $0.42746700. Security found
+that the initial `read_project` implementation authorized a pathname before
+reopening it and could allocate beyond `maxFileBytes` if a file changed between
+`stat` and `readFile`. Coder reached its 20-tool ceiling after one partial edit.
+The completed mitigation opens every component descriptor-relative with
+`O_NOFOLLOW`, retains opened parents across pathname swaps, `fstat`s the opened
+file, and reads at most `maxFileBytes + 1` from that same descriptor. Deterministic
+tests cover ancestor replacement and post-stat growth.

@@ -1,4 +1,5 @@
-import { promises as fs } from "node:fs";
+import { dlopen, ptr } from "bun:ffi";
+import { promises as fs, constants as fsConstants, read as fsRead, fstat } from "node:fs";
 import path from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import { markTrustedToolOutcome } from "../observability/tool-activity";
@@ -21,6 +22,20 @@ export const DEFAULT_READ_PROJECT_CONFIG: Readonly<ReadProjectConfig> = Object.f
   maxOutputBytes: 16_000,
 });
 
+interface ReadProjectAccessHooks {
+  afterOpenDirectory?(relativePath: string): void | Promise<void>;
+  afterOpenFile?(relativePath: string): void | Promise<void>;
+  afterStat?(relativePath: string): void | Promise<void>;
+}
+
+const native =
+  process.platform === "linux" || process.platform === "darwin"
+    ? dlopen(process.platform === "darwin" ? "/usr/lib/libSystem.B.dylib" : "libc.so.6", {
+        openat: { args: ["i32", "ptr", "i32", "i32"], returns: "i32" },
+        close: { args: ["i32"], returns: "i32" },
+      })
+    : undefined;
+
 function positiveInteger(name: string, value: number): void {
   if (!Number.isSafeInteger(value) || value <= 0)
     throw new Error(`read project config ${name} must be a positive integer`);
@@ -38,10 +53,94 @@ function clip(value: string, maxBytes: number): string {
   return result;
 }
 
+function safeSegments(requestedPath: string): string[] {
+  if (requestedPath === "" || path.isAbsolute(requestedPath))
+    throw new Error("path_outside_target");
+  const segments = requestedPath.split(/[\\/]/u);
+  if (segments.some((segment) => segment === "" || segment === "." || segment === ".."))
+    throw new Error("path_outside_target");
+  return segments;
+}
+
+function readFromFd(fd: number, buffer: Buffer, offset: number, length: number): Promise<number> {
+  return new Promise((resolve, reject) => {
+    fsRead(fd, buffer, offset, length, null, (error, bytesRead) => {
+      if (error !== null) reject(error);
+      else resolve(bytesRead);
+    });
+  });
+}
+
+function statFd(fd: number): Promise<import("node:fs").Stats> {
+  return new Promise((resolve, reject) => {
+    fstat(fd, (error, stat) => {
+      if (error !== null) reject(error);
+      else resolve(stat);
+    });
+  });
+}
+
+function openAt(parentFd: number, segment: string, flags: number): number {
+  if (native === undefined) return -1;
+  const encoded = Buffer.from(`${segment}\0`);
+  return native.symbols.openat(parentFd, ptr(encoded), flags, 0);
+}
+
+async function readBoundedFile(
+  root: string,
+  requestedPath: string,
+  maxFileBytes: number,
+  hooks: ReadProjectAccessHooks,
+): Promise<{ relative: string; body: string }> {
+  if (native === undefined) throw new Error("unsupported_platform");
+  const segments = safeSegments(requestedPath);
+  const directoryFlags = fsConstants.O_RDONLY | fsConstants.O_DIRECTORY | fsConstants.O_NOFOLLOW;
+  const fileFlags = fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW;
+  const rootHandle = await fs.open(root, directoryFlags);
+  let parentFd = rootHandle.fd;
+  const openedDirectoryFds: number[] = [];
+  let fileFd: number | undefined;
+  try {
+    for (let index = 0; index < segments.length - 1; index++) {
+      const segment = segments[index] as string;
+      const fd = openAt(parentFd, segment, directoryFlags);
+      if (fd < 0) throw new Error("path_access_failed");
+      openedDirectoryFds.push(fd);
+      parentFd = fd;
+      await hooks.afterOpenDirectory?.(segments.slice(0, index + 1).join("/"));
+    }
+    fileFd = openAt(parentFd, segments.at(-1) as string, fileFlags);
+    if (fileFd < 0) throw new Error("path_access_failed");
+    const relative = segments.join("/");
+    await hooks.afterOpenFile?.(relative);
+    const stat = await statFd(fileFd);
+    if (!stat.isFile()) throw new Error("path_not_file");
+    if (stat.size > maxFileBytes) throw new Error("file_too_large");
+    await hooks.afterStat?.(relative);
+
+    const buffer = Buffer.allocUnsafe(maxFileBytes + 1);
+    let bytesRead = 0;
+    while (bytesRead < buffer.length) {
+      const count = await readFromFd(fileFd, buffer, bytesRead, buffer.length - bytesRead);
+      if (count === 0) break;
+      bytesRead += count;
+    }
+    if (bytesRead > maxFileBytes) throw new Error("file_too_large");
+    const bytes = buffer.subarray(0, bytesRead);
+    if (bytes.includes(0)) throw new Error("binary_file");
+    return { relative, body: bytes.toString("utf8") };
+  } finally {
+    if (fileFd !== undefined) native.symbols.close(fileFd);
+    for (const fd of openedDirectoryFds.reverse()) native.symbols.close(fd);
+    await rootHandle.close();
+  }
+}
+
 /** Read several explicit project slices through one aggregate output ceiling. */
 export function buildReadProjectTool(
   targetDir: string,
   overrides: Partial<ReadProjectConfig> = {},
+  hooks: ReadProjectAccessHooks = {},
 ): Tool {
   const config = { ...DEFAULT_READ_PROJECT_CONFIG, ...overrides };
   for (const [name, value] of Object.entries(config)) positiveInteger(name, value);
@@ -71,16 +170,12 @@ export function buildReadProjectTool(
           if (!Number.isSafeInteger(offset) || offset < 1) throw new Error("offset_invalid");
           if (!Number.isSafeInteger(limit) || limit < 1 || limit > config.maxLinesPerItem)
             throw new Error("limit_invalid");
-          const requested = path.resolve(root, item.path);
-          const absolute = await fs.realpath(requested);
-          const relative = path.relative(root, absolute);
-          if (relative.startsWith("..") || path.isAbsolute(relative))
-            throw new Error("path_outside_target");
-          const stat = await fs.stat(absolute);
-          if (!stat.isFile()) throw new Error("path_not_file");
-          if (stat.size > config.maxFileBytes) throw new Error("file_too_large");
-          const body = await fs.readFile(absolute, "utf8");
-          if (body.includes("\0")) throw new Error("binary_file");
+          const { relative, body } = await readBoundedFile(
+            root,
+            item.path,
+            config.maxFileBytes,
+            hooks,
+          );
           const lines = body.split("\n");
           const selected = lines.slice(offset - 1, offset - 1 + limit);
           const numbered = selected.map((line, index) => `${offset + index}: ${line}`).join("\n");
@@ -91,8 +186,9 @@ export function buildReadProjectTool(
         const unbounded = sections.join("\n\n");
         const marker = "\n\n[read_project output truncated; narrow the requested slices]";
         const truncated = Buffer.byteLength(unbounded) > config.maxOutputBytes;
+        const boundedMarker = clip(marker, config.maxOutputBytes);
         const text = truncated
-          ? `${clip(unbounded, Math.max(1, config.maxOutputBytes - Buffer.byteLength(marker)))}${marker}`
+          ? `${clip(unbounded, config.maxOutputBytes - Buffer.byteLength(boundedMarker))}${boundedMarker}`
           : unbounded;
         return {
           content: [{ type: "text", text }],

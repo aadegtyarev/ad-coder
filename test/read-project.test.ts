@@ -1,5 +1,12 @@
 import { expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import {
+  rename as fsRename,
+  symlink as fsSymlink,
+  mkdir,
+  mkdtemp,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { buildReadProjectTool } from "../src/project-tools/read";
@@ -41,8 +48,62 @@ test("read_project makes aggregate truncation visible and cages paths", async ()
     expect(Buffer.byteLength(text)).toBeLessThanOrEqual(100);
     expect(text).toContain("output truncated");
     const escaped = await execute(tool, [{ path: "../outside" }]);
-    expect(escaped.content[0]).toEqual({ type: "text", text: "project read failed: failed" });
+    expect(escaped.content[0]).toEqual({
+      type: "text",
+      text: "project read failed: path_outside_target",
+    });
   } finally {
     await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("read_project caps growth after descriptor stat", async () => {
+  if (process.platform !== "linux" && process.platform !== "darwin") return;
+  const dir = await mkdtemp(path.join(tmpdir(), "ad-coder-read-"));
+  try {
+    const file = path.join(dir, "growing.txt");
+    await writeFile(file, "small");
+    const tool = buildReadProjectTool(
+      dir,
+      { maxFileBytes: 16 },
+      {
+        afterStat: async () => writeFile(file, "x".repeat(100)),
+      },
+    );
+    const result = await execute(tool, [{ path: "growing.txt" }]);
+    expect(result.content[0]).toEqual({
+      type: "text",
+      text: "project read failed: file_too_large",
+    });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("read_project keeps an opened parent when its pathname is swapped", async () => {
+  if (process.platform !== "linux" && process.platform !== "darwin") return;
+  const dir = await mkdtemp(path.join(tmpdir(), "ad-coder-read-"));
+  const outside = await mkdtemp(path.join(tmpdir(), "ad-coder-outside-"));
+  try {
+    await mkdir(path.join(dir, "safe"));
+    await writeFile(path.join(dir, "safe", "value.txt"), "inside\n");
+    await writeFile(path.join(outside, "value.txt"), "outside\n");
+    const tool = buildReadProjectTool(
+      dir,
+      {},
+      {
+        afterOpenDirectory: async () => {
+          await fsRename(path.join(dir, "safe"), path.join(dir, "old"));
+          await fsSymlink(outside, path.join(dir, "safe"));
+        },
+      },
+    );
+    const result = await execute(tool, [{ path: "safe/value.txt" }]);
+    const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+    expect(text).toContain("inside");
+    expect(text).not.toContain("outside");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
   }
 });

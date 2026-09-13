@@ -37,6 +37,8 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ### Security
 
+- Hardened `read_project` against path replacement and post-stat file growth by
+  using descriptor-relative no-follow traversal and a bounded descriptor read.
 - Hardened activity projection against argument, identifier, terminal-control,
   custom-tool-name, and oversized-record disclosure; default web transport now
   pins validated public addresses and revalidates redirects.
