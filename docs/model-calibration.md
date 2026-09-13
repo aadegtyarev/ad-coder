@@ -200,3 +200,14 @@ and $0.24770508. Every retry Coder and Reviewer stage reported `focused` with no
 fallback. This sample validates context transport, not general model capability:
 the task prompt names known edge cases, so routing conclusions continue to rely
 on hidden and holdout tasks.
+
+An unprompted Orchestrator holdout asked Sol low to perform the bounded
+`refactor-config-v1` change. It chose the automatic pipeline, which passed all
+four scorer gates and Terra review in one round, then redundantly reran tests,
+read three files, and checked the diff. The child pipeline used 144.32 s, 79,716
+fresh plus 118,272 cached input, 5,711 output, 1,417 reasoning tokens, and
+$0.21419568. Orchestrator added 8,268 fresh plus 9,600 cached input, 661 output,
+115 reasoning tokens, and $0.06597000, for $0.28016568 total. The result was
+correct but the route and duplicate verification were inefficient for a bounded
+refactor. Orchestrator now treats a terminal approved report with named passing
+checks as sufficient evidence unless it is missing, stale, or contradictory.

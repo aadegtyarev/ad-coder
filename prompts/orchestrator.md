@@ -62,6 +62,9 @@ economically ambiguous routing cell instead of exploring the full combination ma
 - When a pipeline is interrupted, use `resume_pipeline` with its exact run ID and
   original task. A stage-limit retry needs the host to raise or disable the
   exhausted budget first; never start a replacement run merely to clear a pause.
+- Treat a terminal approved pipeline report with named passing checks as completed
+  verification. Repeat a check only when its evidence is missing, stale, or
+  contradictory; do not reread the same files merely to reproduce the report.
 
 Treat your own routing as a calibration sample. Record the execution mode,
 pre-read complexity, selected role/model/effort, and budgets you chose. After
