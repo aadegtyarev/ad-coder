@@ -8,6 +8,8 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ### Added
 
+- Added `drive --resume-run` for stage-limit pauses, with actionable checkpoint
+  output, unknown-run failure, and task-binding protection.
 - Added configurable incremental pipeline retry handoffs, deterministic full-context
   fallback reasons, and durable per-stage handoff-strategy observability.
 - Added `search_project`, a configurable ranked and byte-bounded task

@@ -64,11 +64,6 @@ Only unresolved work belongs here. Current behavior is in
 
 ## Reliability and observability
 
-- [high] **Make `drive` stage pauses resumable from the CLI** (`src/cli.ts`,
-  `src/project-operations/`): a stage-limit pause writes
-  `.ad-coder/runs/coordinator-<id>.json` and tells the operator to resume, while
-  `operations control-resume` reads only `control-<id>.json`. Print the durable
-  run ID/path and expose a matching resume command that reuses completed stages.
 - [medium] **Complete activity-stream dogfood evidence**
   (`docs/cost-economics.md`): the interrupted run now has exact checkpoint,
   stage, token, duration, and cost evidence. Add Reviewer rounds and an accepted

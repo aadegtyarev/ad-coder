@@ -50,6 +50,8 @@ export interface CoordinatorCloseout {
 export interface RunCheckpoint {
   schemaVersion: 1;
   runId: string;
+  /** Binds a resumable run to its original task without persisting task contents. */
+  taskDigest?: string;
   phase: CoordinatorPhase;
   workflowState: WorkflowState;
   followUps: FollowUp[];
@@ -67,6 +69,9 @@ export interface RunCheckpoint {
 
 export interface RunCoordinatorOptions {
   runId?: string;
+  task?: string;
+  /** Fail instead of silently creating a new checkpoint for a mistyped resume id. */
+  resumeExisting?: boolean;
   decisionLimit?: number;
   checkpointByteLimit?: number;
   /** Required for a non-file backlog authority; the coordinator never falls back. */
@@ -154,15 +159,36 @@ export class RunCoordinator {
         throw new ProjectOperationsError("invalid_config", name);
     this.store.validateId(runId);
     this.checkpointPath = path.join(store.layout.runs, `coordinator-${runId}.json`);
+    const taskDigest =
+      options.task === undefined
+        ? undefined
+        : crypto.createHash("sha256").update(options.task).digest("hex");
     try {
       this.persisted = store.readVersionedJson<RunCheckpoint>(this.checkpointPath);
       if (this.persisted.value.schemaVersion !== 1 || this.persisted.value.runId !== runId)
         throw new ProjectOperationsError("invalid_config", runId);
+      if (
+        taskDigest !== undefined &&
+        this.persisted.value.taskDigest !== undefined &&
+        this.persisted.value.taskDigest !== taskDigest
+      )
+        throw new ProjectOperationsError("invalid_config", "resume task does not match checkpoint");
+      // Legacy checkpoints predate task binding. The explicit operator resume is
+      // the migration boundary: bind once, then reject every later mismatch.
+      if (options.resumeExisting && taskDigest !== undefined && !this.persisted.value.taskDigest) {
+        this.persisted = store.writeVersionedJson(
+          this.checkpointPath,
+          { ...this.persisted.value, taskDigest },
+          this.persisted.version,
+        );
+      }
     } catch (error) {
       if (!(error instanceof ProjectStoreError) || error.code !== "not_found") throw error;
+      if (options.resumeExisting) throw new ProjectOperationsError("not_found", runId);
       const initial: RunCheckpoint = {
         schemaVersion: 1,
         runId,
+        ...(taskDigest === undefined ? {} : { taskDigest }),
         phase: "workflow",
         workflowState: session.initialState(),
         followUps: [],
@@ -177,6 +203,10 @@ export class RunCoordinator {
 
   get checkpoint(): RunCheckpoint {
     return clone(this.persisted.value);
+  }
+
+  get checkpointFile(): string {
+    return this.checkpointPath;
   }
 
   resumeResearch(resolution: ResearchPauseResolution): void {

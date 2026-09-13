@@ -167,7 +167,10 @@ Each pipeline role stage owns a fresh `StageLimitController`. The runner meters
 every model and tool admission, provider-reported input and cost, and elapsed
 time; a deadline closes the active harness. `RunCoordinator` checkpoints a
 `stage_limit` pause before returning, so completed earlier phases remain committed
-and an operator can change the configured limit and resume the incomplete phase.
+and an operator can change the configured limit and resume the incomplete phase
+with `drive --resume-run <id>`. The CLI prints the coordinator run ID and checkpoint
+path on pause. New checkpoints bind to a digest of the original task; a mismatched
+task or unknown resume ID fails instead of starting unrelated work.
 
 ## Context, usage, and recovery
 
