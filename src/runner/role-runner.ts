@@ -7,7 +7,11 @@ import type {
   ToolActivityConfig,
   ToolActivityConsumer,
 } from "../observability/tool-activity";
-import { StageLimitController, type StageLimits } from "../orchestration/stage-limits";
+import {
+  StageLimitController,
+  type StageLimitSnapshot,
+  type StageLimits,
+} from "../orchestration/stage-limits";
 import type { ProjectStoreConfig } from "../project-store/types";
 import type { Role } from "../role";
 import type { SessionLimitController } from "../session-limits";
@@ -21,6 +25,12 @@ export interface RunRoleOptions {
   step?: string;
   laneName?: string;
   session?: Session;
+  /** Resume the durable lane operation already admitted in `session`. */
+  resumeActiveOperation?: boolean;
+  stageLimitInitial?: Partial<
+    Pick<StageLimitSnapshot, "elapsedMs" | "modelTurns" | "toolTurns" | "inputTokens" | "costUsd">
+  >;
+  stageLimitObserver?: (snapshot: Readonly<StageLimitSnapshot>) => void;
   ledgerSink?: LedgerSink;
   context?: Context;
   /**
@@ -96,7 +106,12 @@ export function createRoleRunner(config: RoleRunnerConfig): RoleRunner {
           sessionLimitController: config.sessionLimitController,
         }),
         ...(config.stageLimits !== undefined && {
-          stageLimitController: new StageLimitController(config.stageLimits, monotonicNow),
+          stageLimitController: new StageLimitController(
+            config.stageLimits,
+            monotonicNow,
+            opts?.stageLimitInitial,
+            opts?.stageLimitObserver,
+          ),
         }),
         ...(config.projectStoreConfig !== undefined && {
           projectStoreConfig: config.projectStoreConfig,
@@ -110,6 +125,9 @@ export function createRoleRunner(config: RoleRunnerConfig): RoleRunner {
         ...(opts?.runId !== undefined && { runId: opts.runId }),
         ...(opts?.step !== undefined && { step: opts.step }),
         ...(opts?.laneName !== undefined && { laneName: opts.laneName }),
+        ...(opts?.resumeActiveOperation !== undefined && {
+          resumeActiveOperation: opts.resumeActiveOperation,
+        }),
         ...(opts?.ledgerSink !== undefined && { ledgerSink: opts.ledgerSink }),
         ...(opts?.context !== undefined && { context: opts.context }),
         ...(opts?.tools !== undefined && { tools: opts.tools }),

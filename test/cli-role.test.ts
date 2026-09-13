@@ -12,6 +12,8 @@ import {
 import { runRoleStandalone } from "../src/cli";
 import { MemoryLedgerSink } from "../src/ledger/ledger";
 import { StageLimitError } from "../src/orchestration/stage-limits";
+import { ProjectStore } from "../src/project-store/project-store";
+import { ProjectStoreError } from "../src/project-store/types";
 import type { Role } from "../src/role";
 import { defineRole } from "../src/role";
 
@@ -89,6 +91,119 @@ test("standalone roles enforce the same stage budgets as pipeline roles", async 
       stageLimits: { maxInputTokens: 1 },
     }),
   ).rejects.toBeInstanceOf(StageLimitError);
+});
+
+test("standalone role resumes the same durable run only after its exhausted budget changes", async () => {
+  const { faux, models, model, role } = fixture();
+  fs.writeFileSync(path.join(targetDir, "resume.txt"), "safe\n");
+  faux.setResponses([
+    fauxAssistantMessage([
+      fauxToolCall("read", { path: "resume.txt" }),
+      fauxToolCall("read", { path: "resume.txt" }),
+    ]),
+  ]);
+  const runId = `resume-${crypto.randomUUID()}`;
+  const task = "review the resumable change";
+
+  await expect(
+    runRoleStandalone({
+      role,
+      model,
+      models,
+      targetDir,
+      task,
+      runId,
+      stageLimits: { maxToolTurns: 1 },
+    }),
+  ).rejects.toBeInstanceOf(StageLimitError);
+
+  const store = new ProjectStore(targetDir);
+  const checkpointPath = path.join(store.layout.runs, `standalone-${runId}.json`);
+  expect(store.readVersionedJson<{ status: string }>(checkpointPath).value.status).toBe("paused");
+
+  await expect(
+    runRoleStandalone({
+      role,
+      model,
+      models,
+      targetDir,
+      task,
+      runId,
+      resumeExisting: true,
+      stageLimits: { maxToolTurns: 1 },
+    }),
+  ).rejects.toBeInstanceOf(ProjectStoreError);
+
+  await expect(
+    runRoleStandalone({
+      role,
+      model: { ...model, id: "different-model" },
+      models,
+      targetDir,
+      task,
+      runId,
+      resumeExisting: true,
+      stageLimits: { maxToolTurns: 3 },
+    }),
+  ).rejects.toBeInstanceOf(ProjectStoreError);
+
+  await expect(
+    runRoleStandalone({
+      role,
+      model,
+      models: createModels(),
+      targetDir,
+      task,
+      runId,
+      resumeExisting: true,
+      stageLimits: { maxToolTurns: 3 },
+    }),
+  ).rejects.toThrow();
+  expect(
+    store.readVersionedJson<{
+      status: string;
+      cumulativeUsage: { toolTurns: number };
+    }>(checkpointPath).value,
+  ).toMatchObject({ status: "running", cumulativeUsage: { toolTurns: 1 } });
+
+  faux.setResponses([
+    fauxAssistantMessage([
+      fauxToolCall("read", { path: "resume.txt" }),
+      fauxToolCall("read", { path: "resume.txt" }),
+    ]),
+  ]);
+  await expect(
+    runRoleStandalone({
+      role,
+      model,
+      models,
+      targetDir,
+      task,
+      runId,
+      resumeExisting: true,
+      stageLimits: { maxToolTurns: 2 },
+    }),
+  ).rejects.toBeInstanceOf(StageLimitError);
+  expect(
+    store.readVersionedJson<{ cumulativeUsage: { toolTurns: number } }>(checkpointPath).value
+      .cumulativeUsage.toolTurns,
+  ).toBe(2);
+
+  faux.setResponses([fauxAssistantMessage("completed review")]);
+  const resumed = await runRoleStandalone({
+    role,
+    model,
+    models,
+    targetDir,
+    task,
+    runId,
+    resumeExisting: true,
+    stageLimits: { maxToolTurns: 4 },
+  });
+
+  expect(resumed.text).toContain("completed review");
+  expect(store.readVersionedJson<{ status: string }>(checkpointPath).value.status).toBe("complete");
+  expect(resumed.ledgerPath).toBe(path.join(store.layout.ledger, `${runId}.jsonl`));
 });
 
 test("standalone roles persist usage and emit semantic tool activity by default", async () => {

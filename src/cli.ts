@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Context, Session, ThinkingLevel } from "@earendil-works/pi-agent-core";
@@ -8,6 +9,7 @@ import type { Api, Model, Models, TextContent } from "@earendil-works/pi-ai";
 import { closeOpenAICodexWebSocketSessions } from "@earendil-works/pi-ai/api/openai-codex-responses";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { assertCredentialPathOutsideProject, FileCredentialStore } from "./auth/credential-store";
+import { createCredentialEnvironment } from "./auth/environment-boundary";
 import { resolveBuildInfo } from "./build-info";
 import { runAuthCommand } from "./cli/auth";
 import { runConsole } from "./cli/console";
@@ -39,6 +41,12 @@ import {
 import { startOrchestrator } from "./orchestration/orchestrator";
 import { runPipeline } from "./orchestration/pipeline";
 import { createWorkflowSession } from "./orchestration/session";
+import {
+  StageLimitError,
+  type StageLimitReason,
+  type StageLimitSnapshot,
+  type StageLimits,
+} from "./orchestration/stage-limits";
 import type { Complexity, PipelineConfig, RoleSpec } from "./orchestration/types";
 import { parseProfile } from "./profiles/validate";
 import type { ClaimInput } from "./project-operations/backlog";
@@ -188,14 +196,10 @@ function parseArgs(argv: string[], command: CommandDefinition): ParsedArgs {
  * would be folded into `process.env` and could supply the target's own
  * credentials -- erasing the credential boundary. Numbers/paths only.
  */
-function warnCwdInsideTarget(absTargetDir: string): void {
-  const cwd = process.cwd();
-  if (cwd === absTargetDir || cwd.startsWith(absTargetDir + path.sep)) {
-    process.stderr.write(
-      `ad-coder: warning: the process cwd is inside --target-dir (${absTargetDir}); ` +
-        `a .env there was auto-loaded into the environment and may supply the target's credentials\n`,
-    );
-  }
+function credentialEnvForTarget(absTargetDir: string): (name: string) => string | undefined {
+  return createCredentialEnvironment(absTargetDir, {
+    warn: (message) => process.stderr.write(message),
+  });
 }
 
 /**
@@ -206,8 +210,15 @@ function warnCwdInsideTarget(absTargetDir: string): void {
  */
 function buildRunner(targetDirArg: string): WorkflowContext["runRole"] {
   const absTargetDir = resolveTargetDir(targetDirArg);
-  warnCwdInsideTarget(absTargetDir);
-  return createRoleRunner({ targetDir: absTargetDir, models: builtinModels() });
+  const env = credentialEnvForTarget(absTargetDir);
+  const models = builtinModels({
+    authContext: {
+      env: async (name) => env(name),
+      fileExists: async (file) =>
+        fs.existsSync(file.startsWith("~/") ? path.join(os.homedir(), file.slice(2)) : file),
+    },
+  });
+  return createRoleRunner({ targetDir: absTargetDir, models });
 }
 
 /**
@@ -248,13 +259,14 @@ export async function runRoleStandalone(params: {
   targetDir: string;
   task: string;
   runId?: string;
+  resumeExisting?: boolean;
   ledgerSink?: LedgerSink;
   tools?: Tool[];
   activityConsumer?: ToolActivityConsumer;
   compaction?: CompactionPolicy;
   projectStoreConfig?: ProjectStoreConfig;
   toolActivity?: Partial<ToolActivityConfig>;
-  stageLimits?: import("./orchestration/stage-limits").StageLimits;
+  stageLimits?: StageLimits;
 }): Promise<{
   text: string;
   cost: number;
@@ -263,23 +275,185 @@ export async function runRoleStandalone(params: {
 }> {
   const runId = params.runId ?? crypto.randomUUID();
   const store = new ProjectStore(params.targetDir, params.projectStoreConfig);
-  const session = await store.createSession(runId, BACKGROUND_CONTEXT);
-  const result = await createRoleRunner({
-    targetDir: params.targetDir,
-    models: params.models,
-    ...(params.compaction !== undefined && { compaction: params.compaction }),
-    ...(params.projectStoreConfig !== undefined && {
-      projectStoreConfig: params.projectStoreConfig,
-    }),
-    ...(params.toolActivity !== undefined && { toolActivity: params.toolActivity }),
-    ...(params.activityConsumer !== undefined && { activityConsumer: params.activityConsumer }),
-    ...(params.stageLimits !== undefined && { stageLimits: params.stageLimits }),
-  }).runRole(params.role, params.model, params.task, {
-    runId,
-    session,
-    ...(params.ledgerSink !== undefined && { ledgerSink: params.ledgerSink }),
-    ...(params.tools !== undefined && { tools: params.tools }),
-  });
+  const checkpointPath = path.join(store.layout.runs, `standalone-${store.validateId(runId)}.json`);
+  type Checkpoint = {
+    schemaVersion: 2;
+    runId: string;
+    role: string;
+    provider: string;
+    modelId: string;
+    taskDigest: string;
+    cumulativeUsage: Pick<
+      StageLimitSnapshot,
+      "elapsedMs" | "modelTurns" | "toolTurns" | "inputTokens" | "costUsd"
+    >;
+    status: "running" | "paused" | "complete";
+    pause?: {
+      code: "stage_limit";
+      reason: StageLimitReason;
+      limit: number;
+      observed: number;
+    };
+  };
+  const taskDigest = new Bun.CryptoHasher("sha256").update(params.task).digest("hex");
+  let checkpoint: import("./project-store/types").VersionedState<Checkpoint>;
+  let stageLimitInitial: Checkpoint["pause"] extends infer _
+    ?
+        | Pick<
+            StageLimitSnapshot,
+            "elapsedMs" | "modelTurns" | "toolTurns" | "inputTokens" | "costUsd"
+          >
+        | undefined
+    : never;
+  let session: Session;
+  if (params.resumeExisting === true) {
+    checkpoint = store.readVersionedJson<Checkpoint>(checkpointPath);
+    const prior = checkpoint.value;
+    if (prior.schemaVersion !== 2 || prior.runId !== runId || prior.role !== params.role.name)
+      throw new ProjectStoreError(
+        "invalid_config",
+        checkpointPath,
+        "standalone checkpoint does not match this role",
+      );
+    if (prior.provider !== params.model.provider || prior.modelId !== params.model.id)
+      throw new ProjectStoreError(
+        "invalid_config",
+        checkpointPath,
+        "standalone checkpoint provider/model does not match",
+      );
+    if (prior.taskDigest !== taskDigest)
+      throw new ProjectStoreError(
+        "invalid_config",
+        checkpointPath,
+        "standalone checkpoint task does not match",
+      );
+    if (prior.status === "complete")
+      throw new ProjectStoreError(
+        "invalid_config",
+        checkpointPath,
+        "standalone role is already complete",
+      );
+    stageLimitInitial = prior.cumulativeUsage;
+    if (prior.pause !== undefined) {
+      const key: Record<StageLimitReason, keyof StageLimits | undefined> = {
+        duration: "maxDurationMs",
+        model_turns: "maxModelTurns",
+        tool_turns: "maxToolTurns",
+        input: "maxInputTokens",
+        cost: "maxCostUsd",
+        cost_in_flight: "maxCostUsd",
+        cost_unknown: "maxCostUsd",
+      };
+      const configured =
+        key[prior.pause.reason] === undefined
+          ? undefined
+          : params.stageLimits?.[key[prior.pause.reason] as keyof StageLimits];
+      if (configured !== 0 && (configured === undefined || configured <= prior.pause.limit))
+        throw new ProjectStoreError(
+          "invalid_config",
+          checkpointPath,
+          `resume requires a larger ${String(key[prior.pause.reason])} or 0`,
+        );
+    }
+    const { pause: _pause, ...resumed } = prior;
+    checkpoint = store.writeVersionedJson(
+      checkpointPath,
+      { ...resumed, status: "running" },
+      checkpoint.version,
+    );
+    session = await store.resumeSession(runId, BACKGROUND_CONTEXT);
+  } else {
+    checkpoint = store.writeVersionedJson(
+      checkpointPath,
+      {
+        schemaVersion: 2,
+        runId,
+        role: params.role.name,
+        provider: params.model.provider,
+        modelId: params.model.id,
+        taskDigest,
+        cumulativeUsage: {
+          elapsedMs: 0,
+          modelTurns: 0,
+          toolTurns: 0,
+          inputTokens: 0,
+          costUsd: 0,
+        },
+        status: "running",
+      },
+      0,
+    );
+    session = await store.createSession(runId, BACKGROUND_CONTEXT);
+  }
+  let result: Awaited<ReturnType<ReturnType<typeof createRoleRunner>["runRole"]>>;
+  try {
+    result = await createRoleRunner({
+      targetDir: params.targetDir,
+      models: params.models,
+      ...(params.compaction !== undefined && { compaction: params.compaction }),
+      ...(params.projectStoreConfig !== undefined && {
+        projectStoreConfig: params.projectStoreConfig,
+      }),
+      ...(params.toolActivity !== undefined && { toolActivity: params.toolActivity }),
+      ...(params.activityConsumer !== undefined && { activityConsumer: params.activityConsumer }),
+      ...(params.stageLimits !== undefined && { stageLimits: params.stageLimits }),
+    }).runRole(params.role, params.model, params.task, {
+      runId,
+      session,
+      ...(params.resumeExisting === true && { resumeActiveOperation: true }),
+      ...(stageLimitInitial !== undefined && { stageLimitInitial }),
+      stageLimitObserver: (snapshot) => {
+        const { elapsedMs, modelTurns, toolTurns, inputTokens, costUsd } = snapshot;
+        checkpoint = store.writeVersionedJson(
+          checkpointPath,
+          {
+            ...checkpoint.value,
+            cumulativeUsage: { elapsedMs, modelTurns, toolTurns, inputTokens, costUsd },
+          },
+          checkpoint.version,
+        );
+      },
+      ...(params.ledgerSink !== undefined && { ledgerSink: params.ledgerSink }),
+      ...(params.tools !== undefined && { tools: params.tools }),
+    });
+  } catch (error) {
+    try {
+      await session.close(BACKGROUND_CONTEXT);
+    } catch {
+      // The runner normally owns closeout; this covers failures before harness creation.
+    }
+    if (error instanceof StageLimitError) {
+      if (error.snapshot === undefined)
+        throw new ProjectStoreError(
+          "invalid_config",
+          checkpointPath,
+          "stage-limit failure did not provide resumable cumulative usage",
+        );
+      const { elapsedMs, modelTurns, toolTurns, inputTokens, costUsd } = error.snapshot;
+      store.writeVersionedJson(
+        checkpointPath,
+        {
+          ...checkpoint.value,
+          status: "paused",
+          cumulativeUsage: { elapsedMs, modelTurns, toolTurns, inputTokens, costUsd },
+          pause: {
+            code: "stage_limit",
+            reason: error.reason,
+            limit: error.limit,
+            observed: error.observed,
+          },
+        },
+        checkpoint.version,
+      );
+    }
+    throw error;
+  }
+  const { pause: _pause, ...completed } = checkpoint.value;
+  store.writeVersionedJson(
+    checkpointPath,
+    { ...completed, status: "complete" },
+    checkpoint.version,
+  );
   // runRole closes the session facade it was handed; reopen a fresh readable
   // facade from the durable store to scan the settled transcript.
   const readable = await store.resumeSession(runId, BACKGROUND_CONTEXT);
@@ -1230,12 +1404,12 @@ function buildConfigOptions(
       fail("--role-budget-percents must contain a JSON object");
     roleBudgetPercents = raw as Partial<Record<ConfigurableRole, BudgetPercents>>;
   }
-  warnCwdInsideTarget(targetDir);
+  const credentialEnv = credentialEnvForTarget(targetDir);
   const credentialPath = flags["--credential-path"];
   if (credentialPath !== undefined) assertCredentialPathOutsideProject(credentialPath, targetDir);
   return {
     targetDir,
-    env: (name: string) => process.env[name],
+    env: credentialEnv,
     ...(credentialPath !== undefined && {
       credentials: new FileCredentialStore({ path: credentialPath }),
     }),
@@ -1317,12 +1491,19 @@ async function roleCommand(
     spec.model,
   );
   const renderer = new ToolActivityRenderer(process.stderr, "human", config.toolActivity);
-  const standaloneRunId = crypto.randomUUID();
+  const resumeRunId = flags["--resume-run"];
+  const standaloneRunId = resumeRunId ?? crypto.randomUUID();
   const expectedLedgerPath = path.join(
     configOptions.targetDir,
     ".ad-coder",
     "ledger",
     `${standaloneRunId}.jsonl`,
+  );
+  const expectedCheckpointPath = path.join(
+    configOptions.targetDir,
+    ".ad-coder",
+    "runs",
+    `standalone-${standaloneRunId}.json`,
   );
   const standaloneResult = await (async () => {
     try {
@@ -1333,6 +1514,7 @@ async function roleCommand(
         targetDir: configOptions.targetDir,
         task,
         runId: standaloneRunId,
+        ...(resumeRunId !== undefined && { resumeExisting: true }),
         ...((config.pluginToolsForModel?.(spec.model) ?? config.pluginTools) !== undefined && {
           tools: config.pluginToolsForModel?.(spec.model) ?? config.pluginTools,
         }),
@@ -1346,6 +1528,12 @@ async function roleCommand(
       });
     } catch (error) {
       process.stderr.write(`ad-coder: partial usage ledger=${expectedLedgerPath}\n`);
+      process.stderr.write(
+        `ad-coder: standalone checkpoint=${expectedCheckpointPath} runId=${standaloneRunId}\n`,
+      );
+      process.stderr.write(
+        `ad-coder: resume with role ${name} <same-task> --resume-run ${standaloneRunId} and adjusted limits\n`,
+      );
       throw error;
     } finally {
       renderer.close();
@@ -1891,7 +2079,14 @@ const COMMANDS: readonly CommandDefinition[] = [
       },
       { name: "<task>", description: "Task for the role." },
     ],
-    options: PIPELINE_OPTIONS,
+    options: [
+      {
+        name: "--resume-run",
+        value: "<id>",
+        description: "Resume this standalone role from its durable checkpoint.",
+      },
+      ...PIPELINE_OPTIONS,
+    ],
     run: ({ positionals, flags }) =>
       withCliProgress(
         `role ${positionals[1] ?? "unknown"}`,

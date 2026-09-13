@@ -48,6 +48,11 @@ The standalone `role` front uses the same target-local durable numeric ledger,
 prints a narrowed usage envelope after completion, and streams the shared
 bounded tool-activity projection while work is in flight. It exposes selected
 built-in plugin tools but removes structured pipeline submission tools.
+It checkpoints role, provider/model identity, task digest, status, cumulative
+stage usage, and stage-limit pauses under
+`.ad-coder/runs/standalone-<runId>.json`. `role --resume-run <id>` validates the
+same role, model, and task, requires the exhausted limit to change, and resumes
+the active durable lane operation under cumulative whole-stage budgets.
 
 ### Tool activity flow
 
@@ -145,6 +150,9 @@ Credentials come from the configured credential store or explicit environment
 accessor, never from the target project's configuration. Credential paths are
 canonicalized, kept outside the target and Git metadata, protected with private
 permissions, and updated atomically without following symlinks.
+The CLI cannot recover environment provenance after Bun's startup dotenv load.
+It therefore disables the environment credential accessor whenever process cwd
+is inside `targetDir`; OAuth and the external private store remain usable.
 
 ### Persistent content
 

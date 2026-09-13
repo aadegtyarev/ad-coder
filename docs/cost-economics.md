@@ -254,6 +254,23 @@ gates across tiers. LDO should adopt the same stage envelopes, scoped handoffs,
 activity events, checkpoint resume, and two-axis efficiency reporting before its
 next comparison run.
 
+### Standalone recovery and cheap-role calibration (2026-09-13)
+
+A focused Security run on the standalone recovery fix used the native cheap
+Security route. Its initial 10-model-turn ceiling paused after about 70 seconds;
+resuming the same durable operation with a 16-turn ceiling reached `APPROVE` in
+another 13.6 seconds for $0.018466. The shared ledger totals were 25,903 fresh
+input, 106,496 cached input, 1,893 output, 1,249 reasoning, and $0.239553 across
+11 responses. Thus 10 turns is too low for this focused Luna audit while 16 was
+sufficient; no claim about other roles follows from this one sample.
+
+The run also exposed and then verified recovery defects that faux tests alone had
+missed: resume must drive Pi's active lane operation, stage usage must remain
+cumulative, provider/model identity must remain fixed, and non-stage failures
+must preserve both usage and the session lease. Future tier selection compares
+total cost through final acceptance, including repair and re-review, rather than
+assuming that either the cheapest or strongest model wins by list price.
+
 ## Измерено на себе: реальная стоимость постройки ad-coder через LDO (2026-09-11)
 
 Прогнали `scripts/ldo-cost.sh` по транскриптам собственных implement-прогонов

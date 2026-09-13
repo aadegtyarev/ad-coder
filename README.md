@@ -75,6 +75,10 @@ project, Git-metadata, and project-aliasing symlink paths are rejected.
 
 Use `ad-coder auth logout` to remove the stored login. Missing or expired
 credentials fail before a model request and direct you to `auth login`.
+Because Bun loads dotenv files before application code, CLI runs whose process
+working directory is inside the target disable all environment credentials.
+OAuth and the private credential store remain available. Run from a directory
+outside the target when intentionally using an environment-key provider.
 
 ## First run
 
@@ -96,6 +100,10 @@ ad-coder role planner "Summarize this repository" \
 The standalone roles are `planner`, `researcher`, `coder`, `reviewer`, `auditor`,
 and `security`. Researcher and Auditor have independent profile cells and may be
 overridden with `--researcher-model` and `--auditor-model`.
+Each run writes a durable checkpoint. After a stage-budget pause, rerun the same
+role and task with `--resume-run <id>` and a larger or disabled reported limit;
+ad-coder reuses the existing session and ledger.
+Provider/model identity and cumulative stage usage remain bound across resumes.
 
 Then run the built-in reviewed pipeline. `--auto` takes default transitions and
 is the non-interactive/scripted mode:
