@@ -1064,6 +1064,9 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
     tools,
     ledgerSink: sink,
     sessionLimitController: controller,
+    ...(core !== undefined && {
+      subscribeBackgroundRuns: core.backgroundRuns.subscribe.bind(core.backgroundRuns),
+    }),
     ...(config.activityChannel !== undefined && { activityChannel: config.activityChannel }),
     ...(config.activityConsumer !== undefined && { activityConsumer: config.activityConsumer }),
     ...(config.toolActivity !== undefined && { toolActivity: config.toolActivity }),
@@ -1074,9 +1077,13 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
     ...conversation,
     step: conversation.step.bind(conversation),
     close: async () => {
-      await core.backgroundRuns.close();
-      await conversation.close();
+      try {
+        await core.backgroundRuns.close();
+      } finally {
+        await conversation.close();
+      }
     },
+    subscribeBackgroundRuns: core.backgroundRuns.subscribe.bind(core.backgroundRuns),
     backgroundRuns: core.backgroundRuns,
   } as ConversationSession & { backgroundRuns: BackgroundRunManager };
 }

@@ -117,15 +117,20 @@ events.
 
 ### Background runs
 
-The session-owned background API reuses the pipeline through seven tools:
-`run_pipeline`, `resume_pipeline`, `start_pipeline`, `pipeline_status`,
-`pipeline_events`, `pipeline_result`, and `cancel_pipeline`. CLI `background
-start` persists an owner-scoped request, spawns a detached worker, and returns.
-Content-free lifecycle events use bounded exclusive cursors. A propagated owner
-ID scopes reconnect; leases distinguish live and abandoned workers. Optional
-resource limits are zero-disabled, with finite page, close-drain, and lease
-safety ceilings. Owner scope is not authentication, and execution is not a
-sandbox.
+The session API exposes pipeline start, resume, status, events, result, and
+cancellation. CLI start persists an owner-scoped request and launches a detached
+worker. The live owner watches atomic updates and refreshes status without
+reconstruction.
+
+Subscriptions provide bounded, asynchronous, content-free hints from the current
+tail. Pages expose cursor position, pending work, and dropped events. Polling
+recovers retained history or watcher failure. Limits bound queues, pages, and
+retention; leases distinguish live workers from abandoned ones.
+
+Orchestrator conversations forward these hints when the pipeline is enabled.
+The console renders allowlisted lifecycle notices on stderr while remaining
+available for input. Notices never enter model context or trigger turns. Owner
+scope is not authentication, and execution is not a sandbox.
 
 ## State and trust boundaries
 

@@ -228,3 +228,21 @@ Python, and Rust samples. Terra remains a reliable Reviewer, but its share was
 91% of Python cost and 95% of Rust cost. This supports an adaptive compact
 review path for truly trivial tasks after risk classification; it does not
 support removing independent review from security-sensitive or broad changes.
+
+### Background observability dogfood — 2026-09-13
+
+A natural complex lifecycle task exposed a stale cross-process read in the new
+background runner. Terra Planner classified it complex correctly. Two Sol low
+Coder rounds cost $2.251194 and both closed without verification; the second
+also printed intended tool calls instead of executing them. A focused Terra low
+Coder continuation cost $0.45419120 and delivered more working integration per
+dollar, though closeout still needed narrower follow-ups. Luna low efficiently
+handled a mechanical cleanup for $0.02681112 but made an unexecuted docs claim.
+
+Terra Reviewers cost $1.10295040 across four passes and found every material
+cross-process, queue-bound, escape-injection, polling, integration-test, and docs
+blocker. The accepted result used 893,998 fresh plus 3,685,376 cached input,
+69,963 output, and 28,979 reasoning tokens for $4.47404352. Complex Coder routing
+moves from Sol low to Terra low; Sol remains reserved for broad Researcher work.
+The run also confirms that long work needs detached lifecycle notices rather
+than an orchestrator turn waiting on the pipeline.

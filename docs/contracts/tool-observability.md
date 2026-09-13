@@ -22,5 +22,9 @@ arguments or drowning in implementation noise?
 - Tool lifecycle reporting is truthful: requested, started, completed, failed,
   cancelled, and timed out are distinct. Missing instrumentation never fabricates
   completion, and dropped events are counted visibly.
+- Detached background pipelines may additionally emit owner-scoped,
+  content-free bounded lifecycle pages through a headless subscription. These
+  notices are tail-only hints, expose pending or dropped events visibly, and
+  always preserve explicit cursor polling as reconnect recovery.
 - Every configurable grouping, refresh, retention, and output limit has an
   efficient default and remains overridable under the configuration contract.

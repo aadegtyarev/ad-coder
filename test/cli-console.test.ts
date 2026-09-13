@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
-import { Readable, Writable } from "node:stream";
+import { PassThrough, Readable, Writable } from "node:stream";
 import { runConsole } from "../src/cli/console";
 import type { ConversationSession, ConversationTurnResult } from "../src/conversation/conversation";
+import type { BackgroundRunNotice } from "../src/orchestration/background-runs";
 import { SessionLimitError } from "../src/session-limits";
 
 class Capture extends Writable {
@@ -308,6 +309,184 @@ test("semantic activity resets heartbeat inactivity", async () => {
     .map((line) => JSON.parse(line));
   expect(records.filter(({ event }) => event === "heartbeat")).toEqual([]);
   expect(records.filter(({ type }) => type === "tool_activity")).toHaveLength(4);
+});
+
+test("background notices render on stderr while input queues without starting model turns", async () => {
+  const input = new PassThrough();
+  const session = fakeSession();
+  const originalStep = session.step.bind(session);
+  let releaseFirst!: () => void;
+  const firstGate = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+  session.step = async (line) => {
+    if (session.inputs.length === 0) await firstGate;
+    return originalStep(line);
+  };
+  let backgroundConsumer:
+    | Parameters<NonNullable<ConversationSession["subscribeBackgroundRuns"]>>[0]
+    | undefined;
+  let unsubscribed = 0;
+  session.subscribeBackgroundRuns = (consumer) => {
+    backgroundConsumer = consumer;
+    return () => {
+      backgroundConsumer = undefined;
+      unsubscribed++;
+    };
+  };
+  const error = new Capture();
+  const running = runConsole({
+    session,
+    input,
+    output: new Capture(),
+    error,
+    mode: "json",
+  });
+
+  input.write("first\n");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(session.inputs).toEqual([]);
+  const hostileNotice = {
+    type: "background_events",
+    runId: "pipeline-1",
+    events: [
+      {
+        sequence: 2,
+        runId: "pipeline-1",
+        lifecycle: "stage_changed",
+        stage: "code",
+        timestamp: 1,
+        metrics: { steps: 1, totalCost: 0 },
+        secretEventField: "SECRET EVENT",
+      },
+      {
+        sequence: 3,
+        runId: "pipeline-1",
+        lifecycle: "completed",
+        timestamp: 2,
+        metrics: { steps: 1, totalCost: 0 },
+      },
+    ],
+    nextCursor: 3,
+    gap: false,
+    droppedEvents: 0,
+    pending: false,
+    secretNoticeField: "SECRET NOTICE",
+  } as unknown as BackgroundRunNotice;
+  backgroundConsumer?.(hostileNotice);
+  input.write("second\n/exit\n");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(session.inputs).toEqual([]);
+  const notice = error
+    .text()
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line))
+    .find(({ type }) => type === "background_events");
+  expect(notice.events.map(({ lifecycle }: { lifecycle: string }) => lifecycle)).toEqual([
+    "stage_changed",
+    "completed",
+  ]);
+  expect(Object.keys(notice)).toEqual([
+    "type",
+    "runId",
+    "events",
+    "nextCursor",
+    "gap",
+    "droppedEvents",
+    "pending",
+  ]);
+  expect(error.text()).not.toContain("SECRET TASK OR RESULT");
+  expect(error.text()).not.toContain("SECRET EVENT");
+  expect(error.text()).not.toContain("SECRET NOTICE");
+
+  releaseFirst();
+  input.end();
+  const result = await running;
+  expect(result).toEqual({ reason: "exit", completedTurns: 2 });
+  expect(session.inputs).toEqual(["first", "second"]);
+  expect(unsubscribed).toBe(1);
+});
+
+test("formatted background notices are content-free and do not call step", async () => {
+  const session = fakeSession();
+  session.subscribeBackgroundRuns = (consumer) => {
+    consumer({
+      type: "background_events",
+      runId: "safe-run",
+      events: [
+        {
+          sequence: 1,
+          runId: "safe-run",
+          lifecycle: "started",
+          timestamp: 1,
+        },
+      ],
+      nextCursor: 1,
+      gap: false,
+      droppedEvents: 2,
+      pending: true,
+    });
+    return () => undefined;
+  };
+  const error = new Capture();
+  await runConsole({
+    session,
+    input: Readable.from("/exit\n"),
+    output: new Capture(),
+    error,
+  });
+  expect(session.inputs).toEqual([]);
+  expect(error.text()).toContain("background pipeline safe-run started");
+  expect(error.text()).toContain("dropped 2 events");
+  expect(error.text()).toContain("poll pipeline_events");
+});
+
+test("formatted background notices enum-project hostile fields and remove terminal escapes", async () => {
+  const session = fakeSession();
+  session.subscribeBackgroundRuns = (consumer) => {
+    consumer({
+      type: "background_events",
+      runId: "safe\u001b[2J-run",
+      events: [
+        {
+          sequence: 1,
+          runId: "event\u001b]0;title\u0007",
+          lifecycle: "started",
+          stage: "code\u001b[31m",
+          timestamp: 1,
+        },
+        {
+          sequence: 2,
+          runId: "event",
+          lifecycle: "completed\u001b[2J",
+          timestamp: 2,
+        },
+      ],
+      nextCursor: 2,
+      gap: false,
+      droppedEvents: "2\u001b[2J" as unknown as number,
+      pending: true,
+    } as unknown as BackgroundRunNotice);
+    return () => undefined;
+  };
+  const error = new Capture();
+  await runConsole({
+    session,
+    input: Readable.from("/exit\n"),
+    output: new Capture(),
+    error,
+  });
+  expect(error.text()).toContain("background pipeline safe-run started");
+  expect(error.text()).not.toContain("code\u001b");
+  expect(error.text()).not.toContain("completed");
+  expect(error.text()).not.toContain("dropped");
+  expect(
+    [...error.text()].some((character) => {
+      const code = character.codePointAt(0)!;
+      return code <= 0x08 || (code >= 0x0b && code <= 0x1f) || (code >= 0x7f && code <= 0x9f);
+    }),
+  ).toBe(false);
 });
 
 test("zero heartbeat keeps the immediate stage event and disables only periodic events", async () => {

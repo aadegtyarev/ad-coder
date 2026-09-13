@@ -99,6 +99,45 @@ test("a two-turn conversation retains history on the live session branch", async
   }
 });
 
+test("startConversation forwards content-free background subscriptions without a model turn", async () => {
+  const { models, model, role } = harnessFixture();
+  let subscriber:
+    | Parameters<
+        NonNullable<
+          import("../src/conversation/conversation").ConversationSession["subscribeBackgroundRuns"]
+        >
+      >[0]
+    | undefined;
+  const conversation = await startConversation({
+    role,
+    targetDir,
+    models,
+    model,
+    subscribeBackgroundRuns: (consumer) => {
+      subscriber = consumer;
+      return () => {
+        subscriber = undefined;
+      };
+    },
+  });
+  const received: string[] = [];
+  const unsubscribe = conversation.subscribeBackgroundRuns?.((notice) => {
+    received.push(notice.events[0]?.lifecycle ?? "missing");
+  });
+  subscriber?.({
+    type: "background_events",
+    runId: "safe-run",
+    events: [{ sequence: 1, runId: "safe-run", lifecycle: "started", timestamp: 1 }],
+    nextCursor: 1,
+    gap: false,
+    droppedEvents: 0,
+    pending: false,
+  });
+  unsubscribe?.();
+  await conversation.close();
+  expect(received).toEqual(["started"]);
+});
+
 test("a default conversation resumes durable history after reconstruction", async () => {
   const { faux, models, model, role } = harnessFixture();
   const runId = `resume_${Date.now()}`;

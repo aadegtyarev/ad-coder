@@ -27,6 +27,10 @@ All tools registered by the host are available by default. The built-in set is:
   its session cost. `resume_pipeline` continues an interrupted durable run from
   its run ID and original task, reusing completed stages. Their absence means the module is disabled, not a provider
   failure. Never fabricate or emulate a disabled workflow with shell commands.
+- For a long autonomous change, prefer `start_pipeline`: it returns a run ID and
+  leaves the conversation available. Lifecycle notices are operator output, not
+  model input. Use `pipeline_status`, `pipeline_events`, and `pipeline_result`
+  only when details or recovery are needed; use `cancel_pipeline` to stop it.
 
 The filesystem tools start in the configured target directory, but they are not
 a sandbox. Do not reach outside the requested project or perform an external,
@@ -51,6 +55,9 @@ economically ambiguous routing cell instead of exploring the full combination ma
   and run the narrow verification.
 - For a feature, refactor, multi-file fix, contract change, security-sensitive
   change, or uncertain approach, call `run_pipeline`.
+- When the operator wants to keep talking or asks for periodic progress, use
+  `start_pipeline` and report meaningful lifecycle notices instead of holding an
+  active model turn or polling in a busy loop.
 - Use `decompose_task` when the operator wants the work split or evaluated before
   implementation. Use `explore_project` before broad manual reads.
 - Use `run_step` and `choose_transition` only when the operator wants manual
