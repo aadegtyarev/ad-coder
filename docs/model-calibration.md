@@ -94,3 +94,27 @@ not finish: it reached the 32-tool ceiling after about 100 s with 7 model turns,
 $0.006998 partial cost. Treat this as harness evidence only: the fixture was then
 corrected to materialize a real Git baseline plus diff, which the Reviewer prompt
 expects. Repeat both models on the corrected fixture before changing defaults.
+
+### First automatic Codex profile run
+
+`pipeline-repair-regressions-v1` ran with every role at low effort, Sol for
+Planner/Security/Coder and Terra for Reviewer. It completed two rounds without
+acceptance: 465.587 s of recorded stage time, 88,940 fresh input, 283,520 cached
+input, 16,541 output, 6,577 reasoning tokens, and $0.831816 total provider cost.
+Planner classified the task medium/elevated. Security found all seeded issues.
+Coder repaired the behavior in round one, but Terra's revert-and-restore check
+showed that the four tests did not fail against the defective implementation.
+Round two added 11 tests and mutation evidence; Terra still rejected because the
+fixture exposed no configured test command to its chosen runner. The independent
+machine scorer gave the implementation 0.9 quality: all three behavioral checks
+passed and only test discovery failed.
+
+The run led to fixture fixes: a standard `test` script, repository-wide test
+discovery, runtime-state exclusion during materialization, and a project contract.
+A follow-up Planner attempt then exposed two harness issues before coding: Sol/low
+hit a 300 s stage limit and repeated reconnaissance after resume, then produced
+`research_required`; the Researcher result was rejected, and the CLI could not
+authorize `resumeResearch`. The accepted-result cost is therefore still unknown.
+Do not change the routing matrix from this single failed sample. It does justify
+testing a cheaper Planner first and fixing research recovery before another full
+matrix run.
