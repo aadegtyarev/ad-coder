@@ -246,6 +246,7 @@ export async function runRoleStandalone(params: {
   models: Models;
   targetDir: string;
   task: string;
+  runId?: string;
   ledgerSink?: LedgerSink;
   tools?: Tool[];
   activityConsumer?: ToolActivityConsumer;
@@ -259,7 +260,7 @@ export async function runRoleStandalone(params: {
   ledgerPath: string | undefined;
   observations: import("./runner/runner").RoleObservations;
 }> {
-  const runId = crypto.randomUUID();
+  const runId = params.runId ?? crypto.randomUUID();
   const store = new ProjectStore(params.targetDir, params.projectStoreConfig);
   const session = await store.createSession(runId, BACKGROUND_CONTEXT);
   const result = await createRoleRunner({
@@ -1279,6 +1280,13 @@ async function roleCommand(
     spec.model,
   );
   const renderer = new ToolActivityRenderer(process.stderr, "human", config.toolActivity);
+  const standaloneRunId = crypto.randomUUID();
+  const expectedLedgerPath = path.join(
+    configOptions.targetDir,
+    ".ad-coder",
+    "ledger",
+    `${standaloneRunId}.jsonl`,
+  );
   const standaloneResult = await (async () => {
     try {
       return await runRoleStandalone({
@@ -1287,6 +1295,7 @@ async function roleCommand(
         models: config.models,
         targetDir: configOptions.targetDir,
         task,
+        runId: standaloneRunId,
         tools: config.pluginToolsForModel?.(spec.model) ?? config.pluginTools,
         activityConsumer: renderer.consume,
         ...(config.compaction !== undefined && { compaction: config.compaction }),
@@ -1296,6 +1305,9 @@ async function roleCommand(
         ...(config.toolActivity !== undefined && { toolActivity: config.toolActivity }),
         ...(config.stageLimits !== undefined && { stageLimits: config.stageLimits }),
       });
+    } catch (error) {
+      process.stderr.write(`ad-coder: partial usage ledger=${expectedLedgerPath}\n`);
+      throw error;
     } finally {
       renderer.close();
     }

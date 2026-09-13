@@ -106,12 +106,15 @@ test("standalone roles persist usage and emit semantic tool activity by default"
     models,
     targetDir,
     task: "review the change",
+    runId: "standalone-observed",
     activityConsumer: (record) => {
       if (record.type === "tool_activity") activity.push(`${record.activity}:${record.lifecycle}`);
     },
   });
 
-  expect(result.ledgerPath).toContain(`${path.sep}.ad-coder${path.sep}ledger${path.sep}`);
+  expect(result.ledgerPath).toBe(
+    path.join(targetDir, ".ad-coder", "ledger", "standalone-observed.jsonl"),
+  );
   expect(fs.existsSync(result.ledgerPath as string)).toBe(true);
   expect(result.observations.input).toBeGreaterThanOrEqual(0);
   expect(activity).toContain("Read:requested");
