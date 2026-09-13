@@ -67,6 +67,7 @@ export class StageLimitController {
   private costUsd = 0;
   private costInFlight = false;
   private terminalReason: StageLimitReason | undefined;
+  private boundaryFailure: StageLimitError | undefined;
 
   constructor(
     limits: StageLimits = {},
@@ -98,6 +99,11 @@ export class StageLimitController {
     this.assertBelow("cost", this.limits.maxCostUsd, this.costUsd);
     if (this.limits.maxCostUsd > 0 && this.costInFlight)
       throw new StageLimitError("cost_in_flight", this.limits.maxCostUsd, this.costUsd);
+  }
+
+  /** Rethrow a model-boundary rejection that the harness converted to its generic fault. */
+  assertNoBoundaryFailure(): void {
+    if (this.boundaryFailure !== undefined) throw this.boundaryFailure;
   }
 
   admitModelTurn(): void {
@@ -133,15 +139,19 @@ export class StageLimitController {
   }
 
   wrap(models: Models): Models {
-    const controller = this;
     const promiseMethods = new Set(["complete", "completeSimple", "fetchDeferred"]);
     const streamMethods = new Set(["stream", "streamSimple", "streamDeferred"]);
+    const reserve = () => {
+      try {
+        this.admitModelTurn();
+      } catch (error) {
+        if (error instanceof StageLimitError) this.boundaryFailure = error;
+        throw error;
+      }
+    };
     const settle = (message: AssistantMessage | undefined) => {
-      if (message === undefined) return controller.failUnknownCost();
-      controller.observeUsage(
-        message.usage.input + message.usage.cacheRead,
-        message.usage.cost.total,
-      );
+      if (message === undefined) return this.failUnknownCost();
+      this.observeUsage(message.usage.input + message.usage.cacheRead, message.usage.cost.total);
     };
     return new Proxy(models, {
       get(target, property, receiver) {
@@ -150,7 +160,7 @@ export class StageLimitController {
         if (promiseMethods.has(property))
           return (...args: unknown[]) => {
             try {
-              controller.admitModelTurn();
+              reserve();
             } catch (error) {
               return Promise.reject(error);
             }
@@ -174,7 +184,7 @@ export class StageLimitController {
           };
         if (streamMethods.has(property))
           return (...args: unknown[]) => {
-            controller.admitModelTurn();
+            reserve();
             let stream: { result(): Promise<AssistantMessage> };
             try {
               stream = Reflect.apply(value, target, args) as typeof stream;
