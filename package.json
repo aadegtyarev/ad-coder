@@ -27,8 +27,8 @@
   "scripts": {
     "test": "bun test",
     "typecheck": "tsc --noEmit",
-    "check": "biome check src test scripts",
-    "check:fix": "biome check --write src test scripts",
+    "check": "biome check src test scripts evals",
+    "check:fix": "biome check --write src test scripts evals",
     "check:release": "bun run scripts/check-release.ts",
     "check:docs": "bun run scripts/check-docs.ts",
     "calibration:score": "bun run scripts/calibration-score.ts",
@@ -38,7 +38,8 @@
     "smoke:artifact": "bun run scripts/artifact-smoke.ts",
     "format": "biome format --write src test",
     "lint": "biome lint src test",
-    "start": "bun run src/cli.ts"
+    "start": "bun run src/cli.ts",
+    "calibration:corpus": "bun run evals/runner/corpus.ts"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "0.85.1",

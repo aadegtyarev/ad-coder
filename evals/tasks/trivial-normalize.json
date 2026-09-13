@@ -1,0 +1,24 @@
+{
+  "id": "trivial-normalize-v1",
+  "role": "coder",
+  "complexity": "trivial",
+  "mode": "role",
+  "fixture": "trivial-normalize",
+  "scorer": "trivial-normalize.ts",
+  "prompt": "Fix normalizeTag so surrounding whitespace never reaches persisted tag keys. Preserve lowercase normalization and add a focused regression test.",
+  "checks": [
+    {
+      "id": "trims-whitespace",
+      "weight": 5
+    },
+    {
+      "id": "preserves-normalization",
+      "weight": 3
+    },
+    {
+      "id": "has-regression-test",
+      "weight": 2
+    }
+  ],
+  "scorerInput": "target"
+}

@@ -5,9 +5,24 @@
   "mode": "automatic-pipeline",
   "prompt": "Repair the two regressions in the current implementation. Encoded IDs must never escape baseDir, malformed encoding must fail with the same stable invalid-id boundary, and metadata failure must not leave an unreported primary write. Add focused regression tests that fail against HEAD and keep the API as small as possible.",
   "checks": [
-    { "id": "rejects-encoded-traversal", "weight": 4 },
-    { "id": "rejects-malformed-encoding", "weight": 2 },
-    { "id": "prevents-partial-primary-write", "weight": 3 },
-    { "id": "has-regression-tests", "weight": 1 }
-  ]
+    {
+      "id": "rejects-encoded-traversal",
+      "weight": 4
+    },
+    {
+      "id": "rejects-malformed-encoding",
+      "weight": 2
+    },
+    {
+      "id": "prevents-partial-primary-write",
+      "weight": 3
+    },
+    {
+      "id": "has-regression-tests",
+      "weight": 1
+    }
+  ],
+  "fixture": "reviewer-hidden-regression",
+  "scorer": "pipeline-repair-regressions.ts",
+  "scorerInput": "target"
 }

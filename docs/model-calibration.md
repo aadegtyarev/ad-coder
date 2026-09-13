@@ -26,6 +26,15 @@ and one tempting false positive. Its scorer derives check results from stable
 finding codes. This keeps grading independent of prose and lets the same task be
 repeated across every model in an inventory.
 
+The version-one corpus manifest now contains six task shapes: trivial bounded
+normalization, medium behavior-preserving refactoring, hidden-defect review,
+medium pipeline repair, complex concurrent-state repair, and manual
+orchestrator tool use. `bun run calibration:corpus -- smoke` materializes and
+executes every target-based scorer; artifact/report scorers declare their input
+kind explicitly. Measurements retain the orchestrator and Planner complexity
+votes plus correctness and agreement, so live Planner feedback can calibrate
+project-local triage without silently changing the user baseline.
+
 Run each corpus task at least once as its declared mode: a standalone `run_role`,
 manual `run_step`/`choose_transition`, or complete `run_pipeline`. Repeat samples
 before changing defaults. The Orchestrator receives this same rule: inventory

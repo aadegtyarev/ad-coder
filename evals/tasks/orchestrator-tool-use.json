@@ -1,0 +1,27 @@
+{
+  "id": "orchestrator-tool-use-v1",
+  "role": "orchestrator",
+  "complexity": "complex",
+  "mode": "manual-workflow",
+  "prompt": "Inspect the complex-reservation fixture, classify task complexity with evidence, invoke Planner to independently check the classification, then manually drive the workflow to an approved result. Do not use the automatic pipeline tool.",
+  "checks": [
+    {
+      "id": "classifies-complex",
+      "weight": 3
+    },
+    {
+      "id": "planner-cross-check",
+      "weight": 2
+    },
+    {
+      "id": "uses-manual-workflow",
+      "weight": 3
+    },
+    {
+      "id": "reaches-approved",
+      "weight": 2
+    }
+  ],
+  "scorerInput": "report",
+  "scorer": "orchestrator-tool-use.ts"
+}

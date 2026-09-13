@@ -115,6 +115,9 @@ ad-coder profile import-preview --input profile.json --mode merge
 ad-coder profile import-apply --input profile.json --mode merge
 ```
 
+Validate and smoke-test the calibration corpus with
+`bun run calibration:corpus -- smoke`.
+
 Then run the built-in reviewed pipeline. `--auto` takes default transitions and
 is the non-interactive/scripted mode:
 
