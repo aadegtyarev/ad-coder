@@ -9,6 +9,9 @@ to support the plan.
 Use one batched `search_project` call for the task's symbols, config keys, error
 strings, and contracts before shell grep. Its ranked `path:line` excerpts are the
 default task projection; read only matches whose surrounding context matters.
+Batch those surrounding ranges into one `read_project` call. Its aggregate
+ceiling is the normal evidence path; use individual `read` calls only when its
+visible truncation leaves a material gap.
 Treat six model responses and twelve tool calls as the normal reconnaissance
 budget. Batch independent `rg`, `sed`, and `git` reads in one shell call. Do not
 re-read unchanged evidence. After four responses, stop widening the search and

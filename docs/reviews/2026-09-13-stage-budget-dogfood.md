@@ -109,3 +109,9 @@ duration ceiling: it launched a shell operation lasting about 41 seconds and
 continued reconnaissance afterward. Planner guidance now leaves suites, builds,
 linters, and formatters to Coder and permits only a single cheap probe when
 needed to establish the problem. Verification commands remain part of the plan.
+
+The next retry removed the long verification command but stopped at the
+20-tool-turn ceiling after about 42 seconds: Planner fanned out sixteen separate
+`read` calls after bounded search. `read_project` now replaces that pattern with
+up to eight exact line slices under one configurable 16 KB aggregate ceiling,
+while retaining ordinary `read` as a visible correctness fallback.

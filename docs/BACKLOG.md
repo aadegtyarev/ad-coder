@@ -24,6 +24,8 @@ Only unresolved work belongs here. Current behavior is in
   tracked modifications and untracked additions. Comparative dogfood and broader
   role-specific handoff projections remain. Every stage now reports separate
   system-prompt, handoff-prompt, tool-definition, and total assembly bytes.
+  `read_project` now batches up to eight exact line slices under one aggregate
+  ceiling; comparative dogfood and incremental cross-round handoffs remain.
 
 - [high] **Complete workflow-module extraction** (`src/workflows/`,
   `src/orchestration/`, `src/cli/resolve-config.ts`): conversational activation
