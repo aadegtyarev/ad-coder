@@ -232,6 +232,7 @@ export interface ResolvePipelineConfigOptions {
   maxRounds?: number;
   surfaceAnalysisLimits?: Partial<SurfaceAnalysisLimits>;
   defaultComplexity?: Complexity;
+  plannerHandoffAttempts?: 1 | 2;
   budgetPercents?: BudgetPercents;
   roleBudgetPercents?: Partial<Record<ConfigurableRole, BudgetPercents>>;
   warn?: (message: string) => void;
@@ -765,7 +766,13 @@ function resolveConfig(
         auditor: options.roleBudgetPercents?.auditor ?? options.budgetPercents ?? {},
       },
     },
-    defaults: { maxRounds, defaultComplexity },
+    defaults: {
+      maxRounds,
+      defaultComplexity,
+      ...(options.plannerHandoffAttempts !== undefined && {
+        plannerHandoffAttempts: options.plannerHandoffAttempts,
+      }),
+    },
     effectiveConfig: {
       inventoryProfile: {
         value: inventory?.name ?? "not-configured",

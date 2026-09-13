@@ -235,6 +235,8 @@ export interface WorkflowDefaults {
   autoAdvance?: boolean;
   maxRounds?: number;
   defaultComplexity?: Complexity;
+  /** One initial Planner attempt plus, by default, one bounded corrective retry for a missing tool handoff. */
+  plannerHandoffAttempts?: 1 | 2;
 }
 
 /**

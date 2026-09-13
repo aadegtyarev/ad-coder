@@ -137,4 +137,6 @@ be narrowed without losing something, say so rather than narrowing by accident.
 
 The plan is the only context the Coder gets — it must stand on its own: dense,
 concrete, grounded in what you read, not assumption. If the task is better solved
-by not building it, say so. State your plan as your final message.
+by not building it, record that conclusion in `submit_plan.summary`. Do not emit
+the plan or a JSON copy in assistant text: `submit_plan` is the sole canonical
+handoff. After its successful call, stop.

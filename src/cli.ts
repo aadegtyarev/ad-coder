@@ -1623,6 +1623,13 @@ function buildConfigOptions(
   const provider = parseProviderFlag(flags["--provider"]);
   const maxRounds = parseMaxRoundsFlag(flags["--max-rounds"]);
   const defaultComplexity = parseComplexityFlag(flags["--default-complexity"]);
+  const plannerHandoffAttemptsRaw = flags["--planner-handoff-attempts"];
+  const plannerHandoffAttempts =
+    plannerHandoffAttemptsRaw === undefined
+      ? undefined
+      : plannerHandoffAttemptsRaw === "1" || plannerHandoffAttemptsRaw === "2"
+        ? (Number(plannerHandoffAttemptsRaw) as 1 | 2)
+        : fail("invalid --planner-handoff-attempts: expected 1 or 2");
   const orchestratorThinkingLevel = parseThinkingLevelFlag(flags["--orchestrator-thinking-level"]);
   const requestTimeoutMs = parseNonNegativeIntegerFlag(
     "--request-timeout-ms",
@@ -1874,6 +1881,7 @@ function buildConfigOptions(
     ...(roleBudgetPercents !== undefined && { roleBudgetPercents }),
     ...(maxRounds !== undefined && { maxRounds }),
     ...(defaultComplexity !== undefined && { defaultComplexity }),
+    ...(plannerHandoffAttempts !== undefined && { plannerHandoffAttempts }),
     ...(projectStoreConfig !== undefined && { projectStoreConfig }),
     ...(Object.keys(toolActivity).length > 0 && { toolActivity }),
   };
@@ -2418,6 +2426,12 @@ const PIPELINE_OPTIONS: CommandDefinition["options"] = [
     name: "--default-complexity",
     value: "<complexity>",
     description: "Set trivial, medium, or complex as the default.",
+  },
+  {
+    name: "--planner-handoff-attempts",
+    value: "<1|2>",
+    description:
+      "Allow one initial Planner handoff attempt or one bounded corrective retry (default: 2).",
   },
   {
     name: "--project-store-config",
