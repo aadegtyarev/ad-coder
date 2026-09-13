@@ -183,10 +183,9 @@ The Planner instruction derives allowed canonical IDs from validation's
 Coder omits `explore_project`; Planner uses bounded projections; Reviewer retains
 independent reconnaissance.
 
-Each role has a `StageLimitController` metering model/tool admission,
-provider-reported input and cost, and elapsed time. Closeout reserves
-stop tools before hard limits, preserving 30 seconds, 4 model turns, 8 tool turns,
-and 100,000 input tokens by default; zero disables a reserve.
+Each role controller meters admissions, input, cost, and time. Closeout reserves
+stop tools early, preserving 30 seconds, 4 model turns, 8 tool turns, and 100,000
+input tokens by default; zero disables each.
 `RunCoordinator` checkpoints a
 `stage_limit` pause before returning, so completed earlier phases remain committed
 and an operator can change the configured limit and resume the incomplete phase
