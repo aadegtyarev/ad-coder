@@ -190,3 +190,13 @@ incremental projection to full context, so projection failure is a separate
 harness cost defect. The task prompt now names its existing canonical contract
 and requires independently executable HEAD-failing tests, preventing Planner
 surface-name drift and masked assertions from consuming calibration rounds.
+
+
+A focused-handoff regression reran the same repair shape with Luna low Coder and
+Terra low Reviewer after allowing bounded untracked paths to remain incremental.
+It passed all four scorer gates and was approved after three rounds: 360.85 s,
+92,696 fresh plus 177,664 cached input, 14,759 output, 6,577 reasoning tokens,
+and $0.24770508. Every retry Coder and Reviewer stage reported `focused` with no
+fallback. This sample validates context transport, not general model capability:
+the task prompt names known edge cases, so routing conclusions continue to rely
+on hidden and holdout tasks.

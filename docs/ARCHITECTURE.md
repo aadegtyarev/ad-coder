@@ -209,16 +209,15 @@ transcript content. Operators should select a model with a larger context window
 or lower the role's context-budget settings before retrying. Cross-provider
 summarization requires explicit authorization.
 
-Pipeline handoff context is a separate policy from transcript compaction. The
-first Reviewer remains broad. Later Coder and Reviewer turns default to bounded
-focused handoffs containing unresolved findings, the Coder response, affected
-contracts, safe path/count metadata, and a bounded credential-redacted diff.
-`incremental`, `full`, and `off` modes are configurable; `off` leaves breadth
-under manual workflow control. Missing/truncated evidence, sensitive or untracked
-paths, review-control changes, risk changes, and configured material-diff
-thresholds widen the handoff with a stable reason. Only bounded metadata, a diff
-digest, and the decision persist in workflow state and reports; raw patches do
-not.
+Pipeline handoff policy is separate from transcript compaction. The first review
+is broad; later Coder and Reviewer turns default to bounded findings, response,
+contract, path/count, and credential-redacted diff evidence. Configurable modes
+are `incremental`, `full`, and manually controlled `off`. Missing or truncated
+evidence, sensitive paths, review-control changes, risk changes, and material
+diffs widen the handoff with a stable reason. Workflow state retains bounded
+metadata, a diff digest, and the decision, never raw patches. An untracked
+addition stays focused because its bounded path permits an explicit role read;
+path truncation still widens the handoff.
 
 The ledger records provider-reported cost rather than recomputing it. Session
 limits are enforced at the shared model-call boundary, including tool follow-up

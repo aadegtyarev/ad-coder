@@ -75,9 +75,6 @@ Only unresolved work belongs here. Current behavior is in
   system-prompt, handoff-prompt, tool-definition, and total assembly bytes.
   `read_project` now batches up to eight exact line slices under one aggregate
   ceiling; comparative dogfood and incremental cross-round handoffs remain.
-  In the 2026-09-13 Sol/Terra repair sample, both retry handoffs reported
-  `projection_failure` and expanded to full context. Diagnose the projection
-  failure and retain the focused handoff when changed paths and diff are valid.
 
 - [high] **Complete workflow-module extraction** (`src/workflows/`,
   `src/orchestration/`, `src/cli/resolve-config.ts`): conversational activation

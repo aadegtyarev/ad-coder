@@ -270,8 +270,6 @@ export interface SafeGitChangedFiles {
   files: string[];
   total: number;
   truncated: number;
-  /** True when the ordinary diff projection cannot contain all changed content. */
-  requiresFullDiff?: boolean;
 }
 
 export interface SafeGitDiffProjection {
@@ -416,7 +414,6 @@ export function readSafeGitChangedFiles(
         files: safe.slice(0, limits.maxPaths),
         total: safe.length,
         truncated: Math.max(0, safe.length - limits.maxPaths),
-        ...(entries.some((entry) => entry.startsWith("?? ")) && { requiresFullDiff: true }),
       });
     });
   });
