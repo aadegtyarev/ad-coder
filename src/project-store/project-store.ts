@@ -34,6 +34,7 @@ const DEFAULT_RETENTION = Object.fromEntries(
   AREAS.map((area) => [area, 0]),
 ) as ProjectStoreRetention;
 const DEFAULT_BYTES: ProjectStoreByteLimits = { attachment: 0, state: 0, jsonlRecord: 0 };
+const STORE_GITIGNORE = "*\n!calibration.json\n";
 
 export class ProjectStore {
   readonly layout: ProjectStoreLayout;
@@ -446,7 +447,7 @@ export class ProjectStore {
     this.createPrivateDir(this.layout.root);
     for (const area of AREAS) this.createPrivateDir(this.layout[area]);
     if (!fs.existsSync(this.layout.gitignore))
-      this.atomicWrite(this.layout.gitignore, Buffer.from("*\n"));
+      this.atomicWrite(this.layout.gitignore, Buffer.from(STORE_GITIGNORE));
     else {
       const stat = fs.lstatSync(this.layout.gitignore);
       if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1)
@@ -455,8 +456,8 @@ export class ProjectStore {
           this.layout.gitignore,
           "store gitignore must be a private regular file",
         );
-      if (fs.readFileSync(this.layout.gitignore, "utf8") !== "*\n")
-        this.atomicWrite(this.layout.gitignore, Buffer.from("*\n"));
+      if (fs.readFileSync(this.layout.gitignore, "utf8") !== STORE_GITIGNORE)
+        this.atomicWrite(this.layout.gitignore, Buffer.from(STORE_GITIGNORE));
     }
     fs.chmodSync(this.layout.gitignore, 0o600);
   }

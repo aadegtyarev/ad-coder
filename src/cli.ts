@@ -50,6 +50,10 @@ import {
 } from "./orchestration/stage-limits";
 import type { Complexity, PipelineConfig, RoleSpec } from "./orchestration/types";
 import { parseProfile } from "./profiles/validate";
+import {
+  createProjectCalibrationSnapshot,
+  writeProjectCalibrationSnapshot,
+} from "./project-calibration";
 import type { ClaimInput } from "./project-operations/backlog";
 import { routeDocumentationFollowUp } from "./project-operations/documentation";
 import { ProjectOperationsError } from "./project-operations/errors";
@@ -964,10 +968,11 @@ async function profileCommand(positionals: string[], flags: Record<string, strin
   if (
     action !== "show" &&
     action !== "export" &&
+    action !== "snapshot" &&
     action !== "import-preview" &&
     action !== "import-apply"
   )
-    fail("profile requires show, export, import-preview, or import-apply");
+    fail("profile requires show, export, snapshot, import-preview, or import-apply");
   if (positionals[2] !== undefined) fail("profile accepts exactly one action");
   const profilePath = flags["--profile-path"];
   const store =
@@ -981,6 +986,16 @@ async function profileCommand(positionals: string[], flags: Record<string, strin
   }
   if (action === "export") {
     process.stdout.write(exportUserProfile(current));
+    return;
+  }
+  if (action === "snapshot") {
+    const targetDir = flags["--target-dir"];
+    const inventory = flags["--inventory"];
+    if (targetDir === undefined || inventory === undefined)
+      fail("profile snapshot requires --target-dir and --inventory");
+    const snapshot = createProjectCalibrationSnapshot(current, inventory);
+    const file = writeProjectCalibrationSnapshot(resolveTargetDir(targetDir), snapshot);
+    process.stdout.write(`${JSON.stringify({ file, snapshot })}\n`);
     return;
   }
   const mode = flags["--mode"];
@@ -2174,15 +2189,17 @@ const COMMANDS: readonly CommandDefinition[] = [
   },
   {
     name: "profile",
-    description: "Show, export, preview, or import the portable user profile.",
+    description: "Show, export, snapshot, preview, or import the portable user profile.",
     positionals: [
       {
-        name: "<show|export|import-preview|import-apply>",
+        name: "<show|export|snapshot|import-preview|import-apply>",
         description: "Profile action.",
       },
     ],
     options: [
       { name: "--input", value: "<file|->", description: "Read an import document." },
+      { name: "--target-dir", value: "<dir>", description: "Project receiving a snapshot." },
+      { name: "--inventory", value: "<name>", description: "Inventory to snapshot." },
       { name: "--mode", value: "<merge|replace>", description: "Select import semantics." },
       {
         name: "--profile-path",

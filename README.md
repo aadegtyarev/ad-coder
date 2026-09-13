@@ -113,7 +113,12 @@ explicitly previewed or applied:
 ad-coder profile export > profile.json
 ad-coder profile import-preview --input profile.json --mode merge
 ad-coder profile import-apply --input profile.json --mode merge
+ad-coder profile snapshot --inventory work --target-dir ./my-project
 ```
+
+The snapshot contains only the selected inventory, calibrated routing, current
+economics, and capacity ranges. A matching named inventory automatically uses
+its project routing; API callers can set `useProjectCalibration: false`.
 
 Validate and smoke-test the calibration corpus with
 `bun run calibration:corpus -- smoke`.

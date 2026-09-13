@@ -28,6 +28,7 @@ import { buildDefaultProfile } from "../profiles/default-profile";
 import { resolveProfile } from "../profiles/resolve";
 import type { Profile, ProfileRole, ResolvedSelection } from "../profiles/types";
 import { parseProfile } from "../profiles/validate";
+import { readProjectCalibrationSnapshot } from "../project-calibration";
 import type { ProjectStoreConfig } from "../project-store/types";
 import { buildExploreProjectTool, EXPLORE_PROJECT_TOOL_NAME } from "../project-tools/explore";
 import { buildReadProjectTool, READ_PROJECT_TOOL_NAME } from "../project-tools/read";
@@ -143,6 +144,8 @@ export interface ResolvePipelineConfigOptions {
   profile?: Profile;
   inventoryConfig?: ModelInventoryConfig;
   inventoryProfile?: string;
+  /** Read a matching committed .ad-coder/calibration.json routing override. Defaults to true. */
+  useProjectCalibration?: boolean;
   overrides?: Partial<Record<ProfileRole, import("../profiles/types").SpawnOverride>>;
   plannerModel?: string;
   researcherModel?: string;
@@ -397,6 +400,18 @@ function resolveConfig(
     );
   }
   const defaultProfile = buildDefaultProfile({ strong, mid, cheap });
+  const projectCalibration =
+    options.useProjectCalibration === false ||
+    inventory === undefined ||
+    options.profile !== undefined
+      ? undefined
+      : readProjectCalibrationSnapshot(options.targetDir);
+  const projectProfile =
+    projectCalibration !== undefined &&
+    inventory !== undefined &&
+    projectCalibration.inventory.name === inventory.name
+      ? projectCalibration.routing
+      : undefined;
   const useCodexOAuthDefaults =
     provider === "openai-codex" &&
     options.profile === undefined &&
@@ -404,7 +419,8 @@ function resolveConfig(
     options.midModel === undefined &&
     options.cheapModel === undefined;
   const profile: Profile = parseProfile(
-    inventory?.profile ??
+    projectProfile ??
+      inventory?.profile ??
       options.profile ??
       (useCodexOAuthDefaults
         ? {

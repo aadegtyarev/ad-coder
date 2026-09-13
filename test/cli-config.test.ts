@@ -8,6 +8,7 @@ import { deriveContextBudget } from "../src/context/budget";
 import type { ModelInventoryConfig } from "../src/inventory/types";
 import { buildDefaultProfile } from "../src/profiles/default-profile";
 import { resolveProfile } from "../src/profiles/resolve";
+import { writeProjectCalibrationSnapshot } from "../src/project-calibration";
 import { RegistryError } from "../src/registry/errors";
 import type { RegistryConfig } from "../src/registry/types";
 
@@ -660,4 +661,48 @@ test("named inventory selects one atomic registry/profile pair and rejects sourc
       warn: silent,
     }).stageLimits?.maxInputTokens,
   ).toBe(123_456);
+});
+
+test("matching project calibration overrides named inventory routing and can be disabled", () => {
+  const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-project-routing-"));
+  const inventory: ModelInventoryConfig = {
+    profiles: [
+      {
+        name: "primary",
+        registry: mixedRegistry(),
+        profile: buildDefaultProfile({ strong: "large", mid: "small", cheap: "small" }),
+      },
+    ],
+    default: "primary",
+  };
+  try {
+    const calibrated = buildDefaultProfile({ strong: "large", mid: "small", cheap: "small" });
+    calibrated.entries = calibrated.entries.map((entry) =>
+      entry.role === "coder" && entry.complexity === "medium"
+        ? { ...entry, model: "large" }
+        : entry,
+    );
+    writeProjectCalibrationSnapshot(targetDir, {
+      version: 1,
+      inventory: { name: "primary", providers: [{ id: "local", models: ["small", "large"] }] },
+      routing: calibrated,
+      observedOn: "2026-09-13",
+      economics: [],
+      subscriptionCapacityRanges: [],
+    });
+    const base = {
+      task: "x",
+      targetDir,
+      inventoryConfig: inventory,
+      compactionMode: "disabled-then-halt" as const,
+      env: fakeEnv({ LOCAL_KEY: "k" }),
+      warn: silent,
+    };
+    expect(resolvePipelineConfig(base).roles.coder.model.id).toBe("large");
+    expect(
+      resolvePipelineConfig({ ...base, useProjectCalibration: false }).roles.coder.model.id,
+    ).toBe("small");
+  } finally {
+    fs.rmSync(targetDir, { recursive: true, force: true });
+  }
 });

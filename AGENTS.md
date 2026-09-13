@@ -41,7 +41,9 @@ output schemas) — those arrive with the feature that needs them, not before.
 
 Typed errors carry names/paths/numbers only, never secrets or file contents. The
 `.ad-coder/` runtime dir (ledger, sessions, scratch) is gitignored via its own
-`.ad-coder/.gitignore` (`*`), so the project's root `.gitignore` is never touched.
+`.ad-coder/.gitignore`; only the bounded anonymous `calibration.json` snapshot
+is unignored. The repository root carries the same exception so a fresh clone
+can commit the snapshot without exposing runtime state.
 
 ## Write verified research to the repo as you find it, not batched
 

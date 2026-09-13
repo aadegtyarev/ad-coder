@@ -84,6 +84,59 @@ test("profile CLI previews and applies a portable import before exporting it", (
   }
 });
 
+test("profile CLI writes a bounded project calibration snapshot", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-profile-snapshot-"));
+  try {
+    const profilePath = path.join(root, "profile.json");
+    const inputPath = path.join(root, "portable.json");
+    fs.writeFileSync(
+      inputPath,
+      JSON.stringify({
+        version: 1,
+        inventories: [{ name: "work", providers: [{ id: "codex", models: ["luna"] }] }],
+        calibratedRouting: [
+          {
+            inventory: "work",
+            profile: { entries: [{ role: "coder", complexity: "trivial", model: "luna" }] },
+            observedOn: "2026-09-13",
+            source: "benchmark",
+            confidence: "measured",
+          },
+        ],
+        economicRecords: [],
+        subscriptionCapacityRanges: [],
+      }),
+    );
+    expect(
+      runCli([
+        "profile",
+        "import-apply",
+        "--input",
+        inputPath,
+        "--mode",
+        "replace",
+        "--profile-path",
+        profilePath,
+      ]).code,
+    ).toBe(0);
+    const result = runCli([
+      "profile",
+      "snapshot",
+      "--profile-path",
+      profilePath,
+      "--target-dir",
+      root,
+      "--inventory",
+      "work",
+    ]);
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout).file).toBe(path.join(root, ".ad-coder", "calibration.json"));
+    expect(fs.existsSync(path.join(root, ".ad-coder", "calibration.json"))).toBe(true);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("profile CLI returns stable JSON errors for invalid input, conflicts, and unsafe stores", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-profile-errors-"));
   try {

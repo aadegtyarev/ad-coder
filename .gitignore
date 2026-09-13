@@ -5,7 +5,8 @@ tags
 
 # Dependencies and local run state
 node_modules/
-.ad-coder/
+.ad-coder/*
+!.ad-coder/calibration.json
 
 # Provider credentials (Bun auto-loads .env)
 .env

@@ -10,6 +10,8 @@ All notable changes to ad-coder are recorded here. The format follows
 
 - Added versioned portable user profiles with append-only economics history and
   always-JSON `profile show|export|import-preview|import-apply` CLI access.
+- Added bounded `.ad-coder/calibration.json` snapshots, `profile snapshot`, and
+  automatic project-calibrated routing for matching named inventories.
 - Added typed, configurable closeout reserves for duration, model turns, and
   tool turns so bounded roles retain capacity to return their final result.
 
