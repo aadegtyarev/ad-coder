@@ -110,6 +110,12 @@ Only unresolved work belongs here. Current behavior is in
 
 ## Reliability and observability
 
+- [medium] **Expose built-in workflow tool identity in activity streams**
+  (`src/observability/`, `src/orchestration/orchestrator.ts`): Orchestrator
+  dogfood reports `run_pipeline` only as `custom` while it is active, hiding the
+  selected execution mode until the final transcript. Project safe allowlisted
+  built-in names without exposing third-party tool identifiers.
+
 - [high] **Role-specific stage-budget defaults** (`src/cli/resolve-config.ts`,
   `src/orchestration/stage-limits.ts`): global defaults currently allow Planner
   far beyond its prompt's normal budget. Add configurable per-role overlays and

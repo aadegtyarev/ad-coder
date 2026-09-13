@@ -8,6 +8,9 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ### Added
 
+- Taught Orchestrator to accept complete terminal pipeline evidence and avoid
+  duplicate post-pipeline reads and test runs.
+
 - Kept incremental Coder and Reviewer retries focused when a change adds
   untracked files; their bounded paths remain available for explicit role reads.
 
