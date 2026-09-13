@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -16,6 +17,7 @@ import type {
   FauxResponseFactory,
   FauxResponseStep,
 } from "@earendil-works/pi-ai/providers/faux";
+import { COMPACTION_SAFETY_PROMPT } from "../src/context/compactor";
 import { MemoryLedgerSink } from "../src/ledger/ledger";
 import {
   buildSubmitFollowUpTool,
@@ -53,6 +55,7 @@ import type { Profile } from "../src/profiles/types";
 import { ProjectOperationsError } from "../src/project-operations/errors";
 import { type RunCheckpoint, RunCoordinator } from "../src/project-operations/run-coordinator";
 import { ProjectStore } from "../src/project-store/project-store";
+import { MODEL_INVENTORY_RESEARCH_BRIEF, RoleBriefError } from "../src/prompts/role-briefs";
 import type { ResolvedRegistry } from "../src/registry/types";
 import type { Role } from "../src/role";
 import { defineRole } from "../src/role";
@@ -1431,6 +1434,113 @@ test("research is checkpointed before dispatch and persists only normalized prov
     destination: "faux/faux-1",
     summary: "corroborated",
   });
+});
+
+test("model-inventory research composes its brief and persists only brief provenance", async () => {
+  const fx = fixture();
+  fs.mkdirSync(path.join(fx.targetDir, "docs/contracts"), { recursive: true });
+  fs.writeFileSync(path.join(fx.targetDir, "docs/contracts/config.md"), "# Config\nCanonical.\n");
+  const briefContent = fs.readFileSync(MODEL_INVENTORY_RESEARCH_BRIEF.path, "utf8");
+  let researcherSystemPrompt: string | undefined;
+  fx.faux.setResponses([
+    ...plannerTurn(researchPlan()),
+    (context) => {
+      researcherSystemPrompt = context.systemPrompt;
+      return fauxAssistantMessage(
+        JSON.stringify({ summary: "corroborated", resolvedSurfaceIds: ["cli"] }),
+      );
+    },
+  ]);
+  const session = createWorkflowSession({
+    targetDir: fx.targetDir,
+    models: fx.models,
+    task: "refresh model inventory",
+    maxRounds: 1,
+    researchPurpose: "model-inventory-bootstrap",
+    roles: {
+      planner: plannerRole(fx),
+      researcher: fx.role("researcher", "facts only"),
+      coder: fx.role("coder", "code"),
+      reviewer: reviewerRole(fx),
+    },
+  });
+  const coordinator = new RunCoordinator(session, session.projectStore, {
+    runId: "brief-provenance",
+  });
+  await coordinator.step();
+  await coordinator.prepareStep();
+  expect(researcherSystemPrompt).toBe(
+    `facts only\n\n${briefContent}\n\n${COMPACTION_SAFETY_PROMPT}`,
+  );
+  const persisted = JSON.stringify(coordinator.checkpoint);
+  expect(coordinator.checkpoint.pendingStep?.state.stageMetrics?.at(-1)?.roleBrief).toEqual({
+    id: MODEL_INVENTORY_RESEARCH_BRIEF.id,
+    version: MODEL_INVENTORY_RESEARCH_BRIEF.version,
+    sha256: createHash("sha256").update(briefContent).digest("hex"),
+  });
+  expect(persisted).not.toContain(briefContent);
+  expect(persisted).not.toContain(MODEL_INVENTORY_RESEARCH_BRIEF.path);
+});
+
+test("ordinary research keeps its prompt and a missing required brief fails before dispatch", async () => {
+  const fx = fixture();
+  let researcherSystemPrompt: string | undefined;
+  fx.faux.setResponses([
+    ...plannerTurn(researchPlan()),
+    (context) => {
+      researcherSystemPrompt = context.systemPrompt;
+      return fauxAssistantMessage(
+        JSON.stringify({ summary: "corroborated", resolvedSurfaceIds: ["cli"] }),
+      );
+    },
+  ]);
+  const session = createWorkflowSession({
+    targetDir: fx.targetDir,
+    models: fx.models,
+    task: "ordinary research",
+    maxRounds: 1,
+    roles: {
+      planner: plannerRole(fx),
+      researcher: fx.role("researcher", "facts only"),
+      coder: fx.role("coder", "code"),
+      reviewer: reviewerRole(fx),
+    },
+  });
+  const coordinator = new RunCoordinator(session, session.projectStore, {
+    runId: "ordinary-research-prompt",
+  });
+  await coordinator.step();
+  await coordinator.prepareStep();
+  expect(researcherSystemPrompt).toBe(`facts only\n\n${COMPACTION_SAFETY_PROMPT}`);
+
+  let dispatches = 0;
+  const models = new Proxy(fx.models, {
+    get(target, property, receiver) {
+      if (["stream", "complete", "streamSimple", "completeSimple"].includes(String(property))) {
+        return (..._args: unknown[]) => {
+          dispatches += 1;
+          throw new Error("unexpected provider dispatch");
+        };
+      }
+      return Reflect.get(target, property, receiver);
+    },
+  });
+  expect(() =>
+    createWorkflowSession({
+      targetDir: fx.targetDir,
+      models,
+      task: "bootstrap inventory",
+      maxRounds: 1,
+      researchPurpose: "model-inventory-bootstrap",
+      researchBrief: { id: "inventory", version: "v1", path: path.join(fx.targetDir, "missing") },
+      roles: {
+        researcher: fx.role("researcher", "facts only"),
+        coder: fx.role("coder", "code"),
+        reviewer: reviewerRole(fx),
+      },
+    }),
+  ).toThrow(RoleBriefError);
+  expect(dispatches).toBe(0);
 });
 
 test("rejected research payload never reaches durable production-flow artifacts", async () => {
