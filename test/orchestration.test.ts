@@ -1235,6 +1235,31 @@ test("a planner emitting only text fails closed before code", async () => {
   ).rejects.toMatchObject({ code: "missing_plan" });
 });
 
+test("a planner whole-JSON fallback is strictly validated before code", async () => {
+  const fx = fixture();
+  const planner = plannerRole(fx);
+  const coder = fx.role("coder", "You code.");
+  const reviewer = reviewerRole(fx);
+  fx.faux.setResponses([
+    fauxAssistantMessage(
+      JSON.stringify(
+        governedPlan({ complexity: "medium", securitySurface: "none", summary: "json" }),
+      ),
+    ),
+    fauxAssistantMessage("coded"),
+    ...reviewerTurn({ status: "approved", issues: [], summary: "ok" }),
+  ]);
+  await expect(
+    runPipeline({
+      targetDir: fx.targetDir,
+      models: fx.models,
+      task: "JSON handoff",
+      maxRounds: 1,
+      roles: { planner, coder, reviewer },
+    }),
+  ).resolves.toMatchObject({ approved: true, complexity: "medium" });
+});
+
 test("planner gets one bounded corrective retry for a missing structured handoff", async () => {
   const fx = fixture();
   const planner = plannerRole(fx);
@@ -1304,7 +1329,9 @@ test("parsePlan rejects invented contract IDs and covered entries without eviden
 test("planner instruction exposes canonical IDs accepted by validation", () => {
   const instruction = formatPlannerInstruction();
   expect(instruction).toContain("Canonical contract IDs accepted by this pipeline:");
-  expect(instruction).toContain("Do not write the plan or JSON in assistant text");
+  expect(instruction).toContain(
+    "If the provider returns text instead, emit exactly one JSON object",
+  );
   expect(instruction).toContain("errors:typed-actionable");
   expect(instruction).toContain("quality:clean-check");
 });

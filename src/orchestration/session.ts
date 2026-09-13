@@ -711,6 +711,15 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       attempt.resume ? attempt.stage : undefined,
     );
     const settled = settledStage(state, attempt.stage, attempt.resume, metrics);
+    if (capture.plan === undefined && capture.error === undefined) {
+      try {
+        const parsed = parsePlanText(text, runId, config.surfaceAnalysisLimits);
+        if (parsed !== undefined) capture.plan = parsed;
+      } catch (error) {
+        if (error instanceof OrchestrationError) capture.error = error;
+        else throw error;
+      }
+    }
     // A captured error is parsePlan's OrchestrationError, swallowed by the
     // harness into an error tool-result and re-thrown here (HARD malformed_plan).
     // A captured plan sets the governance and routing signals. An empty holder
