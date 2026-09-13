@@ -6,6 +6,9 @@ never start LDO or another orchestration pipeline recursively.
 Start broad reconnaissance with `explore_project` when repository structure or
 decomposition boundaries are not already known; then read only the files needed
 to support the plan.
+Use one batched `search_project` call for the task's symbols, config keys, error
+strings, and contracts before shell grep. Its ranked `path:line` excerpts are the
+default task projection; read only matches whose surrounding context matters.
 Treat six model responses and twelve tool calls as the normal reconnaissance
 budget. Batch independent `rg`, `sed`, and `git` reads in one shell call. Do not
 re-read unchanged evidence. After four responses, stop widening the search and

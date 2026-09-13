@@ -386,6 +386,12 @@ export {
   DEFAULT_EXPLORE_PROJECT_CONFIG,
   EXPLORE_PROJECT_TOOL_NAME,
 } from "./project-tools/explore";
+export type { SearchProjectConfig } from "./project-tools/search";
+export {
+  buildSearchProjectTool,
+  DEFAULT_SEARCH_PROJECT_CONFIG,
+  SEARCH_PROJECT_TOOL_NAME,
+} from "./project-tools/search";
 export type { PromptErrorCode } from "./prompts/errors";
 export { PromptError } from "./prompts/errors";
 export type { ResolvePromptOptions } from "./prompts/prompts";

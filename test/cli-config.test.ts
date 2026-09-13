@@ -474,7 +474,10 @@ test("built-in plugin groups are selectable, visible, and mutually exclusive wit
     warn: silent,
   } as const;
   const selected = resolvePipelineConfig({ ...base, enabledPlugins: ["explore"] });
-  expect(selected.pluginTools?.map(({ name }) => name)).toEqual(["explore_project"]);
+  expect(selected.pluginTools?.map(({ name }) => name)).toEqual([
+    "explore_project",
+    "search_project",
+  ]);
   expect(selected.effectiveConfig?.enabledPlugins).toEqual({ value: "explore", source: "cli" });
   expect(() => resolvePipelineConfig({ ...base, enabledPlugins: [], pluginTools: [] })).toThrow(
     "pluginTools cannot be combined with enabledPlugins",

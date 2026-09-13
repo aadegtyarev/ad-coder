@@ -62,3 +62,12 @@ were admitted; the session artifact was about 462 KB. This is materially bounded
 versus the earlier 180-second/26-command attempt, but it still produced no usable
 plan. Further savings therefore require a task-specific reconnaissance tool/result
 projection rather than more prompt wording or a larger limit.
+### Task-specific reconnaissance projection
+
+After the bounded Planner still spent 12 admitted tool calls without producing a
+plan, the next optimization moved task lookup into a native tool instead of adding
+more prompt instructions. `search_project` batches literal symbols, config keys,
+error strings, and contract terms; ranks matching files; and bounds term count,
+per-line excerpts, returned matches, Git output, and final result bytes. It also
+includes untracked files so review can see newly added implementation. The normal
+`read`/`bash` path remains available when the projection is insufficient.
