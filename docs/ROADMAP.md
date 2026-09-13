@@ -379,6 +379,20 @@ workflows — one substrate, swappable drivers.
   The current single selected profile file is the substrate. Named, atomic
   registry/profile switching for account or provider exhaustion remains a
   follow-on; it must never silently move an active durable run across providers.
+- **In-repository model calibration suite (decided 2026-09-13)** — keep small,
+  versioned, realistic evaluation repositories under `evals/fixtures/`, role and
+  complexity tasks under `evals/tasks/`, headless execution under `evals/runner/`,
+  and deterministic plus independent-review scoring under `evals/scorers/`.
+  Raw provider outputs and run state stay gitignored under `.ad-coder/evals/`;
+  durable aggregate findings and recommended routing live in
+  `docs/model-calibration.md`. Cover Planner localization, Researcher evidence,
+  Security seeded vulnerabilities, Coder changes at all three complexities,
+  Reviewer/Auditor hidden regressions, Orchestrator mode/complexity/escalation,
+  and Summarizer fact retention. Score quality gates first, then total cost to
+  acceptance including repairs and re-review. Calibration supplies a starting
+  matrix for a new inventory; project-specific outcomes progressively refine it.
+  Split fixtures into another repository only when their size or incompatible
+  toolchains make the main repository materially harder to maintain.
 - **Project memory** — committed, machine-portable (laptop↔desktop via git).
   Decided: autonomy default `push` (agent commits+pushes), commits on the
   working branch (one `git pull` brings code+memory atomically). Non-negotiable

@@ -13,6 +13,10 @@ Only unresolved work belongs here. Current behavior is in
   duration, fresh/cache/output/reasoning tokens, and provider cost before
   changing configurable `(role, complexity)` defaults. Quality gates remain
   identical for every routing choice.
+  Build the first calibration corpus inside this repository (`evals/fixtures`,
+  `evals/tasks`, `evals/runner`, `evals/scorers`) with versioned hidden defects,
+  machine gates, gitignored raw outputs, and durable aggregate conclusions in
+  `docs/model-calibration.md`.
 
 - [high] **Named atomic model-inventory profiles** (`src/registry/`,
   `src/profiles/`, `src/cli/`): let an operator switch the complete registered
