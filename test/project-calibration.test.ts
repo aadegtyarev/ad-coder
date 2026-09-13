@@ -82,3 +82,28 @@ test("project snapshot limits and missing calibrated inventories fail loudly", (
     UserProfileError,
   );
 });
+
+test("project snapshot refuses symlinked directories and destinations", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-calibration-link-"));
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-calibration-outside-"));
+  try {
+    fs.symlinkSync(outside, path.join(root, ".ad-coder"));
+    expect(() =>
+      writeProjectCalibrationSnapshot(root, createProjectCalibrationSnapshot(profile, "work")),
+    ).toThrow(UserProfileError);
+    expect(fs.existsSync(path.join(outside, "calibration.json"))).toBe(false);
+    fs.unlinkSync(path.join(root, ".ad-coder"));
+    fs.mkdirSync(path.join(root, ".ad-coder"));
+    fs.symlinkSync(
+      path.join(outside, "target.json"),
+      path.join(root, ".ad-coder", "calibration.json"),
+    );
+    expect(() =>
+      writeProjectCalibrationSnapshot(root, createProjectCalibrationSnapshot(profile, "work")),
+    ).toThrow(UserProfileError);
+    expect(fs.existsSync(path.join(outside, "target.json"))).toBe(false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(outside, { recursive: true, force: true });
+  }
+});

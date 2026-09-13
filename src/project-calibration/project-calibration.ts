@@ -150,13 +150,37 @@ export function parseProjectCalibrationSnapshot(value: unknown): ProjectCalibrat
 export function writeProjectCalibrationSnapshot(targetDir: string, value: unknown) {
   const snapshot = parseProjectCalibrationSnapshot(value);
   const file = projectCalibrationPath(targetDir);
-  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-  const tmp = path.join(path.dirname(file), `.${FILE}.${crypto.randomUUID()}.tmp`);
+  const directory = path.dirname(file);
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const directoryStat = fs.lstatSync(directory);
+  if (!directoryStat.isDirectory() || directoryStat.isSymbolicLink())
+    throw new UserProfileError("invalid_path", "snapshot", "snapshot directory is unsafe");
+  const directoryFd = fs.openSync(
+    directory,
+    fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | NOFOLLOW,
+  );
+  const stableDirectory = `/proc/self/fd/${directoryFd}`;
+  const destination = path.join(stableDirectory, FILE);
+  const tmp = path.join(stableDirectory, `.${FILE}.${crypto.randomUUID()}.tmp`);
   try {
+    try {
+      const destinationStat = fs.lstatSync(destination);
+      if (
+        !destinationStat.isFile() ||
+        destinationStat.isSymbolicLink() ||
+        destinationStat.nlink !== 1
+      )
+        throw new UserProfileError("invalid_path", "snapshot", "snapshot destination is unsafe");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
     fs.writeFileSync(tmp, `${JSON.stringify(snapshot, null, 2)}\n`, { mode: 0o600, flag: "wx" });
-    fs.renameSync(tmp, file);
+    fs.renameSync(tmp, destination);
+    fs.chmodSync(destination, 0o600);
+    fs.fsyncSync(directoryFd);
   } finally {
     fs.rmSync(tmp, { force: true });
+    fs.closeSync(directoryFd);
   }
   return file;
 }

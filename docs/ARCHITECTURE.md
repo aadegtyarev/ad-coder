@@ -44,30 +44,19 @@ work lives in `docs/BACKLOG.md`.
 
 ### One role
 
-`runRole` validates the target directory and role, creates tools and a ledger,
-builds an agent harness, drives one model turn, and closes resources. The target
-directory is a starting working directory, not a security sandbox.
-
-The standalone `role` front uses the same target-local durable numeric ledger,
-prints a narrowed usage envelope after completion, and streams the shared
-bounded tool-activity projection while work is in flight. It exposes selected
-built-in plugin tools but removes structured pipeline submission tools.
-It checkpoints role, provider/model identity, task digest, status, cumulative
-stage usage, and stage-limit pauses under
-`.ad-coder/runs/standalone-<runId>.json`. `role --resume-run <id>` validates the
-same role, model, and task, requires the exhausted limit to change, and resumes
-the active durable lane operation under cumulative whole-stage budgets.
+`runRole` drives one validated role with target-rooted tools and a numeric
+ledger. The target is a working directory, not a sandbox. The standalone `role`
+front streams bounded activity and removes pipeline submission tools. It
+checkpoints identity, task digest, status, usage, and pauses under
+`.ad-coder/runs/standalone-<runId>.json`; resume validates identity and task,
+requires the exhausted limit to change, and retains cumulative budgets.
 
 ### Tool activity flow
 
-Runner and conversation adapters attach to harness events before a turn starts.
-The observability core assigns semantic categories, correlation and sequence,
-uses category-only projection for raw tool arguments, then publishes through
-bounded replay and subscriber queues. Activity remains ephemeral; only its drop
-count and safe aggregate stage metrics cross result or checkpoint boundaries.
-Those metrics include separate byte counts for the effective system prompt,
-stage handoff prompt, and tool definitions, exposing every role's request weight
-before provider-specific serialization.
+Runner and conversation adapters publish categorized, correlated harness events
+through bounded replay and subscriber queues. Activity stays ephemeral; only
+drop counts and safe aggregate metrics reach results or checkpoints. Metrics
+separate system-prompt, handoff, and tool-definition bytes.
 
 Console rendering subscribes to that same channel. Human mode groups repeated
 semantic activity, while JSON mode transports schema-v1 records as NDJSON on
