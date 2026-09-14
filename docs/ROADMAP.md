@@ -896,6 +896,18 @@ workflows — one substrate, swappable drivers.
   durable conversation continue under the manager. Separate conversations are an
   explicit future opt-in, never the default.
 
+  Every managed session has a stable ID, a short display name, and a name source
+  (`generated` or `manual`). A new session starts as `New session`; after its
+  first user message settles, a bounded title-only LLM call generates a concise
+  name from that message asynchronously, without delaying the answer. Title
+  generation model/effort/limit are configurable and default to the cheapest
+  viable configured route. The result is length-limited, secret-screened and
+  treated as untrusted display data; failure leaves the neutral fallback. A
+  manual name is never replaced. `sessions` lists name plus short ID/project/
+  attachment/run state; `/session rename <session> <name>` and
+  `:session rename <session> <name>` set a bounded safe manual name. Their
+  no-argument forms show command-specific syntax and examples.
+
   Attaching does not replay private raw transcripts into Telegram. It presents a
   safe catch-up card (project, profile, active turn, run statuses, cost and last
   activity) and offers paginated structured run history/status/result commands.
