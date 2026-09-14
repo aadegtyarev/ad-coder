@@ -231,6 +231,8 @@ account identity remain gitignored.
 
 ## Working-tree and harness notes
 
+- Every change merged into `main`, including documentation-only work, must bump
+  the package version according to SemVer and add a dated changelog entry.
 - Changes go through a feature branch/worktree and PR; merge green PRs immediately
   after required checks pass. Do not push directly to `main`. Historical direct-main commits `958254a` and
   `c09e4ef` predate this rule and were accepted by operator decision.

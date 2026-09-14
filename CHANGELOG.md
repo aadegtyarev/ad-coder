@@ -6,6 +6,8 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-14
+
 ### Fixed
 
 - Fixed `ad-coder update` for global Bun GitHub installs by resolving and

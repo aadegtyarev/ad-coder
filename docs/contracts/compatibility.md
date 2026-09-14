@@ -13,10 +13,11 @@ surprising existing users, and what evidence makes an installable release valid?
 - Classify the release with Semantic Versioning from observable compatibility, not
   implementation size: incompatible public change is major, compatible capability
   is minor, compatible correction is patch.
-- Every installable release has a new version, matching dated changelog entry,
-  reproducible locked install, and a bounded smoke of the packed artifact. The
-  binary must report that exact version. Never reuse a version already offered as
-  an install target.
+- Every change merged into `main`, including documentation-only changes, has a
+  new Semantic Version and matching dated changelog entry. A PR that leaves the
+  version unchanged is blocking. Installable changes additionally require a
+  reproducible locked install and bounded packed-artifact smoke. The binary must
+  report the exact version; never reuse a version previously offered from `main`.
 - Before publication, inspect the exact tracked and packed file sets for credentials,
   private keys, local runtime state, unexpected generated data, and licensing
   mistakes. Publication stops on uncertainty; absence of an optional external
