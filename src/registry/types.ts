@@ -47,6 +47,18 @@ export interface ModelConfig {
     cacheWrite: number;
   };
   api?: ApiKind;
+  /**
+   * Per-model override of the provider `baseUrl`. Needed when one account
+   * fronts two request APIs under different path prefixes, because pi's
+   * adapters append their own suffix to whatever `baseUrl` they are handed.
+   * Same https-only validation as the provider field.
+   */
+  baseUrl?: string;
+  /**
+   * Per-model request headers, merged OVER the provider's declared headers.
+   * Same non-secret contract as `ProviderConfig.headers`.
+   */
+  headers?: Record<string, string>;
   compat?: unknown;
 }
 
@@ -74,6 +86,22 @@ export interface ProviderConfig {
   api: ApiKind;
   baseUrl: string;
   credential: CredentialSource;
+  /**
+   * Static request headers every model of this provider sends, for APIs that
+   * mandate a non-auth header (a routing or tenancy marker, an API version).
+   *
+   * NOT A CREDENTIAL CHANNEL. Values are literal config text and are the one
+   * part of a registry config that is transmitted verbatim to the provider, so
+   * the validator rejects any name that would carry or displace authentication
+   * (`authorization`, `x-api-key`, `cookie`, ...): a key belongs in
+   * `credential`, whose value the resolver never places in a config file.
+   * Headers pi-ai owns (`user-agent`, `content-type`, ...) are likewise
+   * rejected rather than silently losing to the adapter's own value.
+   *
+   * Per-request values a config file cannot know (a run-scoped session id) are
+   * derived by the resolver, not declared here.
+   */
+  headers?: Record<string, string>;
   models: ModelConfig[];
 }
 

@@ -310,6 +310,39 @@ data; the CLI never discovers configuration from `target-dir`.
 Custom registry models declare `"input": ["text", "image"]` when they accept
 images; omission intentionally means text-only.
 
+A provider whose API mandates a non-auth request header — a routing or tenancy
+marker — declares it once on the provider; every model of that provider sends
+it:
+
+```json
+{
+  "id": "example",
+  "baseUrl": "https://example.com/v1",
+  "credential": { "kind": "env-var", "envVar": "EXAMPLE_API_KEY" },
+  "headers": { "x-example-session": "adcoder-{{session}}" },
+  "models": [{ "name": "fast", "modelId": "example-fast", "maxTokens": 16384,
+               "api": "anthropic-messages", "baseUrl": "https://example.com",
+               "cost": { "input": 0.15, "output": 0.5, "cacheRead": 0.03, "cacheWrite": 0 } }]
+}
+```
+
+`headers` is **not a credential channel**: values are literal config text sent
+verbatim, so names that carry or displace authentication (`authorization`,
+`x-api-key`, `cookie`, ...) and names the HTTP client owns (`user-agent`,
+`content-type`, ...) are rejected. An API key belongs in `credential`, whose
+value never appears in a config file. A model may declare its own `headers`,
+merged over the provider's on a case-insensitive name match.
+
+`{{session}}` expands to one opaque random identifier per resolved registry —
+the same value for every model of a run, a new value for the next run — for
+APIs that require a per-conversation routing marker a static file cannot know.
+It carries no credential or project data. An unknown placeholder is rejected
+rather than transmitted literally.
+
+A model may override `baseUrl` when one account fronts two request APIs under
+different path prefixes, since each adapter appends its own suffix to whatever
+base URL it is given. Both the provider and model forms are https-only.
+
 To switch a complete account/provider model inventory atomically, put named
 registry and routing-profile pairs in one trusted JSON file, then select one:
 

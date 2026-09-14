@@ -438,3 +438,216 @@ test("resolveRegistry re-validates a hand-built config", () => {
 afterEach(() => {
   delete process.env.REGISTRY_DECOY_KEY;
 });
+
+// --- declared request headers ------------------------------------------------
+
+test("declared provider headers reach every resolved model and the provider", () => {
+  const cfg = config({
+    providers: [
+      provider({
+        headers: { "x-tenant": "go", "X-Route": "eu" },
+        models: [model(), model({ name: "m2", modelId: "model-2" })],
+      }),
+    ],
+  });
+  const parsed = parseRegistryConfig(cfg);
+  expect(parsed.providers[0]?.headers).toEqual({ "x-tenant": "go", "X-Route": "eu" });
+
+  const resolved = resolveRegistry(cfg, { env: fakeEnv({ P1_KEY: "test-key" }) });
+  // Load-bearing: pi's adapters read `model.headers`, not `provider.headers`,
+  // so a provider-level declaration that stopped at the provider would never
+  // be transmitted.
+  expect(resolved.getModel("m1").headers).toEqual({ "x-tenant": "go", "X-Route": "eu" });
+  expect(resolved.getModel("m2").headers).toEqual({ "x-tenant": "go", "X-Route": "eu" });
+});
+
+test("a model header overrides the provider's value for the same name, ignoring case", () => {
+  const cfg = config({
+    providers: [
+      provider({
+        headers: { "X-Route": "eu", "x-tenant": "go" },
+        models: [model({ headers: { "x-route": "us" } })],
+      }),
+    ],
+  });
+  const resolved = resolveRegistry(cfg, { env: fakeEnv({ P1_KEY: "test-key" }) });
+  // One entry for the overridden name, not both spellings.
+  expect(resolved.getModel("m1").headers).toEqual({ "x-tenant": "go", "x-route": "us" });
+});
+
+test("a model without declared headers carries none", () => {
+  const resolved = resolveRegistry(config(), { env: fakeEnv({ P1_KEY: "test-key" }) });
+  expect(resolved.getModel("m1").headers).toBeUndefined();
+});
+
+test("credential-bearing and client-owned header names are rejected by name", () => {
+  for (const name of [
+    "authorization",
+    "Authorization",
+    "x-api-key",
+    "proxy-authorization",
+    "cookie",
+    "host",
+    "content-type",
+    "user-agent",
+    "anthropic-version",
+  ]) {
+    try {
+      parseRegistryConfig(config({ providers: [provider({ headers: { [name]: "value" } })] }));
+      throw new Error(`expected rejection for ${name}`);
+    } catch (error) {
+      expect(error).toBeInstanceOf(RegistryError);
+      expect((error as RegistryError).code).toBe("invalid_config");
+      expect((error as RegistryError).detail).toBe(`p1.headers.${name}`);
+    }
+  }
+});
+
+test("a reserved header on a model is rejected too", () => {
+  expect(() =>
+    parseRegistryConfig(
+      config({ providers: [provider({ models: [model({ headers: { authorization: "x" } })] })] }),
+    ),
+  ).toThrow(RegistryError);
+});
+
+test("header names and values are shape-checked", () => {
+  const rejected: Record<string, unknown>[] = [
+    { "x bad": "value" },
+    { "x:bad": "value" },
+    { "": "value" },
+    { "x-ok": "" },
+    { "x-ok": 7 },
+    { "x-ok": null },
+    // A newline would splice an additional header into the request.
+    { "x-ok": "value\r\nx-injected: 1" },
+    { "x-ok": "значение" },
+  ];
+  for (const headers of rejected) {
+    expect(() =>
+      parseRegistryConfig(config({ providers: [provider({ headers: headers as never })] })),
+    ).toThrow(RegistryError);
+  }
+  expect(() =>
+    parseRegistryConfig(config({ providers: [provider({ headers: "x-ok: 1" as never })] })),
+  ).toThrow(RegistryError);
+});
+
+test("two header names differing only by case are rejected as a duplicate", () => {
+  try {
+    parseRegistryConfig(
+      config({ providers: [provider({ headers: { "x-route": "eu", "X-Route": "us" } })] }),
+    );
+    throw new Error("expected throw");
+  } catch (error) {
+    expect(error).toBeInstanceOf(RegistryError);
+    expect((error as RegistryError).message).toContain("more than once");
+  }
+});
+
+test("a header value is never echoed in a validation failure", () => {
+  try {
+    parseRegistryConfig(
+      config({ providers: [provider({ headers: { authorization: "sk-secret-value" } })] }),
+    );
+    throw new Error("expected throw");
+  } catch (error) {
+    expect((error as RegistryError).message).not.toContain("sk-secret-value");
+    expect((error as RegistryError).detail).not.toContain("sk-secret-value");
+  }
+});
+
+// --- per-model baseUrl -------------------------------------------------------
+
+test("a model baseUrl overrides the provider's for that model only", () => {
+  const cfg = config({
+    providers: [
+      provider({
+        models: [
+          model(),
+          model({
+            name: "m2",
+            modelId: "model-2",
+            api: "anthropic-messages",
+            baseUrl: "https://api.example.com/alt",
+          }),
+        ],
+      }),
+    ],
+  });
+  expect(parseRegistryConfig(cfg).providers[0]?.models[1]?.baseUrl).toBe(
+    "https://api.example.com/alt",
+  );
+  const resolved = resolveRegistry(cfg, { env: fakeEnv({ P1_KEY: "test-key" }) });
+  expect(resolved.getModel("m1").baseUrl).toBe("https://api.example.com");
+  expect(resolved.getModel("m2").baseUrl).toBe("https://api.example.com/alt");
+});
+
+test("a model baseUrl gets the same https-only check as the provider's", () => {
+  for (const baseUrl of ["http://api.example.com", "ftp://example.com", "not-a-url", 7]) {
+    expect(() =>
+      parseRegistryConfig(
+        config({ providers: [provider({ models: [model({ baseUrl: baseUrl as never })] })] }),
+      ),
+    ).toThrow(RegistryError);
+  }
+});
+
+// --- run-scoped header placeholders ------------------------------------------
+
+test("the session placeholder expands to one value shared by every model of a run", () => {
+  const cfg = config({
+    providers: [
+      provider({
+        headers: { "x-session": "run-{{session}}" },
+        models: [model(), model({ name: "m2", modelId: "model-2" })],
+      }),
+    ],
+  });
+  const resolved = resolveRegistry(cfg, { env: fakeEnv({ P1_KEY: "test-key" }) });
+  const first = resolved.getModel("m1").headers?.["x-session"];
+  // A run marker, not a per-request nonce: one value across the whole registry.
+  expect(first).toMatch(/^run-[0-9a-f-]{36}$/);
+  expect(resolved.getModel("m2").headers?.["x-session"]).toBe(first as string);
+  // ...and a different value for the next run, which is why it cannot be config.
+  const next = resolveRegistry(cfg, { env: fakeEnv({ P1_KEY: "test-key" }) });
+  expect(next.getModel("m1").headers?.["x-session"]).not.toBe(first as string);
+});
+
+test("an injected session value is used verbatim, in model and provider headers alike", () => {
+  const cfg = config({
+    providers: [
+      provider({
+        headers: { "x-session": "{{session}}", "x-both": "a-{{session}}-b-{{session}}" },
+        models: [model({ headers: { "x-model": "m-{{session}}" } })],
+      }),
+    ],
+  });
+  const resolved = resolveRegistry(cfg, {
+    env: fakeEnv({ P1_KEY: "test-key" }),
+    session: "fixed-id",
+  });
+  expect(resolved.getModel("m1").headers).toEqual({
+    "x-session": "fixed-id",
+    "x-both": "a-fixed-id-b-fixed-id",
+    "x-model": "m-fixed-id",
+  });
+  expect(resolved.models.getProvider("p1")?.headers).toMatchObject({ "x-session": "fixed-id" });
+});
+
+test("an unknown placeholder is rejected instead of being transmitted literally", () => {
+  for (const value of ["{{sessionn}}", "x-{{SESSION}}", "{{}}", "{{run id}}"]) {
+    const cfg = config({ providers: [provider({ headers: { "x-h": value } })] });
+    try {
+      parseRegistryConfig(cfg);
+      throw new Error(`expected rejection for ${value}`);
+    } catch (error) {
+      expect(error).toBeInstanceOf(RegistryError);
+      expect((error as RegistryError).detail).toBe("p1.headers.x-h");
+    }
+  }
+  // The supported token still passes.
+  expect(() =>
+    parseRegistryConfig(config({ providers: [provider({ headers: { "x-h": "{{session}}" } })] })),
+  ).not.toThrow();
+});

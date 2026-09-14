@@ -6,6 +6,39 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-15
+
+### Added
+
+- A registry provider can declare static request headers, so an API that
+  mandates a non-auth header is reachable at all. Previously no such provider
+  could be admitted: `ProviderConfig` had no header field, and while pi-ai
+  accepts provider headers it never transmits them — both stream adapters read
+  `model.headers` — so declared headers are flattened onto every model. Measured
+  against a provider that rejects an unmarked request: without the header the
+  role returned an empty turn with a zero-usage ledger record and no error at
+  all; with it, all five models answered across both request APIs.
+- A header value may contain `{{session}}`, expanded by the resolver to one
+  opaque random identifier per resolved registry — the same value for every
+  model of a run, a new value for the next — for APIs that demand a
+  per-conversation routing marker a static config file cannot hold. Unknown
+  placeholders are rejected rather than sent literally, where they would fail as
+  an opaque provider routing error instead of a config error.
+- A model can override the provider `baseUrl`, for one account fronting two
+  request APIs under different path prefixes; each adapter appends its own
+  suffix to the base URL it is handed.
+
+### Security
+
+- Declared headers are not a credential channel. The validator rejects any name
+  that would carry or displace authentication (`authorization`, `x-api-key`,
+  `cookie`, `cf-aig-authorization`, ...) or that the HTTP client owns
+  (`user-agent`, `content-type`, ...), along with malformed field names, values
+  outside printable ASCII (a newline would splice an extra header into the
+  request), and duplicate names differing only by case. Failures name the
+  header and never echo its value. Per-model `baseUrl` is https-only, as the
+  provider field already was.
+
 ## [0.5.1] - 2026-09-14
 
 ### Fixed

@@ -16,6 +16,131 @@ const API_KINDS: readonly ApiKind[] = [
 export const DEFAULT_CONTEXT_WINDOW = 200_000;
 
 /**
+ * Header names a declared config may NOT set, lower-cased.
+ *
+ * Two distinct reasons, both fail-closed:
+ *
+ * AUTHENTICATION. `authorization`, `x-api-key`, `proxy-authorization`,
+ * `cookie`, and the Anthropic OAuth pair carry or displace credentials. The
+ * resolver derives those from `credential`, whose value never appears in a
+ * config file; accepting them here would invite an operator to paste a secret
+ * into shared config, and a null/empty value would silently strip the auth the
+ * resolver installed.
+ *
+ * TRANSPORT. `host`, `content-type`, `content-length`, `accept-encoding`,
+ * `user-agent`, and `anthropic-version` are owned by pi-ai or its SDKs.
+ * Declaring one either loses to the adapter or corrupts the request body
+ * framing, so rejecting is honest where silently-ignored would not be.
+ */
+const FORBIDDEN_HEADER_NAMES: ReadonlySet<string> = new Set([
+  "authorization",
+  "proxy-authorization",
+  "x-api-key",
+  "cookie",
+  "set-cookie",
+  "anthropic-auth-token",
+  "cf-aig-authorization",
+  "host",
+  "content-type",
+  "content-length",
+  "accept-encoding",
+  "transfer-encoding",
+  "user-agent",
+  "anthropic-version",
+]);
+
+/** RFC 7230 token: the characters an HTTP field name may contain. */
+/**
+ * Placeholders a declared header value may contain, expanded by the resolver at
+ * resolve time. `session` becomes one opaque run-scoped identifier, the same
+ * value for every header and model of a single resolved registry, a fresh value
+ * for the next run. It exists because some APIs demand a per-conversation
+ * routing marker that a static config file cannot know.
+ *
+ * Unknown tokens are REJECTED rather than transmitted literally: a typo that
+ * reached the wire would look to the provider like a legitimate constant value
+ * and fail as an opaque routing error instead of a config error.
+ */
+const HEADER_PLACEHOLDERS: ReadonlySet<string> = new Set(["session"]);
+
+/** `{{name}}` — the only substitution syntax a declared header value supports. */
+export const HEADER_PLACEHOLDER_PATTERN = /\{\{([^{}]*)\}\}/g;
+
+const HEADER_NAME_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+
+/**
+ * Validate a declared header map: plain object, token-shaped names, no
+ * duplicate names differing only by case, printable ASCII values, and none of
+ * the reserved names above. Returns undefined when absent so the field stays
+ * off the resolved object entirely.
+ *
+ * Values are NOT secrets by contract and are reported only by NAME on failure,
+ * matching the rest of this validator.
+ */
+function parseHeaders(value: unknown, scope: string, bad: Bad): Record<string, string> | undefined {
+  if (value === undefined) return undefined;
+  if (!isObject(value)) {
+    bad("invalid_config", `${scope}.headers`, "headers must be an object when present");
+  }
+  const seen = new Set<string>();
+  const headers: Record<string, string> = {};
+  for (const [name, headerValue] of Object.entries(value as Record<string, unknown>)) {
+    if (!HEADER_NAME_PATTERN.test(name)) {
+      bad(
+        "invalid_config",
+        `${scope}.headers.${name}`,
+        `header name "${name}" is not a valid HTTP field name`,
+      );
+    }
+    const lower = name.toLowerCase();
+    if (FORBIDDEN_HEADER_NAMES.has(lower)) {
+      bad(
+        "invalid_config",
+        `${scope}.headers.${name}`,
+        `header "${name}" is reserved; authentication belongs in provider.credential and transport headers are owned by the client`,
+      );
+    }
+    if (seen.has(lower)) {
+      bad(
+        "invalid_config",
+        `${scope}.headers.${name}`,
+        `header "${name}" is declared more than once, ignoring case`,
+      );
+    }
+    seen.add(lower);
+    if (typeof headerValue !== "string" || headerValue.length === 0) {
+      bad(
+        "invalid_config",
+        `${scope}.headers.${name}`,
+        `header "${name}" must have a non-empty string value`,
+      );
+    }
+    const text = headerValue as string;
+    // Printable ASCII only: a newline would splice an extra header into the
+    // request, and a non-ASCII byte is not transmissible in a field value.
+    if (!/^[\x20-\x7e]*$/.test(text)) {
+      bad(
+        "invalid_config",
+        `${scope}.headers.${name}`,
+        `header "${name}" value must contain only printable ASCII characters`,
+      );
+    }
+    for (const match of text.matchAll(HEADER_PLACEHOLDER_PATTERN)) {
+      const token = match[1] ?? "";
+      if (!HEADER_PLACEHOLDERS.has(token)) {
+        bad(
+          "invalid_config",
+          `${scope}.headers.${name}`,
+          `header "${name}" uses unknown placeholder "{{${token}}}"; supported: ${[...HEADER_PLACEHOLDERS].map((p) => `{{${p}}}`).join(", ")}`,
+        );
+      }
+    }
+    headers[name] = text;
+  }
+  return headers;
+}
+
+/**
  * TRUST BOUNDARY. `RegistryConfig` is OPERATOR-AUTHORED, plain-data config: the
  * config AUTHOR is trusted, its concrete SHAPE is not. This validator hardens
  * against malformed/careless input (wrong types, duplicate keys, a non-URL
@@ -102,6 +227,8 @@ function parseProvider(
 
   const credential = parseCredential(record.credential, providerId, bad);
 
+  const headers = parseHeaders(record.headers, providerId, bad);
+
   const models = record.models;
   if (!Array.isArray(models) || models.length === 0) {
     bad(
@@ -121,6 +248,7 @@ function parseProvider(
     api: api as ApiKind,
     baseUrl: record.baseUrl as string,
     credential,
+    ...(headers !== undefined ? { headers } : {}),
     models: validatedModels,
   };
 }
@@ -234,6 +362,11 @@ function parseModel(
     bad("invalid_config", `${modelName}.compat`, "model.compat must be an object when present");
   }
 
+  if (record.baseUrl !== undefined) {
+    assertHttpsUrl(record.baseUrl, `${modelName}.baseUrl`, bad);
+  }
+  const headers = parseHeaders(record.headers, modelName, bad);
+
   return {
     name: modelName,
     modelId: record.modelId as string,
@@ -243,6 +376,8 @@ function parseModel(
     ...(input !== undefined ? { input } : {}),
     cost,
     ...(api !== undefined ? { api } : {}),
+    ...(record.baseUrl !== undefined ? { baseUrl: record.baseUrl as string } : {}),
+    ...(headers !== undefined ? { headers } : {}),
     ...(record.compat !== undefined ? { compat: record.compat } : {}),
   };
 }
