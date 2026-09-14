@@ -23,8 +23,10 @@ All notable changes to ad-coder are recorded here. The format follows
   render from one command registry instead of a hand-maintained usage string.
   `/exit` is dispatched through its registry entry rather than a literal name.
 - Every console failure, including interruption, session limits, empty provider
-  turns, and turn failures, now reports the same typed projection with a
-  recovery action and retryability instead of a bare code.
+  turns, turn failures, oversized input, unreadable input, and a failed session
+  close, now reports the same typed projection with a recovery action and
+  retryability instead of a bare code. Oversized input, unreadable input, and a
+  failed close previously had no machine-mode record at all.
 - Console failures now report a stable `code` with the failed command, concise
   text naming the failure, a `retryable` flag, and one recovery action in both
   the formatted and `console_error` JSON projections.

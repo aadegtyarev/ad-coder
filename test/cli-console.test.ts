@@ -135,7 +135,8 @@ test("counts UTF-8 bytes across chunks and rejects an oversized line before step
   expect(result).toEqual({ reason: "input_too_large", completedTurns: 0 });
   expect(session.inputs).toEqual([]);
   expect(session.closes).toBe(1);
-  expect(error.text()).toBe("ad-coder: input line exceeds the configured byte limit\n");
+  expect(error.text()).toContain("input line exceeds the configured byte limit");
+  expect(error.text()).toContain("send a shorter line");
 });
 
 test("reports a cooperative interruption separately from a provider failure", async () => {

@@ -57,9 +57,27 @@ export interface ConsoleRunResult {
   completedTurns: number;
 }
 
-const INPUT_TOO_LARGE_MESSAGE = "ad-coder: input line exceeds the configured byte limit\n";
-const INPUT_FAILED_MESSAGE = "ad-coder: console input failed\n";
-const CLOSE_FAILED_MESSAGE = "ad-coder: console session close failed\n";
+const INPUT_TOO_LARGE_FAILURE = {
+  code: "input_too_large",
+  message: "input line exceeds the configured byte limit",
+  // The byte ceiling is a programmatic runConsole parameter; the CLI exposes no
+  // flag for it, so the action must not name one.
+  action: "send a shorter line, or raise maxInputBytes when embedding runConsole",
+  // The same oversized line cannot succeed on a retry.
+  retryable: false,
+} as const;
+const INPUT_FAILED_FAILURE = {
+  code: "input_failed",
+  message: "console input failed",
+  action: "restart the console; the input stream is no longer readable",
+  retryable: false,
+} as const;
+const CLOSE_FAILED_FAILURE = {
+  code: "close_failed",
+  message: "console session close failed",
+  action: "check for background runs that outlived the session with: ad-coder background list",
+  retryable: false,
+} as const;
 
 /**
  * Every console failure — control and turn alike — reaches stderr through this
@@ -696,7 +714,7 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
             lineBytes.length >= maxInputBytes &&
             !(lineBytes.length === maxInputBytes && byte === 0x0d)
           ) {
-            params.error.write(INPUT_TOO_LARGE_MESSAGE);
+            params.error.write(renderFailure(INPUT_TOO_LARGE_FAILURE, mode));
             reason = "input_too_large";
             stopped = true;
             break;
@@ -711,7 +729,7 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
     if (!stopped && lineBytes.length > 0) queueLine();
     await lineQueue;
   } catch {
-    params.error.write(INPUT_FAILED_MESSAGE);
+    params.error.write(renderFailure(INPUT_FAILED_FAILURE, mode));
     reason = "input_failed";
   } finally {
     if (escapeTimer !== undefined) clearTimeout(escapeTimer);
@@ -719,7 +737,7 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
     try {
       await params.session.close();
     } catch {
-      params.error.write(CLOSE_FAILED_MESSAGE);
+      params.error.write(renderFailure(CLOSE_FAILED_FAILURE, mode));
       if (isSuccessfulExit(reason)) reason = "close_failed";
     } finally {
       if (rawModeEnabled) ttyInput.setRawMode?.(false);
