@@ -8,6 +8,9 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ### Fixed
 
+- Fixed `ad-coder update` for global Bun GitHub installs by resolving and
+  installing the exact `main` revision instead of trusting a stale Git lock.
+
 - Reconciled role tool allow-lists with disabled plugin groups, preserved typed
   pre-provider tool-configuration failures, and made project reconnaissance
   parameters and failures unambiguous and actionable while retaining Planner's

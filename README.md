@@ -10,41 +10,39 @@ their prompts as trusted unless you restrict tools or provide an external sandbo
 
 ## Requirements and installation
 
-Use Bun 1.3+ (the pi packages also require Node 22.19+). Use a local,
-reviewable clone so dependency resolution stays frozen and no global package
-installation is mutated:
+Use Bun 1.3+ (the pi packages also require Node 22.19+). Install the CLI globally
+from the GitHub repository:
+
+```sh
+bun add -g github:aadegtyarev/ad-coder#main
+ad-coder --help
+ad-coder about
+```
+
+Then update it without remembering the Git command:
+
+```sh
+ad-coder update
+```
+
+The updater resolves GitHub `main` and installs its exact commit SHA so Bun cannot
+silently reuse a stale Git lock. For development, a linked checkout remains supported:
 
 ```sh
 git clone https://github.com/aadegtyarev/ad-coder.git
 cd ad-coder
 bun install --frozen-lockfile --ignore-scripts
 bun link
-ad-coder --help
-ad-coder about
 ```
 
-To update the linked clean checkout:
-
-```sh
-ad-coder update
-```
-
-The command refuses dirty, detached, or untracked-branch checkouts. It performs
-the equivalent verified sequence:
+In linked mode, `ad-coder update` refuses dirty, detached, or untracked branches
+and performs:
 
 ```sh
 git pull --ff-only
 bun install --frozen-lockfile --ignore-scripts
 bun link
-hash -r
-ad-coder about
 ```
-
-This deliberately avoids `bun install -g <git-url>`: Bun 1.3 may reuse a stale
-Git snapshot and its progress display can remain at `2/2` while resolving the
-provider dependency tree. `ad-coder about --json` reports package
-semver, source revision when Git metadata is available, and linked-development
-state. The project does not claim or test a global install/update workflow.
 
 The registry is the authoritative CLI reference: use `ad-coder --help` and
 `ad-coder <command> --help` for the exact commands and flags.

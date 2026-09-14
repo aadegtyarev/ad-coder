@@ -1,6 +1,9 @@
 import { expect, test } from "bun:test";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import type { UpdateCommandRunner } from "../src/update/updater";
-import { UpdateError, updateCheckout } from "../src/update/updater";
+import { UpdateError, updateAdCoder, updateCheckout } from "../src/update/updater";
 
 const checkoutDir = process.cwd();
 
@@ -42,6 +45,7 @@ test("updates a clean tracked checkout with fixed non-shell argv", async () => {
     onStep: (step) => steps.push(step),
   });
   expect(result).toMatchObject({
+    mode: "linked-checkout",
     branch: "main",
     upstream: "origin/main",
     previousRevision: "old",
@@ -52,6 +56,33 @@ test("updates a clean tracked checkout with fixed non-shell argv", async () => {
   expect(fake.calls).toContainEqual(["bun", "install", "--frozen-lockfile", "--ignore-scripts"]);
   expect(fake.calls).toContainEqual(["bun", "link"]);
   expect(steps).toEqual(["pull", "install", "link"]);
+});
+
+test("updates a global install from the exact GitHub main revision", async () => {
+  const packageDir = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-global-update-"));
+  const revision = "a".repeat(40);
+  const calls: string[][] = [];
+  const run: UpdateCommandRunner = async (argv) => {
+    calls.push([...argv]);
+    return {
+      exitCode: 0,
+      stdout: argv[1] === "ls-remote" ? `${revision}\trefs/heads/main\n` : "",
+      stderr: "",
+    };
+  };
+  try {
+    const result = await updateAdCoder({ checkoutDir: packageDir, run });
+    expect(result).toMatchObject({ mode: "global-github", revision, branch: "main" });
+    expect(calls).toContainEqual([
+      "bun",
+      "add",
+      "--global",
+      "--force",
+      `github:aadegtyarev/ad-coder#${revision}`,
+    ]);
+  } finally {
+    fs.rmSync(packageDir, { recursive: true, force: true });
+  }
 });
 
 test("refuses a dirty checkout before mutation", async () => {
