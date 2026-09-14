@@ -6,6 +6,13 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-09-14
+
+### Fixed
+
+- Reject empty OpenRouter API-key input and report login success only after the
+  private credential store confirms that the key was retained.
+
 ## [0.3.3] - 2026-09-14
 
 ### Fixed
