@@ -811,6 +811,55 @@ test("two rounds: reviewer round-1 issue is threaded into the coder round-2 prom
   expect(result.stageMetrics?.at(-1)?.pipelineContextStrategy).toBe("focused");
 });
 
+test("untracked retry evidence remains focused when its bounded projection is safe", async () => {
+  const fx = fixture();
+  const reviewerPrompts: string[] = [];
+  execFileSync("git", ["init", "-q"], { cwd: fx.targetDir });
+  execFileSync("git", ["config", "user.name", "Test"], { cwd: fx.targetDir });
+  execFileSync("git", ["config", "user.email", "test@example.invalid"], { cwd: fx.targetDir });
+  fs.writeFileSync(path.join(fx.targetDir, "baseline.txt"), "baseline\n");
+  execFileSync("git", ["add", "baseline.txt"], { cwd: fx.targetDir });
+  execFileSync("git", ["commit", "-qm", "baseline"], { cwd: fx.targetDir });
+  const coder = fx.role("coder", "You code.");
+  const reviewer = reviewerRole(fx);
+  const changes: Verdict = {
+    status: "changes_requested",
+    issues: [{ severity: "major", what: "add a null check" }],
+    summary: "needs a fix",
+  };
+  const approve: Verdict = { status: "approved", issues: [], summary: "fixed" };
+  fx.faux.setResponses([
+    fauxAssistantMessage(
+      fauxToolCall("write", { path: "new.ts", content: "export const added = true;\n" }),
+    ),
+    fauxAssistantMessage("coded round1"),
+    (context) => {
+      reviewerPrompts.push(lastUserText(context));
+      return fauxAssistantMessage(fauxToolCall(SUBMIT_VERDICT_TOOL_NAME, changes));
+    },
+    fauxAssistantMessage("review complete"),
+    fauxAssistantMessage("coded round2"),
+    (context) => {
+      reviewerPrompts.push(lastUserText(context));
+      return fauxAssistantMessage(fauxToolCall(SUBMIT_VERDICT_TOOL_NAME, approve));
+    },
+    fauxAssistantMessage("review complete"),
+  ]);
+
+  const result = await runPipeline({
+    targetDir: fx.targetDir,
+    models: fx.models,
+    task: "implement untracked evidence",
+    maxRounds: 3,
+    roles: { coder, reviewer },
+  });
+
+  expect(result.approved).toBe(true);
+  expect(reviewerPrompts.at(1)).toContain("Focused re-review");
+  expect(reviewerPrompts.at(1)).toContain("new.ts");
+  expect(result.stageMetrics?.at(-1)?.pipelineContextStrategy).toBe("focused");
+});
+
 test("maxRounds exhausted returns approved:false without throwing", async () => {
   const fx = fixture();
   const coder = fx.role("coder", "You code.");
