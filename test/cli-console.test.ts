@@ -14,6 +14,7 @@ import {
   type BackgroundRunNotice,
 } from "../src/orchestration/background-runs";
 import { defineRole, type Role } from "../src/role";
+import { EmptyTurnError } from "../src/runner/errors";
 import { SessionLimitError } from "../src/session-limits";
 
 class Capture extends Writable {
@@ -144,6 +145,20 @@ test("reports a cooperative interruption separately from a provider failure", as
   expect(error.text()).toContain("console turn interrupted");
   expect(error.text()).not.toContain("console turn failed");
   expect(session.closes).toBe(1);
+});
+
+test("empty provider turns show an actionable authentication command", async () => {
+  const error = new Capture();
+  await runConsole({
+    session: fakeSession({ stepError: new EmptyTurnError("run") }),
+    input: Readable.from("hello\n"),
+    output: new Capture(),
+    error,
+    authenticationCommand: "ad-coder auth login --provider openrouter --target-dir '/tmp/project'",
+  });
+  expect(error.text()).toContain(
+    "run: ad-coder auth login --provider openrouter --target-dir '/tmp/project'",
+  );
 });
 
 test("JSON mode emits narrowed parseable sanitized records without prompts", async () => {

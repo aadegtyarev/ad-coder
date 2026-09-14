@@ -47,6 +47,8 @@ export interface RunConsoleParams {
   toolActivity?: Partial<ToolActivityConfig>;
   /** Process-local cooperative shutdown probe supplied by the CLI front. */
   interrupted?: () => boolean;
+  /** Exact operator command shown after an empty provider turn. */
+  authenticationCommand?: string;
 }
 
 export interface ConsoleRunResult {
@@ -488,10 +490,14 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
         );
         reason = "session_limit";
       } else if (error instanceof EmptyTurnError) {
+        const recovery =
+          params.authenticationCommand === undefined
+            ? "verify authentication and retry"
+            : `run: ${params.authenticationCommand}`;
         params.error.write(
           mode === "json"
             ? `${JSON.stringify({ type: "console_error", code: "empty_turn" })}\n`
-            : "ad-coder: provider returned a failed empty turn; verify authentication and retry\n",
+            : `ad-coder: provider returned a failed empty turn; ${recovery}\n`,
         );
         reason = "turn_failed";
       } else {

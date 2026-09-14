@@ -6,6 +6,13 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-09-14
+
+### Fixed
+
+- Added the exact selected-provider authentication command to interactive
+  console recovery after an empty failed provider turn.
+
 ## [0.3.2] - 2026-09-14
 
 ### Changed
