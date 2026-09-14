@@ -529,6 +529,14 @@ export type {
   SkillResolutionErrorCode,
 } from "./skills/resolver";
 export { resolveSkills, SkillResolutionError } from "./skills/resolver";
+export type {
+  UpdateCommandResult,
+  UpdateCommandRunner,
+  UpdateErrorCode,
+  UpdateOptions,
+  UpdateResult,
+} from "./update/updater";
+export { UpdateError, updateCheckout } from "./update/updater";
 export * from "./user-profile";
 export type {
   ExtractedPage,

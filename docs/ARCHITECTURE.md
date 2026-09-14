@@ -252,6 +252,8 @@ script-disabled dependency install followed by `bun link`. Artifact smoke tests
 pack the project, verify integrity, install without lifecycle scripts or ambient
 release credentials, and execute `ad-coder about` and help without changing the
 operator's global installation.
+The updater accepts clean tracking Git checkouts, then fast-forwards,
+frozen-installs, and relinks.
 
 ## Rules that are easy to break
 

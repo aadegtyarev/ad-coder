@@ -23,7 +23,14 @@ ad-coder --help
 ad-coder about
 ```
 
-To update, inspect the clone and run:
+To update the linked clean checkout:
+
+```sh
+ad-coder update
+```
+
+The command refuses dirty, detached, or untracked-branch checkouts. It performs
+the equivalent verified sequence:
 
 ```sh
 git pull --ff-only
