@@ -51,7 +51,6 @@ const FORBIDDEN_HEADER_NAMES: ReadonlySet<string> = new Set([
   "anthropic-version",
 ]);
 
-/** RFC 7230 token: the characters an HTTP field name may contain. */
 /**
  * Placeholders a declared header value may contain, expanded by the resolver at
  * resolve time. `session` becomes one opaque run-scoped identifier, the same
@@ -68,6 +67,7 @@ const HEADER_PLACEHOLDERS: ReadonlySet<string> = new Set(["session"]);
 /** `{{name}}` — the only substitution syntax a declared header value supports. */
 export const HEADER_PLACEHOLDER_PATTERN = /\{\{([^{}]*)\}\}/g;
 
+/** RFC 7230 token: the characters an HTTP field name may contain. */
 const HEADER_NAME_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 
 /**
