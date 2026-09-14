@@ -612,8 +612,9 @@ test("role stage-budget overlays inherit global limits and preserve explicit zer
   expect(config.roleStageLimits?.reviewer).toMatchObject({
     maxModelTurns: 3,
     maxToolTurns: 0,
-    maxDurationMs: 600_000,
+    maxDurationMs: 300_000,
   });
+  expect(config.roleStageLimits?.planner?.maxToolTurns).toBe(10);
 });
 
 test("named inventory selects one atomic registry/profile pair and rejects source mixing", () => {
