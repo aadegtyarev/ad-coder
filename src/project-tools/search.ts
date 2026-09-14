@@ -58,7 +58,14 @@ export function buildSearchProjectTool(
     description:
       "Search tracked project text for task symbols or exact phrases. Returns a ranked, byte-bounded path:line projection; use read only when surrounding context is still needed.",
     label: "search project",
-    parameters: Type.Object({ terms: Type.Array(Type.String()) }),
+    parameters: Type.Object({
+      terms: Type.Array(
+        Type.String({
+          description: `Literal text to find (not a regular expression), at most ${config.maxTermBytes} UTF-8 bytes.`,
+        }),
+        { minItems: 1, maxItems: config.maxTerms },
+      ),
+    }),
     async execute(_toolCallId, params) {
       try {
         const root = await fs.realpath(targetDir);
@@ -123,14 +130,54 @@ export function buildSearchProjectTool(
             truncated:
               rows.length > matches.length ||
               Buffer.byteLength(text) < Buffer.byteLength(unbounded),
+            code: undefined as string | undefined,
+            retryable: undefined as boolean | undefined,
+            nextAction: undefined as string | undefined,
           },
         };
       } catch (error) {
+        const known =
+          error instanceof Error &&
+          ["terms_empty", "terms_limit", "term_too_long"].includes(error.message)
+            ? error.message
+            : undefined;
+        const nodeCode =
+          typeof error === "object" && error !== null && "code" in error
+            ? String(error.code).toLowerCase()
+            : undefined;
         const code =
-          error instanceof Error && /^[a-z0-9_]+$/.test(error.message) ? error.message : "failed";
+          known ??
+          (nodeCode === "enoent"
+            ? "target_not_found"
+            : nodeCode === "eacces" || nodeCode === "eperm"
+              ? "permission_denied"
+              : "git_failed");
+        const nextAction =
+          code === "terms_empty"
+            ? "provide at least one non-empty literal term"
+            : code === "terms_limit"
+              ? `retry with at most ${config.maxTerms} ${config.maxTerms === 1 ? "term" : "terms"}`
+              : code === "term_too_long"
+                ? `shorten each term to at most ${config.maxTermBytes} UTF-8 bytes`
+                : code === "target_not_found"
+                  ? "verify the target project path, then retry"
+                  : code === "permission_denied"
+                    ? "grant read access to the target project, then retry"
+                    : "verify the target repository and Git availability, then retry";
+        const details = markTrustedToolOutcome(
+          {
+            matches: 0,
+            returned: 0,
+            truncated: false,
+            code,
+            retryable: code === "git_failed",
+            nextAction,
+          },
+          "failed",
+        );
         return {
-          content: [{ type: "text", text: `project search failed: ${code}` }],
-          details: markTrustedToolOutcome({}, "failed"),
+          content: [{ type: "text", text: `project search failed: ${code}; ${nextAction}` }],
+          details,
         };
       }
     },

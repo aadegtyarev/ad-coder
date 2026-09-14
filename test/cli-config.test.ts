@@ -481,10 +481,105 @@ test("built-in plugin groups are selectable, visible, and mutually exclusive wit
     "search_project",
     "read_project",
   ]);
+  expect(selected.roles.planner?.role.activeToolNames).toEqual([
+    "read",
+    "explore_project",
+    "search_project",
+    "read_project",
+    "submit_plan",
+    "submit_follow_up",
+  ]);
+  expect(selected.roles.coder?.role.activeToolNames).toEqual([
+    "read",
+    "write",
+    "edit",
+    "bash",
+    "search_project",
+    "read_project",
+    "submit_follow_up",
+  ]);
+  for (const role of ["security", "reviewer", "auditor"] as const) {
+    expect(selected.roles[role]?.role.activeToolNames).toContain("explore_project");
+    expect(selected.roles[role]?.role.activeToolNames).toContain("read");
+    expect(selected.roles[role]?.role.activeToolNames).toContain("bash");
+  }
+  expect(selected.roles.researcher?.role.activeToolNames).toContain("read_project");
   expect(selected.effectiveConfig?.enabledPlugins).toEqual({ value: "explore", source: "cli" });
+  const disabled = resolvePipelineConfig({ ...base, enabledPlugins: [] });
+  for (const spec of Object.values(disabled.roles)) {
+    expect(spec?.role.activeToolNames).not.toContain("explore_project");
+    expect(spec?.role.activeToolNames).not.toContain("search_project");
+    expect(spec?.role.activeToolNames).not.toContain("read_project");
+    expect(spec?.role.activeToolNames).not.toContain("web_search");
+    expect(spec?.role.activeToolNames).not.toContain("web_read");
+  }
+  expect(disabled.roles.planner?.role.activeToolNames).toContain("read");
   expect(() => resolvePipelineConfig({ ...base, enabledPlugins: [], pluginTools: [] })).toThrow(
     "pluginTools cannot be combined with enabledPlugins",
   );
+  const custom = resolvePipelineConfig({ ...base, pluginTools: [] });
+  const customUsingBuiltInNames = resolvePipelineConfig({
+    ...base,
+    pluginTools: selected.pluginTools ?? [],
+  });
+  for (const resolved of [custom, customUsingBuiltInNames]) {
+    for (const spec of Object.values(resolved.roles)) {
+      expect(spec?.role.activeToolNames).not.toContain("explore_project");
+      expect(spec?.role.activeToolNames).not.toContain("search_project");
+      expect(spec?.role.activeToolNames).not.toContain("read_project");
+      expect(spec?.role.activeToolNames).not.toContain("web_search");
+      expect(spec?.role.activeToolNames).not.toContain("web_read");
+    }
+  }
+});
+
+test("every built-in plugin combination keeps role tools and prompt fallbacks aligned", () => {
+  const base = {
+    task: "x",
+    targetDir: "/tmp",
+    registryConfig: mixedRegistry(),
+    profile: buildDefaultProfile({ strong: "large", mid: "small", cheap: "small" }),
+    summarizerModel: "large",
+    env: fakeEnv({ LOCAL_KEY: "k" }),
+    warn: silent,
+  } as const;
+  const combinations = [
+    [],
+    ["explore"],
+    ["web"],
+    ["vision"],
+    ["explore", "web"],
+    ["explore", "vision"],
+    ["web", "vision"],
+    ["explore", "web", "vision"],
+  ] as const;
+  for (const enabledPlugins of combinations) {
+    const resolved = resolvePipelineConfig({ ...base, enabledPlugins: [...enabledPlugins] });
+    const pluginNames: readonly string[] = enabledPlugins;
+    const hasExplore = pluginNames.includes("explore");
+    const hasWeb = pluginNames.includes("web");
+    for (const role of [
+      "planner",
+      "researcher",
+      "security",
+      "coder",
+      "reviewer",
+      "auditor",
+    ] as const) {
+      const spec = resolved.roles[role];
+      expect(spec).toBeDefined();
+      for (const tool of ["explore_project", "search_project", "read_project"]) {
+        expect(spec?.role.activeToolNames?.includes(tool)).toBe(
+          hasExplore && !(role === "coder" && tool === "explore_project"),
+        );
+      }
+      expect(spec?.role.systemPrompt).toMatch(/when\s+(?:[^\n]*tools are\s+)?available/i);
+    }
+    for (const role of ["researcher", "auditor"] as const) {
+      expect(resolved.roles[role]?.role.activeToolNames?.includes("web_search")).toBe(hasWeb);
+      expect(resolved.roles[role]?.role.activeToolNames?.includes("web_read")).toBe(hasWeb);
+    }
+  }
 });
 
 test("provider request timeout is effective, visible, and zero-disabled", () => {

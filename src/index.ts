@@ -492,6 +492,7 @@ export type { Role, RoleRunDeps } from "./role";
 export { defineRole, resolveRoleModel, toHarnessOptions } from "./role";
 export type { RunnerErrorCode } from "./runner/errors";
 export {
+  ConfiguredToolsUnavailableError,
   EmptyTurnError,
   ProviderLimitError,
   providerLimitFrom,

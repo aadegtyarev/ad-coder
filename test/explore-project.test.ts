@@ -43,6 +43,12 @@ test("explore_project returns bounded metadata and decomposition signals without
   }
 });
 
+test("explore_project documents focus as a directory path rather than a research prompt", () => {
+  const tool = buildExploreProjectTool("/tmp/project");
+  expect(tool.description).toContain("focus is only a relative directory path");
+  expect(JSON.stringify(tool.parameters)).toContain("Optional relative directory path");
+});
+
 test("explore_project refuses a focus outside target", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "ad-coder-explore-"));
   try {
@@ -50,7 +56,12 @@ test("explore_project refuses a focus outside target", async () => {
     const result = await execute(tool, { focus: ".." });
     expect(result.content[0]).toEqual({
       type: "text",
-      text: "project exploration failed: focus_outside_target",
+      text: "project exploration failed: focus_outside_target; choose a focus inside the target project",
+    });
+    expect(result.details).toMatchObject({
+      code: "focus_outside_target",
+      retryable: false,
+      nextAction: "choose a focus inside the target project",
     });
   } finally {
     await rm(dir, { recursive: true, force: true });

@@ -46,6 +46,7 @@ import type { SessionLimitController } from "../session-limits";
 import {
   assertRunId,
   assertUniqueToolNames,
+  ConfiguredToolsUnavailableError,
   EmptyTurnError,
   providerLimitFrom,
   RunInterruptedError,
@@ -807,6 +808,9 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
       if (providerLimit !== undefined) throw providerLimit;
     }
     if (result.status === "failed") {
+      if (result.error?.code === "configured_tools_unavailable") {
+        throw new ConfiguredToolsUnavailableError(runId, result.error);
+      }
       const entries = await session.findEntries(
         { type: "message", order: "desc", limit: 20 },
         context,

@@ -105,14 +105,16 @@ the host configuration to raise or disable the exhausted budget.
 
 `startConversation` keeps one durable harness session and attaches ledger
 listeners per turn. `startOrchestrator` adds selected project, web, and image
-plugins. Named workflow modules contribute tools only when enabled. Disabling
+plugins. Role allow-lists include only enabled plugin tools. Named workflow
+modules contribute tools only when enabled. Disabling
 the opt-in `pipeline` module removes its synchronous, stepped, and background
 tools. `decompose_task` runs Planner alone without disturbing manual stepping.
 The orchestrator routes work, never starts another orchestrator, and receives
 all host-registered tools by default.
 
 `explore_project` gives every code-reading role a bounded, Git-ignore-aware map
-without file contents. Web tools are replaceable plugins; `web_read` preserves
+without file contents. Failures name a safe cause and next action. Web tools are
+replaceable plugins; `web_read` preserves
 normalized links. `inspect_image` sends pixels directly to a capable model or
 uses one bounded vision call. Web transport validates DNS, peer address, and
 redirects; private-network access requires an explicit trusted override.

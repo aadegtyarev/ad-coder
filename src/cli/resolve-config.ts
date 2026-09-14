@@ -615,32 +615,37 @@ function resolveConfig(
     ["read", "bash"],
     options.orchestratorThinkingLevel ?? orchestratorSelection.thinkingLevel,
   );
+  const registeredPluginNames = new Set(pluginTools.map(({ name }) => name));
+  const projectToolNames =
+    options.pluginTools === undefined
+      ? [EXPLORE_PROJECT_TOOL_NAME, SEARCH_PROJECT_TOOL_NAME, READ_PROJECT_TOOL_NAME].filter(
+          (name) => registeredPluginNames.has(name),
+        )
+      : [];
+  const webToolNames =
+    options.pluginTools === undefined
+      ? ["web_search", "web_read"].filter((name) => registeredPluginNames.has(name))
+      : [];
   const pipelineRoles = orchestratorOnly
     ? undefined
     : {
         planner: buildRole("planner", [
-          EXPLORE_PROJECT_TOOL_NAME,
-          SEARCH_PROJECT_TOOL_NAME,
-          READ_PROJECT_TOOL_NAME,
+          "read",
+          ...projectToolNames,
           SUBMIT_PLAN_TOOL_NAME,
           SUBMIT_FOLLOW_UP_TOOL_NAME,
         ]),
         researcher: buildRole("researcher", [
           "read",
           "bash",
-          EXPLORE_PROJECT_TOOL_NAME,
-          SEARCH_PROJECT_TOOL_NAME,
-          READ_PROJECT_TOOL_NAME,
-          "web_search",
-          "web_read",
+          ...projectToolNames,
+          ...webToolNames,
           SUBMIT_FOLLOW_UP_TOOL_NAME,
         ]),
         security: buildRole("security", [
           "read",
           "bash",
-          EXPLORE_PROJECT_TOOL_NAME,
-          SEARCH_PROJECT_TOOL_NAME,
-          READ_PROJECT_TOOL_NAME,
+          ...projectToolNames,
           SUBMIT_FOLLOW_UP_TOOL_NAME,
         ]),
         coder: buildRole("coder", [
@@ -648,27 +653,21 @@ function resolveConfig(
           "write",
           "edit",
           "bash",
-          SEARCH_PROJECT_TOOL_NAME,
-          READ_PROJECT_TOOL_NAME,
+          ...projectToolNames.filter((name) => name !== EXPLORE_PROJECT_TOOL_NAME),
           SUBMIT_FOLLOW_UP_TOOL_NAME,
         ]),
         reviewer: buildRole("reviewer", [
           "read",
           "bash",
-          EXPLORE_PROJECT_TOOL_NAME,
-          SEARCH_PROJECT_TOOL_NAME,
-          READ_PROJECT_TOOL_NAME,
+          ...projectToolNames,
           SUBMIT_VERDICT_TOOL_NAME,
           SUBMIT_FOLLOW_UP_TOOL_NAME,
         ]),
         auditor: buildRole("auditor", [
           "read",
           "bash",
-          EXPLORE_PROJECT_TOOL_NAME,
-          SEARCH_PROJECT_TOOL_NAME,
-          READ_PROJECT_TOOL_NAME,
-          "web_search",
-          "web_read",
+          ...projectToolNames,
+          ...webToolNames,
           SUBMIT_FOLLOW_UP_TOOL_NAME,
         ]),
       };

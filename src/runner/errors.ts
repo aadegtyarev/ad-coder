@@ -22,6 +22,22 @@ export class EmptyTurnError extends Error {
   }
 }
 
+/** A role referenced tools that were not registered in the selected plugin set. */
+export class ConfiguredToolsUnavailableError extends Error {
+  override readonly name = "ConfiguredToolsUnavailableError";
+  readonly code = "configured_tools_unavailable" as const;
+
+  constructor(
+    readonly runId: string,
+    cause?: unknown,
+  ) {
+    super(
+      "role tools are unavailable in the selected plugin configuration; enable the required plugin or remove those tools from the role profile, then retry",
+      { cause },
+    );
+  }
+}
+
 /** A caller deliberately stopped a live role run after durable closeout began. */
 export class RunInterruptedError extends Error {
   override readonly name = "RunInterruptedError";
