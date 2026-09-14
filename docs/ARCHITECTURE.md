@@ -57,6 +57,11 @@ Incremental reviewer context projects both tracked diffs and validated untracked
 UTF-8 files under one byte ceiling; credential-like lines are redacted before
 the projection is handed to a role.
 
+Stage limits resolve as built-in global defaults, then built-in role defaults,
+then caller global overrides, then caller role overrides. Explicit zero remains
+a disabled limit. The resolver applies the selected role limits to both workflow
+turns and the standalone `role` command.
+
 ### Tool activity flow
 
 Runner and conversation adapters publish categorized, correlated harness events

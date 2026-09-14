@@ -116,13 +116,6 @@ Only unresolved work belongs here. Current behavior is in
   selected execution mode until the final transcript. Project safe allowlisted
   built-in names without exposing third-party tool identifiers.
 
-- [high] **Role-specific stage-budget defaults** (`src/cli/resolve-config.ts`,
-  `src/orchestration/stage-limits.ts`): global defaults currently allow Planner
-  far beyond its prompt's normal budget. Add configurable per-role overlays and
-  efficient defaults, preserving zero-disabled semantics. Dogfood evidence:
-  Luna Planner produced no plan after 72.1 s, 13 model turns, 35 tool turns,
-  293,212 input tokens, and $0.019080; its prompt expected roughly 12 tools.
-
 - [high] **Account for failed-stage usage** (`src/runner/`,
   `src/project-operations/run-coordinator.ts`): a rejected Researcher consumes
   provider tokens and cost but contributes no entry to workflow `stageMetrics`.

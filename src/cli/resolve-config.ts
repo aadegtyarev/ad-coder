@@ -73,6 +73,64 @@ export type ConfigurableRole =
   | "orchestrator";
 export type BuiltInPluginName = "explore" | "web" | "vision";
 
+const DEFAULT_STAGE_LIMITS: Required<StageLimits> = {
+  maxDurationMs: 600_000,
+  maxModelTurns: 32,
+  maxToolTurns: 128,
+  maxInputTokens: 500_000,
+  maxCostUsd: 2,
+  finalResponseReserveModelTurns: 4,
+  finalResponseReserveDurationMs: 30_000,
+  finalResponseReserveToolTurns: 8,
+  finalResponseReserveInputTokens: 100_000,
+};
+
+/** Efficient role ceilings inferred from committed dogfood evidence; overrides remain data-only. */
+const DEFAULT_ROLE_STAGE_LIMITS: Readonly<Partial<Record<ProfileRole, StageLimits>>> = {
+  planner: {
+    maxDurationMs: 180_000,
+    maxModelTurns: 10,
+    maxToolTurns: 20,
+    maxInputTokens: 250_000,
+    maxCostUsd: 0.1,
+  },
+  researcher: {
+    maxDurationMs: 240_000,
+    maxModelTurns: 14,
+    maxToolTurns: 32,
+    maxInputTokens: 300_000,
+    maxCostUsd: 0.25,
+  },
+  security: {
+    maxDurationMs: 180_000,
+    maxModelTurns: 10,
+    maxToolTurns: 20,
+    maxInputTokens: 200_000,
+    maxCostUsd: 0.15,
+  },
+  coder: {
+    maxDurationMs: 480_000,
+    maxModelTurns: 20,
+    maxToolTurns: 48,
+    maxInputTokens: 400_000,
+    maxCostUsd: 0.8,
+  },
+  reviewer: {
+    maxDurationMs: 300_000,
+    maxModelTurns: 16,
+    maxToolTurns: 40,
+    maxInputTokens: 350_000,
+    maxCostUsd: 0.5,
+  },
+  auditor: {
+    maxDurationMs: 300_000,
+    maxModelTurns: 16,
+    maxToolTurns: 40,
+    maxInputTokens: 350_000,
+    maxCostUsd: 0.5,
+  },
+};
+
 /** maxRounds default when the caller does not override it. */
 const DEFAULT_MAX_ROUNDS = 2;
 export const DEFAULT_PIPELINE_CONTEXT_CONFIG = {
@@ -261,22 +319,21 @@ function resolveConfig(
   const requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   if (!Number.isSafeInteger(requestTimeoutMs) || requestTimeoutMs < 0)
     throw new Error("requestTimeoutMs must be a non-negative safe integer");
-  const stageLimits: Required<StageLimits> = {
-    maxDurationMs: options.stageLimits?.maxDurationMs ?? 600_000,
-    maxModelTurns: options.stageLimits?.maxModelTurns ?? 32,
-    maxToolTurns: options.stageLimits?.maxToolTurns ?? 128,
-    maxInputTokens: options.stageLimits?.maxInputTokens ?? 500_000,
-    maxCostUsd: options.stageLimits?.maxCostUsd ?? 2,
-    finalResponseReserveModelTurns: options.stageLimits?.finalResponseReserveModelTurns ?? 4,
-    finalResponseReserveDurationMs: options.stageLimits?.finalResponseReserveDurationMs ?? 30_000,
-    finalResponseReserveToolTurns: options.stageLimits?.finalResponseReserveToolTurns ?? 8,
-    finalResponseReserveInputTokens:
-      options.stageLimits?.finalResponseReserveInputTokens ?? 100_000,
-  };
+  const stageLimits: Required<StageLimits> = { ...DEFAULT_STAGE_LIMITS, ...options.stageLimits };
   new StageLimitController(stageLimits);
+  const roleNames = new Set([
+    ...Object.keys(DEFAULT_ROLE_STAGE_LIMITS),
+    ...Object.keys(options.roleStageLimits ?? {}),
+  ]);
   const roleStageLimits = Object.fromEntries(
-    Object.entries(options.roleStageLimits ?? {}).map(([role, overlay]) => {
-      const resolved = { ...stageLimits, ...overlay };
+    [...roleNames].map((role) => {
+      const profileRole = role as ProfileRole;
+      const resolved = {
+        ...DEFAULT_STAGE_LIMITS,
+        ...DEFAULT_ROLE_STAGE_LIMITS[profileRole],
+        ...options.stageLimits,
+        ...options.roleStageLimits?.[profileRole],
+      };
       new StageLimitController(resolved);
       return [role, resolved];
     }),

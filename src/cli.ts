@@ -1873,6 +1873,9 @@ async function roleCommand(
     },
     spec.model,
   );
+  const standaloneStageLimits =
+    config.roleStageLimits?.[name as keyof NonNullable<typeof config.roleStageLimits>] ??
+    config.stageLimits;
   const renderer = new ToolActivityRenderer(process.stderr, "human", config.toolActivity);
   const resumeRunId = flags["--resume-run"];
   const standaloneRunId = resumeRunId ?? crypto.randomUUID();
@@ -1917,7 +1920,7 @@ async function roleCommand(
           projectStoreConfig: config.projectStoreConfig,
         }),
         ...(config.toolActivity !== undefined && { toolActivity: config.toolActivity }),
-        ...(config.stageLimits !== undefined && { stageLimits: config.stageLimits }),
+        ...(standaloneStageLimits !== undefined && { stageLimits: standaloneStageLimits }),
         abortSignal: abortController.signal,
       });
     } catch (error) {
