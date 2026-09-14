@@ -597,6 +597,25 @@ test("stage budgets have finite defaults, expose provenance, and are zero-disabl
   expect(disabled.effectiveConfig?.["stageLimits.maxCostUsd"]?.source).toBe("cli");
 });
 
+test("role stage-budget overlays inherit global limits and preserve explicit zero", () => {
+  const config = resolvePipelineConfig({
+    task: "x",
+    targetDir: "/tmp",
+    registryConfig: mixedRegistry(),
+    profile: buildDefaultProfile({ strong: "large", mid: "small", cheap: "small" }),
+    summarizerModel: "large",
+    env: fakeEnv({ LOCAL_KEY: "k" }),
+    warn: silent,
+    stageLimits: { maxToolTurns: 10 },
+    roleStageLimits: { reviewer: { maxModelTurns: 3, maxToolTurns: 0 } },
+  });
+  expect(config.roleStageLimits?.reviewer).toMatchObject({
+    maxModelTurns: 3,
+    maxToolTurns: 0,
+    maxDurationMs: 600_000,
+  });
+});
+
 test("named inventory selects one atomic registry/profile pair and rejects source mixing", () => {
   const inventory: ModelInventoryConfig = {
     profiles: [

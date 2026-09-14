@@ -18,11 +18,11 @@ Only unresolved work belongs here. Current behavior is in
   connect/read ceilings, remember failed domains for the run, and show the target
   plus remaining deadline in activity events.
 
-- [high] **Make CLI signals cancel active roles durably**: SIGINT/SIGTERM must
-  abort the in-process harness/WebSocket, close ledger/session state, and leave a
-  terminal or resumable checkpoint. Separately, launcher integrations must kill
-  their full `npm -> sh -> bun` process group; ad-coder has no provider child
-  process to signal, and cannot enforce the parent harness's process policy.
+- [high] **Make launcher cancellation process-group-safe**: launcher integrations
+  must kill their full `npm -> sh -> bun` process group. The CLI itself maps
+  SIGINT/SIGTERM to a resumable role pause and closes its in-process resources;
+  ad-coder has no provider child process to signal, and cannot enforce the parent
+  harness's process policy.
 
 - [high] **Portable economic profile store** (`src/user-profile/`, `src/cli.ts`):
   add a private user-level store for named inventories, calibrated routing,

@@ -116,6 +116,14 @@ ad-coder profile import-apply --input profile.json --mode merge
 ad-coder profile snapshot --inventory work --target-dir ./my-project
 ```
 
+For subscription-credit calibration, append an account-free server balance
+observation with `profile record --input <record.json>`. Use
+`kind: "credit_balance"`, a stable provider/model scope, `unit: "credits"`, and
+`source: "provider-measurement"`. Record the refill price separately as a normal
+`price` record using `unit: "USD/credit"`; for a 500-credit refill costing $10,
+the value is `0.02`. Two balance observations linked by `previousId` measure
+credits consumed without exporting account identity or raw provider responses.
+
 The snapshot contains only the selected inventory, calibrated routing, current
 economics, and capacity ranges. A matching named inventory automatically uses
 its project routing; API callers can set `useProjectCalibration: false`.

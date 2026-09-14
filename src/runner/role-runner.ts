@@ -33,6 +33,8 @@ export interface RunRoleOptions {
       "elapsedMs" | "modelTurns" | "toolTurns" | "inputTokens" | "lastInputTokens" | "costUsd"
     >
   >;
+  /** Per-call role overlay; overrides the runner's shared stage limits. */
+  stageLimits?: StageLimits;
   stageLimitObserver?: (snapshot: Readonly<StageLimitSnapshot>) => void;
   ledgerSink?: LedgerSink;
   context?: Context;
@@ -47,6 +49,8 @@ export interface RunRoleOptions {
   activityConsumer?: ToolActivityConsumer;
   /** Monotonic milliseconds seam used by deterministic metric tests. */
   monotonicNow?: () => number;
+  /** Cancels a live role run and leaves its session resumable. */
+  abortSignal?: AbortSignal;
 }
 
 /**
@@ -108,9 +112,9 @@ export function createRoleRunner(config: RoleRunnerConfig): RoleRunner {
         ...(config.sessionLimitController !== undefined && {
           sessionLimitController: config.sessionLimitController,
         }),
-        ...(config.stageLimits !== undefined && {
+        ...((opts?.stageLimits !== undefined || config.stageLimits !== undefined) && {
           stageLimitController: new StageLimitController(
-            config.stageLimits,
+            opts?.stageLimits ?? config.stageLimits,
             monotonicNow,
             opts?.stageLimitInitial,
             opts?.stageLimitObserver,
@@ -134,6 +138,7 @@ export function createRoleRunner(config: RoleRunnerConfig): RoleRunner {
         ...(opts?.ledgerSink !== undefined && { ledgerSink: opts.ledgerSink }),
         ...(opts?.context !== undefined && { context: opts.context }),
         ...(opts?.tools !== undefined && { tools: opts.tools }),
+        ...(opts?.abortSignal !== undefined && { abortSignal: opts.abortSignal }),
       });
     },
   };

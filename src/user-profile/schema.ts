@@ -14,6 +14,7 @@ const ECONOMIC_KINDS = new Set<EconomicRecordKind>([
   "price",
   "context_limit",
   "subscription_limit",
+  "credit_balance",
 ]);
 const CONFIDENCES = new Set<EconomicConfidence>([
   "official",

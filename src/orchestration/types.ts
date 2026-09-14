@@ -303,6 +303,8 @@ export interface PipelineConfig {
   sessionLimitController?: SessionLimitController;
   /** Per-stage limits. Omitted/zero fields preserve unlimited historical behavior. */
   stageLimits?: StageLimits;
+  /** Optional role-specific stage-limit overlays, resolved over `stageLimits`. */
+  roleStageLimits?: Partial<Record<ProfileRole, StageLimits>>;
   /** Retention and byte limits for all durable state created by this run. */
   projectStoreConfig?: ProjectStoreConfig;
   /** Durable coordinator identity; supply runId to resume an interrupted run. */

@@ -30,6 +30,9 @@ All notable changes to ad-coder are recorded here. The format follows
 - Added explicit model-inventory Researcher brief composition, trusted replacement-source configuration, and digest-only durable stage metadata.
 - Added versioned portable user profiles with append-only economics history and
   always-JSON `profile show|export|import-preview|import-apply` CLI access.
+- Added append-only server-reported `credit_balance` observations and atomic
+  `profile record` input, so a future credit refill and balance delta can be
+  measured without exporting account identity or raw provider responses.
 - Added bounded `.ad-coder/calibration.json` snapshots, `profile snapshot`, and
   automatic project-calibrated routing for matching named inventories.
 - Added typed, configurable closeout reserves for duration, model turns, and

@@ -8,7 +8,17 @@ export interface ModelInventoryConfig {
   default?: string;
 }
 
-export type EconomicRecordKind = "price" | "context_limit" | "subscription_limit";
+/**
+ * `credit_balance` is a server-reported, account-free balance observation. It
+ * must use a stable provider/model scope and a unit such as `credits`, so two
+ * append-only observations can measure consumed capacity without retaining an
+ * account identifier or raw provider response.
+ */
+export type EconomicRecordKind =
+  | "price"
+  | "context_limit"
+  | "subscription_limit"
+  | "credit_balance";
 export type EconomicConfidence = "official" | "provider_reported" | "measured" | "estimated";
 
 export interface EconomicRecord {
