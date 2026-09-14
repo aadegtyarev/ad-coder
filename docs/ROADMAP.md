@@ -847,14 +847,43 @@ workflows — one substrate, swappable drivers.
   failures. A daemon/event stream remains a possible later multi-project feature,
   not a dependency of this control plane.
 
+- **Session manager + Telegram driver (decided 2026-09-14)** — before a Telegram
+  transport, add a small headless `SessionManager` over the existing
+  `ProjectStore`, Orchestrator API, background-run control plane, and durable
+  event cursor. It owns only safe durable bindings:
+  `driverKey -> (projectKey, targetDir, deterministic sessionId, profile)`.
+  It resolves a binding, creates or reopens the per-project Orchestrator session,
+  starts/controls background pipelines, and switches project/profile for future
+  work only. Existing paused runs never change provider/model identity implicitly.
+  Project keys are immediate child directories of configured allowed roots;
+  absolute paths, traversal, and escaping symlinks are rejected. It may create a
+  new, non-existing safe-slug project beneath an allowed root, initialize Git,
+  and create only the minimal ignored runtime scaffold.
+
+  Telegram v1 is an optional local long-polling driver in the same ad-coder
+  process, calling this headless API directly rather than spawning/parsing a CLI.
+  It has a credential-store/environment bot token, an explicit chat allowlist,
+  and secret-free private bindings outside target projects. A personal chat is a
+  switchable project dashboard; later a `(groupChatId, topicId)` binding becomes
+  one fixed project room. The driver relays durable background events from its
+  acknowledged cursor and resumes safely after its own restart. It supports
+  ordinary messages to the selected Orchestrator session plus project, profile,
+  run/status/resume/cancel commands. No webhook, public listener, daemon,
+  SessionManager-wide plugin registry, or multi-user policy is required for v1.
+
+  Every Telegram command with no required argument returns command-specific
+  help including syntax and an example; it never infers or executes a default
+  mutation. The same command schema supplies parser validation and help so they
+  cannot drift.
+
 - **Plugin registry (decided 2026-09-12)** — build on the existing `defineTool`,
   workflow and driver seams. A small manifest declares an entry module and the
   capabilities it provides (`tools`, `workflows`, `drivers`, event subscribers).
   Support local paths and ordinary npm packages with `add`, `enable`, `disable`,
   `list` and `doctor`; enabled plugin code is trusted operator configuration, like
   project workflows and prompt overrides. MCP is a general tool-source plugin;
-  Telegram is a driver plugin over SessionManager and the daemon. Avoid a separate
-  package ecosystem or plugin-specific session implementation.
+  Telegram is a driver over SessionManager; avoid a separate package ecosystem or
+  plugin-specific session implementation.
 
 ## Open backlog (mechanical)
 
