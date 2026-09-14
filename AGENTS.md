@@ -121,6 +121,9 @@ chat transcript or ignored harness runtime state.
 
 ## Native dogfood and calibration program
 
+Run ad-coder itself with the `openrouter-presets` inventory profile by default.
+Use another inventory profile only when the operator explicitly requests it.
+
 ### Finish this program end to end
 
 The active dogfood/calibration program is one continuous project objective, not a

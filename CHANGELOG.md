@@ -6,6 +6,13 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-09-14
+
+### Changed
+
+- Made `openrouter-presets` the required default inventory profile for ad-coder
+  dogfood and development unless the operator explicitly selects another.
+
 ## [0.3.1] - 2026-09-14
 
 ### Fixed
