@@ -16,6 +16,8 @@ All notable changes to ad-coder are recorded here. The format follows
 - Exported the console command registry (`CONSOLE_COMMANDS`,
   `consoleCommandUsage`, `consoleCommandNames`, `findConsoleCommand`) and the
   typed `ConsoleControlFailure` projection from the library entry point.
+- `/help` now explains each command argument individually in both the formatted
+  and JSON projections, rather than only naming it in the usage line.
 
 ### Changed
 

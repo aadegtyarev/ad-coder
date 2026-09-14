@@ -39,18 +39,13 @@ export interface ConsoleCommandDefinition {
   readonly description: string;
   readonly args: readonly ConsoleCommandArgument[];
   readonly example: string;
-  /**
-   * `control` commands execute headlessly here. `front` commands are dispatched
-   * by the console front itself; they are declared here so help, usage, and
-   * argument validation still render from this one registry.
-   */
-  readonly scope: "control" | "front";
   /** Set when the command needs an optional capability the host may not enable. */
   readonly requires?: "background_runs";
   /**
-   * Set on every `front` command; names the front-side effect to run. A front
-   * looks this up instead of matching the command name literally, so the
-   * registry stays the one source of dispatch (`docs/contracts/cli.md`).
+   * Present exactly on the commands a front executes itself rather than through
+   * `executeConsoleControl`; it names the front-side effect. A front selects on
+   * this instead of matching a command name literally, so the registry stays the
+   * one source of dispatch (`docs/contracts/cli.md`).
    */
   readonly frontAction?: "exit";
 }
@@ -59,6 +54,7 @@ export interface ConsoleCommandHelpEntry {
   readonly name: string;
   readonly usage: string;
   readonly description: string;
+  readonly args: readonly ConsoleCommandArgument[];
   readonly example: string;
   readonly available: boolean;
   /** Present only when `available` is false; names how to enable the command. */
@@ -113,14 +109,12 @@ export const CONSOLE_COMMANDS: readonly ConsoleCommandDefinition[] = [
     description: "List every console command with its arguments and an example.",
     args: [],
     example: "/help",
-    scope: "control",
   },
   {
     name: "/list",
     description: "List background pipeline runs in this owner scope.",
     args: [],
     example: "/list",
-    scope: "control",
     requires: "background_runs",
   },
   {
@@ -147,7 +141,6 @@ export const CONSOLE_COMMANDS: readonly ConsoleCommandDefinition[] = [
       },
     ],
     example: `/events ${EXAMPLE_RUN_ID}`,
-    scope: "control",
     requires: "background_runs",
   },
   {
@@ -162,7 +155,6 @@ export const CONSOLE_COMMANDS: readonly ConsoleCommandDefinition[] = [
       },
     ],
     example: `/status ${EXAMPLE_RUN_ID}`,
-    scope: "control",
     requires: "background_runs",
   },
   {
@@ -177,7 +169,6 @@ export const CONSOLE_COMMANDS: readonly ConsoleCommandDefinition[] = [
       },
     ],
     example: `/result ${EXAMPLE_RUN_ID}`,
-    scope: "control",
     requires: "background_runs",
   },
   {
@@ -192,7 +183,6 @@ export const CONSOLE_COMMANDS: readonly ConsoleCommandDefinition[] = [
       },
     ],
     example: `/cancel ${EXAMPLE_RUN_ID}`,
-    scope: "control",
     requires: "background_runs",
   },
   {
@@ -200,14 +190,12 @@ export const CONSOLE_COMMANDS: readonly ConsoleCommandDefinition[] = [
     description: "Interrupt only the current orchestrator turn; the session stays open.",
     args: [],
     example: "/interrupt",
-    scope: "control",
   },
   {
     name: "/exit",
     description: "Close the console session; detached background runs keep running.",
     args: [],
     example: "/exit",
-    scope: "front",
     frontAction: "exit",
   },
 ];
@@ -282,6 +270,7 @@ function helpEntries(backgroundRuns: BackgroundRunManager | undefined): ConsoleC
       name: command.name,
       usage: consoleCommandUsage(command),
       description: command.description,
+      args: command.args,
       example: command.example,
       available,
       ...(available ? {} : { unavailableAction: BACKGROUND_RUNS_ACTION }),
@@ -324,7 +313,7 @@ export function executeConsoleControl(
         command,
         command.args.length === 0
           ? "takes no arguments"
-          : `takes at most ${command.args.length} arguments`,
+          : `takes at most ${command.args.length} ${command.args.length === 1 ? "argument" : "arguments"}`,
       );
   };
   try {
@@ -380,11 +369,17 @@ export function executeConsoleControl(
           run: managerFor(command, controls.backgroundRuns).cancel(runId(command, args[0])),
         });
       default:
-        // A `front` command reached here only because its front dispatched a
-        // malformed form of it. Validate the arguments so it is never silently
-        // forwarded to the model as a prompt.
-        requireArgs();
-        invalidArguments(command, "is handled by the console front, not by a control dispatch");
+        // Reached only by a caller that dispatches control commands without
+        // handling the front commands first. Fail typed rather than letting the
+        // command fall through and reach the model as a prompt.
+        fail({
+          code: "invalid_request",
+          command: command.name,
+          message: `${command.name} is executed by the console front, which did not handle it`,
+          action: `dispatch ${command.name} on the front by its registry frontAction before calling executeConsoleControl`,
+          // Re-sending the identical command to this dispatch cannot succeed.
+          retryable: false,
+        });
     }
   } catch (error) {
     if (error instanceof ConsoleControlError) throw error;

@@ -241,6 +241,11 @@ function renderControl(
         name: command.name,
         usage: command.usage,
         description: command.description,
+        args: command.args.map((argument) => ({
+          name: argument.name,
+          required: argument.required,
+          description: argument.description,
+        })),
         example: command.example,
         available: command.available,
         ...(command.unavailableAction === undefined
@@ -280,11 +285,15 @@ function renderControl(
   if (result.type === "console_help") {
     const width = Math.max(...result.commands.map((command) => command.usage.length));
     return `${result.commands
-      .map(
-        (command) =>
+      .map((command) =>
+        [
           `  ${command.usage.padEnd(width)}  ${command.description}${
             command.available ? "" : ` (unavailable: ${command.unavailableAction})`
-          }\n    example: ${command.example}`,
+          }`,
+          // Each argument explains itself, so the usage line stays terse.
+          ...command.args.map((argument) => `    ${argument.name} ${argument.description}`),
+          `    example: ${command.example}`,
+        ].join("\n"),
       )
       .join("\n")}\n`;
   }

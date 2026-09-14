@@ -1405,3 +1405,90 @@ test("a manager failure keeps its cause for programmatic callers only", () => {
   expect(failure.failure.code).toBe("not_found");
   expect(failure.failure.action).toContain("/list");
 });
+
+test("every declared registry field reaches an operator, so none can quietly rot", async () => {
+  const session = fakeSession();
+  const output = new Capture();
+  await runConsole({
+    session,
+    input: Readable.from("/help\n/exit\n"),
+    output,
+    error: new Capture(),
+    mode: "json",
+  });
+
+  const record = JSON.parse(output.text().trim()) as {
+    commands: Array<{
+      name: string;
+      args: Array<{ name: string; required: boolean; description: string }>;
+    }>;
+  };
+  for (const command of CONSOLE_COMMANDS) {
+    const rendered = record.commands.find((entry) => entry.name === command.name);
+    expect(rendered?.args.map((argument) => argument.name)).toEqual(
+      command.args.map((argument) => argument.name),
+    );
+    // A per-argument description is declared for every argument AND rendered.
+    for (const argument of command.args) {
+      const shown = rendered?.args.find((entry) => entry.name === argument.name);
+      expect(shown?.description).toBe(argument.description);
+      expect(argument.description.length).toBeGreaterThan(0);
+    }
+  }
+});
+
+test("a formatted /help explains each argument, not just the usage line", async () => {
+  const session = fakeSession();
+  const output = new Capture();
+  await runConsole({
+    session,
+    input: Readable.from("/help\n/exit\n"),
+    output,
+    error: new Capture(),
+    mode: "formatted",
+  });
+
+  const text = output.text();
+  for (const command of CONSOLE_COMMANDS)
+    for (const argument of command.args) expect(text).toContain(argument.description);
+});
+
+test("an over-arity failure counts arguments grammatically", async () => {
+  const session = fakeSession() as unknown as ConversationSession & {
+    backgroundRuns: BackgroundRunManager;
+  };
+  session.backgroundRuns = { list: () => [] } as unknown as BackgroundRunManager;
+  const error = new Capture();
+  await runConsole({
+    session,
+    input: Readable.from(
+      "/status 123e4567-e89b-12d3-a456-426614174000 123e4567-e89b-12d3-a456-426614174000\n/exit\n",
+    ),
+    output: new Capture(),
+    error,
+    mode: "json",
+  });
+
+  const record = JSON.parse(error.text().trim()) as { code: string; message: string };
+  expect(record.code).toBe("invalid_command");
+  expect(record.message).toContain("takes at most 1 argument");
+  expect(record.message).not.toContain("1 arguments");
+});
+
+test("a front command reaching control dispatch fails with an action the caller can take", () => {
+  const front = CONSOLE_COMMANDS.filter((command) => command.frontAction !== undefined);
+  expect(front.length).toBeGreaterThan(0);
+  for (const command of front) {
+    let caught: unknown;
+    try {
+      executeConsoleControl(command.name, { interrupt: async () => false });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(ConsoleControlError);
+    const failure = (caught as ConsoleControlError).failure;
+    // The action must not tell the caller to retype the command that just failed.
+    expect(failure.action).toContain("frontAction");
+    expect(failure.retryable).toBe(false);
+  }
+});
