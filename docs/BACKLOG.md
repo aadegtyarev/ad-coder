@@ -22,14 +22,27 @@ Only unresolved work belongs here. Current behavior is in
   reconciliation, provider balance adapters where explicitly configured, and
   fair allocation across every session sharing a provider/account scope.
 
-- [next] **Just-in-time skills for orchestration**: after empirical estimate and
-  before Telegram, add a trusted, versioned, digest-recorded SkillRegistry with
-  bounded lazy loading. Start with `architecture-recon`, `task-slicing`, and
-  `acceptance-review`, so the Orchestrator can produce a bounded brief before
-  Planner dispatch, keep exploration finite, and independently accept work
-  against declared criteria. Skills must not become an always-appended prompt;
-  manifests are discoverable, full instructions are role-scoped, and their
-  selected IDs/versions/cost are durable run evidence.
+- [next] **Durable Skills v2 provenance**: Skills v1 provides bounded built-in
+  and project-local resolution plus explicit console/library selection and
+  role-scoped delegated prompts. Persist immutable selected IDs, versions,
+  source, digest, and exact prompt bytes in pipeline checkpoints/results so a
+  resume never rereads mutated skill content.
+
+- [high] **Make role tool selection and failures truthful**: `--plugins none`
+  currently leaves project-tool names in role allow-lists, producing
+  `configured_tools_unavailable`, while the standalone CLI misreports that
+  pre-provider failure as an empty provider turn. Reconcile enabled plugins with
+  role tools before session start and preserve the typed cause in CLI output.
+  Project exploration/search failures must set error state, retain a safe cause,
+  and name request limits plus the next useful action instead of returning
+  success-shaped generic `failed` text.
+
+- [next] **Canonical model aliases and suggestions**: make named execution
+  profiles the normal CLI path, resolve stable aliases such as `codex-terra` to
+  provider model IDs internally, list valid aliases programmatically, suggest a
+  close alias for unknown input, and display both alias and provider ID in
+  diagnostics. Orchestrator routing must select registry entries rather than
+  authoring model identifiers.
 
 - [high] **Reserve stage capacity for synthesis and verification**: expose
   remaining cumulative time/model/tool/token/cost budgets to the active role
@@ -87,6 +100,12 @@ Only unresolved work belongs here. Current behavior is in
   user-local calibrated inventory as the reusable provider/account baseline,
   then an explicit `.ad-coder/` project override with per-cell provenance in
   `config show`. Project observations must never silently rewrite the user base.
+  Add a configurable decomposition guard: when a bounded Coder dispatch reaches
+  its early evidence threshold without an implementation diff, pause it and
+  create narrower sequential slices rather than retrying the same broad brief.
+  Feed the resulting task-shape-specific outcome into routing confidence for
+  `(role, model, complexity)` while retaining the original evidence and never
+  globally demoting a model from one sample.
 
 - [high] **Explicit durable-run inventory migration** (`src/inventory/`,
   `src/project-operations/`): named atomic registry/profile selection and safe

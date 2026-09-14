@@ -384,6 +384,12 @@ workflows — one substrate, swappable drivers.
   limit hits, rounds, gates, and accepted-result cost. Corpus labels seed the
   Orchestrator; live Planner disagreement is project-local feedback, not an
   automatic truth or a silent rewrite of user calibration.
+  A bounded Coder closeout with no edit evidence is also a first-class
+  decomposition signal. Record the task shape and the `(role, model)` outcome,
+  then require smaller sequential child slices for cross-surface work (for
+  example persistence + worker assembly + prompt wiring) before another broad
+  dispatch. It may lower that model's confidence for the matching task shape,
+  but never declares a model globally incapable from one failed sample.
   **Current Codex product decision (2026-09-12):** the zero-config OAuth preset
   deliberately pins Coder to `codex-sol` with medium thinking at every complexity,
   Reviewer to `codex-terra`, and Recorder to `codex-luna`. Keep this until profile
@@ -955,6 +961,17 @@ workflows — one substrate, swappable drivers.
   provider automatically, reserve credits, or claim cross-process allocation.
   The later SessionManager-owned wallet will add durable reservations for active
   runs and use ProviderAdmission to allocate fairly across all sessions.
+
+- **Just-in-time orchestration skills v1 (decided 2026-09-14)** — implement the
+  enforceable `docs/contracts/skills.md`: built-in and project-local trusted
+  skills share a bounded manifest/instruction resolver; project skills live in
+  `.ad-coder/skills/<id>/`. The Orchestrator selects skills explicitly through
+  the library or console `--skills`; the resolver exposes version/source/digest.
+  Resume-stable pipeline snapshots remain v2 work. First skills are architecture
+  reconnaissance, task slicing, independent acceptance review, and delivery
+  calibration. They replace
+  permanent prompt bulk with role-scoped lazy instructions, never silent global
+  injection.
 
   Every Telegram command with no required argument returns command-specific
   help including syntax and an example; it never infers or executes a default

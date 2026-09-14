@@ -281,6 +281,74 @@ test("disabled pipeline does not resolve its role prompts or construct its core 
   expect(names).toContain(EXPLORE_PROJECT_TOOL_NAME);
 });
 
+test("selected skills are delegated only to compatible roles and retain project overrides", async () => {
+  const targetDir = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-skills-role-")),
+  );
+  const skillDir = path.join(targetDir, ".ad-coder", "skills", "task-slicing");
+  const instruction = "PROJECT TASK-SLICING INSTRUCTION";
+  fs.mkdirSync(skillDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(skillDir, "skill.json"),
+    JSON.stringify({ id: "task-slicing", version: "2", description: "local", roles: ["planner"] }),
+  );
+  fs.writeFileSync(path.join(skillDir, "instructions.md"), instruction);
+  const orchestratorSkillDir = path.join(targetDir, ".ad-coder", "skills", "delivery-calibration");
+  const orchestratorInstruction = "PROJECT DELIVERY-CALIBRATION INSTRUCTION";
+  fs.mkdirSync(orchestratorSkillDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(orchestratorSkillDir, "skill.json"),
+    JSON.stringify({
+      id: "delivery-calibration",
+      version: "2",
+      description: "local",
+      roles: ["orchestrator", "planner"],
+    }),
+  );
+  fs.writeFileSync(path.join(orchestratorSkillDir, "instructions.md"), orchestratorInstruction);
+  const credentials: CredentialStore = {
+    read: async () => ({ type: "oauth", access: "a", refresh: "r", expires: 0 }),
+    list: async () => [],
+    modify: async (_providerId, fn) => fn(undefined),
+    delete: async () => {},
+  };
+  let orchestrator: Role | undefined;
+  let outerTools: Tool[] = [];
+  const delegated: Role[] = [];
+
+  await startOrchestrator({
+    targetDir,
+    env: () => undefined,
+    warn: () => {},
+    credentials,
+    selectedSkills: ["task-slicing", "delivery-calibration"],
+    enabledWorkflows: [],
+    startConversation: async (config) => {
+      orchestrator = config.role;
+      outerTools = config.tools ?? [];
+      return fakeConversation("outer");
+    },
+    startDelegatedConversation: async (config) => {
+      delegated.push(config.role);
+      return fakeConversation(config.role.name);
+    },
+  });
+  const runRole = outerTools.find(({ name }) => name === RUN_ROLE_TOOL_NAME) as Tool;
+  await callTool(runRole, { role: "planner", task: "make a plan" });
+  await callTool(runRole, { role: "reviewer", task: "review the plan" });
+
+  const planner = delegated.find(({ name }) => name === "planner");
+  const reviewer = delegated.find(({ name }) => name === "reviewer");
+  expect(orchestrator?.systemPrompt).not.toContain(instruction);
+  expect(orchestrator?.systemPrompt.match(new RegExp(orchestratorInstruction, "g"))?.length).toBe(
+    1,
+  );
+  expect(planner?.systemPrompt.match(new RegExp(instruction, "g"))?.length).toBe(1);
+  expect(planner?.systemPrompt).toContain("## task-slicing@2");
+  expect(planner?.systemPrompt).toContain(orchestratorInstruction);
+  expect(reviewer?.systemPrompt).not.toContain(instruction);
+});
+
 test("run_role delegates independently and rejects unknown role names safely", async () => {
   const calls: Array<{ role: string; task: string }> = [];
   const tool = buildRunRoleTool(async (role, task) => {

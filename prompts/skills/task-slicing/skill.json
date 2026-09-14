@@ -1,0 +1,1 @@
+{"id":"task-slicing","version":"1","description":"Turn a broad request into a minimal testable vertical slice.","roles":["orchestrator","planner"]}

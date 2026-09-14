@@ -105,6 +105,7 @@ import { createRoleRunner } from "./runner/role-runner";
 import type { Tool } from "./runner/tool";
 import type { SessionLimits } from "./session-limits";
 import { SessionLimitController } from "./session-limits";
+import { SkillResolutionError } from "./skills/resolver";
 import {
   createDefaultUserProfileStore,
   exportUserProfile,
@@ -124,6 +125,7 @@ type RoleName = (typeof ROLE_NAMES)[number];
 const PROVIDERS = ["deepseek", "openrouter", "openai-codex"] as const;
 const COMPLEXITIES = ["trivial", "medium", "complex"] as const;
 let operationsJsonFront = false;
+let consoleJsonFront = false;
 const DEFAULT_HEARTBEAT_MS = 10_000;
 
 function fail(message: string): never {
@@ -220,9 +222,14 @@ function parseArgs(argv: string[], command: CommandDefinition): ParsedArgs {
  * would be folded into `process.env` and could supply the target's own
  * credentials -- erasing the credential boundary. Numbers/paths only.
  */
-function credentialEnvForTarget(absTargetDir: string): (name: string) => string | undefined {
+function credentialEnvForTarget(
+  absTargetDir: string,
+  emitHumanWarning = true,
+): (name: string) => string | undefined {
   return createCredentialEnvironment(absTargetDir, {
-    warn: (message) => process.stderr.write(message),
+    warn: (message) => {
+      if (emitHumanWarning) process.stderr.write(message);
+    },
   });
 }
 
@@ -1805,7 +1812,7 @@ function buildConfigOptions(
       fail("--role-budget-percents must contain a JSON object");
     roleBudgetPercents = raw as Partial<Record<ConfigurableRole, BudgetPercents>>;
   }
-  const credentialEnv = credentialEnvForTarget(targetDir);
+  const credentialEnv = credentialEnvForTarget(targetDir, !consoleJsonFront);
   const credentialPath = flags["--credential-path"];
   if (credentialPath !== undefined) assertCredentialPathOutsideProject(credentialPath, targetDir);
   return {
@@ -2072,12 +2079,20 @@ async function consoleCommand(
           .split(",")
           .map((name) => name.trim())
           .filter(Boolean);
+  const selectedSkills =
+    flags["--skills"] === undefined
+      ? []
+      : flags["--skills"]
+          .split(",")
+          .map((name) => name.trim())
+          .filter(Boolean);
   const configOptions = buildConfigOptions(targetDirArg, flags);
   const session = await startOrchestrator({
     ...configOptions,
     sessionLimits,
     workflowModules: [BUILT_IN_PIPELINE_WORKFLOW],
     enabledWorkflows,
+    selectedSkills,
   });
   const result = await runConsole({
     session,
@@ -2757,6 +2772,11 @@ const COMMANDS: readonly CommandDefinition[] = [
         description: `Enable comma-separated workflow modules; available: ${BUILT_IN_PIPELINE_WORKFLOW_NAME}.`,
       },
       {
+        name: "--skills",
+        value: "<names>",
+        description: "Enable comma-separated built-in or project-local skills for delegated roles.",
+      },
+      {
         name: "--max-input-bytes",
         value: "<n>",
         description: "Set the maximum bytes accepted in one input line.",
@@ -2835,6 +2855,7 @@ async function main(argv: string[]): Promise<void> {
     return;
   }
   const commandName = argv[0];
+  consoleJsonFront = commandName === "console" && argv.slice(1).includes("--json");
   operationsJsonFront =
     commandName === "operations" ||
     commandName === "control" ||
@@ -2860,17 +2881,24 @@ if (import.meta.main) {
   try {
     await main(process.argv.slice(2));
   } catch (error) {
-    if (operationsJsonFront) {
+    if (operationsJsonFront || consoleJsonFront) {
       const payload =
-        error instanceof UserProfileError
-          ? { code: error.code, detail: error.detail }
-          : error instanceof ProjectOperationsError
+        error instanceof SkillResolutionError
+          ? {
+              code: `skill_${error.code}`,
+              text: error.message,
+              retryable: false,
+              nextAction: error.nextAction,
+            }
+          : error instanceof UserProfileError
             ? { code: error.code, detail: error.detail }
-            : error instanceof ProjectStoreError
-              ? { code: error.code, detail: error.path }
-              : error instanceof BackgroundRunError
-                ? { code: error.code, detail: error.detail }
-                : { code: "internal_error" };
+            : error instanceof ProjectOperationsError
+              ? { code: error.code, detail: error.detail }
+              : error instanceof ProjectStoreError
+                ? { code: error.code, detail: error.path }
+                : error instanceof BackgroundRunError
+                  ? { code: error.code, detail: error.detail }
+                  : { code: "internal_error" };
       process.stderr.write(`${JSON.stringify({ error: payload })}\n`);
     } else {
       process.stderr.write(`ad-coder: ${errorMessage(error)}\n`);
