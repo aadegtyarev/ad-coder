@@ -62,6 +62,11 @@ then caller global overrides, then caller role overrides. Explicit zero remains
 a disabled limit. The resolver applies the selected role limits to both workflow
 turns and the standalone `role` command.
 
+When a dispatched Researcher stage fails after receiving provider responses, its
+durable `research_rejected` pause retains the run ID and aggregated numeric ledger
+metrics. The original error is preserved for control flow; raw provider content
+is never copied into the checkpoint.
+
 ### Tool activity flow
 
 Runner and conversation adapters publish categorized, correlated harness events

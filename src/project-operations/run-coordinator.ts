@@ -5,6 +5,7 @@ import {
   applyTransition,
   autoDriver,
   toPipelineResult,
+  WorkflowStageFailureError,
   WorkflowStageLimitError,
 } from "../orchestration/session";
 import { StageLimitError, type StageLimitReason } from "../orchestration/stage-limits";
@@ -374,8 +375,17 @@ export class RunCoordinator {
         return undefined;
       }
       if (checkpoint.workflowState.phase !== "research") throw error;
+      const failedState =
+        error instanceof WorkflowStageFailureError
+          ? {
+              ...checkpoint.workflowState,
+              runIds: [...checkpoint.workflowState.runIds, error.runId],
+              stageMetrics: [...(checkpoint.workflowState.stageMetrics ?? []), error.metrics],
+            }
+          : checkpoint.workflowState;
       this.save({
         ...this.persisted.value,
+        workflowState: failedState,
         pause: {
           phase: "research",
           code: "research_rejected",
