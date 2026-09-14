@@ -6,6 +6,13 @@ Only unresolved work belongs here. Current behavior is in
 
 ## Current priority
 
+- [next] **Headless SessionManager and minimal Telegram driver**: implement the
+  2026-09-14 roadmap decision: safe allowed-root project bindings/creation,
+  per-driver project/profile selection, durable Orchestrator sessions and event
+  cursors, then the trusted personal-chat long-polling driver. Command schemas
+  must provide argument validation and command-specific no-argument help with an
+  example from one source.
+
 - [high] **Reserve stage capacity for synthesis and verification**: expose
   remaining cumulative time/model/tool/token/cost budgets to the active role
   after tool turns. Input-token and four-turn reserves are delivered, and final
