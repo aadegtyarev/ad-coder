@@ -27,9 +27,9 @@ work lives in `docs/BACKLOG.md`.
 | Authentication | `src/auth/` | Store credentials outside target projects and expose secret-free status. |
 | Model inventories | `src/inventory/` | Validate and resolve a named atomic registry plus complexity-routing profile. |
 | Registry and profiles | `src/registry/`, `src/profiles/` | Resolve providers, models, role routing, and effective configuration. |
-| Portable user profile | `src/user-profile/` | Persist validated inventories, calibrated routing, and append-only economics behind atomic writes and a cross-process lock; expose deterministic import/export and atomic `profile record` through the JSON CLI. |
-| Project calibration | `src/project-calibration/` | Materialize a bounded anonymous current snapshot at `.ad-coder/calibration.json`; matching named inventories consume its routing automatically, with an API switch to disable the override. |
-| Stage-attempt accounting | `src/orchestration/session.ts`, `src/project-operations/run-coordinator.ts` | Tee every role response into a readable ledger and persist partial metrics/run identity before a stage-limit pause, so resumed terminal economics include failed attempts. |
+| Portable user profile | `src/user-profile/` | Atomically persist validated inventories, calibrated routing, and append-only economics; expose deterministic JSON import, export, and recording. |
+| Project calibration | `src/project-calibration/` | Materialize a bounded anonymous snapshot at `.ad-coder/calibration.json`; matching inventories consume its routing unless an API switch disables it. |
+| Stage-attempt accounting | `src/orchestration/session.ts`, `src/project-operations/run-coordinator.ts` | Persist partial metrics and role identity before a limit pause, then resume without losing accepted-result economics. |
 | Roles and prompts | `src/role.ts`, `src/prompts/`, `prompts/` | Validate roles, resolve built-in or project prompts, and compose versioned model-inventory Researcher briefs without persisting content. |
 | Runner | `src/runner/` | Execute one role turn with tools rooted at the target directory. |
 | Context | `src/context/` | Enforce context budgets and optional ad-coder-owned compaction. |
@@ -44,28 +44,22 @@ work lives in `docs/BACKLOG.md`.
 
 ### One role
 
-`runRole` drives one validated role with target-rooted tools and a numeric
-ledger. The target is a working directory, not a sandbox. The standalone `role`
-front streams bounded activity and removes pipeline submission tools. It
-checkpoints identity, task digest, status, usage, and pauses under
-`.ad-coder/runs/standalone-<runId>.json`; resume validates identity and task,
-requires the exhausted limit to change, and retains cumulative budgets. SIGINT
-and SIGTERM abort the active lane, close the in-process resources, and persist
-an `interrupted` pause that can be resumed without changing a budget.
+`runRole` drives one validated role with target-rooted tools and a numeric ledger;
+the target is a working directory, not a sandbox. The standalone `role` front
+streams bounded activity, removes pipeline submission tools, and checkpoints
+identity, task digest, usage, and pauses. Resume validates identity/task and an
+increased exhausted limit. SIGINT/SIGTERM persist a resumable `interrupted` pause.
 
 Incremental reviewer context projects both tracked diffs and validated untracked
 UTF-8 files under one byte ceiling; credential-like lines are redacted before
 the projection is handed to a role.
 
-Stage limits resolve as built-in global defaults, then built-in role defaults,
-then caller global overrides, then caller role overrides. Explicit zero remains
-a disabled limit. The resolver applies the selected role limits to both workflow
-turns and the standalone `role` command.
+Stage limits resolve as built-in global, built-in role, caller global, then caller
+role defaults; zero disables a limit. The selected role limits apply to workflows
+and standalone `role`.
 
-When a dispatched Researcher stage fails after receiving provider responses, its
-durable `research_rejected` pause retains the run ID and aggregated numeric ledger
-metrics. The original error is preserved for control flow; raw provider content
-is never copied into the checkpoint.
+After a dispatched Researcher failure, `research_rejected` retains run ID and
+numeric metrics, never raw provider content.
 
 ### Tool activity flow
 
@@ -195,11 +189,10 @@ a model. Per-run overrides win over profile entries. The Planner uses the
 configured default complexity before it has produced a rating; later roles use
 the submitted rating.
 
-Configuration follows `docs/contracts/config.md`: behavior with a reasonable
-alternative is configurable, defaults favor efficient operation, and numeric
-resource limits use zero to mean disabled unless a separate mandatory safety
-ceiling is documented. `config show` exposes effective values and their sources
-without returning credential material.
+Configuration follows `docs/contracts/config.md`: reasonable alternatives are
+configurable, defaults favor efficiency, and numeric limits use zero for disabled
+unless a mandatory safety ceiling says otherwise. `config show` exposes effective
+values and sources without credentials.
 
 The Planner instruction derives allowed canonical IDs from validation's
 `CONTRACT_INDEX`, avoiding speculative research and duplicate identifier sources.
@@ -207,19 +200,13 @@ The Planner instruction derives allowed canonical IDs from validation's
 Coder omits `explore_project`; Planner uses bounded projections; Reviewer retains
 independent reconnaissance.
 
-Each role controller meters admissions, input, cost, and time. Closeout predicts
-input and removes final-request tools, preserving 30 seconds, 4 turns, 8 tool turns, and 100,000
-input tokens by default; zero disables each.
-`RunCoordinator` checkpoints a
-`stage_limit` pause before returning, so completed earlier phases remain committed
-and an operator can change the configured limit and resume the incomplete phase
-with `drive --resume-run <id>`. The CLI prints the coordinator run ID and checkpoint
-path on pause. New checkpoints bind to a digest of the original task; a mismatched
-task or unknown resume ID fails instead of starting unrelated work.
-An explicitly rejected Researcher result is retried with
-`drive --resume-run <id> --retry-research`. This clears only a research pause and
-re-prepares its durable dispatch; it preserves the accepted Planner result and
-refuses use without an existing run.
+Each role controller meters admissions, input, cost, and time. Closeout reserves
+30 seconds, 4 turns, 8 tool turns, and 100,000 input tokens by default; zero
+disables each. `RunCoordinator` checkpoints `stage_limit` before returning, so
+earlier phases remain committed and `drive --resume-run <id>` can continue after
+a configured increase. Checkpoints bind the task digest; mismatches and unknown
+IDs fail. `--retry-research` clears only a rejected research pause and preserves
+the accepted Planner result.
 
 ## Context, usage, and recovery
 

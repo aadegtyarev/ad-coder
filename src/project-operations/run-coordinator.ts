@@ -353,12 +353,40 @@ export class RunCoordinator {
       result = await this.session.step(checkpoint.workflowState);
     } catch (error) {
       if (error instanceof StageLimitError) {
+        const activePhase = checkpoint.workflowState.phase;
+        const resumablePhase =
+          activePhase === "plan" ||
+          activePhase === "security" ||
+          activePhase === "code" ||
+          activePhase === "review";
         const failedState =
           error instanceof WorkflowStageLimitError
             ? {
                 ...checkpoint.workflowState,
                 runIds: [...checkpoint.workflowState.runIds, error.runId],
                 stageMetrics: [...(checkpoint.workflowState.stageMetrics ?? []), error.metrics],
+                ...(!resumablePhase
+                  ? {}
+                  : {
+                      activeStage: {
+                        phase: activePhase,
+                        step: error.metrics.stage,
+                        runId: error.runId,
+                        metrics: error.metrics,
+                        ...(error.snapshot === undefined
+                          ? {}
+                          : {
+                              snapshot: {
+                                elapsedMs: error.snapshot.elapsedMs,
+                                modelTurns: error.snapshot.modelTurns,
+                                toolTurns: error.snapshot.toolTurns,
+                                inputTokens: error.snapshot.inputTokens,
+                                lastInputTokens: error.snapshot.lastInputTokens,
+                                costUsd: error.snapshot.costUsd,
+                              },
+                            }),
+                      },
+                    }),
               }
             : checkpoint.workflowState;
         this.save({

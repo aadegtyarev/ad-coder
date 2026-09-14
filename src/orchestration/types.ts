@@ -419,6 +419,26 @@ export interface PipelineStageMetrics {
   pipelineContextFallbackReason?: PipelineContextFallbackReason;
 }
 
+/** Accounting snapshot required to continue an interrupted durable role turn. */
+export interface StageResumeSnapshot {
+  elapsedMs: number;
+  modelTurns: number;
+  toolTurns: number;
+  inputTokens: number;
+  lastInputTokens: number;
+  costUsd: number;
+}
+
+/** A durable role operation that was paused before its stage could settle. */
+export interface ActiveWorkflowStage {
+  phase: Exclude<WorkflowPhase, "done">;
+  step: string;
+  runId: string;
+  /** Present only after a paused attempt has produced durable accounting. */
+  metrics?: PipelineStageMetrics;
+  snapshot?: StageResumeSnapshot;
+}
+
 export type PipelineContextMode = "incremental" | "full" | "off";
 export type PipelineContextSelection = "broad" | "focused" | "full";
 export type PipelineContextFallbackReason =
@@ -586,6 +606,8 @@ export interface WorkflowState {
   runIds: string[];
   /** Completed-stage observations, retained in stable execution order. */
   stageMetrics?: PipelineStageMetrics[];
+  /** A paused durable role session, resumed before a new role session is admitted. */
+  activeStage?: ActiveWorkflowStage;
   /** Most recent safe handoff decision, retained for deterministic resume. */
   pipelineContext?: PipelineContextSnapshot;
   /** True once a `stop` edge has settled the run; the driver loop stops stepping. */
