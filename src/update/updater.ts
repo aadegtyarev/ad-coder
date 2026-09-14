@@ -6,6 +6,7 @@ export type UpdateErrorCode =
   | "dirty_checkout"
   | "detached_head"
   | "missing_upstream"
+  | "invalid_revision"
   | "command_failed";
 
 export class UpdateError extends Error {
@@ -31,6 +32,7 @@ export type UpdateCommandRunner = (
 ) => Promise<UpdateCommandResult>;
 
 export interface UpdateResult {
+  mode: "linked-checkout" | "global-github";
   checkoutDir: string;
   branch: string;
   upstream: string;
@@ -42,8 +44,12 @@ export interface UpdateResult {
 export interface UpdateOptions {
   checkoutDir: string;
   run: UpdateCommandRunner;
-  onStep?: (step: "pull" | "install" | "link") => void;
+  onStep?: (step: "resolve" | "pull" | "install" | "link") => void;
 }
+
+const GITHUB_REMOTE = "git@github.com:aadegtyarev/ad-coder.git";
+const GITHUB_PACKAGE = "github:aadegtyarev/ad-coder";
+const SAFE_GIT_REVISION = /^[0-9a-f]{40}$/;
 
 async function requireCommand(
   run: UpdateCommandRunner,
@@ -142,11 +148,49 @@ export async function updateCheckout(options: UpdateOptions): Promise<UpdateResu
     "revision",
   );
   return {
+    mode: "linked-checkout",
     checkoutDir,
     branch,
     upstream,
     previousRevision,
     revision,
     changed: revision !== previousRevision,
+  };
+}
+
+/** Update either a development checkout or a global Bun GitHub installation. */
+export async function updateAdCoder(options: UpdateOptions): Promise<UpdateResult> {
+  const packageDir = fs.realpathSync(options.checkoutDir);
+  if (fs.existsSync(path.join(packageDir, ".git"))) return updateCheckout(options);
+
+  options.onStep?.("resolve");
+  const remote = await requireCommand(
+    options.run,
+    packageDir,
+    ["git", "ls-remote", GITHUB_REMOTE, "refs/heads/main"],
+    "resolve",
+  );
+  const revision = remote.split(/\s+/u)[0] ?? "";
+  if (!SAFE_GIT_REVISION.test(revision))
+    throw new UpdateError(
+      "invalid_revision",
+      "main",
+      "GitHub returned an invalid main revision; installation was not changed",
+    );
+  options.onStep?.("install");
+  await requireCommand(
+    options.run,
+    packageDir,
+    ["bun", "add", "--global", "--force", `${GITHUB_PACKAGE}#${revision}`],
+    "install",
+  );
+  return {
+    mode: "global-github",
+    checkoutDir: packageDir,
+    branch: "main",
+    upstream: GITHUB_REMOTE,
+    previousRevision: "unknown",
+    revision,
+    changed: true,
   };
 }

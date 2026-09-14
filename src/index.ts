@@ -536,7 +536,7 @@ export type {
   UpdateOptions,
   UpdateResult,
 } from "./update/updater";
-export { UpdateError, updateCheckout } from "./update/updater";
+export { UpdateError, updateAdCoder, updateCheckout } from "./update/updater";
 export * from "./user-profile";
 export type {
   ExtractedPage,

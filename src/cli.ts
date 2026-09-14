@@ -106,7 +106,7 @@ import type { Tool } from "./runner/tool";
 import type { SessionLimits } from "./session-limits";
 import { SessionLimitController } from "./session-limits";
 import { SkillResolutionError } from "./skills/resolver";
-import { updateCheckout } from "./update/updater";
+import { updateAdCoder } from "./update/updater";
 import {
   createDefaultUserProfileStore,
   exportUserProfile,
@@ -2459,12 +2459,12 @@ const COMMANDS: readonly CommandDefinition[] = [
   },
   {
     name: "update",
-    description: "Safely update a linked Git checkout and refresh its Bun link.",
+    description: "Update the global GitHub install or a linked Git checkout.",
     positionals: [],
     options: [{ name: "--json", description: "Emit a stable JSON result." }],
     run: async ({ positionals, booleans }) => {
       if (positionals[1] !== undefined) fail("the update command accepts no positional arguments");
-      const result = await updateCheckout({
+      const result = await updateAdCoder({
         checkoutDir: path.resolve(import.meta.dir, ".."),
         run: async (argv, cwd) => {
           const child = spawnSync(argv[0] as string, argv.slice(1), {
