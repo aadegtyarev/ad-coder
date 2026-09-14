@@ -2,7 +2,25 @@ import * as fs from "node:fs";
 
 interface Finding {
   code: string;
-  blocking: boolean;
+  blocking?: boolean;
+  severity?: string;
+}
+
+/**
+ * Whether a finding is raised as blocking.
+ *
+ * An explicit `blocking` is always honoured, in both directions: a model that
+ * deliberately marks a finding non-blocking must not be credited for it. But a
+ * model that OMITS the field while carrying `severity: "blocker"` has said the
+ * same thing under a different name, and the point of this scorer is to read
+ * what the review actually claims rather than which key it chose. Omitting the
+ * requested field is still an instruction-following miss -- it belongs in the
+ * acceptance signal, not in silently zeroing an otherwise correct review.
+ */
+function isBlocking(finding: Finding): boolean {
+  if (typeof finding.blocking === "boolean") return finding.blocking;
+  const severity = (finding.severity ?? "").toLowerCase();
+  return severity === "blocker" || severity === "blocking" || severity === "critical";
 }
 
 /**
@@ -34,9 +52,7 @@ const end = raw.lastIndexOf("]");
 if (end < 0) throw new Error("reviewer artifact must contain a JSON array");
 const findings = JSON.parse(raw.slice(0, end + 1)) as Finding[];
 
-const blocking = findings
-  .filter((finding) => finding.blocking)
-  .map((finding) => tokens(finding.code));
+const blocking = findings.filter(isBlocking).map((finding) => tokens(finding.code));
 
 /** True when some blocking finding's code carries every word in one of the groups. */
 const matches = (...groups: string[][]): boolean =>

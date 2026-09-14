@@ -54,7 +54,10 @@ All notable changes to ad-coder are recorded here. The format follows
   reviews that found every seeded defect with executed evidence and correctly
   refused the tempting false positive scored 0.2. Codes are now reduced to word
   tokens and matched on a PAIR of words naming the specific defect, so a vague
-  finding still fails and a non-blocking one still does not count.
+  finding still fails and a non-blocking one still does not count. A finding
+  that omits `blocking` but carries `severity: "blocker"` is read as blocking:
+  an explicit `blocking: false` still wins, so a deliberate non-blocking finding
+  is never credited.
 
 ### Security
 
