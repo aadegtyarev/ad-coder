@@ -107,7 +107,7 @@ import type { Tool } from "./runner/tool";
 import type { SessionLimits } from "./session-limits";
 import { SessionLimitController } from "./session-limits";
 import { SkillResolutionError } from "./skills/resolver";
-import { updateAdCoder } from "./update/updater";
+import { UpdateError, updateAdCoder } from "./update/updater";
 import {
   createDefaultUserProfileStore,
   exportUserProfile,
@@ -128,10 +128,13 @@ const PROVIDERS = ["deepseek", "openrouter", "openai-codex"] as const;
 const COMPLEXITIES = ["trivial", "medium", "complex"] as const;
 let operationsJsonFront = false;
 let consoleJsonFront = false;
+let updateJsonFront = false;
 const DEFAULT_HEARTBEAT_MS = 10_000;
 
 function fail(message: string): never {
-  if (operationsJsonFront) {
+  // Any machine front gets the structured shape; only a human front gets the
+  // help text, which would otherwise corrupt a caller parsing stderr.
+  if (operationsJsonFront || consoleJsonFront || updateJsonFront) {
     process.stderr.write(`${JSON.stringify({ error: { code: "usage", detail: message } })}\n`);
     process.exit(2);
   }
@@ -2940,6 +2943,7 @@ async function main(argv: string[]): Promise<void> {
   }
   const commandName = argv[0];
   consoleJsonFront = commandName === "console" && argv.slice(1).includes("--json");
+  updateJsonFront = commandName === "update" && argv.slice(1).includes("--json");
   operationsJsonFront =
     commandName === "operations" ||
     commandName === "control" ||
@@ -2959,34 +2963,49 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/**
+ * Project a failed CLI invocation into the record a machine front reads.
+ * Exported so the shape is testable as public behavior rather than only through
+ * a process spawn (`docs/contracts/errors.md`, `docs/contracts/architecture.md`).
+ */
+export function projectCliError(error: unknown): Record<string, unknown> {
+  if (error instanceof UpdateError)
+    return {
+      code: error.code,
+      detail: error.detail,
+      text: error.message,
+      retryable: error.retryable,
+      ...(error.nextAction === undefined ? {} : { nextAction: error.nextAction }),
+    };
+  if (error instanceof SkillResolutionError)
+    return {
+      code: `skill_${error.code}`,
+      text: error.message,
+      retryable: false,
+      nextAction: error.nextAction,
+    };
+  if (error instanceof UserProfileError) return { code: error.code, detail: error.detail };
+  if (error instanceof ProjectOperationsError) return { code: error.code, detail: error.detail };
+  if (error instanceof ProjectStoreError) return { code: error.code, detail: error.path };
+  if (error instanceof BackgroundRunError) return { code: error.code, detail: error.detail };
+  return { code: "internal_error" };
+}
+
+/** Render a failed CLI invocation as the human line, including its recovery action. */
+export function renderCliError(error: unknown): string {
+  const action = error instanceof UpdateError ? error.nextAction : undefined;
+  return `ad-coder: ${errorMessage(error)}${action === undefined ? "" : `; ${action}`}\n`;
+}
+
 // Only run when invoked as the entry point, so importing this module for tests
 // (e.g. to exercise runRoleStandalone) does not fire the CLI dispatch.
 if (import.meta.main) {
   try {
     await main(process.argv.slice(2));
   } catch (error) {
-    if (operationsJsonFront || consoleJsonFront) {
-      const payload =
-        error instanceof SkillResolutionError
-          ? {
-              code: `skill_${error.code}`,
-              text: error.message,
-              retryable: false,
-              nextAction: error.nextAction,
-            }
-          : error instanceof UserProfileError
-            ? { code: error.code, detail: error.detail }
-            : error instanceof ProjectOperationsError
-              ? { code: error.code, detail: error.detail }
-              : error instanceof ProjectStoreError
-                ? { code: error.code, detail: error.path }
-                : error instanceof BackgroundRunError
-                  ? { code: error.code, detail: error.detail }
-                  : { code: "internal_error" };
-      process.stderr.write(`${JSON.stringify({ error: payload })}\n`);
-    } else {
-      process.stderr.write(`ad-coder: ${errorMessage(error)}\n`);
-    }
+    if (operationsJsonFront || consoleJsonFront || updateJsonFront)
+      process.stderr.write(`${JSON.stringify({ error: projectCliError(error) })}\n`);
+    else process.stderr.write(renderCliError(error));
     process.exit(1);
   } finally {
     closeOpenAICodexWebSocketSessions();

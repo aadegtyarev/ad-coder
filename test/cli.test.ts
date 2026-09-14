@@ -4,9 +4,11 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { AuthInteraction, Models } from "@earendil-works/pi-ai";
 import { FileCredentialStore } from "../src/auth/credential-store";
+import { projectCliError, renderCliError } from "../src/cli";
 import { renderAuthEvent, runAuthCommand } from "../src/cli/auth";
 import type { DurableRunRecord } from "../src/orchestration/control-plane";
 import { ProjectStore } from "../src/project-store/project-store";
+import { UpdateError } from "../src/update/updater";
 
 const REPO_ROOT = path.resolve(import.meta.dir, "..");
 const CLI = path.join(REPO_ROOT, "src/cli.ts");
@@ -1123,4 +1125,61 @@ test("a workflow that throws exits 1 with only the error message", () => {
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("a machine front projects an update failure with its code, retryability, and action", () => {
+  const mismatch = new UpdateError("install_mismatch", "9e8c433", "left 9e8c433 installed", {
+    retryable: false,
+    nextAction: "remove the stale entry from ~/.bun/install/global/bun.lock",
+  });
+  expect(projectCliError(mismatch)).toEqual({
+    code: "install_mismatch",
+    detail: "9e8c433",
+    text: "left 9e8c433 installed",
+    retryable: false,
+    nextAction: "remove the stale entry from ~/.bun/install/global/bun.lock",
+  });
+
+  // An error without a recovery omits the key rather than projecting an empty one.
+  const bare = new UpdateError("not_checkout", "/dir", "no checkout");
+  expect(projectCliError(bare)).toEqual({
+    code: "not_checkout",
+    detail: "/dir",
+    text: "no checkout",
+    retryable: false,
+  });
+
+  // An unrecognized failure never leaks its text into the machine record.
+  expect(projectCliError(new Error("secret internals"))).toEqual({ code: "internal_error" });
+});
+
+test("a human front states the update failure and its recovery action on one line", () => {
+  const failure = new UpdateError("install_mismatch", "9e8c433", "left 9e8c433 installed", {
+    retryable: false,
+    nextAction: "repair the global lockfile",
+  });
+  expect(renderCliError(failure)).toBe(
+    "ad-coder: left 9e8c433 installed; repair the global lockfile\n",
+  );
+  // An error carrying no action renders exactly as it did before, with no stray separator.
+  expect(renderCliError(new Error("plain failure"))).toBe("ad-coder: plain failure\n");
+  expect(renderCliError(new UpdateError("not_checkout", "/dir", "no checkout"))).toBe(
+    "ad-coder: no checkout\n",
+  );
+});
+
+test("a usage error under a machine front stays machine-readable instead of printing help", () => {
+  for (const args of [
+    ["update", "--json", "stray"],
+    ["console", "--json", "stray"],
+  ]) {
+    const { code, stdout, stderr } = runCli(args);
+    expect(code).toBe(2);
+    expect(stdout).toBe("");
+    expect(JSON.parse(stderr.trim()).error).toMatchObject({ code: "usage" });
+    // The root help would corrupt a caller parsing stderr as JSON.
+    expect(stderr).not.toContain("usage: ad-coder <command> [options]");
+  }
+  // A human front keeps the help text it has always printed.
+  expect(runCli(["update", "stray"]).stderr).toContain("usage: ad-coder <command> [options]");
 });

@@ -25,8 +25,12 @@ Then update it without remembering the Git command:
 ad-coder update
 ```
 
-The updater resolves GitHub `main` and installs its exact commit SHA so Bun cannot
-silently reuse a stale Git lock. For development, a linked checkout remains supported:
+The updater resolves GitHub `main`, installs its exact commit SHA, then reads back
+the revision Bun actually recorded and fails rather than reporting success when the
+two disagree. A stale global lockfile pin makes `bun add --force` reinstall the
+previous revision and still exit zero; that case now surfaces as `install_mismatch`
+with the lockfile to repair, and `install_unverifiable` when no installed revision
+can be read at all. For development, a linked checkout remains supported:
 
 ```sh
 git clone https://github.com/aadegtyarev/ad-coder.git

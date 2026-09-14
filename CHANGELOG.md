@@ -6,6 +6,45 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-14
+
+### Fixed
+
+- `ad-coder update` no longer reports a global GitHub install as changed without
+  verifying it. It now reads the installed revision before and after `bun add`,
+  reports the real `previousRevision`, and derives `changed` from the comparison
+  instead of hardcoding both. A stale pin in the global lockfile makes
+  `bun add --global --force` reinstall the previous revision and still exit zero;
+  that outcome now fails with the typed `install_mismatch` code naming the
+  lockfile to repair, and `install_unverifiable` when no installed revision can
+  be read at all.
+- `UpdateError` now carries `retryable` and a next action, and `ad-coder update`
+  projects both — as a structured record under `--json` and as recovery text on
+  stderr otherwise — instead of emitting a bare message.
+
+- Every `ad-coder update` failure now projects a recovery action, not only the
+  two new verification codes: `not_checkout`, `dirty_checkout`, `detached_head`,
+  `missing_upstream`, `invalid_revision`, and `command_failed` each name the next
+  step, and a runner that cannot spawn is translated into a typed
+  `command_failed` that keeps its causal error for programmatic callers.
+- A usage error under `ad-coder update --json` or `ad-coder console --json` now
+  emits the structured `usage` record instead of prose followed by the whole
+  root help text, which corrupted stderr for a caller parsing it as JSON.
+
+### Added
+
+- Exported `readInstalledRevision` and the `UpdateErrorOptions` type from the
+  library entry point, and an injectable `readInstalledRevision` hook on
+  `UpdateOptions` so an install can be verified without a real Bun installation.
+- Exported `projectCliError` and `renderCliError` from the CLI module so the
+  machine and human failure shapes are reachable and testable without spawning
+  a process.
+- Widened two existing public types compatibly: `UpdateOptions.onStep` gained
+  the `"verify"` step, and `UpdateErrorCode` gained `install_mismatch` and
+  `install_unverifiable`. A consumer that annotates either narrowly by hand
+  needs its annotation widened; runtime behavior for existing callers is
+  unchanged.
+
 ## [0.4.0] - 2026-09-14
 
 ### Added
