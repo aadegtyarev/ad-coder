@@ -6,6 +6,44 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-14
+
+### Added
+
+- `/help` console command listing every console command with its usage,
+  description, and an example, and naming `--workflows pipeline` for the
+  commands the session did not enable.
+- Exported the console command registry (`CONSOLE_COMMANDS`,
+  `consoleCommandUsage`, `consoleCommandNames`, `findConsoleCommand`) and the
+  typed `ConsoleControlFailure` projection from the library entry point.
+- `/help` now explains each command argument individually in both the formatted
+  and JSON projections, rather than only naming it in the usage line.
+
+### Changed
+
+- Console command dispatch, argument validation, failure guidance, and help now
+  render from one command registry instead of a hand-maintained usage string.
+  `/exit` is dispatched through its registry entry rather than a literal name.
+- Every console failure, including interruption, session limits, empty provider
+  turns, turn failures, oversized input, unreadable input, and a failed session
+  close, now reports the same typed projection with a recovery action and
+  retryability instead of a bare code. Oversized input, unreadable input, and a
+  failed close previously had no machine-mode record at all.
+- Console failures now report a stable `code` with the failed command, concise
+  text naming the failure, a `retryable` flag, and one recovery action in both
+  the formatted and `console_error` JSON projections.
+
+### Fixed
+
+- Replaced the identical, unhelpful guidance every failed console command
+  printed, which listed neither `/help` nor `/exit` and never explained why the
+  command failed.
+- Sanitized terminal control sequences out of the machine-mode `console_error`
+  record; `JSON.stringify` leaves C1 controls intact, so untrusted command text
+  could reach a terminal reading JSON output.
+- Preserved the originating manager error as `cause` on `ConsoleControlError`
+  for programmatic callers while still projecting only safe fields.
+
 ## [0.3.4] - 2026-09-14
 
 ### Fixed

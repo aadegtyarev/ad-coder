@@ -3,6 +3,14 @@ import { PassThrough, Readable, Writable } from "node:stream";
 import { createModels, fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 import { runConsole } from "../src/cli/console";
 import {
+  CONSOLE_COMMANDS,
+  ConsoleControlError,
+  consoleCommandNames,
+  consoleCommandUsage,
+  executeConsoleControl,
+  findConsoleCommand,
+} from "../src/conversation/console-control";
+import {
   type ConversationSession,
   type ConversationTurnResult,
   startConversation,
@@ -127,7 +135,8 @@ test("counts UTF-8 bytes across chunks and rejects an oversized line before step
   expect(result).toEqual({ reason: "input_too_large", completedTurns: 0 });
   expect(session.inputs).toEqual([]);
   expect(session.closes).toBe(1);
-  expect(error.text()).toBe("ad-coder: input line exceeds the configured byte limit\n");
+  expect(error.text()).toContain("input line exceeds the configured byte limit");
+  expect(error.text()).toContain("send a shorter line");
 });
 
 test("reports a cooperative interruption separately from a provider failure", async () => {
@@ -269,7 +278,13 @@ test("typed session exhaustion stops input with no fabricated JSON record", asyn
   expect(output.text()).toBe("");
   expect(error.text()).toBe(
     '{"type":"progress","event":"started","stage":"console-turn","elapsedSeconds":0}\n' +
-      '{"type":"console_error","code":"session_limit"}\n',
+      `${JSON.stringify({
+        type: "console_error",
+        code: "session_limit",
+        message: "session resource limit reached",
+        action: "restart the console to start a session with a fresh budget",
+        retryable: false,
+      })}\n`,
   );
 });
 
@@ -1015,4 +1030,465 @@ test("zero heartbeat keeps the immediate stage event and disables only periodic 
   expect(progress).toEqual([
     { type: "progress", event: "started", stage: "console-turn", elapsedSeconds: 0 },
   ]);
+});
+
+test("/help lists every console command with usage and an example from the registry", async () => {
+  const session = fakeSession();
+  const output = new Capture();
+  await runConsole({
+    session,
+    input: Readable.from("/help\n/exit\n"),
+    output,
+    error: new Capture(),
+    mode: "json",
+  });
+
+  expect(session.inputs).toEqual([]);
+  const record = JSON.parse(output.text().trim()) as {
+    type: string;
+    commands: Array<{
+      name: string;
+      usage: string;
+      description: string;
+      example: string;
+      available: boolean;
+      unavailableAction?: string;
+    }>;
+  };
+  expect(record.type).toBe("console_help");
+  expect(record.commands.map((command) => command.name)).toEqual(
+    CONSOLE_COMMANDS.map((command) => command.name),
+  );
+  for (const command of record.commands) {
+    expect(command.usage.startsWith(command.name)).toBe(true);
+    expect(command.description.length).toBeGreaterThan(0);
+    expect(command.example.startsWith(command.name)).toBe(true);
+  }
+  // Without a background manager the background commands are reported as
+  // unavailable WITH the action that enables them, never silently listed.
+  const list = record.commands.find((command) => command.name === "/list");
+  expect(list?.available).toBe(false);
+  expect(list?.unavailableAction).toContain("--workflows pipeline");
+  expect(record.commands.find((command) => command.name === "/exit")?.available).toBe(true);
+});
+
+test("/help marks background commands available once the session enables them", async () => {
+  const session = fakeSession() as unknown as ConversationSession & {
+    backgroundRuns: BackgroundRunManager;
+  };
+  session.backgroundRuns = { list: () => [] } as unknown as BackgroundRunManager;
+  const output = new Capture();
+  await runConsole({
+    session,
+    input: Readable.from("/help\n/exit\n"),
+    output,
+    error: new Capture(),
+    mode: "json",
+  });
+
+  const record = JSON.parse(output.text().trim()) as {
+    commands: Array<{ name: string; available: boolean; unavailableAction?: string }>;
+  };
+  const list = record.commands.find((command) => command.name === "/list");
+  expect(list?.available).toBe(true);
+  expect(list?.unavailableAction).toBeUndefined();
+});
+
+test("a formatted /help renders one usage and example line per command", async () => {
+  const session = fakeSession();
+  const output = new Capture();
+  await runConsole({
+    session,
+    input: Readable.from("/help\n/exit\n"),
+    output,
+    error: new Capture(),
+    mode: "formatted",
+  });
+
+  const text = output.text();
+  for (const command of CONSOLE_COMMANDS) {
+    expect(text).toContain(consoleCommandUsage(command));
+    expect(text).toContain(`example: ${command.example}`);
+  }
+});
+
+test("a missing run identifier names the command, the cause, and its usage", async () => {
+  const session = fakeSession() as unknown as ConversationSession & {
+    backgroundRuns: BackgroundRunManager;
+  };
+  session.backgroundRuns = { list: () => [] } as unknown as BackgroundRunManager;
+  const error = new Capture();
+  await runConsole({
+    session,
+    input: Readable.from("/status\n/exit\n"),
+    output: new Capture(),
+    error,
+    mode: "json",
+  });
+
+  const record = JSON.parse(error.text().trim()) as {
+    type: string;
+    code: string;
+    command: string;
+    message: string;
+    action: string;
+    retryable: boolean;
+  };
+  expect(record.type).toBe("console_error");
+  expect(record.code).toBe("invalid_command");
+  expect(record.command).toBe("/status");
+  expect(record.message).toContain("requires a background run identifier");
+  expect(record.action).toContain("/status <run-id>");
+  expect(record.action).toContain("example: /status ");
+  expect(record.retryable).toBe(true);
+});
+
+test("an unavailable background command names the flag that enables it", async () => {
+  const session = fakeSession();
+  const error = new Capture();
+  await runConsole({
+    session,
+    input: Readable.from("/list\n/exit\n"),
+    output: new Capture(),
+    error,
+    mode: "json",
+  });
+
+  const record = JSON.parse(error.text().trim()) as {
+    code: string;
+    command: string;
+    action: string;
+    retryable: boolean;
+  };
+  expect(record.code).toBe("not_available");
+  expect(record.command).toBe("/list");
+  expect(record.action).toContain("--workflows pipeline");
+  // Retrying the identical command in this session cannot succeed.
+  expect(record.retryable).toBe(false);
+});
+
+test("an unknown console command points at /help instead of a hardcoded list", async () => {
+  const session = fakeSession();
+  const error = new Capture();
+  await runConsole({
+    session,
+    input: Readable.from("/nope\n/exit\n"),
+    output: new Capture(),
+    error,
+    mode: "json",
+  });
+
+  // An unknown slash command must never be forwarded to the model as a prompt.
+  expect(session.inputs).toEqual([]);
+  const record = JSON.parse(error.text().trim()) as {
+    code: string;
+    message: string;
+    action: string;
+    retryable: boolean;
+  };
+  expect(record.code).toBe("unknown_command");
+  expect(record.message).toContain("/nope");
+  expect(record.action).toContain("/help");
+  expect(record.retryable).toBe(true);
+});
+
+test("a formatted console failure states the cause and the next action", async () => {
+  const session = fakeSession();
+  const error = new Capture();
+  await runConsole({
+    session,
+    input: Readable.from("/list\n/exit\n"),
+    output: new Capture(),
+    error,
+    mode: "formatted",
+  });
+
+  const text = error.text();
+  expect(text).toContain("/list needs background runs");
+  expect(text).toContain("--workflows pipeline");
+  // The retired hand-maintained command list must not reappear.
+  expect(text).not.toContain("use /list, /events, /status, /result, /cancel, or /interrupt");
+});
+
+test("a terminal control sequence in an unknown command cannot reach the terminal", async () => {
+  const session = fakeSession();
+  const error = new Capture();
+  await runConsole({
+    session,
+    input: Readable.from("/\u001b[31mnope\n/exit\n"),
+    output: new Capture(),
+    error,
+    mode: "formatted",
+  });
+
+  expect(error.text()).not.toContain("\u001b");
+});
+
+test("a run the manager does not know reports not_found with a recovery action", async () => {
+  const session = fakeSession() as unknown as ConversationSession & {
+    backgroundRuns: BackgroundRunManager;
+  };
+  session.backgroundRuns = {
+    status: () => {
+      throw new Error("not_found");
+    },
+  } as unknown as BackgroundRunManager;
+  const error = new Capture();
+  await runConsole({
+    session,
+    input: Readable.from("/status 123e4567-e89b-12d3-a456-426614174000\n/exit\n"),
+    output: new Capture(),
+    error,
+    mode: "json",
+  });
+
+  const record = JSON.parse(error.text().trim()) as {
+    code: string;
+    command: string;
+    action: string;
+    retryable: boolean;
+  };
+  expect(record.code).toBe("not_found");
+  expect(record.command).toBe("/status");
+  expect(record.action).toContain("/list");
+  expect(record.retryable).toBe(false);
+});
+
+test("a result requested before termination stays retryable with a wait action", async () => {
+  const session = fakeSession() as unknown as ConversationSession & {
+    backgroundRuns: BackgroundRunManager;
+  };
+  session.backgroundRuns = {
+    result: () => {
+      throw new Error("not_terminal");
+    },
+  } as unknown as BackgroundRunManager;
+  const error = new Capture();
+  await runConsole({
+    session,
+    input: Readable.from("/result 123e4567-e89b-12d3-a456-426614174000\n/exit\n"),
+    output: new Capture(),
+    error,
+    mode: "json",
+  });
+
+  const record = JSON.parse(error.text().trim()) as {
+    code: string;
+    action: string;
+    retryable: boolean;
+  };
+  expect(record.code).toBe("not_terminal");
+  expect(record.action).toContain("/status");
+  expect(record.retryable).toBe(true);
+});
+
+test("every registered console command declares usage, a description, and an example", () => {
+  for (const command of CONSOLE_COMMANDS) {
+    expect(command.name.startsWith("/")).toBe(true);
+    expect(command.description.length).toBeGreaterThan(0);
+    expect(command.example.startsWith(command.name)).toBe(true);
+    expect(consoleCommandUsage(command).startsWith(command.name)).toBe(true);
+    // A required argument must precede every optional one in the usage line.
+    const required = command.args.map((argument) => argument.required);
+    expect([...required].sort((a, b) => Number(b) - Number(a))).toEqual(required);
+  }
+  expect(consoleCommandNames()).toContain("/help");
+  expect(consoleCommandNames()).toContain("/exit");
+});
+
+test("a C1 control sequence cannot reach a terminal through the JSON failure record", async () => {
+  const session = fakeSession();
+  const error = new Capture();
+  await runConsole({
+    session,
+    input: Readable.from("/\u009b31mnope\n/exit\n"),
+    output: new Capture(),
+    error,
+    mode: "json",
+  });
+
+  // JSON.stringify does not escape C1 controls, so the record is sanitized too.
+  expect(error.text()).not.toContain("\u009b");
+  expect(error.text()).not.toContain("\u001b");
+  const record = JSON.parse(error.text().trim()) as { code: string; message: string };
+  expect(record.code).toBe("unknown_command");
+  expect(record.message).not.toContain("\u009b");
+});
+
+test("every console failure projection carries a code, action, and retryability", async () => {
+  const cases: Array<{
+    session: ReturnType<typeof fakeSession>;
+    code: string;
+    retryable: boolean;
+  }> = [
+    {
+      session: fakeSession({ stepError: new Error("boom") }),
+      code: "turn_failed",
+      retryable: true,
+    },
+    {
+      session: fakeSession({ stepError: new SessionLimitError("turns", 1, 1) }),
+      code: "session_limit",
+      retryable: false,
+    },
+  ];
+  for (const { session, code, retryable } of cases) {
+    const error = new Capture();
+    await runConsole({
+      session,
+      input: Readable.from("hello\n"),
+      output: new Capture(),
+      error,
+      mode: "json",
+    });
+    const line = error
+      .text()
+      .trim()
+      .split("\n")
+      .find((entry) => entry.includes('"console_error"')) as string;
+    const record = JSON.parse(line) as {
+      type: string;
+      code: string;
+      message: string;
+      action: string;
+      retryable: boolean;
+    };
+    expect(record.type).toBe("console_error");
+    expect(record.code).toBe(code);
+    expect(record.message.length).toBeGreaterThan(0);
+    expect(record.action.length).toBeGreaterThan(0);
+    expect(record.retryable).toBe(retryable);
+  }
+});
+
+test("the console front dispatches every registered exit command, not one literal", async () => {
+  const exits = CONSOLE_COMMANDS.filter((command) => command.frontAction === "exit");
+  expect(exits.length).toBeGreaterThan(0);
+  // Driving the registry rather than the literal "/exit" means a command added
+  // to the registry cannot be silently unreachable from the front.
+  for (const command of exits) {
+    const session = fakeSession();
+    const result = await runConsole({
+      session,
+      input: Readable.from(`${command.name}\n`),
+      output: new Capture(),
+      error: new Capture(),
+      mode: "json",
+    });
+    expect(result.reason).toBe("exit");
+    expect(session.inputs).toEqual([]);
+  }
+  expect(findConsoleCommand("/exit")?.frontAction).toBe("exit");
+});
+
+test("a manager failure keeps its cause for programmatic callers only", () => {
+  const cause = new Error("not_found");
+  const manager = {
+    status: () => {
+      throw cause;
+    },
+  } as unknown as BackgroundRunManager;
+  let caught: unknown;
+  try {
+    executeConsoleControl("/status 123e4567-e89b-12d3-a456-426614174000", {
+      backgroundRuns: manager,
+      interrupt: async () => false,
+    });
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught).toBeInstanceOf(ConsoleControlError);
+  const failure = caught as ConsoleControlError;
+  expect(failure.cause).toBe(cause);
+  // The public projection never repeats the raw manager text.
+  expect(failure.failure.message).not.toContain("not_found");
+  expect(failure.failure.code).toBe("not_found");
+  expect(failure.failure.action).toContain("/list");
+});
+
+test("every declared registry field reaches an operator, so none can quietly rot", async () => {
+  const session = fakeSession();
+  const output = new Capture();
+  await runConsole({
+    session,
+    input: Readable.from("/help\n/exit\n"),
+    output,
+    error: new Capture(),
+    mode: "json",
+  });
+
+  const record = JSON.parse(output.text().trim()) as {
+    commands: Array<{
+      name: string;
+      args: Array<{ name: string; required: boolean; description: string }>;
+    }>;
+  };
+  for (const command of CONSOLE_COMMANDS) {
+    const rendered = record.commands.find((entry) => entry.name === command.name);
+    expect(rendered?.args.map((argument) => argument.name)).toEqual(
+      command.args.map((argument) => argument.name),
+    );
+    // A per-argument description is declared for every argument AND rendered.
+    for (const argument of command.args) {
+      const shown = rendered?.args.find((entry) => entry.name === argument.name);
+      expect(shown?.description).toBe(argument.description);
+      expect(argument.description.length).toBeGreaterThan(0);
+    }
+  }
+});
+
+test("a formatted /help explains each argument, not just the usage line", async () => {
+  const session = fakeSession();
+  const output = new Capture();
+  await runConsole({
+    session,
+    input: Readable.from("/help\n/exit\n"),
+    output,
+    error: new Capture(),
+    mode: "formatted",
+  });
+
+  const text = output.text();
+  for (const command of CONSOLE_COMMANDS)
+    for (const argument of command.args) expect(text).toContain(argument.description);
+});
+
+test("an over-arity failure counts arguments grammatically", async () => {
+  const session = fakeSession() as unknown as ConversationSession & {
+    backgroundRuns: BackgroundRunManager;
+  };
+  session.backgroundRuns = { list: () => [] } as unknown as BackgroundRunManager;
+  const error = new Capture();
+  await runConsole({
+    session,
+    input: Readable.from(
+      "/status 123e4567-e89b-12d3-a456-426614174000 123e4567-e89b-12d3-a456-426614174000\n/exit\n",
+    ),
+    output: new Capture(),
+    error,
+    mode: "json",
+  });
+
+  const record = JSON.parse(error.text().trim()) as { code: string; message: string };
+  expect(record.code).toBe("invalid_command");
+  expect(record.message).toContain("takes at most 1 argument");
+  expect(record.message).not.toContain("1 arguments");
+});
+
+test("a front command reaching control dispatch fails with an action the caller can take", () => {
+  const front = CONSOLE_COMMANDS.filter((command) => command.frontAction !== undefined);
+  expect(front.length).toBeGreaterThan(0);
+  for (const command of front) {
+    let caught: unknown;
+    try {
+      executeConsoleControl(command.name, { interrupt: async () => false });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(ConsoleControlError);
+    const failure = (caught as ConsoleControlError).failure;
+    // The action must not tell the caller to retype the command that just failed.
+    expect(failure.action).toContain("frontAction");
+    expect(failure.retryable).toBe(false);
+  }
 });

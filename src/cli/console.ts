@@ -2,6 +2,7 @@ import {
   ConsoleControlError,
   DEFAULT_CONSOLE_CONTROL_PAGE_SIZE,
   executeConsoleControl,
+  findConsoleCommand,
 } from "../conversation/console-control";
 import type {
   ConversationSession,
@@ -56,12 +57,59 @@ export interface ConsoleRunResult {
   completedTurns: number;
 }
 
-const INPUT_TOO_LARGE_MESSAGE = "ad-coder: input line exceeds the configured byte limit\n";
-const INPUT_FAILED_MESSAGE = "ad-coder: console input failed\n";
-const TURN_FAILED_MESSAGE = "ad-coder: console turn failed\n";
-const SESSION_LIMIT_MESSAGE = "ad-coder: session resource limit reached\n";
-const INTERRUPTED_MESSAGE = "ad-coder: current turn interrupted; session remains available\n";
-const CLOSE_FAILED_MESSAGE = "ad-coder: console session close failed\n";
+const INPUT_TOO_LARGE_FAILURE = {
+  code: "input_too_large",
+  message: "input line exceeds the configured byte limit",
+  // The byte ceiling is a programmatic runConsole parameter; the CLI exposes no
+  // flag for it, so the action must not name one.
+  action: "send a shorter line, or raise maxInputBytes when embedding runConsole",
+  // The same oversized line cannot succeed on a retry.
+  retryable: false,
+} as const;
+const INPUT_FAILED_FAILURE = {
+  code: "input_failed",
+  message: "console input failed",
+  action: "restart the console; the input stream is no longer readable",
+  retryable: false,
+} as const;
+const CLOSE_FAILED_FAILURE = {
+  code: "close_failed",
+  message: "console session close failed",
+  action: "check for background runs that outlived the session with: ad-coder background list",
+  retryable: false,
+} as const;
+
+/**
+ * Every console failure — control and turn alike — reaches stderr through this
+ * one projection: a stable `code`, safe text naming the failed operation,
+ * whether a retry can succeed, and the next action (docs/contracts/errors.md).
+ * Untrusted text is sanitized for BOTH projections, because a machine-mode JSON
+ * record is still read in a terminal and `JSON.stringify` does not escape C1
+ * control characters.
+ */
+function renderFailure(
+  failure: {
+    code: string;
+    command?: string;
+    message: string;
+    action: string;
+    retryable: boolean;
+  },
+  mode: ConsoleOutputMode,
+): string {
+  const message = sanitizeTerminalText(failure.message);
+  const action = sanitizeTerminalText(failure.action);
+  if (mode === "json")
+    return `${JSON.stringify({
+      type: "console_error",
+      code: failure.code,
+      ...(failure.command === undefined ? {} : { command: sanitizeTerminalText(failure.command) }),
+      message,
+      action,
+      retryable: failure.retryable,
+    })}\n`;
+  return `ad-coder: ${message}; ${action}\n`;
+}
 export const DEFAULT_CONSOLE_ESCAPE_SEQUENCE_TIMEOUT_MS = 1_000;
 
 interface TtyReadableStream extends NodeJS.ReadableStream {
@@ -186,7 +234,26 @@ function renderControl(
     };
   };
   let safe: Record<string, unknown>;
-  if (result.type === "console_control")
+  if (result.type === "console_help")
+    safe = {
+      type: result.type,
+      commands: result.commands.map((command) => ({
+        name: command.name,
+        usage: command.usage,
+        description: command.description,
+        args: command.args.map((argument) => ({
+          name: argument.name,
+          required: argument.required,
+          description: argument.description,
+        })),
+        example: command.example,
+        available: command.available,
+        ...(command.unavailableAction === undefined
+          ? {}
+          : { unavailableAction: command.unavailableAction }),
+      })),
+    };
+  else if (result.type === "console_control")
     safe = { type: result.type, command: result.command, status: result.status };
   else if (result.type === "background_list")
     safe = {
@@ -215,6 +282,21 @@ function renderControl(
     };
   }
   if (mode === "json") return `${JSON.stringify(safe)}\n`;
+  if (result.type === "console_help") {
+    const width = Math.max(...result.commands.map((command) => command.usage.length));
+    return `${result.commands
+      .map((command) =>
+        [
+          `  ${command.usage.padEnd(width)}  ${command.description}${
+            command.available ? "" : ` (unavailable: ${command.unavailableAction})`
+          }`,
+          // Each argument explains itself, so the usage line stays terse.
+          ...command.args.map((argument) => `    ${argument.name} ${argument.description}`),
+          `    example: ${command.example}`,
+        ].join("\n"),
+      )
+      .join("\n")}\n`;
+  }
   if (result.type === "console_control") return `ad-coder: current turn ${result.status}\n`;
   if (result.type === "background_list")
     return `${(safe.runs as Record<string, unknown>[]).map((run) => `ad-coder: background ${run.runId} ${run.lifecycle} steps ${(run.metrics as Record<string, unknown>).steps} cost ${(run.metrics as Record<string, unknown>).totalCost}`).join("\n") || "ad-coder: 0 background runs"}\n`;
@@ -393,7 +475,7 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
       if (mode === "formatted") params.output.write("ad-coder> ");
       return;
     }
-    if (line.trim() === "/exit") {
+    if (findConsoleCommand(line.trim())?.frontAction === "exit") {
       reason = "exit";
       exitPromptCount = queuedPromptCount;
       stopped = true;
@@ -463,30 +545,49 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
     } catch (error) {
       if (params.interrupted?.()) {
         params.error.write(
-          mode === "json"
-            ? '{"type":"console_error","code":"interrupted"}\n'
-            : "ad-coder: console turn interrupted; restart the console to resume the session\n",
+          renderFailure(
+            {
+              code: "interrupted",
+              message: "console turn interrupted",
+              action: "restart the console to resume the session",
+              retryable: true,
+            },
+            mode,
+          ),
         );
         reason = "interrupted";
       } else if (error instanceof ConsoleControlError) {
-        params.error.write(
-          mode === "json"
-            ? `${JSON.stringify({ type: "console_error", code: error.code })}\n`
-            : `ad-coder: console command ${error.code}; use /list, /events, /status, /result, /cancel, or /interrupt\n`,
-        );
+        // The guidance is derived from the command registry, so it always names
+        // the failed command and one next action (docs/contracts/errors.md).
+        params.error.write(renderFailure(error.failure, mode));
         if (mode === "formatted") params.output.write("ad-coder> ");
         return;
       } else if (error instanceof TurnInterruptedError) {
         params.error.write(
-          mode === "json" ? '{"type":"console_error","code":"interrupted"}\n' : INTERRUPTED_MESSAGE,
+          renderFailure(
+            {
+              code: "interrupted",
+              message: "current turn interrupted",
+              action: "session remains available; enter the next prompt",
+              retryable: true,
+            },
+            mode,
+          ),
         );
         if (mode === "formatted") params.output.write("ad-coder> ");
         return;
       } else if (error instanceof SessionLimitError) {
         params.error.write(
-          mode === "json"
-            ? `${JSON.stringify({ type: "console_error", code: "session_limit" })}\n`
-            : SESSION_LIMIT_MESSAGE,
+          renderFailure(
+            {
+              code: "session_limit",
+              message: "session resource limit reached",
+              action: "restart the console to start a session with a fresh budget",
+              // The same session cannot grant more budget to a retry.
+              retryable: false,
+            },
+            mode,
+          ),
         );
         reason = "session_limit";
       } else if (error instanceof EmptyTurnError) {
@@ -495,16 +596,28 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
             ? "verify authentication and retry"
             : `run: ${params.authenticationCommand}`;
         params.error.write(
-          mode === "json"
-            ? `${JSON.stringify({ type: "console_error", code: "empty_turn" })}\n`
-            : `ad-coder: provider returned a failed empty turn; ${recovery}\n`,
+          renderFailure(
+            {
+              code: "empty_turn",
+              message: "provider returned a failed empty turn",
+              action: recovery,
+              retryable: true,
+            },
+            mode,
+          ),
         );
         reason = "turn_failed";
       } else {
         params.error.write(
-          mode === "json"
-            ? `${JSON.stringify({ type: "console_error", code: "turn_failed" })}\n`
-            : TURN_FAILED_MESSAGE,
+          renderFailure(
+            {
+              code: "turn_failed",
+              message: "console turn failed",
+              action: "retry the prompt; if it keeps failing, restart the console",
+              retryable: true,
+            },
+            mode,
+          ),
         );
         reason = "turn_failed";
       }
@@ -610,7 +723,7 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
             lineBytes.length >= maxInputBytes &&
             !(lineBytes.length === maxInputBytes && byte === 0x0d)
           ) {
-            params.error.write(INPUT_TOO_LARGE_MESSAGE);
+            params.error.write(renderFailure(INPUT_TOO_LARGE_FAILURE, mode));
             reason = "input_too_large";
             stopped = true;
             break;
@@ -625,7 +738,7 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
     if (!stopped && lineBytes.length > 0) queueLine();
     await lineQueue;
   } catch {
-    params.error.write(INPUT_FAILED_MESSAGE);
+    params.error.write(renderFailure(INPUT_FAILED_FAILURE, mode));
     reason = "input_failed";
   } finally {
     if (escapeTimer !== undefined) clearTimeout(escapeTimer);
@@ -633,7 +746,7 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
     try {
       await params.session.close();
     } catch {
-      params.error.write(CLOSE_FAILED_MESSAGE);
+      params.error.write(renderFailure(CLOSE_FAILED_FAILURE, mode));
       if (isSuccessfulExit(reason)) reason = "close_failed";
     } finally {
       if (rawModeEnabled) ttyInput.setRawMode?.(false);
