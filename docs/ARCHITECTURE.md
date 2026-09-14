@@ -25,7 +25,7 @@ work lives in `docs/BACKLOG.md`.
 |---|---|---|
 | CLI | `src/cli.ts`, `src/cli/` | Parse commands, render human or JSON output, and call headless APIs. |
 | Authentication | `src/auth/` | Store Codex OAuth and OpenRouter API-key credentials outside target projects and expose secret-free status. |
-| Model inventories | `src/inventory/` | Validate and resolve a named atomic registry plus complexity-routing profile. |
+| Model inventories | `src/inventory/` | Seed, persist, validate, and resolve named registry/routing profiles. |
 | Registry and profiles | `src/registry/`, `src/profiles/` | Resolve providers, models, role routing, and effective configuration. |
 | Portable user profile | `src/user-profile/` | Atomically persist validated inventories, calibrated routing, and append-only economics; expose deterministic JSON import, export, and recording. |
 | Project calibration | `src/project-calibration/` | Materialize a bounded anonymous snapshot at `.ad-coder/calibration.json`; matching inventories consume its routing unless an API switch disables it. |

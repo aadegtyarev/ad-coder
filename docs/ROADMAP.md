@@ -367,7 +367,11 @@ workflows — one substrate, swappable drivers.
   credential and any authorised work providers. A provider account scope is
   therefore `(profile, provider)`, never merely a model name; CreditWallet and
   ProviderAdmission keep those scopes separate. Switching profiles changes future
-  work without changing workflow semantics; a live or paused durable run remains
+  work through the single editable runtime store at
+  `~/.config/ad-coder/inventories.json`; first use materializes the shipped
+  OpenAI profile there, and upgrades do not rewrite the user-owned file. Profile
+  changes affect future work without changing workflow semantics; a live or
+  paused durable run remains
   pinned to its original profile. **Complexity** selects the most
   economically efficient model inside that active inventory. Quality is an
   invariant gate at every complexity, never an economy-versus-quality mode.

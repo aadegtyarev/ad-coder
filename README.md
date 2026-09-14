@@ -309,6 +309,12 @@ ad-coder drive "Implement the change" --inventory-config ./inventories.json \
   --inventory-profile codex-secondary --target-dir ./my-project --auto
 ```
 
+The normal editable store is `~/.config/ad-coder/inventories.json` (or
+`$XDG_CONFIG_HOME/ad-coder/inventories.json`). ad-coder creates it with the
+built-in OpenAI profile on first use and never overwrites it on upgrade. The
+`--inventory-config` form selects another file for one run; explicit provider
+and model flags likewise act only as per-run overrides.
+
 An inventory entry has `{ "name", "registry", "profile" }`; the top-level
 object has `profiles` and an optional `default`. The pair is validated together,
 and inventory options cannot be mixed with separate `--provider`,

@@ -34,6 +34,11 @@ Rules the operator declared for ad-coder. A violation is always blocking.
   available, Coder and Reviewer may use different model families to reduce
   correlated blind spots; a single-family inventory may route them to different
   variants recommended for those roles.
+- 2026-09-14: `~/.config/ad-coder/inventories.json` is the single editable
+  runtime source for named registry/routing profiles. First CLI use seeds the
+  built-in OpenAI profile when the file is absent; upgrades never overwrite an
+  existing user-owned file. Explicit provider, registry, profile, or model flags
+  remain non-persistent per-run overrides.
 - 2026-09-13: User profiles are portable through explicit versioned export and
   import. Exports contain inventories, routing calibration, confirmed economic
   history, and safe subscription-capacity estimates, but never credentials,
