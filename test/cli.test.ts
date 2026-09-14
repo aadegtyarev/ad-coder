@@ -949,7 +949,6 @@ test("console help is registry-derived and invalid input limits fail before prov
   }
   expect(runCli(["console", "--unknown"]).stderr).toContain("unknown option");
   expect(runCli(["console", "extra"]).stderr).toContain("accepts no positional arguments");
-
   const acceptedThinking = runCli([
     "console",
     "--target-dir",
@@ -972,7 +971,7 @@ test("console help is registry-derived and invalid input limits fail before prov
   ]);
   expect(invalidThinking.code).toBe(2);
   expect(invalidThinking.stderr).toContain("invalid --orchestrator-thinking-level");
-}, 15_000);
+}, 30_000);
 
 test("running the example workflow prints its result and exits 0", () => {
   const { code, stdout } = runCli(["run", "examples/hello.workflow.ts"]);

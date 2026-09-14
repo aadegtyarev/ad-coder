@@ -208,8 +208,12 @@ test("a paused drive resumes its incomplete stage from the coordinator checkpoin
     }),
   ).rejects.toMatchObject({ code: "requirements_unresolved" });
   expect(first.checkpoint.workflowState.phase).toBe("code");
+  const pausedRunId = first.checkpoint.workflowState.activeStage?.runId;
+  expect(pausedRunId).toBeDefined();
 
-  fx.faux.setResponses([fauxAssistantMessage("coded after retry"), ...reviewerTurn(approve)]);
+  // The admitted coder operation is already settled when the local limit fires;
+  // resume must read that durable lane result instead of dispatching the prompt again.
+  fx.faux.setResponses([...reviewerTurn(approve)]);
   pipeline.stageLimits = { maxModelTurns: 3 };
   const resumedSession = createWorkflowSession(pipeline);
   const resumed = new RunCoordinator(resumedSession, resumedSession.projectStore, {
@@ -229,6 +233,13 @@ test("a paused drive resumes its incomplete stage from the coordinator checkpoin
   });
   expect(result.approved).toBe(true);
   expect(resumed.checkpoint.workflowState.done).toBe(true);
+  expect(resumed.checkpoint.workflowState.activeStage).toBeUndefined();
+  expect(resumed.checkpoint.workflowState.runIds.filter((id) => id === pausedRunId)).toHaveLength(
+    1,
+  );
+  expect(
+    resumed.checkpoint.workflowState.stageMetrics?.filter(({ stage }) => stage === "code:1"),
+  ).toHaveLength(1);
 });
 
 test("an interrupted coordinator without a pause can be reopened and driven", async () => {

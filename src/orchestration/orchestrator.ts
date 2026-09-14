@@ -268,7 +268,11 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         ? {}
         : { runId: resumeRunId, ...(createWithRunId ? {} : { resumeExisting: true }) }),
     });
-    if (resumeRunId !== undefined && runCoordinator.checkpoint.pause?.code === "stage_limit")
+    if (
+      resumeRunId !== undefined &&
+      (runCoordinator.checkpoint.pause?.code === "stage_limit" ||
+        runCoordinator.checkpoint.pause?.code === "stage_failed")
+    )
       runCoordinator.resumeStage({ source: "host_config", action: "retry" });
     const perStep: StepCost[] = [];
     let costCursor = sink.records().length;

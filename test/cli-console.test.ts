@@ -129,6 +129,23 @@ test("counts UTF-8 bytes across chunks and rejects an oversized line before step
   expect(error.text()).toBe("ad-coder: input line exceeds the configured byte limit\n");
 });
 
+test("reports a cooperative interruption separately from a provider failure", async () => {
+  const session = fakeSession({ stepError: new Error("transport closed") });
+  const error = new Capture();
+  const result = await runConsole({
+    session,
+    input: Readable.from(["work\n"]),
+    output: new Capture(),
+    error,
+    interrupted: () => true,
+  });
+
+  expect(result).toEqual({ reason: "interrupted", completedTurns: 0 });
+  expect(error.text()).toContain("console turn interrupted");
+  expect(error.text()).not.toContain("console turn failed");
+  expect(session.closes).toBe(1);
+});
+
 test("JSON mode emits narrowed parseable sanitized records without prompts", async () => {
   const session = fakeSession({
     result: () => ({

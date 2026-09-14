@@ -88,6 +88,8 @@ export interface RunCoordinatorOptions {
   checkpointByteLimit?: number;
   /** Required for a non-file backlog authority; the coordinator never falls back. */
   backlogStore?: BacklogStore;
+  /** Process-local cooperative cancellation probe; never persisted. */
+  interrupted?: () => boolean;
 }
 
 export const DEFAULT_RUN_COORDINATOR_OPTIONS = {
@@ -152,6 +154,7 @@ export class RunCoordinator {
   private readonly decisionLimit: number;
   private readonly checkpointByteLimit: number;
   private readonly backlogStore: BacklogStore | undefined;
+  private readonly interrupted: (() => boolean) | undefined;
 
   constructor(
     private readonly session: WorkflowSession,
@@ -163,6 +166,7 @@ export class RunCoordinator {
     this.checkpointByteLimit =
       options.checkpointByteLimit ?? DEFAULT_RUN_COORDINATOR_OPTIONS.checkpointByteLimit;
     this.backlogStore = options.backlogStore;
+    this.interrupted = options.interrupted;
     for (const [name, value] of [
       ["decisionLimit", this.decisionLimit],
       ["checkpointByteLimit", this.checkpointByteLimit],
@@ -235,13 +239,21 @@ export class RunCoordinator {
   /** Clear a stage-budget pause after the operator supplies a larger/disabled budget. */
   resumeStage(resolution: ResearchPauseResolution): void {
     const checkpoint = this.persisted.value;
+    const pause = checkpoint.pause;
+    const pauseCode = pause?.code;
     if (
       (resolution.source !== "operator" && resolution.source !== "host_config") ||
-      checkpoint.pause?.code !== "stage_limit"
+      (pauseCode !== "stage_limit" && pauseCode !== "stage_failed" && pauseCode !== "interrupted")
     )
       throw new ProjectOperationsError("unauthorized_resolution", checkpoint.runId);
-    const reason = checkpoint.pause.limitReason;
-    const priorLimit = checkpoint.pause.limit;
+    if (pauseCode !== "stage_limit") {
+      const next = { ...checkpoint };
+      delete next.pause;
+      this.save(next);
+      return;
+    }
+    const reason = pause?.limitReason;
+    const priorLimit = pause?.limit;
     if (reason === undefined || priorLimit === undefined)
       throw new ProjectOperationsError("invalid_config", "stage pause lacks limit evidence");
     const key =
@@ -294,6 +306,17 @@ export class RunCoordinator {
     if (checkpoint.phase !== "workflow" || checkpoint.workflowState.done) return undefined;
     if (checkpoint.pause !== undefined) return undefined;
     if (checkpoint.pendingStep !== undefined) return clone(checkpoint.pendingStep);
+    if (this.interrupted?.()) {
+      this.save({
+        ...checkpoint,
+        pause: {
+          phase: checkpoint.workflowState.phase,
+          code: "interrupted",
+          action: "resume the interrupted workflow explicitly",
+        },
+      });
+      return undefined;
+    }
     if (checkpoint.workflowState.phase === "research") {
       if (checkpoint.researchEffect?.status === "dispatched") {
         this.save({
@@ -352,6 +375,17 @@ export class RunCoordinator {
     try {
       result = await this.session.step(checkpoint.workflowState);
     } catch (error) {
+      if (this.interrupted?.()) {
+        this.save({
+          ...this.persisted.value,
+          pause: {
+            phase: checkpoint.workflowState.phase,
+            code: "interrupted",
+            action: "resume the interrupted workflow explicitly",
+          },
+        });
+        return undefined;
+      }
       if (error instanceof StageLimitError) {
         const activePhase = checkpoint.workflowState.phase;
         const resumablePhase =
@@ -398,6 +432,25 @@ export class RunCoordinator {
             action: `increase or disable the ${error.reason} stage limit, then resume explicitly`,
             limitReason: error.reason,
             limit: error.limit,
+          },
+        });
+        return undefined;
+      }
+      if (
+        error instanceof WorkflowStageFailureError &&
+        checkpoint.workflowState.phase !== "research"
+      ) {
+        this.save({
+          ...this.persisted.value,
+          workflowState: {
+            ...checkpoint.workflowState,
+            runIds: [...checkpoint.workflowState.runIds, error.runId],
+            stageMetrics: [...(checkpoint.workflowState.stageMetrics ?? []), error.metrics],
+          },
+          pause: {
+            phase: checkpoint.workflowState.phase,
+            code: "stage_failed",
+            action: "inspect the provider failure and retry the stage explicitly",
           },
         });
         return undefined;

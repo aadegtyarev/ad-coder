@@ -270,6 +270,22 @@ export function parsePlan(
   };
 }
 
+/** Accept only a complete JSON structured-output fallback, then validate it identically to tool args. */
+export function parsePlanText(
+  text: string,
+  detail: string,
+  limits: SurfaceAnalysisLimits = DEFAULT_SURFACE_ANALYSIS_LIMITS,
+): Plan | undefined {
+  const value = text.trim();
+  if (!value.startsWith("{") || !value.endsWith("}")) return undefined;
+  try {
+    return parsePlan(JSON.parse(value), detail, limits);
+  } catch (error) {
+    if (error instanceof OrchestrationError) throw error;
+    throw new OrchestrationError("malformed_plan", detail, "planner JSON handoff is invalid");
+  }
+}
+
 /**
  * Build the `submit_plan` tool for one planner turn, writing into `capture`.
  *
@@ -296,6 +312,9 @@ export function buildSubmitPlanTool(
     name: SUBMIT_PLAN_TOOL_NAME,
     description: "Record the plan's complexity, security surface, contract rules, and summary.",
     label: "submit plan",
+    // Providers that expose strict JSON-schema tool calls can constrain this
+    // mandatory handoff; others retain the normal tool-call fallback.
+    constrainedSampling: { type: "json_schema", strict: "prefer" },
     parameters: Type.Object({
       complexity: Type.String(),
       securitySurface: Type.String(),
@@ -338,6 +357,7 @@ export function formatPlannerInstruction(): string {
     "Call it with this shape:",
     '{ "complexity": "trivial" | "medium" | "complex", "securitySurface": "none" | "low" | "elevated", "summary": "<short summary>", "contractRequirements": ["<rule>"], "surfaceAnalysis": { "projectType": "<type>", "surfaces": [{"id":"<stable-id>","name":"<surface>","rationale":"<why affected>"}], "coverage": [{"surfaceId":"<stable-id>","status":"covered|not_applicable|research_required","contractIds":["<canonical id>"],"evidence":["<source or gap evidence>"],"rationale":"<decision>"}] } }',
     "This structured submission is mandatory. Identify every affected product surface before coding.",
+    `Call ${SUBMIT_PLAN_TOOL_NAME} first. If the provider returns text instead, emit exactly one JSON object with that shape and no Markdown or prose.`,
     'For status "covered", contractIds and evidence must both be non-empty. Use only canonical contract IDs.',
     `Canonical contract IDs accepted by this pipeline: ${canonicalIds}.`,
     'For status "not_applicable", contractIds must be empty and evidence must explain why no contract applies.',

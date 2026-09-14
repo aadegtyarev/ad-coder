@@ -127,6 +127,76 @@ describe("web plugin tools", () => {
     });
   });
 
+  test("web_read keeps its deadline active while a response body stalls after headers", async () => {
+    let aborted = false;
+    const tool = buildWebTools(
+      { timeoutMs: 5 },
+      {
+        lookup,
+        fetch: (async (_input: string | URL | Request, init?: RequestInit) => {
+          const stream = new ReadableStream<Uint8Array>({
+            start(controller) {
+              init?.signal?.addEventListener(
+                "abort",
+                () => {
+                  aborted = true;
+                  controller.error(new Error("aborted"));
+                },
+                { once: true },
+              );
+            },
+          });
+          return new Response(stream, { headers: { "content-type": "text/plain" } });
+        }) as unknown as typeof fetch,
+      },
+    ).find(({ name }) => name === WEB_READ_TOOL_NAME);
+    if (tool === undefined) throw new Error("missing web_read");
+    const result = await execute(tool, { url: "https://example.com/stalled" });
+    expect(aborted).toBe(true);
+    expect(result.content[0]).toEqual({ type: "text", text: "web request failed: failed" });
+  });
+
+  test("web tools fail fast for a domain already rejected during this role run", async () => {
+    let calls = 0;
+    const tool = buildWebTools(
+      {},
+      {
+        lookup,
+        fetch: (async () => {
+          calls += 1;
+          return new Response("down", { status: 503, headers: { "content-type": "text/plain" } });
+        }) as unknown as typeof fetch,
+      },
+    ).find(({ name }) => name === WEB_READ_TOOL_NAME);
+    if (tool === undefined) throw new Error("missing web_read");
+    await execute(tool, { url: "https://unavailable.example/a" });
+    const second = await execute(tool, { url: "https://unavailable.example/b" });
+    expect(calls).toBe(1);
+    expect(second.content[0]).toEqual({
+      type: "text",
+      text: "web request failed: domain_unavailable",
+    });
+  });
+
+  test("failed-domain memory is bounded without blocking uncached domains", async () => {
+    let calls = 0;
+    const tool = buildWebTools(
+      { maxFailedDomains: 1 },
+      {
+        lookup,
+        fetch: (async () => {
+          calls += 1;
+          return new Response("down", { status: 503, headers: { "content-type": "text/plain" } });
+        }) as unknown as typeof fetch,
+      },
+    ).find(({ name }) => name === WEB_READ_TOOL_NAME);
+    if (tool === undefined) throw new Error("missing web_read");
+    await execute(tool, { url: "https://first.example/a" });
+    await execute(tool, { url: "https://second.example/a" });
+    await execute(tool, { url: "https://second.example/b" });
+    expect(calls).toBe(3);
+  });
+
   test("text-only role routes local image through configured vision model", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "ad-coder-image-"));
     try {

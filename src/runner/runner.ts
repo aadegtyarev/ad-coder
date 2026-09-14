@@ -37,7 +37,11 @@ import {
   type ToolActivityConfig,
   type ToolActivityConsumer,
 } from "../observability/tool-activity";
-import { type StageLimitController, StageLimitError } from "../orchestration/stage-limits";
+import {
+  projectRemainingStageBudget,
+  type StageLimitController,
+  StageLimitError,
+} from "../orchestration/stage-limits";
 import { ProjectStore } from "../project-store/project-store";
 import type { ProjectStoreConfig } from "../project-store/types";
 import type { Role } from "../role";
@@ -632,6 +636,7 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
     params.activityConsumer === undefined
       ? undefined
       : activityChannel.subscribe(params.activityConsumer);
+  const stageLimitController = params.stageLimitController;
   const offActivity = attachToolActivity({
     channel: activityChannel,
     events: harness.events,
@@ -639,6 +644,9 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
     role: params.role.name,
     runId,
     step: params.step ?? "run",
+    ...(stageLimitController !== undefined && {
+      budget: () => projectRemainingStageBudget(stageLimitController.snapshot()),
+    }),
   });
   harness.hooks.on("after_response", (event) => {
     try {

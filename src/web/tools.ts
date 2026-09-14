@@ -25,6 +25,7 @@ export interface WebToolConfig {
   maxLinks: number;
   maxImages: number;
   maxRedirects: number;
+  maxFailedDomains: number;
   allowPrivateNetwork: boolean;
   userAgent: string;
 }
@@ -39,6 +40,7 @@ export const DEFAULT_WEB_TOOL_CONFIG: Readonly<WebToolConfig> = Object.freeze({
   maxLinks: 40,
   maxImages: 12,
   maxRedirects: 5,
+  maxFailedDomains: 64,
   allowPrivateNetwork: false,
   userAgent: "ad-coder/0.2 (+https://github.com/aadegtyarev/ad-coder)",
 });
@@ -279,13 +281,14 @@ async function boundedFetch(
         headers: { accept: "text/html,text/plain;q=0.9", "user-agent": config.userAgent },
       });
     } catch (error) {
-      if (timedOut) throw new WebTimeoutError();
-      throw error;
-    } finally {
       clearTimeout(timer);
       signal?.removeEventListener("abort", abortFromHarness);
+      if (timedOut) throw new WebTimeoutError();
+      throw error;
     }
     if (response.status >= 300 && response.status < 400) {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", abortFromHarness);
       const location = response.headers.get("location");
       if (location === null || redirect === config.maxRedirects) throw new Error("redirect_failed");
       url = await assertPublicUrl(
@@ -295,31 +298,39 @@ async function boundedFetch(
       );
       continue;
     }
-    if (!response.ok) throw new Error(`http_${response.status}`);
-    const contentType = response.headers.get("content-type") ?? "";
-    if (!/text\/html|text\/plain|application\/xhtml\+xml/i.test(contentType))
-      throw new Error("unsupported_content_type");
-    const reader = response.body?.getReader();
-    if (reader === undefined) throw new Error("empty_response");
-    const chunks: Uint8Array[] = [];
-    let bytes = 0;
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      bytes += value.byteLength;
-      if (bytes > config.maxResponseBytes) {
-        await reader.cancel();
-        throw new Error("response_too_large");
+    try {
+      if (!response.ok) throw new Error(`http_${response.status}`);
+      const contentType = response.headers.get("content-type") ?? "";
+      if (!/text\/html|text\/plain|application\/xhtml\+xml/i.test(contentType))
+        throw new Error("unsupported_content_type");
+      const reader = response.body?.getReader();
+      if (reader === undefined) throw new Error("empty_response");
+      const chunks: Uint8Array[] = [];
+      let bytes = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        bytes += value.byteLength;
+        if (bytes > config.maxResponseBytes) {
+          await reader.cancel();
+          throw new Error("response_too_large");
+        }
+        chunks.push(value);
       }
-      chunks.push(value);
+      const joined = new Uint8Array(bytes);
+      let offset = 0;
+      for (const chunk of chunks) {
+        joined.set(chunk, offset);
+        offset += chunk.byteLength;
+      }
+      return { url: url.href, contentType, body: new TextDecoder().decode(joined) };
+    } catch (error) {
+      if (timedOut) throw new WebTimeoutError();
+      throw error;
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", abortFromHarness);
     }
-    const joined = new Uint8Array(bytes);
-    let offset = 0;
-    for (const chunk of chunks) {
-      joined.set(chunk, offset);
-      offset += chunk.byteLength;
-    }
-    return { url: url.href, contentType, body: new TextDecoder().decode(joined) };
   }
   throw new Error("redirect_failed");
 }
@@ -448,6 +459,35 @@ export function buildWebTools(
     fetch: dependencies.fetch ?? createPinnedFetch(lookup, config.allowPrivateNetwork),
     lookup,
   };
+  // Per-tool-set only: avoid repeatedly burning a role's bounded stage budget
+  // on a host that has already failed, without retaining browsing history.
+  const failedDomains = new Set<string>();
+  const domainFor = (raw: string): string | undefined => {
+    try {
+      return new URL(raw).hostname.toLowerCase();
+    } catch {
+      return undefined;
+    }
+  };
+  const fetchWithDomainMemory = async (raw: string) => {
+    const domain = domainFor(raw);
+    if (domain !== undefined && failedDomains.has(domain)) throw new Error("domain_unavailable");
+    try {
+      return await boundedFetch(raw, config, runtime);
+    } catch (error) {
+      // Configuration and target-validation failures are not host availability
+      // evidence; every other bounded transport/content failure is.
+      if (
+        domain !== undefined &&
+        !(
+          error instanceof Error &&
+          ["invalid_url", "unsafe_url", "private_network_denied"].includes(error.message)
+        )
+      )
+        if (failedDomains.size < config.maxFailedDomains) failedDomains.add(domain);
+      throw error;
+    }
+  };
   const search = defineTool({
     name: WEB_SEARCH_TOOL_NAME,
     description: "Search the public web through DuckDuckGo and return bounded titles and URLs.",
@@ -457,7 +497,7 @@ export function buildWebTools(
       try {
         const endpoint = new URL(config.searchEndpoint);
         endpoint.searchParams.set("q", params.query);
-        const response = await boundedFetch(endpoint.href, config, runtime);
+        const response = await fetchWithDomainMemory(endpoint.href);
         const results = parseDuckDuckGoResults(response.body, config.maxResults);
         return {
           content: [{ type: "text", text: results.join("\n\n") || "no web results" }],
@@ -478,7 +518,7 @@ export function buildWebTools(
     parameters: Type.Object({ url: Type.String() }),
     async execute(_toolCallId, params) {
       try {
-        const response = await boundedFetch(params.url, config, runtime);
+        const response = await fetchWithDomainMemory(params.url);
         const page = extractPage(response.body, response.url, config);
         const links = page.links.map(({ text, url }, index) => `[${index + 1}] ${text}\n${url}`);
         const images = page.images.map(

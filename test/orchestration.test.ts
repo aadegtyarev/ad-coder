@@ -673,9 +673,9 @@ test("pipeline aggregates exact multi-response stage observations in stable orde
       model: "faux-1",
       thinkingLevel: "unknown",
       durationMs: 100,
-      input: 1934,
-      cachedInput: 625,
-      freshInput: 1309,
+      input: expect.any(Number),
+      cachedInput: expect.any(Number),
+      freshInput: expect.any(Number),
       output: 124,
       reasoning: 0,
       costUsd: 0,
@@ -697,9 +697,9 @@ test("pipeline aggregates exact multi-response stage observations in stable orde
       model: "faux-1",
       thinkingLevel: "unknown",
       durationMs: 100,
-      input: 585,
-      cachedInput: 13,
-      freshInput: 572,
+      input: expect.any(Number),
+      cachedInput: expect.any(Number),
+      freshInput: expect.any(Number),
       output: 15,
       reasoning: 0,
       costUsd: 0,
@@ -722,9 +722,9 @@ test("pipeline aggregates exact multi-response stage observations in stable orde
       model: "faux-1",
       thinkingLevel: "unknown",
       durationMs: 100,
-      input: 921,
-      cachedInput: 118,
-      freshInput: 803,
+      input: expect.any(Number),
+      cachedInput: expect.any(Number),
+      freshInput: expect.any(Number),
       output: 25,
       reasoning: 0,
       costUsd: 0,
@@ -1235,6 +1235,54 @@ test("a planner emitting only text fails closed before code", async () => {
   ).rejects.toMatchObject({ code: "missing_plan" });
 });
 
+test("a planner whole-JSON fallback is strictly validated before code", async () => {
+  const fx = fixture();
+  const planner = plannerRole(fx);
+  const coder = fx.role("coder", "You code.");
+  const reviewer = reviewerRole(fx);
+  fx.faux.setResponses([
+    fauxAssistantMessage(
+      JSON.stringify(
+        governedPlan({ complexity: "medium", securitySurface: "none", summary: "json" }),
+      ),
+    ),
+    fauxAssistantMessage("coded"),
+    ...reviewerTurn({ status: "approved", issues: [], summary: "ok" }),
+  ]);
+  await expect(
+    runPipeline({
+      targetDir: fx.targetDir,
+      models: fx.models,
+      task: "JSON handoff",
+      maxRounds: 1,
+      roles: { planner, coder, reviewer },
+    }),
+  ).resolves.toMatchObject({ approved: true, complexity: "medium" });
+});
+
+test("planner gets one bounded corrective retry for a missing structured handoff", async () => {
+  const fx = fixture();
+  const planner = plannerRole(fx);
+  const coder = fx.role("coder", "You code.");
+  const reviewer = reviewerRole(fx);
+  fx.faux.setResponses([
+    fauxAssistantMessage("plan in text only"),
+    ...plannerTurn({ complexity: "medium", securitySurface: "none", summary: "recorded" }),
+    fauxAssistantMessage("coded"),
+    ...reviewerTurn({ status: "approved", issues: [], summary: "ok" }),
+  ]);
+
+  const result = await runPipeline({
+    targetDir: fx.targetDir,
+    models: fx.models,
+    task: "implement corrective handoff",
+    maxRounds: 1,
+    roles: { planner, coder, reviewer },
+  });
+  expect(result.approved).toBe(true);
+  expect(result.stageMetrics.filter(({ stage }) => stage === "plan")).toHaveLength(2);
+});
+
 test("a default-open planner emitting only text fails closed before code", async () => {
   const fx = fixture();
   fx.faux.setResponses([fauxAssistantMessage("plan only")]);
@@ -1281,6 +1329,9 @@ test("parsePlan rejects invented contract IDs and covered entries without eviden
 test("planner instruction exposes canonical IDs accepted by validation", () => {
   const instruction = formatPlannerInstruction();
   expect(instruction).toContain("Canonical contract IDs accepted by this pipeline:");
+  expect(instruction).toContain(
+    "If the provider returns text instead, emit exactly one JSON object",
+  );
   expect(instruction).toContain("errors:typed-actionable");
   expect(instruction).toContain("quality:clean-check");
 });

@@ -170,6 +170,9 @@ test("startOrchestrator preserves the resolved seed thinking level", async () =>
         import("../src/conversation/conversation").ConversationConfig["subscribeBackgroundRuns"]
       >
     | undefined;
+  let detachedLaunch:
+    | import("../src/orchestration/background-runs").BackgroundDetachedLaunch
+    | undefined;
 
   const session = await startOrchestrator({
     targetDir,
@@ -179,6 +182,10 @@ test("startOrchestrator preserves the resolved seed thinking level", async () =>
     orchestratorThinkingLevel: "high",
     workflowModules: [BUILT_IN_PIPELINE_WORKFLOW],
     enabledWorkflows: [BUILT_IN_PIPELINE_WORKFLOW_NAME],
+    backgroundOwnerId: "console-owner",
+    backgroundHostLauncher: (launch) => {
+      detachedLaunch = launch;
+    },
     startConversation: async (config) => {
       captured = config.role;
       capturedToolNames = config.tools?.map(({ name }) => name);
@@ -230,7 +237,8 @@ test("startOrchestrator preserves the resolved seed thinking level", async () =>
   const backgroundRuns = session as typeof session & {
     backgroundRuns: import("../src/orchestration/background-runs").BackgroundRunManager;
   };
-  const run = backgroundRuns.backgroundRuns.start("safe background task");
+  const run = await backgroundRuns.backgroundRuns.startDetached("safe background task");
+  expect(detachedLaunch).toMatchObject({ runId: run.runId, task: "safe background task" });
   backgroundRuns.backgroundRuns.cancel(run.runId);
   await new Promise((resolve) => setTimeout(resolve, 0));
   unsubscribe?.();

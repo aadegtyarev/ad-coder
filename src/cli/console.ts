@@ -45,6 +45,8 @@ export interface RunConsoleParams {
    */
   escapeSequenceTimeoutMs?: number;
   toolActivity?: Partial<ToolActivityConfig>;
+  /** Process-local cooperative shutdown probe supplied by the CLI front. */
+  interrupted?: () => boolean;
 }
 
 export interface ConsoleRunResult {
@@ -457,7 +459,14 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
       );
       if (mode === "formatted") params.output.write("ad-coder> ");
     } catch (error) {
-      if (error instanceof ConsoleControlError) {
+      if (params.interrupted?.()) {
+        params.error.write(
+          mode === "json"
+            ? '{"type":"console_error","code":"interrupted"}\n'
+            : "ad-coder: console turn interrupted; restart the console to resume the session\n",
+        );
+        reason = "interrupted";
+      } else if (error instanceof ConsoleControlError) {
         params.error.write(
           mode === "json"
             ? `${JSON.stringify({ type: "console_error", code: error.code })}\n`

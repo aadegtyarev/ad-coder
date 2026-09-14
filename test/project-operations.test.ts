@@ -526,6 +526,80 @@ test("RunCoordinator checkpoints aggregation and makes automatic closeout effect
   expect(new FileBacklogStore(store).list()).toHaveLength(1);
 });
 
+test("RunCoordinator persists a failed stage's safe metrics and permits an explicit retry", async () => {
+  const target = root();
+  const store = new ProjectStore(target);
+  const base = coordinatorSession(store, []);
+  let attempts = 0;
+  const session: WorkflowSession = {
+    ...base,
+    async step(state) {
+      attempts += 1;
+      if (attempts === 1) {
+        throw new WorkflowStageFailureError(
+          new Error("provider detail must not persist"),
+          "failed-code",
+          {
+            stage: "code:1",
+            status: "paused",
+            provider: "faux",
+            model: "faux-1",
+            thinkingLevel: "unknown",
+            durationMs: 12,
+            input: 7,
+            cachedInput: 2,
+            freshInput: 5,
+            output: 3,
+            reasoning: 0,
+            costUsd: 0.25,
+            requestBytes: { systemPrompt: 0, prompt: 0, toolDefinitions: 0, total: 0 },
+            readFiles: [],
+            readFilesTotal: 0,
+            readFilesTruncated: 0,
+            diffBytes: 0,
+            contextStrategy: "auto",
+          },
+        );
+      }
+      return base.step(state);
+    },
+  };
+  const coordinator = new RunCoordinator(session, store, { runId: "failed-stage-pause" });
+  const paused = await coordinator.run();
+  expect(paused.checkpoint.pause).toEqual({
+    phase: "code",
+    code: "stage_failed",
+    action: "inspect the provider failure and retry the stage explicitly",
+  });
+  expect(paused.checkpoint.workflowState.stageMetrics).toEqual([
+    expect.objectContaining({ stage: "code:1", costUsd: 0.25 }),
+  ]);
+  expect(JSON.stringify(paused.checkpoint)).not.toContain("provider detail must not persist");
+  coordinator.resumeStage({ source: "operator", action: "retry" });
+  expect((await coordinator.run()).status).toBe("complete");
+  expect(attempts).toBe(2);
+});
+
+test("RunCoordinator durably pauses a cooperatively interrupted workflow and resumes it", async () => {
+  const target = root();
+  const store = new ProjectStore(target);
+  let interrupted = true;
+  const coordinator = new RunCoordinator(coordinatorSession(store, []), store, {
+    runId: "interrupted-workflow",
+    interrupted: () => interrupted,
+  });
+  const paused = await coordinator.run();
+  expect(paused.checkpoint.pause).toEqual({
+    phase: "code",
+    code: "interrupted",
+    action: "resume the interrupted workflow explicitly",
+  });
+
+  interrupted = false;
+  coordinator.resumeStage({ source: "operator", action: "retry" });
+  expect((await coordinator.run()).status).toBe("complete");
+});
+
 test("RunCoordinator durably pauses a limited stage and resumes only that stage", async () => {
   const target = root();
   const store = new ProjectStore(target);
