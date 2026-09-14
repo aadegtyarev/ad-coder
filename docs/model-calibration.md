@@ -26,6 +26,18 @@ and one tempting false positive. Its scorer derives check results from stable
 finding codes. This keeps grading independent of prose and lets the same task be
 repeated across every model in an inventory.
 
+**Match those codes on meaning, not spelling.** The task prompt asks for
+"concise stable defect codes" and deliberately supplies no vocabulary, so each
+model invents its own: one sweep of six models produced four spellings of the
+same path-traversal finding. An exact-match code list therefore measures
+spelling luck, and it scored three reviews that found every seeded defect with
+executed evidence — and correctly refused the false positive — at 0.2. The
+scorer now reduces a code to its word tokens and requires a PAIR of words that
+together name the specific defect, so an adjacent-but-vague finding still fails
+and a non-blocking one still does not count. When adding a scorer, budget for
+this: the check must recognise the defect a model describes, not the label it
+happened to choose.
+
 The version-one corpus manifest now contains six task shapes: trivial bounded
 normalization, medium behavior-preserving refactoring, hidden-defect review,
 medium pipeline repair, complex concurrent-state repair, and manual

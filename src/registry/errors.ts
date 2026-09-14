@@ -4,6 +4,7 @@ export type RegistryErrorCode =
   | "duplicate_provider"
   | "duplicate_model"
   | "unsupported_api"
+  | "unknown_catalog"
   | "missing_credential"
   | "unknown_model";
 
