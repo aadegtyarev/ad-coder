@@ -33,6 +33,8 @@ export interface RunRoleOptions {
       "elapsedMs" | "modelTurns" | "toolTurns" | "inputTokens" | "lastInputTokens" | "costUsd"
     >
   >;
+  /** Per-call role overlay; overrides the runner's shared stage limits. */
+  stageLimits?: StageLimits;
   stageLimitObserver?: (snapshot: Readonly<StageLimitSnapshot>) => void;
   ledgerSink?: LedgerSink;
   context?: Context;
@@ -110,9 +112,9 @@ export function createRoleRunner(config: RoleRunnerConfig): RoleRunner {
         ...(config.sessionLimitController !== undefined && {
           sessionLimitController: config.sessionLimitController,
         }),
-        ...(config.stageLimits !== undefined && {
+        ...((opts?.stageLimits !== undefined || config.stageLimits !== undefined) && {
           stageLimitController: new StageLimitController(
-            config.stageLimits,
+            opts?.stageLimits ?? config.stageLimits,
             monotonicNow,
             opts?.stageLimitInitial,
             opts?.stageLimitObserver,

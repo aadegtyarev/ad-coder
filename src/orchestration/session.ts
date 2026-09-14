@@ -460,6 +460,9 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
         session,
         ...(turnLedger !== undefined && { ledgerSink: turnLedger }),
         ...(tools !== undefined && { tools }),
+        ...(config.roleStageLimits?.[role.name as ProfileRole] !== undefined && {
+          stageLimits: config.roleStageLimits[role.name as ProfileRole],
+        }),
       });
     } catch (error) {
       if (!(error instanceof StageLimitError)) throw error;

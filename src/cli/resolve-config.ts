@@ -160,6 +160,8 @@ export interface ResolvePipelineConfigOptions {
   orchestratorThinkingLevel?: ThinkingLevel;
   requestTimeoutMs?: number;
   stageLimits?: StageLimits;
+  /** Optional role-specific overlays, resolved over global stageLimits. */
+  roleStageLimits?: Partial<Record<ProfileRole, StageLimits>>;
   compactionMode?: CompactionMode;
   pipelineContextMode?: PipelineContextMode;
   /** Zero disables only the material-diff escalation trigger. */
@@ -272,6 +274,13 @@ function resolveConfig(
       options.stageLimits?.finalResponseReserveInputTokens ?? 100_000,
   };
   new StageLimitController(stageLimits);
+  const roleStageLimits = Object.fromEntries(
+    Object.entries(options.roleStageLimits ?? {}).map(([role, overlay]) => {
+      const resolved = { ...stageLimits, ...overlay };
+      new StageLimitController(resolved);
+      return [role, resolved];
+    }),
+  ) as Partial<Record<ProfileRole, Required<StageLimits>>>;
   if (options.pluginTools !== undefined && options.enabledPlugins !== undefined)
     throw new Error("pluginTools cannot be combined with enabledPlugins");
   const enabledPlugins = options.enabledPlugins ?? ["explore", "web", "vision"];
@@ -798,6 +807,7 @@ function resolveConfig(
       ),
     },
     stageLimits,
+    ...(Object.keys(roleStageLimits).length > 0 && { roleStageLimits }),
     ...(options.projectStoreConfig !== undefined && {
       projectStoreConfig: options.projectStoreConfig,
     }),
