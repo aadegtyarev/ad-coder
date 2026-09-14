@@ -848,9 +848,11 @@ workflows — one substrate, swappable drivers.
   not a dependency of this control plane.
 
 - **Session manager + Telegram driver (decided 2026-09-14)** — before a Telegram
-  transport, add a small headless `SessionManager` over the existing
+  transport, add a small private local `SessionManager` service over the existing
   `ProjectStore`, Orchestrator API, background-run control plane, and durable
-  event cursor. It owns safe durable bindings:
+  event cursor. It listens only on an owner-private Unix socket; console and
+  Telegram are clients, never independent live-session owners. It owns safe
+  durable bindings:
   `driverKey -> projectKey`, plus one project record
   `projectKey -> (targetDir, shared sessionId, profile)`. A project therefore
   has one shared durable Orchestrator conversation by default; Telegram, console,
@@ -868,20 +870,29 @@ workflows — one substrate, swappable drivers.
   It has a credential-store/environment bot token, an explicit chat allowlist,
   and secret-free private bindings outside target projects. A personal chat is a
   switchable project dashboard; later a `(groupChatId, topicId)` binding becomes
-  one fixed project room. `ad-coder console --target-dir <project>` attaches to
-  the same project's shared conversation by default. The manager serializes only
-  submitted turns: while one is active, the other front sees progress and may
-  queue a normal message or use safe status/cancel controls; an idle console holds
-  no ownership. Closing console therefore immediately leaves Telegram usable,
-  and a local terminal can resume after any remote turn settles. Separate
-  conversations are an explicit future opt-in, never the default. The driver
-  relays durable background events from its acknowledged cursor and resumes
-  safely after its own restart. It supports ordinary messages to the selected
-  Orchestrator session plus project, profile, run/status/resume/cancel commands.
-  The same command schema backs bot slash commands and console colon commands,
-  so both fronts provide the same project-management and run controls. No
-  webhook, public listener, daemon,
-  SessionManager-wide plugin registry, or multi-user policy is required for v1.
+  one fixed project room. `ad-coder console` initially lists open project
+  sessions, their attached interface and active run/turn, then offers attach to
+  one, attach to all selected sessions, or create a project. Telegram exposes
+  the same `sessions` list. `attach <session>` moves interactive ownership from
+  either interface to the requesting interface; it is not a process exit. A
+  submitted active turn is never cancelled by transfer: the target is marked
+  pending, both fronts see progress, and transfer completes when that turn
+  settles. `detach <session>` releases the attached interface while runs and the
+  durable conversation continue under the manager. Separate conversations are an
+  explicit future opt-in, never the default.
+
+  Attaching does not replay private raw transcripts into Telegram. It presents a
+  safe catch-up card (project, profile, active turn, run statuses, cost and last
+  activity) and offers paginated structured run history/status/result commands.
+  An explicit `summary` command may ask the shared Orchestrator to describe the
+  current work, making that new summary a normal durable turn. The driver relays
+  durable background events from its acknowledged cursor and resumes safely after
+  its own restart. It supports ordinary messages to the selected Orchestrator
+  session plus project, profile, session attach/detach, run/status/resume/cancel
+  commands. The same command schema backs bot slash commands and console colon
+  commands, so both fronts provide the same project-management and run controls.
+  No webhook, public listener, SessionManager-wide plugin registry, or multi-user
+  policy is required for v1.
 
   Every Telegram command with no required argument returns command-specific
   help including syntax and an example; it never infers or executes a default
