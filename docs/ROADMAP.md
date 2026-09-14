@@ -865,6 +865,21 @@ workflows — one substrate, swappable drivers.
   new, non-existing safe-slug project beneath an allowed root, initialize Git,
   and create only the minimal ignored runtime scaffold.
 
+  `ad-coder console` launched from a project directory first discovers the
+  private Manager socket and resolves that directory's project binding. If the
+  project's shared session exists, it shows its attachment, active turn and runs
+  and offers to attach; if absent, it offers to create the project session. This
+  makes the current-directory flow the normal path, not a separate command to
+  remember. Direct process-owned console remains an explicit `--standalone`
+  fallback when Manager is unavailable or deliberately disabled. A legacy live
+  standalone session is detected through its durable lease and is never opened or
+  stolen by Manager/Telegram. It appears as `standalone:<local>` in session lists;
+  either front may request a handoff, but the standalone console accepts it with
+  `:handoff accept` after its active turn settles. Then it persists/releases its
+  session and Manager adopts the same durable session ID. New consoles always use
+  Manager when it is available, so this compatibility handoff disappears from
+  normal operation.
+
   Telegram v1 is an optional local long-polling driver in the same ad-coder
   process, calling this headless API directly rather than spawning/parsing a CLI.
   It has a credential-store/environment bot token, an explicit chat allowlist,
