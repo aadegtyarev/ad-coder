@@ -521,6 +521,13 @@ export type {
   SessionLimits,
 } from "./session-limits";
 export { SessionLimitController, SessionLimitError } from "./session-limits";
+export type {
+  ResolvedSkill,
+  ResolveSkillsOptions,
+  SkillManifest,
+  SkillResolutionErrorCode,
+} from "./skills/resolver";
+export { resolveSkills, SkillResolutionError } from "./skills/resolver";
 export * from "./user-profile";
 export type {
   ExtractedPage,

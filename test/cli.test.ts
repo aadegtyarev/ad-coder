@@ -851,6 +851,7 @@ test("operations validates retry policy and emits stage metrics in control repor
 
 test("console help is registry-derived and invalid input limits fail before provider access", () => {
   const help = runCli(["console", "--help"]);
+  expect(help.stdout).toContain("--skills <names>");
   expect(help.code).toBe(0);
   expect(help.stdout).toContain("usage: ad-coder console [options]");
   for (const option of [
@@ -945,6 +946,39 @@ test("running the example workflow prints its result and exits 0", () => {
   const result = JSON.parse(stdout) as { greeting: string; runId: string };
   expect(result.greeting).toBe("hello from ad-coder");
   expect(result.runId).toMatch(/^[0-9a-f-]{36}$/);
+});
+
+test("console projects code-specific actionable skill errors", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-cli-skills-"));
+  const skills = path.join(root, ".ad-coder", "skills");
+  fs.mkdirSync(skills, { recursive: true });
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-cli-skill-outside-"));
+  fs.symlinkSync(outside, path.join(skills, "escaping"));
+  const oversized = path.join(skills, "oversized");
+  fs.mkdirSync(oversized);
+  fs.writeFileSync(
+    path.join(oversized, "skill.json"),
+    JSON.stringify({ id: "oversized", version: "1", description: "x", roles: ["planner"] }),
+  );
+  fs.writeFileSync(path.join(oversized, "instructions.md"), "x".repeat(16_385));
+  const cases = [
+    ["not-installed", "missing", "choose an installed skill ID or remove it from --skills"],
+    ["bad/id", "malformed", "fix the selected skill manifest or requested skill IDs"],
+    ["escaping", "escaping", "replace symlinks with files inside the configured skill directory"],
+    ["oversized", "oversized", "reduce the selected skill manifest or instructions"],
+  ] as const;
+  for (const [id, code, nextAction] of cases) {
+    const result = runCli(["console", "--target-dir", root, "--skills", id, "--json"], {
+      cwd: path.dirname(root),
+    });
+    expect(result.code).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(JSON.parse(result.stderr).error).toMatchObject({
+      code: `skill_${code}`,
+      retryable: false,
+      nextAction,
+    });
+  }
 });
 
 test("a missing command, a missing file and a URL specifier each exit 2", () => {

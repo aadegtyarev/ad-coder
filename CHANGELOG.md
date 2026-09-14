@@ -8,6 +8,10 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ### Added
 
+- Added explicitly selected, role-scoped Skills v1 with bounded secure
+  built-in/project resolution, content digests, actionable typed failures,
+  four orchestration skills, and console/library selection.
+
 - Added responsive console-local controls plus configurable console page sizing and Escape-sequence timeout handling.
 
 - Added `Escape`/`/interrupt` turn-only console interruption and local commands

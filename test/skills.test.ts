@@ -1,0 +1,203 @@
+import { expect, test } from "bun:test";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { resolveSkills, SkillResolutionError } from "ad-coder";
+
+function expectSkillError(action: () => unknown, code: SkillResolutionError["code"]): void {
+  try {
+    action();
+    throw new Error("expected SkillResolutionError");
+  } catch (error) {
+    expect(error).toBeInstanceOf(SkillResolutionError);
+    expect((error as SkillResolutionError).code).toBe(code);
+  }
+}
+
+function project(): string {
+  return fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-skills-"));
+}
+
+test("loads shipped skills with a content digest", () => {
+  const skill = resolveSkills(["task-slicing"])[0];
+  expect(skill).toBeDefined();
+  if (skill === undefined) throw new Error("missing built-in skill");
+  expect(skill).toMatchObject({ id: "task-slicing", version: "1", source: "builtin" });
+  expect(skill.instructions).toContain("acceptance criteria");
+  expect(skill.sha256).toMatch(/^[a-f0-9]{64}$/);
+  expect(resolveSkills(["delivery-calibration"])[0]).toMatchObject({
+    id: "delivery-calibration",
+    source: "builtin",
+    roles: ["orchestrator", "planner"],
+  });
+});
+
+test("project skill shadows a built-in skill", () => {
+  const root = project();
+  const dir = path.join(root, ".ad-coder", "skills", "task-slicing");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, "skill.json"),
+    JSON.stringify({ id: "task-slicing", version: "2", description: "local", roles: ["planner"] }),
+  );
+  fs.writeFileSync(path.join(dir, "instructions.md"), "local bounded instruction");
+  expect(resolveSkills(["task-slicing"], { projectDir: root })[0]).toMatchObject({
+    source: "project",
+    version: "2",
+    instructions: "local bounded instruction",
+  });
+});
+
+test("digest binds selected source and manifest as well as instructions", () => {
+  const builtin = resolveSkills(["task-slicing"])[0];
+  const root = project();
+  const dir = path.join(root, ".ad-coder", "skills", "task-slicing");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, "skill.json"),
+    JSON.stringify({
+      id: "task-slicing",
+      version: "999",
+      description: "changed",
+      roles: ["planner"],
+    }),
+  );
+  fs.writeFileSync(path.join(dir, "instructions.md"), builtin?.instructions ?? "");
+  const projectSkill = resolveSkills(["task-slicing"], { projectDir: root })[0];
+  expect(projectSkill?.instructions).toBe(builtin?.instructions);
+  expect(projectSkill?.sha256).not.toBe(builtin?.sha256);
+  const firstDigest = projectSkill?.sha256;
+  fs.writeFileSync(
+    path.join(dir, "skill.json"),
+    `${JSON.stringify(
+      {
+        id: "task-slicing",
+        version: "999",
+        description: "changed",
+        roles: ["planner"],
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  expect(resolveSkills(["task-slicing"], { projectDir: root })[0]?.sha256).not.toBe(firstDigest);
+});
+
+test("digest binds original instruction bytes before UTF-8 decoding", () => {
+  const root = project();
+  const dir = path.join(root, ".ad-coder", "skills", "raw-bytes");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, "skill.json"),
+    JSON.stringify({ id: "raw-bytes", version: "1", description: "x", roles: ["planner"] }),
+  );
+  fs.writeFileSync(path.join(dir, "instructions.md"), Buffer.from([0x80]));
+  const first = resolveSkills(["raw-bytes"], { projectDir: root })[0];
+  fs.writeFileSync(path.join(dir, "instructions.md"), Buffer.from([0x81]));
+  const second = resolveSkills(["raw-bytes"], { projectDir: root })[0];
+  expect(first?.instructions).toBe(second?.instructions);
+  expect(first?.sha256).not.toBe(second?.sha256);
+});
+
+test("refuses duplicate, malformed, and oversized skills before dispatch", () => {
+  expectSkillError(() => resolveSkills(["task-slicing", "task-slicing"]), "malformed");
+  const root = project();
+  const dir = path.join(root, ".ad-coder", "skills", "bad");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "skill.json"), "{");
+  expectSkillError(() => resolveSkills(["bad"], { projectDir: root }), "malformed");
+  const long = project();
+  const longDir = path.join(long, ".ad-coder", "skills", "long");
+  fs.mkdirSync(longDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(longDir, "skill.json"),
+    JSON.stringify({ id: "long", version: "1", description: "x", roles: ["planner"] }),
+  );
+  fs.writeFileSync(path.join(longDir, "instructions.md"), "x".repeat(20));
+  expectSkillError(
+    () => resolveSkills(["long"], { projectDir: long, maxInstructionBytes: 10 }),
+    "oversized",
+  );
+});
+
+test("rejects skill manifest and instructions symlink escapes", () => {
+  const root = project();
+  const outside = path.join(root, "outside");
+  fs.mkdirSync(outside);
+  fs.writeFileSync(
+    path.join(outside, "skill.json"),
+    JSON.stringify({
+      id: "manifest-escape",
+      version: "1",
+      description: "outside",
+      roles: ["planner"],
+    }),
+  );
+  const manifestDir = path.join(root, ".ad-coder", "skills", "manifest-escape");
+  fs.mkdirSync(manifestDir, { recursive: true });
+  fs.symlinkSync(path.join(outside, "skill.json"), path.join(manifestDir, "skill.json"));
+  expectSkillError(() => resolveSkills(["manifest-escape"], { projectDir: root }), "escaping");
+
+  const instructionDir = path.join(root, ".ad-coder", "skills", "instruction-escape");
+  fs.mkdirSync(instructionDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(instructionDir, "skill.json"),
+    JSON.stringify({
+      id: "instruction-escape",
+      version: "1",
+      description: "local",
+      roles: ["planner"],
+    }),
+  );
+  fs.writeFileSync(path.join(outside, "instructions.md"), "outside instructions");
+  fs.symlinkSync(
+    path.join(outside, "instructions.md"),
+    path.join(instructionDir, "instructions.md"),
+  );
+  expectSkillError(() => resolveSkills(["instruction-escape"], { projectDir: root }), "escaping");
+});
+
+test("rejects root, intermediate, and skill-directory symlink escapes", () => {
+  const root = project();
+  const outside = project();
+  const rootEscape = path.join(root, "linked-project");
+  fs.symlinkSync(outside, rootEscape);
+  expectSkillError(() => resolveSkills(["any"], { projectDir: rootEscape }), "escaping");
+
+  const intermediate = project();
+  const skillRoot = path.join(intermediate, ".ad-coder");
+  fs.symlinkSync(outside, skillRoot);
+  expectSkillError(() => resolveSkills(["any"], { projectDir: intermediate }), "escaping");
+
+  const idRoot = project();
+  const idParent = path.join(idRoot, ".ad-coder", "skills");
+  fs.mkdirSync(idParent, { recursive: true });
+  fs.symlinkSync(outside, path.join(idParent, "escaped"));
+  expectSkillError(() => resolveSkills(["escaped"], { projectDir: idRoot }), "escaping");
+});
+
+test("enforces requested skill and manifest byte limits before loading", () => {
+  expectSkillError(
+    () => resolveSkills(["task-slicing", "architecture-recon"], { maxRequestedSkills: 1 }),
+    "oversized",
+  );
+
+  const root = project();
+  const dir = path.join(root, ".ad-coder", "skills", "large-manifest");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, "skill.json"),
+    `${JSON.stringify({ id: "large-manifest", version: "1", description: "local", roles: ["planner"] })}${" ".repeat(20)}`,
+  );
+  fs.writeFileSync(path.join(dir, "instructions.md"), "local instructions");
+  expectSkillError(
+    () => resolveSkills(["large-manifest"], { projectDir: root, maxManifestBytes: 10 }),
+    "oversized",
+  );
+});
+
+test("rejects invalid skill resolver limits", () => {
+  expectSkillError(() => resolveSkills([], { maxRequestedSkills: 0 }), "malformed");
+  expectSkillError(() => resolveSkills([], { maxManifestBytes: Infinity }), "malformed");
+  expectSkillError(() => resolveSkills([], { maxInstructionBytes: 1.5 }), "malformed");
+});

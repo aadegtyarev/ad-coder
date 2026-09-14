@@ -15,6 +15,7 @@ import type { Tool } from "../runner/tool";
 import { defineTool } from "../runner/tool";
 import type { SessionLimitSnapshot, SessionLimits } from "../session-limits";
 import { SessionLimitController } from "../session-limits";
+import { resolveSkills } from "../skills/resolver";
 import { buildWebTools } from "../web/tools";
 import { resolveWorkflowModules } from "../workflows/registry";
 import type { OrchestratorWorkflowModule } from "../workflows/types";
@@ -907,6 +908,8 @@ export function buildOrchestratorTools(
  * closed over here and never a tool parameter.
  */
 export type OrchestratorConfig = Omit<ResolvePipelineConfigOptions, "task"> & {
+  /** Explicit lazy skills for this managed conversation; absent means none. */
+  selectedSkills?: readonly string[];
   sessionLimits?: SessionLimits;
   /** Optional construction seam for embedding hosts that own the conversation lifecycle. */
   startConversation?: typeof startConversationImpl;
@@ -944,6 +947,15 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
   const ownerId = config.backgroundOwnerId ?? crypto.randomUUID();
   const controller = new SessionLimitController(config.sessionLimits);
   const buildConfig = (task: string): PipelineConfig => resolvePipelineConfig({ ...config, task });
+  const selectedSkills = resolveSkills(config.selectedSkills ?? [], {
+    projectDir: config.targetDir,
+  });
+  const skillInstructions = (role: DelegatableRoleName | "orchestrator"): string => {
+    const applicableSkills = selectedSkills.filter((skill) => skill.roles.includes(role));
+    return applicableSkills.length === 0
+      ? ""
+      : `\n\nSelected skills:\n${applicableSkills.map((skill) => `## ${skill.id}@${skill.version}\n${skill.instructions}`).join("\n\n")}`;
+  };
   // A placeholder task only seeds the config that yields the orchestrator's own
   // conversation model + window budget; the real per-run task arrives through
   // the tools. Its independent role selection still shares the registry and
@@ -993,7 +1005,7 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
       {
         ...base.role,
         name,
-        systemPrompt: `${resolvePrompt(name, { projectDir: config.targetDir })}\n\nThis is an independent role invocation. Return the complete result as assistant text; do not expect pipeline submission tools.`,
+        systemPrompt: `${resolvePrompt(name, { projectDir: config.targetDir })}${skillInstructions(name)}\n\nThis is an independent role invocation. Return the complete result as assistant text; do not expect pipeline submission tools.`,
         activeToolNames: [
           "read",
           "bash",
@@ -1043,7 +1055,7 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
       name: "orchestrator",
       provider: orchestratorModel.provider,
       modelId: orchestratorModel.id,
-      systemPrompt: resolvePrompt("orchestrator", { projectDir: config.targetDir }),
+      systemPrompt: `${resolvePrompt("orchestrator", { projectDir: config.targetDir })}${skillInstructions("orchestrator")}`,
       cacheRetention: "short",
       contextBudget: orchestratorSpec.role.contextBudget,
       ...(orchestratorSpec.role.thinkingLevel !== undefined && {
