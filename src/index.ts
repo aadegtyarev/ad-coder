@@ -552,10 +552,16 @@ export type {
   UpdateCommandResult,
   UpdateCommandRunner,
   UpdateErrorCode,
+  UpdateErrorOptions,
   UpdateOptions,
   UpdateResult,
 } from "./update/updater";
-export { UpdateError, updateAdCoder, updateCheckout } from "./update/updater";
+export {
+  readInstalledRevision,
+  UpdateError,
+  updateAdCoder,
+  updateCheckout,
+} from "./update/updater";
 export * from "./user-profile";
 export type {
   ExtractedPage,
