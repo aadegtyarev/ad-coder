@@ -200,9 +200,12 @@ Only unresolved work belongs here. Current behavior is in
   convention, not a defect in the result: OpenAI-style `completion_tokens`
   includes reasoning, while some providers report reasoning outside it, so the
   guard fires on a correct response. Measured 2026-09-14 on a MiniMax M3
-  Reviewer run: 42s of completed review discarded, $0.01636788 spent with no
-  result returned. Per the error contract a counter discrepancy is an
-  observation, not an unrecoverable boundary failure — record it as typed,
+  Reviewer run recorded in `docs/calibration-evidence.jsonl`
+  (`reviewer-hidden-regression-v1`): over 40s of completed review discarded,
+  $0.01636788 spent across 12 turns with no result returned, three of which
+  reported reasoning above output (922>902, 1374>1306, 1656>1472). Per the
+  error contract a counter discrepancy is an observation, not an
+  unrecoverable boundary failure — record it as typed,
   safe, non-fatal usage-integrity metadata, keep the result, and reserve the
   fatal path for values that are actually unusable (negative, non-finite,
   unsafe-integer).

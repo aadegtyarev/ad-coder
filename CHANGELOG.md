@@ -19,8 +19,10 @@ All notable changes to ad-coder are recorded here. The format follows
   one hardcoded provider id. A per-role model override silently resets the
   selected inventory's provider destination. A provider that reports reasoning
   tokens outside its output count aborts an already-completed, already-paid-for
-  role run over an accounting convention. Documentation only; no behavior
-  change.
+  role run over an accounting convention. The last of these now cites a
+  durable evidence record in `docs/calibration-evidence.jsonl` rather than
+  figures that lived only in a scratch ledger. Documentation only; no
+  behavior change.
 
 ## [0.5.1] - 2026-09-14
 
