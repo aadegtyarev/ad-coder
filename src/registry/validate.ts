@@ -293,14 +293,34 @@ function parseProvider(
     }
   }
 
+  // With a catalog and no declared provider baseUrl, each model supplies its
+  // own; the provider value is then only the fallback for a model that has none,
+  // so the first model's URL that exists is the honest default to report.
+  //
+  // SECURITY (load-bearing). A `"catalog": false` model supplies NO baseUrl, so
+  // a catalog provider whose models are all opted out leaves nothing to fall
+  // back to. Resolving that to `undefined` is not a harmless gap: `toPiModel`
+  // writes it straight onto the pi model, and both vendor SDKs treat an absent
+  // baseURL as "use my own default host" -- so the declared credential would be
+  // transmitted to the SDK vendor's endpoint rather than the operator's
+  // provider. Reject instead: a config that cannot name its destination must
+  // not resolve.
+  const providerBaseUrl =
+    (record.baseUrl as string | undefined) ??
+    validatedModels.find((model) => model.baseUrl !== undefined)?.baseUrl;
+  if (providerBaseUrl === undefined) {
+    bad(
+      "invalid_config",
+      `${providerId}.baseUrl`,
+      `provider "${providerId}" declares no baseUrl and no model supplies one; a catalog provider whose models all set "catalog": false must declare provider.baseUrl`,
+    );
+  }
+
   return {
     id: providerId,
     ...(record.displayName !== undefined ? { displayName: record.displayName as string } : {}),
     api: api as ApiKind,
-    // With a catalog and no declared provider baseUrl, each model supplies its
-    // own; the provider value is then only the fallback for a model that somehow
-    // has none, so the first model's URL is the honest default to report.
-    baseUrl: (record.baseUrl as string | undefined) ?? (validatedModels[0]?.baseUrl as string),
+    baseUrl: providerBaseUrl as string,
     credential,
     ...(record.catalog !== undefined ? { catalog: record.catalog as string } : {}),
     ...(headers !== undefined ? { headers } : {}),

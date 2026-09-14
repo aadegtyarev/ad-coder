@@ -37,10 +37,24 @@ All notable changes to ad-coder are recorded here. The format follows
   API. Declared fields still win, `models` becomes an optional filter, and
   omitting it admits the whole catalog.
 - Catalog-supplied thinking-level maps now reach the provider request, so a
-  routing profile asking for a level the model does not support gets the
-  model's documented fallback instead of an opaque provider error. Two
-  `opencode-go` models we route to reject `medium` — unknowable from a
-  hand-written model list.
+  supported level is sent under the spelling that model expects rather than
+  pi's. The map also names the levels a model does NOT support, which is a
+  calibration input and not a repair: depending on the request format an
+  unsupported level is forwarded verbatim, silently dropped, or replaced from a
+  fixed table. Every `opencode-go` and OpenRouter model we route rejects at
+  least one level we were using, and the same DeepSeek model accepts `low` on
+  one provider and not the other — unknowable from a hand-written model list.
+
+### Fixed
+
+- The `reviewer-hidden-regression-v1` scorer matched finding codes against an
+  exact string list, so it graded spelling rather than review quality: the task
+  prompt asks for "concise stable defect codes" and names no vocabulary, and six
+  models produced four spellings of the same path-traversal defect. Three
+  reviews that found every seeded defect with executed evidence and correctly
+  refused the tempting false positive scored 0.2. Codes are now reduced to word
+  tokens and matched on a PAIR of words naming the specific defect, so a vague
+  finding still fails and a non-blocking one still does not count.
 
 ### Security
 
@@ -52,6 +66,14 @@ All notable changes to ad-coder are recorded here. The format follows
   request), and duplicate names differing only by case. Failures name the
   header and never echo its value. Per-model `baseUrl` is https-only, as the
   provider field already was.
+- A catalog provider must always resolve to a destination it named. Previously a
+  provider that named a catalog, declared no `baseUrl`, and marked every one of
+  its models `"catalog": false` produced `baseUrl: undefined` on the resolved pi
+  model — and both vendor SDKs read an absent base URL as "use my own default
+  host", so the declared credential would have been transmitted to the SDK
+  vendor's endpoint rather than the operator's provider. That config is now an
+  `invalid_config` rejection, and the provider's reported fallback takes the
+  first model that actually has a base URL instead of whichever model is first.
 - A model id the named catalog does not publish is rejected rather than
   resolved with whatever economics sit next to it, so a typo cannot silently
   become a priced model. An account-scoped id (an OpenRouter `@preset/...`,

@@ -172,10 +172,17 @@ export interface ResolvedModelConfig extends ModelConfig {
    * values, where `null` marks a level the model does NOT support.
    *
    * Present only for a catalog-backed model: it is a fact about the model that
-   * no config file can be expected to restate correctly. Without it the
-   * adapter forwards a requested level verbatim, so a routing profile asking
-   * for a level the model rejects produces an opaque provider error instead of
-   * the model's documented fallback.
+   * no config file can be expected to restate correctly. Without it the adapter
+   * forwards a requested level verbatim, so a supported level that this model
+   * spells differently never reaches it under the right name.
+   *
+   * NOT A SAFETY NET. The `null` marks are a calibration input: pi's adapters
+   * do not uniformly repair an unsupported level. The `deepseek` and
+   * `openrouter` branches use `map[level] ?? level`, and `null ?? level` yields
+   * the level -- so an explicitly unsupported value is forwarded verbatim,
+   * exactly as if it were unlisted. Other branches drop the effort field or
+   * fall back to a fixed table. A profile must therefore pick levels FROM this
+   * map, not rely on it to catch a bad one.
    */
   thinkingLevelMap?: ThinkingLevelMap;
   /**

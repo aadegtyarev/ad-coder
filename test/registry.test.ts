@@ -852,6 +852,66 @@ test('"catalog": false admits an account-scoped id beside catalog-backed sibling
   expect(byHand?.maxTokens).toBe(8192);
 });
 
+test("a catalog provider whose models all opt out must declare its own baseUrl", () => {
+  let thrown: RegistryError | undefined;
+  try {
+    parseRegistryConfig({
+      providers: [
+        {
+          // No provider baseUrl, and the only model opts out of the catalog, so
+          // nothing supplies a destination. Resolving that to `undefined` would
+          // hand the vendor SDK its own default host together with the declared
+          // key, so it must be rejected at validation.
+          id: "openrouter",
+          api: "openai-completions",
+          catalog: "openrouter",
+          credential: { kind: "env-var", envVar: "OPENROUTER_API_KEY" },
+          models: [
+            {
+              modelId: "vendor/unlisted",
+              name: "unlisted",
+              catalog: false,
+              maxTokens: 8192,
+              cost: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
+            },
+          ],
+        },
+      ],
+    });
+  } catch (error) {
+    thrown = error as RegistryError;
+  }
+  expect(thrown?.code).toBe("invalid_config");
+  expect(thrown?.detail).toBe("openrouter.baseUrl");
+});
+
+test("a catalog provider takes its reported baseUrl from the first model that has one", () => {
+  const config = parseRegistryConfig({
+    providers: [
+      {
+        id: "openrouter",
+        api: "openai-completions",
+        catalog: "openrouter",
+        credential: { kind: "env-var", envVar: "OPENROUTER_API_KEY" },
+        models: [
+          {
+            // Opted out first: the fallback must skip it rather than stop at it.
+            modelId: "vendor/unlisted",
+            name: "unlisted",
+            catalog: false,
+            maxTokens: 8192,
+            cost: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
+          },
+          { modelId: "minimax/minimax-m3", name: "m3" },
+        ],
+      },
+    ],
+  });
+  const provider = config.providers[0]!;
+  expect(provider.baseUrl).toBe(provider.models[1]!.baseUrl as string);
+  expect(provider.baseUrl.startsWith("https://")).toBe(true);
+});
+
 test('"catalog": false without a provider catalog is a config error, not a no-op', () => {
   let thrown: RegistryError | undefined;
   try {

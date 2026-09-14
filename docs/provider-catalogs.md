@@ -132,14 +132,43 @@ catalog entries carry their own.
 ## Thinking levels
 
 Where a provider publishes it, a catalog entry carries the set of thinking
-levels the model supports, with unsupported levels marked explicitly. ad-coder
-forwards it, so a routing profile asking for a level the model rejects gets the
-model's documented fallback instead of an opaque provider error.
+levels the model supports, each mapped to the spelling that model expects, with
+unsupported levels marked explicitly. ad-coder forwards that map, so a level the
+model *does* support is sent under the model's own name rather than pi's.
 
-This is worth checking when you calibrate a profile. For example, on
-`opencode-go` both `glm-5.3-flash` and `deepseek-v4-flash` support `low`,
-`high` and `max` but **not** `medium` — a profile routing them at `medium` is
-misconfigured in a way a hand-written model list cannot show you.
+**An unsupported level is not repaired for you.** The map tells you a level is
+unsupported; it does not make asking for it safe. What actually happens depends
+on the request format the model speaks, and all three outcomes are bad in
+different ways:
+
+- `deepseek` and `openrouter` formats forward the unsupported level *verbatim*
+  (the adapter's `?? requested` fallback treats the explicit "unsupported" mark
+  the same as "not listed"), so the provider sees a value it never published.
+- `zai` and `ant-ling` formats drop the effort field entirely while still
+  enabling thinking, so the request silently runs at the model's default.
+- `anthropic-messages` falls back to its own fixed level table, ignoring the
+  model's map.
+
+So the map is a **calibration input**, not a safety net: pick levels from it
+rather than around it.
+
+This is worth checking whenever you calibrate a profile — the supported set is
+narrower than it looks, and it differs between the same model on two providers:
+
+| model | provider | supported levels |
+| --- | --- | --- |
+| `glm-5.3-flash` | `opencode-go` | `low`, `high`, `max` |
+| `deepseek-v4-flash` | `opencode-go` | `off`, `low`, `high`, `xhigh`, `max` |
+| `deepseek-v4-pro` | `opencode-go` | `off`, `high`, `xhigh`, `max` |
+| `z-ai/glm-5.3-flash` | `openrouter` | `low`, `high`, `max` |
+| `deepseek/deepseek-v4-flash` | `openrouter` | `off`, `high`, `xhigh` |
+| `deepseek/deepseek-v4-pro` | `openrouter` | `off`, `high`, `xhigh` |
+
+Note the last two rows: the same DeepSeek model that accepts `low` on
+`opencode-go` does **not** accept it on OpenRouter. A profile that routes them
+at `low` or `medium` is misconfigured in a way a hand-written model list cannot
+show you. Models with no map at all (`minimax-m3`, `kimi-k2.7-code`,
+`qwen3.7-plus`) take every level verbatim.
 
 ## What a catalog does not do
 
