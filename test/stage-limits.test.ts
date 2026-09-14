@@ -226,6 +226,84 @@ test("input closeout predicts the next request from prior provider usage", async
   expect(controller.snapshot().inputTokens).toBe(200);
 });
 
+test("a tool-free closeout request tells the model why its tools are gone", async () => {
+  const seen: { tools: number; messages: { role: string; content: unknown }[] }[] = [];
+  const message = fauxAssistantMessage("ok");
+  message.usage.input = 100;
+  message.usage.cacheRead = 0;
+  const models = {
+    completeSimple: async (
+      _model: unknown,
+      context: { tools?: unknown[]; messages: { role: string; content: unknown }[] },
+    ) => {
+      seen.push({ tools: context.tools?.length ?? 0, messages: [...context.messages] });
+      return message;
+    },
+  } as unknown as Models;
+  const controller = new StageLimitController({
+    maxInputTokens: 300,
+    finalResponseReserveInputTokens: 100,
+  });
+  const limited = controller.wrap(models);
+  const context = {
+    messages: [{ role: "user", content: "do the work", timestamp: 0 }],
+    tools: [{}],
+  } as never;
+
+  await limited.completeSimple({} as never, context);
+  await limited.completeSimple({} as never, context);
+
+  expect(seen[0]?.messages).toHaveLength(1);
+  expect(seen[1]?.tools).toBe(0);
+  expect(seen[1]?.messages).toHaveLength(2);
+  const instruction = seen[1]?.messages[1];
+  expect(instruction?.role).toBe("user");
+  expect(instruction?.content).toMatch(/stop using tools and return the final response/);
+  expect(instruction?.content).toMatch(/input tokens used/);
+});
+
+test("a closeout request leaves the caller's own context untouched", async () => {
+  const message = fauxAssistantMessage("ok");
+  message.usage.input = 100;
+  message.usage.cacheRead = 0;
+  const models = { completeSimple: async () => message } as unknown as Models;
+  const controller = new StageLimitController({
+    maxInputTokens: 300,
+    finalResponseReserveInputTokens: 100,
+  });
+  const limited = controller.wrap(models);
+  const context = { messages: [{ role: "user", content: "task", timestamp: 0 }], tools: [{}] };
+
+  await limited.completeSimple({} as never, context as never);
+  await limited.completeSimple({} as never, context as never);
+
+  expect(context.messages).toHaveLength(1);
+  expect(context.tools).toHaveLength(1);
+});
+
+test("a closeout request without a message list is passed through unchanged", async () => {
+  let seen: unknown;
+  const message = fauxAssistantMessage("ok");
+  message.usage.input = 100;
+  message.usage.cacheRead = 0;
+  const models = {
+    completeSimple: async (_model: unknown, context: unknown) => {
+      seen = context;
+      return message;
+    },
+  } as unknown as Models;
+  const controller = new StageLimitController({
+    maxInputTokens: 300,
+    finalResponseReserveInputTokens: 100,
+  });
+  const limited = controller.wrap(models);
+
+  await limited.completeSimple({} as never, { messages: [], tools: [{}] } as never);
+  await limited.completeSimple({} as never, undefined as never);
+
+  expect(seen).toBeUndefined();
+});
+
 test("input closeout prediction survives controller reconstruction", async () => {
   const message = fauxAssistantMessage("ok");
   message.usage.input = 100;

@@ -6,6 +6,19 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-09-14
+
+### Fixed
+
+- A stage that enters a final-response reserve no longer strips the tool schema
+  in silence. The provider request that follows now carries the same instruction
+  the tool rejection does — stop using tools and return the final response, with
+  the reserve that tripped and its numbers — so a model that suddenly has no
+  tools is told why. Without it, models answered the missing schema by emitting
+  their own tool-call syntax as prose, and the role returned that garbage as its
+  final answer. Observed on two unrelated model families across three runs and on
+  two different reserves (`model_turns`, `input`).
+
 ## [0.5.0] - 2026-09-14
 
 ### Fixed
