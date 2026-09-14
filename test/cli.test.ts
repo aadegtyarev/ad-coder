@@ -126,6 +126,44 @@ test("profile CLI previews and applies a portable import before exporting it", (
   }
 });
 
+test("profile CLI appends a server-reported credit balance observation", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-profile-credit-"));
+  try {
+    const profilePath = path.join(root, "private", "profile.json");
+    const inputPath = path.join(root, "credit.json");
+    fs.writeFileSync(
+      inputPath,
+      JSON.stringify({
+        id: "codex-credit-balance-2026-09-14",
+        observedAt: "2026-09-14T00:00:00.000Z",
+        provider: "openai-codex",
+        model: "gpt-5.6-terra",
+        kind: "credit_balance",
+        value: 500,
+        unit: "credits",
+        source: "provider-measurement",
+        confidence: "provider_reported",
+      }),
+    );
+    const result = runCli([
+      "profile",
+      "record",
+      "--input",
+      inputPath,
+      "--profile-path",
+      profilePath,
+    ]);
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout).record).toMatchObject({
+      kind: "credit_balance",
+      value: 500,
+      unit: "credits",
+    });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("profile CLI writes a bounded project calibration snapshot", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-profile-snapshot-"));
   try {

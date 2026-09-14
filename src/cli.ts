@@ -95,7 +95,7 @@ import { ProjectStoreError } from "./project-store/types";
 import { parseRegistryConfig } from "./registry/validate";
 import type { Role } from "./role";
 import { defineRole } from "./role";
-import { resolveTargetDir } from "./runner/errors";
+import { RunInterruptedError, resolveTargetDir } from "./runner/errors";
 import { createRoleRunner } from "./runner/role-runner";
 import type { Tool } from "./runner/tool";
 import type { SessionLimits } from "./session-limits";
@@ -286,6 +286,8 @@ export async function runRoleStandalone(params: {
   projectStoreConfig?: ProjectStoreConfig;
   toolActivity?: Partial<ToolActivityConfig>;
   stageLimits?: StageLimits;
+  /** Cancels a live role run and persists a resumable pause. */
+  abortSignal?: AbortSignal;
 }): Promise<{
   text: string;
   cost: number;
@@ -313,12 +315,14 @@ export async function runRoleStandalone(params: {
       ledgerPath?: string;
       observations: import("./runner/runner").RoleObservations;
     };
-    pause?: {
-      code: "stage_limit";
-      reason: StageLimitReason;
-      limit: number;
-      observed: number;
-    };
+    pause?:
+      | {
+          code: "stage_limit";
+          reason: StageLimitReason;
+          limit: number;
+          observed: number;
+        }
+      | { code: "interrupted" };
   };
   const taskDigest = new Bun.CryptoHasher("sha256").update(params.task).digest("hex");
   let checkpoint: import("./project-store/types").VersionedState<Checkpoint>;
@@ -365,7 +369,7 @@ export async function runRoleStandalone(params: {
         prior.cumulativeUsage.inputTokens,
     };
     stageLimitInitial = cumulativeUsage;
-    if (prior.pause !== undefined) {
+    if (prior.pause?.code === "stage_limit") {
       const key: Record<StageLimitReason, keyof StageLimits | undefined> = {
         duration: "maxDurationMs",
         model_turns: "maxModelTurns",
@@ -455,6 +459,7 @@ export async function runRoleStandalone(params: {
       },
       ...(params.ledgerSink !== undefined && { ledgerSink: params.ledgerSink }),
       ...(params.tools !== undefined && { tools: params.tools }),
+      ...(params.abortSignal !== undefined && { abortSignal: params.abortSignal }),
     });
   } catch (error) {
     try {
@@ -490,6 +495,17 @@ export async function runRoleStandalone(params: {
             limit: error.limit,
             observed: error.observed,
           },
+        },
+        checkpoint.version,
+      );
+    }
+    if (error instanceof RunInterruptedError || params.abortSignal?.aborted === true) {
+      store.writeVersionedJson(
+        checkpointPath,
+        {
+          ...checkpoint.value,
+          status: "paused",
+          pause: { code: "interrupted" },
         },
         checkpoint.version,
       );
@@ -999,10 +1015,11 @@ async function profileCommand(positionals: string[], flags: Record<string, strin
     action !== "show" &&
     action !== "export" &&
     action !== "snapshot" &&
+    action !== "record" &&
     action !== "import-preview" &&
     action !== "import-apply"
   )
-    fail("profile requires show, export, snapshot, import-preview, or import-apply");
+    fail("profile requires show, export, snapshot, record, import-preview, or import-apply");
   if (positionals[2] !== undefined) fail("profile accepts exactly one action");
   const profilePath = flags["--profile-path"];
   const store =
@@ -1026,6 +1043,14 @@ async function profileCommand(positionals: string[], flags: Record<string, strin
     const snapshot = createProjectCalibrationSnapshot(current, inventory);
     const file = writeProjectCalibrationSnapshot(resolveTargetDir(targetDir), snapshot);
     process.stdout.write(`${JSON.stringify({ file, snapshot })}\n`);
+    return;
+  }
+  if (action === "record") {
+    const raw = readProfileJsonInput(flags["--input"]);
+    const profile = await store.appendEconomicRecord(raw);
+    process.stdout.write(
+      `${JSON.stringify({ path: store.path, record: profile.economicRecords.at(-1) })}\n`,
+    );
     return;
   }
   const mode = flags["--mode"];
@@ -1863,6 +1888,16 @@ async function roleCommand(
     "runs",
     `standalone-${standaloneRunId}.json`,
   );
+  const abortController = new AbortController();
+  let receivedSignal: "SIGINT" | "SIGTERM" | undefined;
+  const interrupt = (signal: "SIGINT" | "SIGTERM") => {
+    receivedSignal ??= signal;
+    abortController.abort();
+  };
+  const onSigint = () => interrupt("SIGINT");
+  const onSigterm = () => interrupt("SIGTERM");
+  process.once("SIGINT", onSigint);
+  process.once("SIGTERM", onSigterm);
   const standaloneResult = await (async () => {
     try {
       return await runRoleStandalone({
@@ -1883,6 +1918,7 @@ async function roleCommand(
         }),
         ...(config.toolActivity !== undefined && { toolActivity: config.toolActivity }),
         ...(config.stageLimits !== undefined && { stageLimits: config.stageLimits }),
+        abortSignal: abortController.signal,
       });
     } catch (error) {
       process.stderr.write(`ad-coder: partial usage ledger=${expectedLedgerPath}\n`);
@@ -1892,11 +1928,18 @@ async function roleCommand(
       process.stderr.write(
         `ad-coder: resume with role ${name} <same-task> --resume-run ${standaloneRunId} and adjusted limits\n`,
       );
+      if (error instanceof RunInterruptedError && receivedSignal !== undefined) {
+        process.exitCode = receivedSignal === "SIGINT" ? 130 : 143;
+        return undefined;
+      }
       throw error;
     } finally {
       renderer.close();
+      process.removeListener("SIGINT", onSigint);
+      process.removeListener("SIGTERM", onSigterm);
     }
   })();
+  if (standaloneResult === undefined) return;
   const { text, cost, ledgerPath, observations } = standaloneResult;
 
   // The extracted assistant text IS this subcommand's result value, so it is
@@ -2443,15 +2486,20 @@ const COMMANDS: readonly CommandDefinition[] = [
   },
   {
     name: "profile",
-    description: "Show, export, snapshot, preview, or import the portable user profile.",
+    description:
+      "Show, record economics, export, snapshot, preview, or import the portable user profile.",
     positionals: [
       {
-        name: "<show|export|snapshot|import-preview|import-apply>",
+        name: "<show|export|snapshot|record|import-preview|import-apply>",
         description: "Profile action.",
       },
     ],
     options: [
-      { name: "--input", value: "<file|->", description: "Read an import document." },
+      {
+        name: "--input",
+        value: "<file|->",
+        description: "Read an import document or one economic record for profile record.",
+      },
       { name: "--target-dir", value: "<dir>", description: "Project receiving a snapshot." },
       { name: "--inventory", value: "<name>", description: "Inventory to snapshot." },
       { name: "--mode", value: "<merge|replace>", description: "Select import semantics." },

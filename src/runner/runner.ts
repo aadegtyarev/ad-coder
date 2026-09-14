@@ -48,6 +48,7 @@ import {
   assertUniqueToolNames,
   EmptyTurnError,
   providerLimitFrom,
+  RunInterruptedError,
   RunnerError,
   resolveTargetDir,
 } from "./errors";
@@ -118,6 +119,8 @@ export interface RunRoleParams {
   toolActivity?: Partial<ToolActivityConfig>;
   /** Monotonic milliseconds seam for deterministic duration metrics. */
   monotonicNow?: () => number;
+  /** Cancels a live harness turn and leaves the durable session resumable. */
+  abortSignal?: AbortSignal;
 }
 
 /**
@@ -626,8 +629,22 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
     return undefined;
   });
 
+  let interrupted = false;
+  let activeLane: Awaited<ReturnType<typeof harness.lane>> | undefined;
+  const interrupt = () => {
+    interrupted = true;
+    // abort() settles the active lane operation; closeout in finally then releases
+    // the session lease and flushes the ledger before the caller sees the pause.
+    void activeLane?.abort(context).catch(() => undefined);
+  };
+  const isInterrupted = () => interrupted || params.abortSignal?.aborted === true;
+  params.abortSignal?.addEventListener("abort", interrupt, { once: true });
+  if (params.abortSignal?.aborted === true) interrupt();
+
   try {
     const lane = await harness.lane(params.laneName ?? "main", context);
+    activeLane = lane;
+    if (isInterrupted()) throw new RunInterruptedError(runId);
     if (params.resumeActiveOperation !== true) {
       const entries = await lane.findEntries({ type: "message", order: "oldestFirst" }, context);
       const pending = {
@@ -657,7 +674,7 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
                 ? undefined
                 : await lane.getResult(execution.lastOperationId, context);
             return settled === undefined
-              ? lane.resume(context)
+              ? lane.prompt(params.prompt, undefined, context)
               : ({ ok: true, value: settled } as const);
           })()
         : lane.prompt(params.prompt, undefined, context);
@@ -691,12 +708,14 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
         if (deadline !== undefined) clearTimeout(deadline);
       })
       .catch((error) => {
+        if (isInterrupted()) throw new RunInterruptedError(runId);
         params.stageLimitController?.assertNoBoundaryFailure();
         controller?.assertNoBoundaryFailure();
         const providerLimit = providerLimitFrom(error);
         if (providerLimit !== undefined) throw providerLimit;
         throw error;
       });
+    if (isInterrupted()) throw new RunInterruptedError(runId);
     controller?.assertNoBoundaryFailure();
     if (usageFailure !== undefined) throw usageFailure;
     if (providerLimitObservation !== undefined) throw providerLimitObservation;
@@ -784,6 +803,7 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
       },
     };
   } finally {
+    params.abortSignal?.removeEventListener("abort", interrupt);
     await harness.close(context);
     offActivity();
     if (ownsActivityChannel) await activityChannel.close();

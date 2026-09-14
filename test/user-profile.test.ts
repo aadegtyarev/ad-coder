@@ -115,6 +115,28 @@ test("appends economics records and rejects every history rewrite", async () => 
   expect((await profileStore.read()).economicRecords).toEqual([record, second]);
 });
 
+test("accepts append-only server-reported credit balance observations", () => {
+  const first = {
+    ...record,
+    id: "credit-balance-1",
+    kind: "credit_balance" as const,
+    value: 500,
+    unit: "credits",
+    source: "provider-measurement",
+    confidence: "provider_reported" as const,
+  };
+  const second = {
+    ...first,
+    id: "credit-balance-2",
+    observedAt: "2026-09-14T00:00:00.000Z",
+    value: 375,
+    previousId: first.id,
+  };
+  expect(parseUserProfileJson(exportUserProfile(profile([first, second]))).economicRecords).toEqual(
+    [first, second],
+  );
+});
+
 test("independent stores serialize concurrent economic appends", async () => {
   const { file, store: first } = createStore();
   const second = new FileUserProfileStore({ userHome: path.dirname(file), path: file });

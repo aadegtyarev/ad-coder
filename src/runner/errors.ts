@@ -22,6 +22,16 @@ export class EmptyTurnError extends Error {
   }
 }
 
+/** A caller deliberately stopped a live role run after durable closeout began. */
+export class RunInterruptedError extends Error {
+  override readonly name = "RunInterruptedError";
+  readonly code = "interrupted" as const;
+
+  constructor(readonly runId: string) {
+    super("role run was interrupted and can be resumed");
+  }
+}
+
 /**
  * Raised when a runner precondition fails before any harness is built. Carries
  * a `code` discriminant and the offending `path` (or run id) ONLY -- never file

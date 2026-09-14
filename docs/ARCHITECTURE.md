@@ -27,7 +27,7 @@ work lives in `docs/BACKLOG.md`.
 | Authentication | `src/auth/` | Store credentials outside target projects and expose secret-free status. |
 | Model inventories | `src/inventory/` | Validate and resolve a named atomic registry plus complexity-routing profile. |
 | Registry and profiles | `src/registry/`, `src/profiles/` | Resolve providers, models, role routing, and effective configuration. |
-| Portable user profile | `src/user-profile/` | Persist validated inventories, calibrated routing, and append-only economics behind atomic writes and a cross-process lock; expose deterministic import/export through the package and JSON CLI. |
+| Portable user profile | `src/user-profile/` | Persist validated inventories, calibrated routing, and append-only economics behind atomic writes and a cross-process lock; expose deterministic import/export and atomic `profile record` through the JSON CLI. |
 | Project calibration | `src/project-calibration/` | Materialize a bounded anonymous current snapshot at `.ad-coder/calibration.json`; matching named inventories consume its routing automatically, with an API switch to disable the override. |
 | Stage-attempt accounting | `src/orchestration/session.ts`, `src/project-operations/run-coordinator.ts` | Tee every role response into a readable ledger and persist partial metrics/run identity before a stage-limit pause, so resumed terminal economics include failed attempts. |
 | Roles and prompts | `src/role.ts`, `src/prompts/`, `prompts/` | Validate roles, resolve built-in or project prompts, and compose versioned model-inventory Researcher briefs without persisting content. |
@@ -49,7 +49,9 @@ ledger. The target is a working directory, not a sandbox. The standalone `role`
 front streams bounded activity and removes pipeline submission tools. It
 checkpoints identity, task digest, status, usage, and pauses under
 `.ad-coder/runs/standalone-<runId>.json`; resume validates identity and task,
-requires the exhausted limit to change, and retains cumulative budgets.
+requires the exhausted limit to change, and retains cumulative budgets. SIGINT
+and SIGTERM abort the active lane, close the in-process resources, and persist
+an `interrupted` pause that can be resumed without changing a budget.
 
 ### Tool activity flow
 

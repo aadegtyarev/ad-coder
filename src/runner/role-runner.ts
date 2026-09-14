@@ -47,6 +47,8 @@ export interface RunRoleOptions {
   activityConsumer?: ToolActivityConsumer;
   /** Monotonic milliseconds seam used by deterministic metric tests. */
   monotonicNow?: () => number;
+  /** Cancels a live role run and leaves its session resumable. */
+  abortSignal?: AbortSignal;
 }
 
 /**
@@ -134,6 +136,7 @@ export function createRoleRunner(config: RoleRunnerConfig): RoleRunner {
         ...(opts?.ledgerSink !== undefined && { ledgerSink: opts.ledgerSink }),
         ...(opts?.context !== undefined && { context: opts.context }),
         ...(opts?.tools !== undefined && { tools: opts.tools }),
+        ...(opts?.abortSignal !== undefined && { abortSignal: opts.abortSignal }),
       });
     },
   };

@@ -16,6 +16,7 @@ import { ProjectStore } from "../src/project-store/project-store";
 import { ProjectStoreError } from "../src/project-store/types";
 import type { Role } from "../src/role";
 import { defineRole } from "../src/role";
+import { RunInterruptedError } from "../src/runner/errors";
 
 const CONTEXT_WINDOW = 200_000;
 const BUDGET = { maxTokens: 100_000, reserveTokens: 10_000, keepRecentTokens: 20_000 } as const;
@@ -100,6 +101,48 @@ test("standalone roles enforce the same stage budgets as pipeline roles", async 
       stageLimits: { maxInputTokens: 1 },
     }),
   ).rejects.toBeInstanceOf(StageLimitError);
+});
+
+test("an interrupted standalone role persists a resumable pause and releases its session", async () => {
+  const { faux, models, model, role } = fixture();
+  const runId = `interrupted-${crypto.randomUUID()}`;
+  const task = "review the interrupted change";
+  const abortController = new AbortController();
+  abortController.abort();
+
+  await expect(
+    runRoleStandalone({
+      role,
+      model,
+      models,
+      targetDir,
+      task,
+      runId,
+      abortSignal: abortController.signal,
+    }),
+  ).rejects.toBeInstanceOf(RunInterruptedError);
+
+  const store = new ProjectStore(targetDir);
+  const checkpointPath = path.join(store.layout.runs, `standalone-${runId}.json`);
+  expect(
+    store.readVersionedJson<{ status: string; pause?: { code: string } }>(checkpointPath).value,
+  ).toMatchObject({
+    status: "paused",
+    pause: { code: "interrupted" },
+  });
+
+  faux.setResponses([fauxAssistantMessage("resumed after interruption")]);
+  const resumed = await runRoleStandalone({
+    role,
+    model,
+    models,
+    targetDir,
+    task,
+    runId,
+    resumeExisting: true,
+  });
+  expect(resumed.text).toContain("resumed after interruption");
+  expect(store.readVersionedJson<{ status: string }>(checkpointPath).value.status).toBe("complete");
 });
 
 test("standalone role resumes the same durable run only after its exhausted budget changes", async () => {

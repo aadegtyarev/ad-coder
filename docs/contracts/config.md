@@ -56,6 +56,11 @@ Rules the operator declared for ad-coder. A violation is always blocking.
   Close-drain time remains finite by default and may use zero for immediate
   shutdown. CLI overrides are `--background-max-page-size`,
   `--background-max-page-bytes`, `--background-close-drain-ms`, and `--lease-ms`.
+- 2026-09-14: Subscription-credit calibration records server-reported balances as
+  append-only `credit_balance` economic records and refill price as `price` in
+  `USD/credit`. Both retain only provider/model scope, timestamp, units, source,
+  confidence, and an optional predecessor record -- never account identity or a
+  raw provider response. `profile record` validates before atomically appending.
 
 ## Sources
 
