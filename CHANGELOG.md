@@ -17,6 +17,8 @@ All notable changes to ad-coder are recorded here. The format follows
 
 - Added persistent OpenRouter API-key login, status, and logout through the
   private credential store, with hidden terminal input and environment fallback.
+- Added `ad-coder update` for clean linked Git checkouts, with fail-closed branch
+  and upstream validation, fast-forward-only pull, frozen install, and link refresh.
 
 - Added explicitly selected, role-scoped Skills v1 with bounded secure
   built-in/project resolution, content digests, actionable typed failures,

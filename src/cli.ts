@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -106,6 +106,7 @@ import type { Tool } from "./runner/tool";
 import type { SessionLimits } from "./session-limits";
 import { SessionLimitController } from "./session-limits";
 import { SkillResolutionError } from "./skills/resolver";
+import { updateCheckout } from "./update/updater";
 import {
   createDefaultUserProfileStore,
   exportUserProfile,
@@ -2440,6 +2441,38 @@ const COMMANDS: readonly CommandDefinition[] = [
           : `ad-coder ${info.version}\nrevision: ${info.revision ?? "unknown"}\nlinked development: ${info.linkedDevelopment ? "yes" : "no"}\n`,
       );
       await Promise.resolve();
+    },
+  },
+  {
+    name: "update",
+    description: "Safely update a linked Git checkout and refresh its Bun link.",
+    positionals: [],
+    options: [{ name: "--json", description: "Emit a stable JSON result." }],
+    run: async ({ positionals, booleans }) => {
+      if (positionals[1] !== undefined) fail("the update command accepts no positional arguments");
+      const result = await updateCheckout({
+        checkoutDir: path.resolve(import.meta.dir, ".."),
+        run: async (argv, cwd) => {
+          const child = spawnSync(argv[0] as string, argv.slice(1), {
+            cwd,
+            encoding: "utf8",
+            maxBuffer: 64 * 1024,
+          });
+          return {
+            exitCode: child.status ?? 1,
+            stdout: child.stdout ?? "",
+            stderr: child.stderr ?? child.error?.message ?? "",
+          };
+        },
+        onStep: (step) => {
+          if (booleans["--json"] !== true) process.stderr.write(`ad-coder: update ${step}\n`);
+        },
+      });
+      process.stdout.write(
+        booleans["--json"] === true
+          ? `${JSON.stringify(result)}\n`
+          : `ad-coder: ${result.changed ? "updated" : "already current"} ${result.branch} (${result.revision.slice(0, 12)})\n`,
+      );
     },
   },
   {

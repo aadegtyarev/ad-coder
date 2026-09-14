@@ -363,6 +363,7 @@ test("root help succeeds on stdout and failure usage is registry-derived", () =>
     expect(code).toBe(0);
     expect(stdout).toContain("usage: ad-coder <command> [options]");
     expect(stdout).toContain("auth    Manage persistent provider authentication.");
+    expect(stdout).toContain("update  Safely update a linked Git checkout");
     expect(stdout).toContain("operations Run a project-operations action and emit JSON.");
     expect(stdout).toContain("run     Run a workflow module.");
     expect(stdout).toContain("role    Run one shipped role once.");
@@ -381,6 +382,7 @@ test("root help succeeds on stdout and failure usage is registry-derived", () =>
 
 test("each command renders its own help before validating required input", () => {
   const commandHelps: ReadonlyArray<readonly [string, string, string]> = [
+    ["update", "--json", "--provider"],
     ["auth", "<status|login|logout>", "--auto"],
     ["operations", "ldo-resume", "<script.ts>"],
     ["run", "<script.ts>", "--provider"],
