@@ -343,6 +343,26 @@ A model may override `baseUrl` when one account fronts two request APIs under
 different path prefixes, since each adapter appends its own suffix to whatever
 base URL it is given. Both the provider and model forms are https-only.
 
+A provider may instead name a shipped model catalog, taking ids, prices,
+context windows, token ceilings, base URLs and supported thinking levels from
+the pinned pi-ai data rather than restating them:
+
+```json
+{
+  "id": "opencode-go",
+  "api": "openai-completions",
+  "catalog": "opencode-go",
+  "credential": { "kind": "env-var", "envVar": "OPENCODE_API_KEY" },
+  "models": [{ "modelId": "glm-5.3-flash", "name": "flash" }]
+}
+```
+
+Anything you declare still wins, an id the catalog does not publish is rejected
+rather than resolved with invented economics, and an account-scoped id such as
+an OpenRouter `@preset/...` is admitted by marking it `"catalog": false` and
+supplying its `cost` and `maxTokens` by hand. See
+[provider catalogs](docs/provider-catalogs.md).
+
 To switch a complete account/provider model inventory atomically, put named
 registry and routing-profile pairs in one trusted JSON file, then select one:
 
@@ -439,6 +459,7 @@ bun run check
 ## Documentation
 
 - [Architecture](docs/ARCHITECTURE.md) — current system map
+- [Provider catalogs](docs/provider-catalogs.md) — declaring providers without hand-written prices
 - [Roadmap](docs/ROADMAP.md) — decisions and future work
 - [Backlog](docs/BACKLOG.md) — unresolved work
 - [Contracts](docs/contracts/) — enforceable rules

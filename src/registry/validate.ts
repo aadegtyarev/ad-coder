@@ -1,10 +1,12 @@
+import { type CatalogModel, catalogModels, catalogNames } from "./catalog";
 import { RegistryError } from "./errors";
 import type {
   ApiKind,
   CredentialSource,
   ModelConfig,
-  ProviderConfig,
-  RegistryConfig,
+  ResolvedModelConfig,
+  ResolvedProviderConfig,
+  ResolvedRegistryConfig,
 } from "./types";
 
 const API_KINDS: readonly ApiKind[] = [
@@ -159,7 +161,7 @@ function parseHeaders(value: unknown, scope: string, bad: Bad): Record<string, s
  * throws a typed `RegistryError` whose `detail` names the offending
  * id/name/field ONLY, never a value.
  */
-export function parseRegistryConfig(value: unknown): RegistryConfig {
+export function parseRegistryConfig(value: unknown): ResolvedRegistryConfig {
   const bad = (code: RegistryError["code"], detail: string, message: string): never => {
     throw new RegistryError(code, detail, message);
   };
@@ -174,7 +176,7 @@ export function parseRegistryConfig(value: unknown): RegistryConfig {
 
   const seenProviderIds = new Set<string>();
   const seenModelNames = new Set<string>();
-  const validated: ProviderConfig[] = [];
+  const validated: ResolvedProviderConfig[] = [];
 
   for (const rawProvider of providers) {
     validated.push(parseProvider(rawProvider, bad, seenProviderIds, seenModelNames));
@@ -190,7 +192,7 @@ function parseProvider(
   bad: Bad,
   seenProviderIds: Set<string>,
   seenModelNames: Set<string>,
-): ProviderConfig {
+): ResolvedProviderConfig {
   if (!isObject(value)) {
     bad("invalid_config", "provider", "each provider must be an object");
   }
@@ -223,33 +225,137 @@ function parseProvider(
     );
   }
 
-  assertHttpsUrl(record.baseUrl, `${providerId}.baseUrl`, bad);
+  let catalog: ReadonlyMap<string, CatalogModel> | undefined;
+  if (record.catalog !== undefined) {
+    if (typeof record.catalog !== "string" || record.catalog.length === 0) {
+      bad(
+        "invalid_config",
+        `${providerId}.catalog`,
+        "provider.catalog must be a non-empty string when present",
+      );
+    }
+    catalog = catalogModels(record.catalog as string);
+    if (catalog === undefined) {
+      // Name the alternatives: a misspelled catalog is indistinguishable from an
+      // unshipped one, and the operator cannot discover the spelling from config.
+      bad(
+        "unknown_catalog",
+        `${providerId}.catalog`,
+        `provider "${providerId}" names catalog "${record.catalog}", which ships no resolvable model; available: ${catalogNames().join(", ")}`,
+      );
+    }
+  }
+
+  // A catalog model carries its own baseUrl, so the provider field is required
+  // only when nothing else can supply one.
+  if (catalog === undefined || record.baseUrl !== undefined) {
+    assertHttpsUrl(record.baseUrl, `${providerId}.baseUrl`, bad);
+  }
 
   const credential = parseCredential(record.credential, providerId, bad);
 
   const headers = parseHeaders(record.headers, providerId, bad);
 
   const models = record.models;
-  if (!Array.isArray(models) || models.length === 0) {
+  if (models !== undefined && (!Array.isArray(models) || models.length === 0)) {
     bad(
       "invalid_config",
       `${providerId}.models`,
-      `provider "${providerId}" must declare a non-empty models array`,
+      `provider "${providerId}" models must be a non-empty array when present`,
     );
   }
-  const validatedModels: ModelConfig[] = [];
-  for (const rawModel of models as unknown[]) {
-    validatedModels.push(parseModel(rawModel, providerId, bad, seenModelNames));
+  if (models === undefined && catalog === undefined) {
+    bad(
+      "invalid_config",
+      `${providerId}.models`,
+      `provider "${providerId}" must declare a non-empty models array, or a catalog to take models from`,
+    );
+  }
+
+  const validatedModels: ResolvedModelConfig[] = [];
+  if (models === undefined) {
+    // Whole catalog admitted: the model name defaults to its catalog id, so a
+    // routing profile addresses it by exactly the id the provider publishes.
+    for (const entry of (catalog as ReadonlyMap<string, CatalogModel>).values()) {
+      validatedModels.push(
+        fromCatalog(
+          entry,
+          { name: entry.modelId, modelId: entry.modelId },
+          providerId,
+          bad,
+          seenModelNames,
+        ),
+      );
+    }
+  } else {
+    for (const rawModel of models as unknown[]) {
+      validatedModels.push(parseModel(rawModel, providerId, catalog, bad, seenModelNames));
+    }
   }
 
   return {
     id: providerId,
     ...(record.displayName !== undefined ? { displayName: record.displayName as string } : {}),
     api: api as ApiKind,
-    baseUrl: record.baseUrl as string,
+    // With a catalog and no declared provider baseUrl, each model supplies its
+    // own; the provider value is then only the fallback for a model that somehow
+    // has none, so the first model's URL is the honest default to report.
+    baseUrl: (record.baseUrl as string | undefined) ?? (validatedModels[0]?.baseUrl as string),
     credential,
+    ...(record.catalog !== undefined ? { catalog: record.catalog as string } : {}),
     ...(headers !== undefined ? { headers } : {}),
     models: validatedModels,
+  };
+}
+
+/**
+ * Build a validated model from a catalog entry plus the operator's overrides.
+ *
+ * PRECEDENCE: a declared field always wins. The catalog is the best available
+ * default, not an authority over the operator -- an account may have negotiated
+ * pricing, or need a lower `maxTokens` than the model's ceiling. What the
+ * operator does NOT declare is taken from the catalog rather than invented.
+ */
+function fromCatalog(
+  entry: CatalogModel,
+  declared: ModelConfig,
+  providerId: string,
+  bad: Bad,
+  seenModelNames: Set<string>,
+): ResolvedModelConfig {
+  if (seenModelNames.has(declared.name)) {
+    bad(
+      "duplicate_model",
+      declared.name,
+      `model name "${declared.name}" is declared more than once across providers`,
+    );
+  }
+  seenModelNames.add(declared.name);
+  if (declared.api !== undefined && declared.api !== entry.api) {
+    // The catalog knows which request API this model actually speaks. A
+    // mismatched override is silently unroutable, so reject rather than honor it.
+    bad(
+      "unsupported_api",
+      declared.name,
+      `model "${declared.name}" declares api "${declared.api}" but catalog "${providerId}" publishes it as "${entry.api}"`,
+    );
+  }
+  return {
+    ...declared,
+    api: entry.api,
+    baseUrl: declared.baseUrl ?? entry.baseUrl,
+    reasoning: declared.reasoning ?? entry.reasoning,
+    input: declared.input ?? [...entry.input],
+    contextWindow: declared.contextWindow ?? entry.contextWindow,
+    maxTokens: declared.maxTokens ?? entry.maxTokens,
+    cost: declared.cost ?? {
+      input: entry.cost.input,
+      output: entry.cost.output,
+      cacheRead: entry.cost.cacheRead,
+      cacheWrite: entry.cost.cacheWrite,
+    },
+    ...(entry.thinkingLevelMap !== undefined && { thinkingLevelMap: entry.thinkingLevelMap }),
+    ...(entry.compat !== undefined && { catalogCompat: entry.compat }),
   };
 }
 
@@ -283,19 +389,72 @@ function parseCredential(value: unknown, providerId: string, bad: Bad): Credenti
 function parseModel(
   value: unknown,
   providerId: string,
+  catalog: ReadonlyMap<string, CatalogModel> | undefined,
   bad: Bad,
   seenModelNames: Set<string>,
-): ModelConfig {
+): ResolvedModelConfig {
   if (!isObject(value)) {
     bad("invalid_config", `${providerId}.model`, "each model must be an object");
   }
   const record = value as Record<string, unknown>;
 
-  const name = record.name;
+  if (typeof record.modelId !== "string" || (record.modelId as string).length === 0) {
+    bad(
+      "invalid_config",
+      `${providerId}.model.modelId`,
+      "model.modelId must be a non-empty string",
+    );
+  }
+  const modelId = record.modelId as string;
+
+  // A catalog entry publishes a usable id, so `name` is the optional alias --
+  // without a catalog it stays required, because a hand-declared model has no
+  // other source for the key the routing profile addresses.
+  const name = record.name ?? (catalog !== undefined ? modelId : undefined);
   if (typeof name !== "string" || name.length === 0) {
     bad("invalid_config", `${providerId}.model.name`, "model.name must be a non-empty string");
   }
   const modelName = name as string;
+
+  if (record.catalog !== undefined && record.catalog !== false) {
+    bad(
+      "invalid_config",
+      `${modelName}.catalog`,
+      "model.catalog may only be false, marking a model the provider catalog does not publish",
+    );
+  }
+  if (record.catalog === false && catalog === undefined) {
+    // Opting out of a catalog the provider never declared means the operator
+    // believes a catalog is in play when none is: report it rather than let the
+    // marker read as satisfied.
+    bad(
+      "invalid_config",
+      `${modelName}.catalog`,
+      `model "${modelName}" sets catalog false, but provider "${providerId}" declares no catalog to opt out of`,
+    );
+  }
+
+  if (catalog !== undefined && record.catalog !== false) {
+    const entry = catalog.get(modelId);
+    if (entry === undefined) {
+      // Resolving an unlisted id would mean inventing its economics. Refuse: a
+      // wrong price is worse than a rejected config, because it silently
+      // corrupts every budget and routing decision computed from it.
+      bad(
+        "unknown_model",
+        `${providerId}.model.modelId`,
+        `provider "${providerId}" admits model "${modelId}", which its catalog does not publish as a resolvable model; declare "catalog": false on that model to supply its cost and maxTokens by hand`,
+      );
+    }
+    return fromCatalog(
+      entry as CatalogModel,
+      parseModelOverrides(record, modelName, modelId, bad),
+      providerId,
+      bad,
+      seenModelNames,
+    );
+  }
+
   if (seenModelNames.has(modelName)) {
     bad(
       "duplicate_model",
@@ -305,14 +464,40 @@ function parseModel(
   }
   seenModelNames.add(modelName);
 
-  if (typeof record.modelId !== "string" || (record.modelId as string).length === 0) {
-    bad("invalid_config", `${modelName}.modelId`, "model.modelId must be a non-empty string");
-  }
+  // Without a catalog nothing else can supply these, so they stay required.
+  assertPositiveNumber(record.maxTokens, `${modelName}.maxTokens`, bad);
+  const cost = parseCost(record.cost, modelName, bad);
 
+  return {
+    ...parseModelOverrides(record, modelName, modelId, bad),
+    contextWindow: (record.contextWindow as number | undefined) ?? DEFAULT_CONTEXT_WINDOW,
+    maxTokens: record.maxTokens as number,
+    cost,
+  };
+}
+
+/**
+ * Validate every model field that is optional in BOTH declaration modes.
+ *
+ * Shared by the hand-declared and catalog-backed paths so one field cannot be
+ * checked in one mode and waved through in the other -- which is exactly how a
+ * validator grows a hole: `headers` are transmitted verbatim to the provider,
+ * and a catalog-backed model sends them just as a hand-declared one does.
+ * Fields absent from the record stay absent from the result, so a catalog value
+ * is overridden only where the operator actually said something.
+ */
+function parseModelOverrides(
+  record: Record<string, unknown>,
+  modelName: string,
+  modelId: string,
+  bad: Bad,
+): ModelConfig {
   if (record.contextWindow !== undefined) {
     assertPositiveNumber(record.contextWindow, `${modelName}.contextWindow`, bad);
   }
-  assertPositiveNumber(record.maxTokens, `${modelName}.maxTokens`, bad);
+  if (record.maxTokens !== undefined) {
+    assertPositiveNumber(record.maxTokens, `${modelName}.maxTokens`, bad);
+  }
 
   if (record.reasoning !== undefined && typeof record.reasoning !== "boolean") {
     bad(
@@ -339,8 +524,6 @@ function parseModel(
     input = record.input as ("text" | "image")[];
   }
 
-  const cost = parseCost(record.cost, modelName, bad);
-
   let api: ApiKind | undefined;
   if (record.api !== undefined) {
     if (typeof record.api !== "string" || !API_KINDS.includes(record.api as ApiKind)) {
@@ -358,6 +541,8 @@ function parseModel(
   // it into provider construction in this first cut. So an unvalidated blob
   // cannot reach request shaping (headers, transport) -- it stays inert data on
   // the config. If a future cut forwards compat, it must be shape-checked here.
+  // (A CATALOG-supplied compat is a different field, `catalogCompat`, and IS
+  // forwarded -- it comes from the pinned dependency, not from config text.)
   if (record.compat !== undefined && !isObject(record.compat)) {
     bad("invalid_config", `${modelName}.compat`, "model.compat must be an object when present");
   }
@@ -369,20 +554,23 @@ function parseModel(
 
   return {
     name: modelName,
-    modelId: record.modelId as string,
-    contextWindow: (record.contextWindow as number | undefined) ?? DEFAULT_CONTEXT_WINDOW,
-    maxTokens: record.maxTokens as number,
+    modelId,
+    ...(record.contextWindow !== undefined
+      ? { contextWindow: record.contextWindow as number }
+      : {}),
+    ...(record.maxTokens !== undefined ? { maxTokens: record.maxTokens as number } : {}),
     ...(record.reasoning !== undefined ? { reasoning: record.reasoning as boolean } : {}),
     ...(input !== undefined ? { input } : {}),
-    cost,
+    ...(record.cost !== undefined ? { cost: parseCost(record.cost, modelName, bad) } : {}),
     ...(api !== undefined ? { api } : {}),
     ...(record.baseUrl !== undefined ? { baseUrl: record.baseUrl as string } : {}),
     ...(headers !== undefined ? { headers } : {}),
+    ...(record.catalog === false ? { catalog: false as const } : {}),
     ...(record.compat !== undefined ? { compat: record.compat } : {}),
   };
 }
 
-function parseCost(value: unknown, modelName: string, bad: Bad): ModelConfig["cost"] {
+function parseCost(value: unknown, modelName: string, bad: Bad): NonNullable<ModelConfig["cost"]> {
   if (!isObject(value)) {
     bad("invalid_config", `${modelName}.cost`, "model.cost must be an object");
   }

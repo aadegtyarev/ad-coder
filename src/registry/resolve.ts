@@ -7,9 +7,9 @@ import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-code
 import { RegistryError } from "./errors";
 import type {
   ApiKind,
-  ModelConfig,
-  ProviderConfig,
   RegistryConfig,
+  ResolvedModelConfig,
+  ResolvedProviderConfig,
   ResolvedRegistry,
 } from "./types";
 import { HEADER_PLACEHOLDER_PATTERN, parseRegistryConfig } from "./validate";
@@ -83,7 +83,10 @@ export function resolveRegistry(
   });
 
   // name -> the pi (providerId, modelId) pair getModel resolves against.
-  const index = new Map<string, { providerId: string; modelId: string; config: ModelConfig }>();
+  const index = new Map<
+    string,
+    { providerId: string; modelId: string; config: ResolvedModelConfig }
+  >();
 
   for (const provider of validated.providers) {
     const registeredId = registerProvider(
@@ -115,7 +118,7 @@ export function resolveRegistry(
     // A fresh object avoids mutating pi-ai's shared provider catalog.
     return {
       ...model,
-      contextWindow: entry.config.contextWindow ?? 200_000,
+      contextWindow: entry.config.contextWindow,
       maxTokens: entry.config.maxTokens,
       ...(entry.config.input !== undefined && { input: [...entry.config.input] }),
     };
@@ -130,7 +133,7 @@ export function resolveRegistry(
 
 /** Register one config provider into `models`, returning the pi provider id it was registered under. */
 function registerProvider(
-  provider: ProviderConfig,
+  provider: ResolvedProviderConfig,
   models: ReturnType<typeof createModels>,
   readEnv: (name: string) => string | undefined,
   hasCredentialStore: boolean,
@@ -213,8 +216,8 @@ function expandHeaderValue(value: string, session: string): string {
  * a per-model override replaces rather than duplicates the provider's value.
  */
 function mergeDeclaredHeaders(
-  provider: ProviderConfig,
-  model: ModelConfig,
+  provider: ResolvedProviderConfig,
+  model: ResolvedModelConfig,
   session: string,
 ): Record<string, string> | undefined {
   if (provider.headers === undefined && model.headers === undefined) return undefined;
@@ -233,7 +236,11 @@ function mergeDeclaredHeaders(
 }
 
 /** Map a declared ModelConfig onto a pi `Model<Api>`, filling only the fields the registry declares. */
-function toPiModel(model: ModelConfig, provider: ProviderConfig, session: string): Model<Api> {
+function toPiModel(
+  model: ResolvedModelConfig,
+  provider: ResolvedProviderConfig,
+  session: string,
+): Model<Api> {
   const api: Api = model.api ?? provider.api;
   const headers = mergeDeclaredHeaders(provider, model, session);
   return {
@@ -251,8 +258,17 @@ function toPiModel(model: ModelConfig, provider: ProviderConfig, session: string
       cacheRead: model.cost.cacheRead,
       cacheWrite: model.cost.cacheWrite,
     },
-    contextWindow: model.contextWindow ?? 200_000,
+    contextWindow: model.contextWindow,
     maxTokens: model.maxTokens,
+    // Catalog facts, forwarded together on purpose: the adapters read
+    // `thinkingLevelMap` only from inside a `compat.thinkingFormat` branch, so
+    // the map without the compat that selects the branch is inert. Operator
+    // `compat` is NOT forwarded (see the validator) -- only this pair, which
+    // originates in the pinned dependency.
+    ...(model.thinkingLevelMap !== undefined && { thinkingLevelMap: model.thinkingLevelMap }),
+    ...(model.catalogCompat !== undefined && {
+      compat: model.catalogCompat as NonNullable<Model<Api>["compat"]>,
+    }),
   };
 }
 
@@ -264,7 +280,7 @@ function toPiModel(model: ModelConfig, provider: ProviderConfig, session: string
  * with `unsupported_api`.
  */
 function buildApi(
-  provider: ProviderConfig,
+  provider: ResolvedProviderConfig,
 ): ProviderStreams | Partial<Record<Api, ProviderStreams>> {
   const kinds = new Set<ApiKind>([provider.api]);
   for (const model of provider.models) {

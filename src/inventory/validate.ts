@@ -1,12 +1,12 @@
 import { parseProfile } from "../profiles/validate";
 import { parseRegistryConfig } from "../registry/validate";
 import { ModelInventoryError } from "./errors";
-import type { ModelInventoryConfig, ModelInventoryProfile } from "./types";
+import type { ResolvedModelInventoryConfig, ResolvedModelInventoryProfile } from "./types";
 
 const PROFILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 /** Validate every atomic pair and every profile model reference without reading credentials. */
-export function parseModelInventoryConfig(value: unknown): ModelInventoryConfig {
+export function parseModelInventoryConfig(value: unknown): ResolvedModelInventoryConfig {
   if (!isObject(value))
     throw new ModelInventoryError("invalid_config", "config", "inventory config must be an object");
   if (!Array.isArray(value.profiles) || value.profiles.length === 0)
@@ -17,7 +17,7 @@ export function parseModelInventoryConfig(value: unknown): ModelInventoryConfig 
     );
 
   const seen = new Set<string>();
-  const profiles: ModelInventoryProfile[] = value.profiles.map((entry) => {
+  const profiles: ResolvedModelInventoryProfile[] = value.profiles.map((entry) => {
     if (!isObject(entry))
       throw new ModelInventoryError(
         "invalid_config",

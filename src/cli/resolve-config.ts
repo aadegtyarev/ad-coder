@@ -37,7 +37,13 @@ import { resolvePrompt } from "../prompts/prompts";
 import type { ResearchPurpose, RoleBriefSource } from "../prompts/role-briefs";
 import { deepseekPreset, openaiCodexPreset, openrouterPreset } from "../registry/presets";
 import { resolveRegistry } from "../registry/resolve";
-import type { ProviderConfig, RegistryConfig, ResolvedRegistry } from "../registry/types";
+import type {
+  ProviderConfig,
+  RegistryConfig,
+  ResolvedRegistry,
+  ResolvedRegistryConfig,
+} from "../registry/types";
+import { parseRegistryConfig } from "../registry/validate";
 import type { Role } from "../role";
 import { defineRole } from "../role";
 import type { Tool } from "../runner/tool";
@@ -421,15 +427,19 @@ function resolveConfig(
       ? selectProvider(env, options.provider, warn)
       : undefined;
   const presetSelection = provider === undefined ? undefined : PROVIDER_PRESETS[provider];
-  let registryConfig: RegistryConfig;
+  let authoredRegistry: RegistryConfig;
   if (inventory !== undefined)
-    registryConfig = options.inventoryConfig?.profiles.find(
+    authoredRegistry = options.inventoryConfig?.profiles.find(
       (entry) => entry.name === inventory.name,
     )?.registry as RegistryConfig;
-  else if (options.registryConfig !== undefined) registryConfig = options.registryConfig;
+  else if (options.registryConfig !== undefined) authoredRegistry = options.registryConfig;
   else if (presetSelection !== undefined)
-    registryConfig = { providers: [presetSelection.preset()] };
+    authoredRegistry = { providers: [presetSelection.preset()] };
   else throw new Error("provider preset could not be selected");
+  // Validate here too, not only inside resolveRegistry: the default-model pick
+  // and the destination warning below both read model facts, and under a
+  // provider `catalog` those facts exist only after validation fills them in.
+  const registryConfig: ResolvedRegistryConfig = parseRegistryConfig(authoredRegistry);
   const defaultModel =
     presetSelection?.defaultModel ?? registryConfig.providers[0]?.models[0]?.name;
   if (defaultModel === undefined) throw new Error("registryConfig must declare at least one model");

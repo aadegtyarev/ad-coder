@@ -27,6 +27,20 @@ All notable changes to ad-coder are recorded here. The format follows
 - A model can override the provider `baseUrl`, for one account fronting two
   request APIs under different path prefixes; each adapter appends its own
   suffix to the base URL it is handed.
+- A provider can name a shipped model catalog (`"catalog": "openrouter"`, 31
+  catalogs from 2 to 366 models) and take model ids, per-token costs, context
+  windows, token ceilings, base URLs, request APIs and supported thinking
+  levels from the pinned pi-ai data instead of restating them. Hand-written
+  economics go stale silently and corrupt every routing and budget decision
+  computed from them; building this surfaced four wrong values in our own draft
+  inventory, including a price 2x over and a model assigned the wrong request
+  API. Declared fields still win, `models` becomes an optional filter, and
+  omitting it admits the whole catalog.
+- Catalog-supplied thinking-level maps now reach the provider request, so a
+  routing profile asking for a level the model does not support gets the
+  model's documented fallback instead of an opaque provider error. Two
+  `opencode-go` models we route to reject `medium` — unknowable from a
+  hand-written model list.
 
 ### Security
 
@@ -38,6 +52,16 @@ All notable changes to ad-coder are recorded here. The format follows
   request), and duplicate names differing only by case. Failures name the
   header and never echo its value. Per-model `baseUrl` is https-only, as the
   provider field already was.
+- A model id the named catalog does not publish is rejected rather than
+  resolved with whatever economics sit next to it, so a typo cannot silently
+  become a priced model. An account-scoped id (an OpenRouter `@preset/...`,
+  which no static catalog can know) requires an explicit `"catalog": false`
+  marker, keeping the hand-written exception deliberate. An `api` override that
+  contradicts the catalog is refused instead of producing an unroutable model,
+  and catalog entries on request APIs the resolver cannot construct are never
+  admitted. Operator-declared `compat` remains inert, unvalidated data; only the
+  catalog's own compat — from the pinned dependency, not config text — is
+  forwarded.
 
 ## [0.5.1] - 2026-09-14
 

@@ -414,7 +414,7 @@ test("the codex/oauth provider resolves via the delegated factory, no api-key au
 
 test("declared context windows override delegated catalog values in either direction", () => {
   const base = openaiCodexPreset();
-  const declared = base.models[0]!;
+  const declared = base.models![0]!;
   const low = resolveRegistry({
     providers: [{ ...base, models: [{ ...declared, contextWindow: 32000 }] }],
   });
@@ -650,4 +650,315 @@ test("an unknown placeholder is rejected instead of being transmitted literally"
   expect(() =>
     parseRegistryConfig(config({ providers: [provider({ headers: { "x-h": "{{session}}" } })] })),
   ).not.toThrow();
+});
+
+// --- provider catalogs ---
+
+test("a catalog supplies cost, ceilings, api and base URL the config never states", () => {
+  const config = parseRegistryConfig({
+    providers: [
+      {
+        id: "opencode-go",
+        api: "openai-completions",
+        catalog: "opencode-go",
+        credential: { kind: "env-var", envVar: "OPENCODE_API_KEY" },
+        models: [{ modelId: "glm-5.3-flash", name: "flash" }],
+      },
+    ],
+  });
+  const model = config.providers[0]!.models[0]!;
+  // Exact values, not merely "defined": the whole point of the catalog is that
+  // these are the provider's real numbers, so an assertion that would pass on
+  // invented ones would not test anything.
+  expect(model.cost).toEqual({ input: 0.075, output: 0.25, cacheRead: 0.015, cacheWrite: 0 });
+  expect(model.contextWindow).toBe(1_000_000);
+  expect(model.maxTokens).toBe(131_072);
+  expect(model.baseUrl).toBe("https://opencode.ai/zen/go/v1");
+  expect(model.api).toBe("openai-completions");
+});
+
+test("a catalog api override wins over the provider api, per model", () => {
+  const registry = resolveRegistry(
+    {
+      providers: [
+        {
+          id: "opencode-go",
+          api: "openai-completions",
+          catalog: "opencode-go",
+          credential: { kind: "env-var", envVar: "OPENCODE_API_KEY" },
+          models: [
+            { modelId: "glm-5.3-flash", name: "flash" },
+            { modelId: "minimax-m3", name: "m3" },
+          ],
+        },
+      ],
+    },
+    { env: () => "k" },
+  );
+  expect(registry.getModel("flash").api).toBe("openai-completions");
+  // The catalog knows this one speaks a different request API than its siblings.
+  expect(registry.getModel("m3").api).toBe("anthropic-messages");
+  expect(registry.getModel("m3").baseUrl).toBe("https://opencode.ai/zen/go");
+});
+
+test("thinking-level support and its compat branch both reach the pi model", () => {
+  const registry = resolveRegistry(
+    {
+      providers: [
+        {
+          id: "opencode-go",
+          api: "openai-completions",
+          catalog: "opencode-go",
+          credential: { kind: "env-var", envVar: "OPENCODE_API_KEY" },
+          models: [{ modelId: "glm-5.3-flash", name: "flash" }],
+        },
+      ],
+    },
+    { env: () => "k" },
+  );
+  const model = registry.getModel("flash");
+  // null marks a level the model rejects: without this the adapter forwards
+  // "medium" verbatim and the provider answers with an opaque error.
+  expect(model.thinkingLevelMap?.medium).toBeNull();
+  expect(model.thinkingLevelMap?.low).toBe("low");
+  // The map is read only inside a compat.thinkingFormat branch, so forwarding
+  // it without compat would be inert.
+  expect(model.compat).toBeDefined();
+});
+
+test("declared values override catalog values rather than the reverse", () => {
+  const registry = resolveRegistry(
+    {
+      providers: [
+        {
+          id: "opencode-go",
+          api: "openai-completions",
+          catalog: "opencode-go",
+          credential: { kind: "env-var", envVar: "OPENCODE_API_KEY" },
+          models: [
+            {
+              modelId: "glm-5.3-flash",
+              name: "flash",
+              maxTokens: 4096,
+              contextWindow: 32_000,
+              cost: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4 },
+            },
+          ],
+        },
+      ],
+    },
+    { env: () => "k" },
+  );
+  const model = registry.getModel("flash");
+  expect(model.maxTokens).toBe(4096);
+  expect(model.contextWindow).toBe(32_000);
+  expect(model.cost.input).toBe(1);
+});
+
+test("an omitted models list admits the whole catalog under catalog ids", () => {
+  const config = parseRegistryConfig({
+    providers: [
+      {
+        id: "deepseek",
+        api: "openai-completions",
+        catalog: "deepseek",
+        credential: { kind: "env-var", envVar: "DEEPSEEK_API_KEY" },
+      },
+    ],
+  });
+  const models = config.providers[0]!.models;
+  expect(models.length).toBeGreaterThan(0);
+  for (const model of models) expect(model.name).toBe(model.modelId);
+});
+
+test("an unknown catalog is rejected and the error names the available ones", () => {
+  let thrown: RegistryError | undefined;
+  try {
+    parseRegistryConfig({
+      providers: [
+        {
+          id: "p",
+          api: "openai-completions",
+          catalog: "opencode-zen",
+          credential: { kind: "env-var", envVar: "K" },
+          models: [{ modelId: "m", name: "m" }],
+        },
+      ],
+    });
+  } catch (error) {
+    thrown = error as RegistryError;
+  }
+  expect(thrown?.code).toBe("unknown_catalog");
+  expect(thrown?.detail).toBe("p.catalog");
+  // A misspelling is otherwise indistinguishable from an unshipped provider.
+  expect(thrown?.message).toContain("opencode-go");
+});
+
+test("an id the catalog does not publish is rejected rather than given invented economics", () => {
+  let thrown: RegistryError | undefined;
+  try {
+    parseRegistryConfig({
+      providers: [
+        {
+          id: "openrouter",
+          api: "openai-completions",
+          baseUrl: "https://openrouter.ai/api/v1",
+          catalog: "openrouter",
+          credential: { kind: "env-var", envVar: "OPENROUTER_API_KEY" },
+          models: [
+            {
+              modelId: "@preset/whatever",
+              name: "preset",
+              maxTokens: 8192,
+              cost: { input: 9, output: 9, cacheRead: 0, cacheWrite: 0 },
+            },
+          ],
+        },
+      ],
+    });
+  } catch (error) {
+    thrown = error as RegistryError;
+  }
+  expect(thrown?.code).toBe("unknown_model");
+  expect(thrown?.message).toContain('"catalog": false');
+});
+
+test('"catalog": false admits an account-scoped id beside catalog-backed siblings', () => {
+  const config = parseRegistryConfig({
+    providers: [
+      {
+        id: "openrouter",
+        api: "openai-completions",
+        baseUrl: "https://openrouter.ai/api/v1",
+        catalog: "openrouter",
+        credential: { kind: "env-var", envVar: "OPENROUTER_API_KEY" },
+        models: [
+          { modelId: "minimax/minimax-m3", name: "m3" },
+          {
+            modelId: "@preset/minimaxm2-5",
+            name: "preset",
+            catalog: false,
+            maxTokens: 8192,
+            cost: { input: 0.27, output: 1.08, cacheRead: 0.054, cacheWrite: 0 },
+          },
+        ],
+      },
+    ],
+  });
+  const [fromCatalog, byHand] = config.providers[0]!.models;
+  expect(fromCatalog?.cost?.input).toBe(0.3);
+  expect(byHand?.cost?.input).toBe(0.27);
+  // The opted-out model falls back to the provider baseUrl, which it must still declare.
+  expect(byHand?.maxTokens).toBe(8192);
+});
+
+test('"catalog": false without a provider catalog is a config error, not a no-op', () => {
+  let thrown: RegistryError | undefined;
+  try {
+    parseRegistryConfig({
+      providers: [
+        {
+          id: "p",
+          api: "openai-completions",
+          baseUrl: "https://example.com/v1",
+          credential: { kind: "env-var", envVar: "K" },
+          models: [
+            {
+              modelId: "m",
+              name: "m",
+              catalog: false,
+              maxTokens: 100,
+              cost: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
+            },
+          ],
+        },
+      ],
+    });
+  } catch (error) {
+    thrown = error as RegistryError;
+  }
+  expect(thrown?.code).toBe("invalid_config");
+  expect(thrown?.detail).toBe("m.catalog");
+});
+
+test("a catalog model still needs cost and maxTokens when declared by hand", () => {
+  expect(() =>
+    parseRegistryConfig({
+      providers: [
+        {
+          id: "p",
+          api: "openai-completions",
+          baseUrl: "https://example.com/v1",
+          credential: { kind: "env-var", envVar: "K" },
+          models: [{ modelId: "m", name: "m", maxTokens: 100 }],
+        },
+      ],
+    }),
+  ).toThrow(RegistryError);
+});
+
+test("declared headers still apply to a catalog-backed model", () => {
+  const registry = resolveRegistry(
+    {
+      providers: [
+        {
+          id: "opencode-go",
+          api: "openai-completions",
+          catalog: "opencode-go",
+          credential: { kind: "env-var", envVar: "OPENCODE_API_KEY" },
+          headers: { "x-opencode-session": "adcoder-{{session}}" },
+          models: [
+            { modelId: "glm-5.3-flash", name: "flash" },
+            { modelId: "minimax-m3", name: "m3", headers: { "x-route": "pinned" } },
+          ],
+        },
+      ],
+    },
+    { env: () => "k", session: "fixed" },
+  );
+  expect(registry.getModel("flash").headers?.["x-opencode-session"]).toBe("adcoder-fixed");
+  // A per-model header survives the catalog merge alongside the provider's own.
+  const pinned = registry.getModel("m3").headers;
+  expect(pinned?.["x-route"]).toBe("pinned");
+  expect(pinned?.["x-opencode-session"]).toBe("adcoder-fixed");
+});
+
+test("a model api override that contradicts the catalog is rejected", () => {
+  let thrown: RegistryError | undefined;
+  try {
+    parseRegistryConfig({
+      providers: [
+        {
+          id: "opencode-go",
+          api: "openai-completions",
+          catalog: "opencode-go",
+          credential: { kind: "env-var", envVar: "OPENCODE_API_KEY" },
+          models: [{ modelId: "glm-5.3-flash", name: "flash", api: "anthropic-messages" }],
+        },
+      ],
+    });
+  } catch (error) {
+    thrown = error as RegistryError;
+  }
+  expect(thrown?.code).toBe("unsupported_api");
+  expect(thrown?.detail).toBe("flash");
+});
+
+test("a catalog admits no model on an api the resolver cannot construct", () => {
+  const config = parseRegistryConfig({
+    providers: [
+      {
+        id: "opencode-go",
+        api: "openai-completions",
+        catalog: "opencode-go",
+        credential: { kind: "env-var", envVar: "OPENCODE_API_KEY" },
+      },
+    ],
+  });
+  // opencode-go publishes openai-responses models too; admitting one would put
+  // a name in the registry that routing can select and then fail to dispatch.
+  for (const model of config.providers[0]!.models) {
+    expect(["openai-completions", "anthropic-messages"]).toContain(String(model.api));
+  }
+  expect(config.providers[0]!.models.some((m) => m.modelId === "gpt-5.6-luna")).toBe(false);
 });
