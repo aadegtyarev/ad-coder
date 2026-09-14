@@ -34,6 +34,7 @@ import {
   buildSubmitPlanTool,
   CONTRACT_INDEX,
   formatPlannerInstruction,
+  parsePlanText,
   SUBMIT_PLAN_TOOL_NAME,
 } from "./plan";
 import { StageLimitError } from "./stage-limits";
@@ -285,6 +286,7 @@ interface ResolvedDefaults {
   autoAdvance: boolean;
   maxRounds: number;
   preComplexity: Complexity;
+  plannerHandoffAttempts: 1 | 2;
 }
 
 /**
@@ -396,7 +398,10 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     // routing.defaultComplexity wins (validated, authoritative in the routing
     // path); a routing-less caller may still name one via defaults.
     preComplexity: routing?.defaultComplexity ?? config.defaults?.defaultComplexity ?? "medium",
+    plannerHandoffAttempts: config.defaults?.plannerHandoffAttempts ?? 2,
   };
+  if (defaults.plannerHandoffAttempts !== 1 && defaults.plannerHandoffAttempts !== 2)
+    throw new RangeError("defaults.plannerHandoffAttempts must be 1 or 2");
 
   // The ONE place a role's model is chosen. Routing absent -> the spec's own
   // model (prior behavior); present -> the profile's (role, complexity) cell,
@@ -486,7 +491,12 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
         session,
         ...(turnLedger !== undefined && { ledgerSink: turnLedger }),
         ...(tools !== undefined && { tools }),
-        ...(resume !== undefined && { resumeActiveOperation: true, resumePromptOnSettled: true }),
+        ...(resume !== undefined && {
+          resumeActiveOperation: true,
+          // Structured Planner/Reviewer callbacks must be rebuilt after process
+          // recovery; other roles can reuse an already-settled durable result.
+          resumePromptOnSettled: step === "plan" || step.startsWith("review:"),
+        }),
         ...(resume?.snapshot !== undefined && { stageLimitInitial: resume.snapshot }),
         ...(config.roleStageLimits?.[role.name as ProfileRole] !== undefined && {
           stageLimits: config.roleStageLimits[role.name as ProfileRole],
@@ -682,10 +692,12 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     if (planner === undefined) {
       throw new OrchestrationError("empty_task", "", "plan phase requires a planner role");
     }
-    const attempt = stageAttempt(state, "plan", "plan");
-    const { runId } = attempt.stage;
-    const capture: PlanCapture = {};
-    const submitPlanTool = buildSubmitPlanTool(capture, runId, config.surfaceAnalysisLimits);
+    const firstAttempt = stageAttempt(state, "plan", "plan");
+    let runId = firstAttempt.stage.runId;
+    let capture: PlanCapture = {};
+    let text = "";
+    let followUps: FollowUp[] = [];
+    let accumulatedState = state;
     const prompt = `${config.task}\n\n${formatPlannerInstruction()}`;
     const selection = pickSelection("planner", planner, state.preComplexity);
     const plannerWithRequiredTool: RoleSpec = {
@@ -697,28 +709,48 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
         ),
       },
     };
-    const { text, followUps, metrics } = await runWorkflowTurn(
-      plannerWithRequiredTool,
-      selection,
-      prompt,
-      "plan",
-      runId,
-      [
-        submitPlanTool,
-        ...(config.pluginToolsForModel?.(selection.model) ?? config.pluginTools ?? []),
-      ],
-      true,
-      attempt.resume ? attempt.stage : undefined,
-    );
-    const settled = settledStage(state, attempt.stage, attempt.resume, metrics);
-    if (capture.plan === undefined && capture.error === undefined) {
-      try {
-        const parsed = parsePlanText(text, runId, config.surfaceAnalysisLimits);
-        if (parsed !== undefined) capture.plan = parsed;
-      } catch (error) {
-        if (error instanceof OrchestrationError) capture.error = error;
-        else throw error;
+    for (let index = 0; index < defaults.plannerHandoffAttempts; index += 1) {
+      const attempt =
+        index === 0
+          ? firstAttempt
+          : {
+              stage: { phase: "plan" as const, step: "plan", runId: crypto.randomUUID() },
+              resume: false,
+            };
+      runId = attempt.stage.runId;
+      capture = {};
+      const submitPlanTool = buildSubmitPlanTool(capture, runId, config.surfaceAnalysisLimits);
+      const turn = await runWorkflowTurn(
+        plannerWithRequiredTool,
+        selection,
+        index === 0
+          ? prompt
+          : `${prompt}\n\nYour preceding response did not call submit_plan. Call submit_plan now with the complete required object, then stop.`,
+        "plan",
+        runId,
+        [
+          submitPlanTool,
+          ...(config.pluginToolsForModel?.(selection.model) ?? config.pluginTools ?? []),
+        ],
+        true,
+        attempt.resume ? attempt.stage : undefined,
+      );
+      text = turn.text;
+      followUps = turn.followUps;
+      accumulatedState = {
+        ...accumulatedState,
+        ...settledStage(accumulatedState, attempt.stage, attempt.resume, turn.metrics),
+      };
+      if (capture.plan === undefined && capture.error === undefined) {
+        try {
+          const parsed = parsePlanText(text, runId, config.surfaceAnalysisLimits);
+          if (parsed !== undefined) capture.plan = parsed;
+        } catch (error) {
+          if (error instanceof OrchestrationError) capture.error = error;
+          else throw error;
+        }
       }
+      if (capture.error !== undefined || capture.plan !== undefined) break;
     }
     // A captured error is parsePlan's OrchestrationError, swallowed by the
     // harness into an error tool-result and re-thrown here (HARD malformed_plan).
@@ -759,7 +791,8 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       planSummary: text,
       contractRequirements,
       surfaceAnalysis: capture.plan.surfaceAnalysis,
-      ...settled,
+      runIds: accumulatedState.runIds,
+      stageMetrics: accumulatedState.stageMetrics ?? [],
       effective,
       ...(complexity !== undefined && { complexity }),
       ...(securitySurface !== undefined && { securitySurface }),

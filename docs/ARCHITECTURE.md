@@ -98,10 +98,8 @@ The conversational Orchestrator exposes the same execution choices: `run_role`
 for one specialist, `run_step` plus `choose_transition` for manual workflow
 control, and `run_pipeline` for automatic completion. Pipeline results include a
 durable run ID and aggregate stage usage. `resume_pipeline` reopens that run with
-the original task and reuses committed stages. Stage-limit recovery requires the
-host configuration to raise or disable the exhausted budget, then reopens the
-paused role's durable lane with its same run ID and cumulative counters rather
-than repeating its prompt or double-counting its partial stage metric.
+the original task and reuses committed stages. After raising the budget, recovery
+resumes its durable role lane without repeating work.
 
 ### Conversation and orchestrator
 

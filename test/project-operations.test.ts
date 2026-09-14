@@ -46,7 +46,6 @@ import {
   WorkflowStageFailureError,
   WorkflowStageLimitError,
 } from "../src";
-import { WorkflowStageExecutionError } from "../src/orchestration/session";
 import { SUBMIT_VERDICT_TOOL_NAME } from "../src/orchestration/verdict";
 import { defineRole } from "../src/role";
 
@@ -537,7 +536,7 @@ test("RunCoordinator persists a failed stage's safe metrics and permits an expli
     async step(state) {
       attempts += 1;
       if (attempts === 1) {
-        throw new WorkflowStageExecutionError(
+        throw new WorkflowStageFailureError(
           new Error("provider detail must not persist"),
           "failed-code",
           {
