@@ -38,6 +38,7 @@ import {
 } from "./plan";
 import { StageLimitError } from "./stage-limits";
 import type {
+  ActiveWorkflowStage,
   AvailableTransition,
   Complexity,
   Driver,
@@ -426,13 +427,16 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     runId: string,
     tools?: Tool[],
     durable = true,
+    resume?: ActiveWorkflowStage,
   ): Promise<{ text: string; followUps: FollowUp[]; metrics: PipelineStageMetrics }> => {
     const { model } = selection;
     // A fresh session per run: each role has its own systemPrompt, so sharing a
     // session would leak one role's history and prompt into another.
     const transientRepo = durable ? undefined : new MemorySessionRepo();
     const session = durable
-      ? await projectStore.createSession(runId, BACKGROUND_CONTEXT)
+      ? resume === undefined
+        ? await projectStore.createSession(runId, BACKGROUND_CONTEXT)
+        : await projectStore.resumeSession(runId, BACKGROUND_CONTEXT)
       : await transientRepo?.create({ id: runId }, BACKGROUND_CONTEXT);
     if (session === undefined) throw new Error("failed to create transient role session");
     const budgetPercents = routing?.budgetPercents?.[spec.role.name as ProfileRole];
@@ -466,14 +470,24 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
           }
         : readableLedger;
     const ledgerStart = readableLedger.records().length;
+    // A settled operation's callbacks cannot be reconstructed in this process.
+    // Resume an active operation, but admit a fresh continuation if it settled:
+    // the transcript preserves completed reconnaissance and fresh callbacks see
+    // every required structured submission.
+    const effectivePrompt =
+      resume === undefined
+        ? prompt
+        : `${prompt}\n\nContinue the interrupted stage from this session. Do not repeat completed reconnaissance; complete any required submission.`;
     let run: Awaited<ReturnType<RoleRunner["runRole"]>>;
     try {
-      run = await runner.runRole(role, model, prompt, {
+      run = await runner.runRole(role, model, effectivePrompt, {
         runId,
         step,
         session,
         ...(turnLedger !== undefined && { ledgerSink: turnLedger }),
         ...(tools !== undefined && { tools }),
+        ...(resume !== undefined && { resumeActiveOperation: true, resumePromptOnSettled: true }),
+        ...(resume?.snapshot !== undefined && { stageLimitInitial: resume.snapshot }),
         ...(config.roleStageLimits?.[role.name as ProfileRole] !== undefined && {
           stageLimits: config.roleStageLimits[role.name as ProfileRole],
         }),
@@ -559,6 +573,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     runId: string,
     tools: Tool[] = [],
     durable = true,
+    resume?: ActiveWorkflowStage,
   ): Promise<{ text: string; followUps: FollowUp[]; metrics: PipelineStageMetrics }> => {
     const enabled =
       spec.role.activeToolNames === undefined ||
@@ -578,8 +593,69 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       runId,
       [...tools, followUpTool],
       durable,
+      resume,
     );
     return { text: turn.text, followUps: capture.followUps, metrics: turn.metrics };
+  };
+
+  const stageAttempt = (
+    state: WorkflowState,
+    phase: ActiveWorkflowStage["phase"],
+    step: string,
+  ): { stage: ActiveWorkflowStage; resume: boolean } => {
+    const active = state.activeStage;
+    if (active?.phase === phase && active.step === step) return { stage: active, resume: true };
+    return {
+      stage: { phase, step, runId: crypto.randomUUID() },
+      resume: false,
+    };
+  };
+
+  const settledStage = (
+    state: WorkflowState,
+    attempt: ActiveWorkflowStage,
+    resume: boolean,
+    metrics: PipelineStageMetrics,
+  ): Pick<WorkflowState, "runIds" | "stageMetrics"> => {
+    const prior = resume ? attempt.metrics : undefined;
+    const merged =
+      prior === undefined
+        ? metrics
+        : {
+            ...metrics,
+            durationMs: (prior.durationMs ?? 0) + (metrics.durationMs ?? 0),
+            input: prior.input + metrics.input,
+            cachedInput: prior.cachedInput + metrics.cachedInput,
+            freshInput: prior.freshInput + metrics.freshInput,
+            output: prior.output + metrics.output,
+            reasoning: (prior.reasoning ?? 0) + (metrics.reasoning ?? 0),
+            costUsd: (prior.costUsd ?? 0) + (metrics.costUsd ?? 0),
+            requestBytes: {
+              systemPrompt: prior.requestBytes.systemPrompt + metrics.requestBytes.systemPrompt,
+              prompt: prior.requestBytes.prompt + metrics.requestBytes.prompt,
+              toolDefinitions:
+                prior.requestBytes.toolDefinitions + metrics.requestBytes.toolDefinitions,
+              total: prior.requestBytes.total + metrics.requestBytes.total,
+            },
+            readFiles: [...new Set([...prior.readFiles, ...metrics.readFiles])].sort(),
+            readFilesTotal: Math.max(
+              prior.readFilesTotal,
+              metrics.readFilesTotal,
+              new Set([...prior.readFiles, ...metrics.readFiles]).size,
+            ),
+            readFilesTruncated: Math.max(prior.readFilesTruncated, metrics.readFilesTruncated),
+          };
+    return {
+      runIds: state.runIds.includes(attempt.runId)
+        ? state.runIds
+        : [...state.runIds, attempt.runId],
+      stageMetrics: [
+        ...(state.stageMetrics ?? []).filter(
+          (metric) => !(resume && metric.stage === attempt.step && metric.status === "paused"),
+        ),
+        merged,
+      ],
+    };
   };
 
   const initialState = (): WorkflowState => ({
@@ -606,7 +682,8 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     if (planner === undefined) {
       throw new OrchestrationError("empty_task", "", "plan phase requires a planner role");
     }
-    const runId = crypto.randomUUID();
+    const attempt = stageAttempt(state, "plan", "plan");
+    const { runId } = attempt.stage;
     const capture: PlanCapture = {};
     const submitPlanTool = buildSubmitPlanTool(capture, runId, config.surfaceAnalysisLimits);
     const prompt = `${config.task}\n\n${formatPlannerInstruction()}`;
@@ -630,8 +707,10 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
         submitPlanTool,
         ...(config.pluginToolsForModel?.(selection.model) ?? config.pluginTools ?? []),
       ],
+      true,
+      attempt.resume ? attempt.stage : undefined,
     );
-    const runIds = [...state.runIds, runId];
+    const settled = settledStage(state, attempt.stage, attempt.resume, metrics);
     // A captured error is parsePlan's OrchestrationError, swallowed by the
     // harness into an error tool-result and re-thrown here (HARD malformed_plan).
     // A captured plan sets the governance and routing signals. An empty holder
@@ -671,12 +750,12 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       planSummary: text,
       contractRequirements,
       surfaceAnalysis: capture.plan.surfaceAnalysis,
-      runIds,
-      stageMetrics: [...(state.stageMetrics ?? []), metrics],
+      ...settled,
       effective,
       ...(complexity !== undefined && { complexity }),
       ...(securitySurface !== undefined && { securitySurface }),
     };
+    delete nextState.activeStage;
     const transitions: AvailableTransition[] = [
       {
         kind: "advance",
@@ -941,7 +1020,8 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     if (security === undefined) {
       throw new OrchestrationError("empty_task", "", "security phase requires a security role");
     }
-    const runId = crypto.randomUUID();
+    const attempt = stageAttempt(state, "security", "security");
+    const { runId } = attempt.stage;
     const prompt = composeSecurityPrompt(
       config.task,
       appendContractRequirements(state.planSummary, state.contractRequirements),
@@ -954,13 +1034,16 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       "security",
       runId,
       config.pluginToolsForModel?.(selection.model) ?? config.pluginTools,
+      true,
+      attempt.resume ? attempt.stage : undefined,
     );
+    const settled = settledStage(state, attempt.stage, attempt.resume, metrics);
     const nextState: WorkflowState = {
       ...state,
       securityNotes: text,
-      runIds: [...state.runIds, runId],
-      stageMetrics: [...(state.stageMetrics ?? []), metrics],
+      ...settled,
     };
+    delete nextState.activeStage;
     const transitions: AvailableTransition[] = [
       { kind: "advance", isDefault: defaults.autoAdvance, toPhase: "code", toRound: state.round },
       { kind: "stop", isDefault: !defaults.autoAdvance, toPhase: "done", toRound: state.round },
@@ -969,8 +1052,9 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
   };
 
   const stepCode = async (state: WorkflowState): Promise<StepResult> => {
-    const runId = crypto.randomUUID();
     const round = state.round;
+    const attempt = stageAttempt(state, "code", `code:${round}`);
+    const { runId } = attempt.stage;
     const previousVerdict = state.verdicts[state.verdicts.length - 1];
     // Round 1 carries the plan summary plus any security mitigation
     // requirements. Round 2+ carry the reviewer's issues instead; unmet
@@ -1022,6 +1106,8 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       `code:${round}`,
       runId,
       config.pluginToolsForModel?.(selection.model) ?? config.pluginTools,
+      true,
+      attempt.resume ? attempt.stage : undefined,
     );
     const metrics = {
       ...rawMetrics,
@@ -1033,8 +1119,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     const nextState: WorkflowState = {
       ...state,
       changeSummary: text,
-      runIds: [...state.runIds, runId],
-      stageMetrics: [...(state.stageMetrics ?? []), metrics],
+      ...settledStage(state, attempt.stage, attempt.resume, metrics),
       pipelineContext: {
         selection: decision.selection,
         ...(decision.fallbackReason !== undefined && { fallbackReason: decision.fallbackReason }),
@@ -1050,6 +1135,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
         riskFingerprint: currentRiskFingerprint,
       },
     };
+    delete nextState.activeStage;
     const transitions: AvailableTransition[] = [
       { kind: "advance", isDefault: defaults.autoAdvance, toPhase: "review", toRound: round },
       // Re-run the coder for another attempt without a review in between.
@@ -1060,8 +1146,9 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
   };
 
   const stepReview = async (state: WorkflowState): Promise<StepResult> => {
-    const runId = crypto.randomUUID();
     const round = state.round;
+    const attempt = stageAttempt(state, "review", `review:${round}`);
+    const { runId } = attempt.stage;
     // Fresh holder + tool PER ROUND: a stale verdict from an earlier round can
     // never be read as this round's (mirrors the old per-runId file keying).
     const capture: VerdictCapture = {};
@@ -1108,10 +1195,16 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       text,
       followUps,
       metrics: rawMetrics,
-    } = await runWorkflowTurn(config.roles.reviewer, selection, prompt, `review:${round}`, runId, [
-      submitTool,
-      ...(config.pluginToolsForModel?.(selection.model) ?? config.pluginTools ?? []),
-    ]);
+    } = await runWorkflowTurn(
+      config.roles.reviewer,
+      selection,
+      prompt,
+      `review:${round}`,
+      runId,
+      [submitTool, ...(config.pluginToolsForModel?.(selection.model) ?? config.pluginTools ?? [])],
+      true,
+      attempt.resume ? attempt.stage : undefined,
+    );
     const metrics = {
       ...rawMetrics,
       pipelineContextStrategy: decision.selection,
@@ -1134,8 +1227,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     const nextState: WorkflowState = {
       ...state,
       verdicts: [...state.verdicts, verdict],
-      runIds: [...state.runIds, runId],
-      stageMetrics: [...(state.stageMetrics ?? []), metrics],
+      ...settledStage(state, attempt.stage, attempt.resume, metrics),
       pipelineContext: {
         selection: decision.selection,
         ...(decision.fallbackReason !== undefined && { fallbackReason: decision.fallbackReason }),
@@ -1151,6 +1243,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
         riskFingerprint: currentRiskFingerprint,
       },
     };
+    delete nextState.activeStage;
 
     let transitions: AvailableTransition[];
     if (verdict.status === "approved") {

@@ -589,6 +589,20 @@ test("RunCoordinator durably pauses a limited stage and resumes only that stage"
   expect(paused.checkpoint.workflowState.stageMetrics).toEqual([
     expect.objectContaining({ stage: "code:1", status: "paused", costUsd: 0.25 }),
   ]);
+  expect(paused.checkpoint.workflowState.activeStage).toMatchObject({
+    phase: "code",
+    step: "code:1",
+    runId: "paused-code",
+    metrics: expect.objectContaining({ status: "paused", costUsd: 0.25 }),
+    snapshot: {
+      elapsedMs: 10,
+      modelTurns: 1,
+      toolTurns: 1,
+      inputTokens: 7,
+      lastInputTokens: 7,
+      costUsd: 0.25,
+    },
+  });
   expect(() => coordinator.resumeStage({ source: "operator", action: "retry" })).toThrow(
     "unchanged duration stage limit",
   );

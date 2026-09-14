@@ -75,6 +75,8 @@ export interface RunRoleParams {
   prompt: string;
   /** Continue the durable active lane operation instead of admitting a new prompt. */
   resumeActiveOperation?: boolean;
+  /** Admit the supplied prompt when a requested resumed operation already settled. */
+  resumePromptOnSettled?: boolean;
   /** Defaults to a fresh UUID. Validated as a file-name-safe token before any path is built. */
   runId?: string;
   /** Ledger attribution dimension. Defaults to "run". */
@@ -735,7 +737,9 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
                 : await lane.getResult(execution.lastOperationId, context);
             return settled === undefined
               ? lane.prompt(params.prompt, undefined, context)
-              : ({ ok: true, value: settled } as const);
+              : params.resumePromptOnSettled === true
+                ? lane.prompt(params.prompt, undefined, context)
+                : ({ ok: true, value: settled } as const);
           })()
         : lane.prompt(params.prompt, undefined, context);
     const maxDurationMs = params.stageLimitController?.limits.maxDurationMs ?? 0;

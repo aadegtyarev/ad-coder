@@ -116,14 +116,6 @@ Only unresolved work belongs here. Current behavior is in
   selected execution mode until the final transcript. Project safe allowlisted
   built-in names without exposing third-party tool identifiers.
 
-- [high] **Resume an interrupted role without repeating reconnaissance**
-  (`src/orchestration/session.ts`, `src/project-operations/run-coordinator.ts`):
-  a stage-limit checkpoint preserves the workflow phase but not the unfinished
-  role-run identity, so retry creates a fresh role session. Persist the active
-  stage run ID and resume its durable conversation after a raised limit; prove
-  the Planner does not repeat completed reads. Rejected Researcher retry already
-  preserves the accepted Planner result through `--retry-research`.
-
 - [medium] **Complete activity-stream dogfood evidence**
   (`docs/cost-economics.md`): the interrupted run now has exact checkpoint,
   stage, token, duration, and cost evidence. Add Reviewer rounds and an accepted

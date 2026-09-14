@@ -27,6 +27,8 @@ export interface RunRoleOptions {
   session?: Session;
   /** Resume the durable lane operation already admitted in `session`. */
   resumeActiveOperation?: boolean;
+  /** When a resumed operation has already settled, admit the supplied continuation prompt. */
+  resumePromptOnSettled?: boolean;
   stageLimitInitial?: Partial<
     Pick<
       StageLimitSnapshot,
@@ -134,6 +136,9 @@ export function createRoleRunner(config: RoleRunnerConfig): RoleRunner {
         ...(opts?.laneName !== undefined && { laneName: opts.laneName }),
         ...(opts?.resumeActiveOperation !== undefined && {
           resumeActiveOperation: opts.resumeActiveOperation,
+        }),
+        ...(opts?.resumePromptOnSettled !== undefined && {
+          resumePromptOnSettled: opts.resumePromptOnSettled,
         }),
         ...(opts?.ledgerSink !== undefined && { ledgerSink: opts.ledgerSink }),
         ...(opts?.context !== undefined && { context: opts.context }),
