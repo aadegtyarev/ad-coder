@@ -139,6 +139,10 @@ function fail(message: string): never {
   process.exit(2);
 }
 
+function shellArgument(value: string): string {
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
 /**
  * The module is imported into this process and inherits the whole environment,
  * including provider credentials. These checks keep a run from loading code off
@@ -2107,6 +2111,16 @@ async function consoleCommand(
           .map((name) => name.trim())
           .filter(Boolean);
   const configOptions = buildConfigOptions(targetDirArg, flags);
+  const selectedInventory = configOptions.inventoryConfig?.profiles.find(
+    (entry) =>
+      entry.name === (configOptions.inventoryProfile ?? configOptions.inventoryConfig?.default),
+  );
+  const authenticationProvider =
+    configOptions.provider ?? selectedInventory?.registry.providers[0]?.id;
+  const authenticationCommand =
+    authenticationProvider === "openrouter" || authenticationProvider === "openai-codex"
+      ? `ad-coder auth login --provider ${authenticationProvider} --target-dir ${shellArgument(path.resolve(targetDirArg))}`
+      : undefined;
   const session = await startOrchestrator({
     ...configOptions,
     sessionLimits,
@@ -2127,6 +2141,7 @@ async function consoleCommand(
     ...(configOptions.toolActivity !== undefined && {
       toolActivity: configOptions.toolActivity,
     }),
+    ...(authenticationCommand !== undefined && { authenticationCommand }),
   });
   if (result.reason !== "eof" && result.reason !== "exit") process.exitCode = 1;
 }
