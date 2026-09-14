@@ -589,8 +589,16 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
           continue;
         }
         if (byte === 0x0a || (rawTty && byte === 0x0d)) {
+          if (rawTty && mode === "formatted") params.output.write("\n");
           queueLine();
           if (stopped) break;
+        } else if (rawTty && (byte === 0x08 || byte === 0x7f)) {
+          if (lineBytes.length > 0) {
+            let removed = lineBytes.pop() as number;
+            while (lineBytes.length > 0 && removed >= 0x80 && removed <= 0xbf)
+              removed = lineBytes.pop() as number;
+            if (mode === "formatted") params.output.write("\b \b");
+          }
         } else {
           if (
             lineBytes.length >= maxInputBytes &&
@@ -602,6 +610,8 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
             break;
           }
           lineBytes.push(byte);
+          if (rawTty && mode === "formatted" && (byte === 0x09 || byte >= 0x20))
+            params.output.write(Buffer.from([byte]));
         }
       }
       if (stopped) break;

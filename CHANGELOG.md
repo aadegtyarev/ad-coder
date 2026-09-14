@@ -6,6 +6,13 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-14
+
+### Fixed
+
+- Restored visible TTY input, newline echo, and destructive Backspace handling
+  in the raw interactive console.
+
 ## [0.3.0] - 2026-09-14
 
 ### Fixed
