@@ -15,6 +15,9 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ### Added
 
+- Added persistent OpenRouter API-key login, status, and logout through the
+  private credential store, with hidden terminal input and environment fallback.
+
 - Added explicitly selected, role-scoped Skills v1 with bounded secure
   built-in/project resolution, content digests, actionable typed failures,
   four orchestration skills, and console/library selection.

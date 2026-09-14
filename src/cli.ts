@@ -2444,9 +2444,14 @@ const COMMANDS: readonly CommandDefinition[] = [
   },
   {
     name: "auth",
-    description: "Manage persistent OpenAI Codex authentication.",
+    description: "Manage persistent provider authentication.",
     positionals: [{ name: "<status|login|logout>", description: "Authentication action." }],
     options: [
+      {
+        name: "--provider",
+        value: "<openai-codex|openrouter>",
+        description: "Select the authentication provider; defaults to openai-codex.",
+      },
       {
         name: "--credential-path",
         value: "<absolute-path>",
@@ -2471,6 +2476,11 @@ const COMMANDS: readonly CommandDefinition[] = [
       const method = flags["--method"];
       if (method !== undefined && method !== "browser" && method !== "device_code")
         fail("--method must be browser or device_code");
+      const provider = flags["--provider"];
+      if (provider !== undefined && provider !== "openai-codex" && provider !== "openrouter")
+        fail("--provider must be openai-codex or openrouter");
+      if (provider === "openrouter" && method !== undefined)
+        fail("--method is only valid for openai-codex");
       await runAuthCommand({
         action,
         ...(flags["--credential-path"] !== undefined && {
@@ -2478,6 +2488,7 @@ const COMMANDS: readonly CommandDefinition[] = [
         }),
         targetDir: resolveTargetDir(flags["--target-dir"] ?? process.cwd()),
         json: booleans["--json"] === true,
+        ...(provider !== undefined && { provider }),
         ...(method !== undefined && { method }),
       });
     },

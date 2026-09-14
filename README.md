@@ -45,11 +45,13 @@ The registry is the authoritative CLI reference: use `ad-coder --help` and
 ## Provider and Codex OAuth setup
 
 The automatic provider precedence is **DeepSeek → OpenRouter → Codex OAuth**.
-Set an API-key provider, or authenticate Codex when neither key is present:
+API-key providers can use an environment variable. OpenRouter may instead be
+stored in ad-coder's private credential store:
 
 ```sh
 export DEEPSEEK_API_KEY=...
 export OPENROUTER_API_KEY=...
+ad-coder auth login --provider openrouter
 ```
 
 Pass `--provider deepseek|openrouter|openai-codex` to override selection. Native
