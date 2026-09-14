@@ -6,12 +6,30 @@ Only unresolved work belongs here. Current behavior is in
 
 ## Current priority
 
-- [next] **Headless SessionManager and minimal Telegram driver**: implement the
-  2026-09-14 roadmap decision: safe allowed-root project bindings/creation,
+- [next] **Provider admission, headless SessionManager and minimal Telegram driver**:
+  first implement the `docs/contracts/provider-admission.md` provider/account
+  concurrency gate: durable fair queue, global cooldown on provider limit, safe
+  actionable status/errors, and cancellation. Then implement the 2026-09-14
+  roadmap decision: safe allowed-root project bindings/creation,
   per-driver project/profile selection, durable Orchestrator sessions and event
   cursors, then the trusted personal-chat long-polling driver. Command schemas
   must provide argument validation and command-specific no-argument help with an
   example from one source.
+
+- [next] **Durable shared CreditWallet reservations**: `profile estimate` v1 now
+  supplies transparent empirical ranges and reads the latest provider-scoped
+  balance. Add SessionManager-owned, restart-safe reservations, active-run usage
+  reconciliation, provider balance adapters where explicitly configured, and
+  fair allocation across every session sharing a provider/account scope.
+
+- [next] **Just-in-time skills for orchestration**: after empirical estimate and
+  before Telegram, add a trusted, versioned, digest-recorded SkillRegistry with
+  bounded lazy loading. Start with `architecture-recon`, `task-slicing`, and
+  `acceptance-review`, so the Orchestrator can produce a bounded brief before
+  Planner dispatch, keep exploration finite, and independently accept work
+  against declared criteria. Skills must not become an always-appended prompt;
+  manifests are discoverable, full instructions are role-scoped, and their
+  selected IDs/versions/cost are durable run evidence.
 
 - [high] **Reserve stage capacity for synthesis and verification**: expose
   remaining cumulative time/model/tool/token/cost budgets to the active role
@@ -38,6 +56,15 @@ Only unresolved work belongs here. Current behavior is in
   with explicit merge/replace conflict handling. Expose current values and
   provenance through the headless API and `config show`; keep credentials in the
   existing credential store.
+
+- [next] **Named execution profiles and provider bindings**: a named profile is
+  one inventory/routing policy plus private credential bindings for its enabled
+  providers. Support explicit `auth login/list/switch` by profile and separate
+  owner-only credential files, so `home` and `work` may each contain a distinct
+  authorised Codex OAuth login alongside DeepSeek/OpenRouter bindings. Account
+  scope is `(profile, provider)` for wallet/admission. Switching applies only to
+  future work; existing durable runs remain pinned, and no automatic fallback or
+  rotation occurs.
 
 - [high] **Portable project calibration snapshot** (`src/profiles/`,
   `.ad-coder/`): layer a bounded anonymous current economics snapshot and
