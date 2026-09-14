@@ -894,7 +894,15 @@ workflows — one substrate, swappable drivers.
   pending, both fronts see progress, and transfer completes when that turn
   settles. `detach <session>` releases the attached interface while runs and the
   durable conversation continue under the manager. Separate conversations are an
-  explicit future opt-in, never the default.
+  explicit future opt-in, never the default. Before creating one, Manager lists
+  every session and active run sharing its `targetDir` and recommends attaching
+  to the default session. The safe alternate is a second read-only research
+  session. A second write-capable session against the same Git worktree requires
+  an explicit `shared-worktree` mode and a second confirmation naming the affected
+  sessions/runs; it warns that stale context and overlapping edits can overwrite
+  work. Manager serializes its own turns and exposes the conflict, but does not
+  claim that serialization makes concurrent worktree writers safe. A separate
+  Git worktree is the recommended route for independent mutable work.
 
   Every managed session has a stable ID, a short display name, and a name source
   (`generated` or `manual`). A new session starts as `New session`; after its
