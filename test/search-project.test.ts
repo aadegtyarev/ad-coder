@@ -54,8 +54,18 @@ test("search_project validates configurable request bounds", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "ad-coder-search-"));
   try {
     Bun.spawnSync(["git", "init", "--quiet"], { cwd: dir });
-    const result = await execute(buildSearchProjectTool(dir, { maxTerms: 1 }), ["one", "two"]);
-    expect(result.content[0]).toEqual({ type: "text", text: "project search failed: terms_limit" });
+    const tool = buildSearchProjectTool(dir, { maxTerms: 1 });
+    expect(JSON.stringify(tool.parameters)).toContain("Literal text to find");
+    const result = await execute(tool, ["one", "two"]);
+    expect(result.content[0]).toEqual({
+      type: "text",
+      text: "project search failed: terms_limit; retry with at most 1 term",
+    });
+    expect(result.details).toMatchObject({
+      code: "terms_limit",
+      retryable: false,
+      nextAction: "retry with at most 1 term",
+    });
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

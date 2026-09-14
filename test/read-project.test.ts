@@ -38,6 +38,28 @@ test("read_project batches exact line slices under one aggregate ceiling", async
   }
 });
 
+test("read_project exposes its line ceiling and an actionable limit failure", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "ad-coder-read-"));
+  try {
+    const tool = buildReadProjectTool(dir, { maxLinesPerItem: 2 });
+    expect(tool.description).toContain("at most 2 lines");
+    expect(JSON.stringify(tool.parameters)).toContain("Relative UTF-8 text file path");
+    expect(JSON.stringify(tool.parameters)).toContain("One-based first line");
+    const result = await execute(tool, [{ path: "anything.ts", limit: 3 }]);
+    expect(result.content[0]).toEqual({
+      type: "text",
+      text: "project read failed: limit_invalid; retry with a line limit from 1 to 2",
+    });
+    expect(result.details).toMatchObject({
+      code: "limit_invalid",
+      retryable: false,
+      nextAction: "retry with a line limit from 1 to 2",
+    });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("read_project makes aggregate truncation visible and cages paths", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "ad-coder-read-"));
   try {
@@ -50,7 +72,7 @@ test("read_project makes aggregate truncation visible and cages paths", async ()
     const escaped = await execute(tool, [{ path: "../outside" }]);
     expect(escaped.content[0]).toEqual({
       type: "text",
-      text: "project read failed: path_outside_target",
+      text: "project read failed: path_outside_target; choose a relative file path inside the target project",
     });
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -73,7 +95,7 @@ test("read_project caps growth after descriptor stat", async () => {
     const result = await execute(tool, [{ path: "growing.txt" }]);
     expect(result.content[0]).toEqual({
       type: "text",
-      text: "project read failed: file_too_large",
+      text: "project read failed: file_too_large; request a smaller project file",
     });
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -86,7 +108,7 @@ test("read_project rejects NUL before native path traversal", async () => {
     const result = await execute(buildReadProjectTool(dir), [{ path: "..\0ignored/secret.txt" }]);
     expect(result.content[0]).toEqual({
       type: "text",
-      text: "project read failed: path_outside_target",
+      text: "project read failed: path_outside_target; choose a relative file path inside the target project",
     });
   } finally {
     await rm(dir, { recursive: true, force: true });

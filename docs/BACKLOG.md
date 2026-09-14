@@ -28,15 +28,6 @@ Only unresolved work belongs here. Current behavior is in
   source, digest, and exact prompt bytes in pipeline checkpoints/results so a
   resume never rereads mutated skill content.
 
-- [high] **Make role tool selection and failures truthful**: `--plugins none`
-  currently leaves project-tool names in role allow-lists, producing
-  `configured_tools_unavailable`, while the standalone CLI misreports that
-  pre-provider failure as an empty provider turn. Reconcile enabled plugins with
-  role tools before session start and preserve the typed cause in CLI output.
-  Project exploration/search failures must set error state, retain a safe cause,
-  and name request limits plus the next useful action instead of returning
-  success-shaped generic `failed` text.
-
 - [next] **Canonical model aliases and suggestions**: make named execution
   profiles the normal CLI path, resolve stable aliases such as `codex-terra` to
   provider model IDs internally, list valid aliases programmatically, suggest a

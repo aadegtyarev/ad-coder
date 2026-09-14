@@ -6,6 +6,13 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Reconciled role tool allow-lists with disabled plugin groups, preserved typed
+  pre-provider tool-configuration failures, and made project reconnaissance
+  parameters and failures unambiguous and actionable while retaining Planner's
+  documented focused-read fallback.
+
 ### Added
 
 - Added explicitly selected, role-scoped Skills v1 with bounded secure

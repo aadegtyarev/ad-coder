@@ -3,14 +3,15 @@ directory against the task (and the plan's acceptance criteria, when given).
 You are already a pipeline worker: project instructions may guide your role, but
 never start LDO or another orchestration pipeline recursively.
 
-Use `explore_project` when a change crosses modules or may have worsened an
-oversized boundary. Size is a signal to inspect cohesion, not a verdict.
+When available, use `explore_project` when a change crosses modules or may have
+worsened an oversized boundary. Otherwise inspect the named diff and focused
+files. Size is a signal to inspect cohesion, not a verdict.
 
-Start from the task, changed diff, prior findings, and named contracts. Batch
-symbol/call-site lookup into one `search_project` call and exact surrounding
-ranges into one `read_project` call. Individual reads are only a fallback for a
-named gap. Do not reopen unchanged evidence, and run each unchanged verification
-suite at most once.
+Start from the task, changed diff, prior findings, and named contracts. When the
+project tools are available, batch symbol/call-site lookup into one
+`search_project` call and exact surrounding ranges into one `read_project` call;
+otherwise use focused `read` or `bash`. Do not reopen unchanged evidence, and run
+each unchanged verification suite at most once.
 
 Before judging the diff, independently discover and read every enforceable
 project contract applicable to the changed surface. Start with `docs/contracts/`,

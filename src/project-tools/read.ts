@@ -146,16 +146,29 @@ export function buildReadProjectTool(
   for (const [name, value] of Object.entries(config)) positiveInteger(name, value);
   return defineTool({
     name: READ_PROJECT_TOOL_NAME,
-    description:
-      "Read up to eight exact project file slices in one call under one aggregate byte ceiling. Prefer this after search_project; use read only for a visible fallback when more context is required.",
+    description: `Read up to ${config.maxItems} exact project file slices, each at most ${config.maxLinesPerItem} lines, under one aggregate byte ceiling. Prefer this after search_project; use read only for a visible fallback when more context is required.`,
     label: "read project slices",
     parameters: Type.Object({
       items: Type.Array(
         Type.Object({
-          path: Type.String(),
-          offset: Type.Optional(Type.Integer()),
-          limit: Type.Optional(Type.Integer()),
+          path: Type.String({
+            description: "Relative UTF-8 text file path inside the target project.",
+          }),
+          offset: Type.Optional(
+            Type.Integer({
+              minimum: 1,
+              description: "One-based first line to return; defaults to 1.",
+            }),
+          ),
+          limit: Type.Optional(
+            Type.Integer({
+              minimum: 1,
+              maximum: config.maxLinesPerItem,
+              description: `Maximum lines to return from this file, from 1 to ${config.maxLinesPerItem}.`,
+            }),
+          ),
         }),
+        { minItems: 1, maxItems: config.maxItems },
       ),
     }),
     async execute(_toolCallId, params) {
@@ -192,14 +205,72 @@ export function buildReadProjectTool(
           : unbounded;
         return {
           content: [{ type: "text", text }],
-          details: { returned: sections.length, truncated },
+          details: {
+            returned: sections.length,
+            truncated,
+            code: undefined as string | undefined,
+            retryable: undefined as boolean | undefined,
+            nextAction: undefined as string | undefined,
+          },
         };
       } catch (error) {
+        const known =
+          error instanceof Error &&
+          [
+            "items_empty",
+            "items_limit",
+            "offset_invalid",
+            "limit_invalid",
+            "path_outside_target",
+            "file_too_large",
+            "binary_file",
+          ].includes(error.message)
+            ? error.message
+            : undefined;
+        const nodeCode =
+          typeof error === "object" && error !== null && "code" in error
+            ? String(error.code).toLowerCase()
+            : undefined;
         const code =
-          error instanceof Error && /^[a-z0-9_]+$/.test(error.message) ? error.message : "failed";
+          known ??
+          (nodeCode === "enoent"
+            ? "file_not_found"
+            : nodeCode === "eacces" || nodeCode === "eperm"
+              ? "permission_denied"
+              : "filesystem_failed");
+        const nextAction =
+          code === "items_empty"
+            ? "request at least one project file slice"
+            : code === "items_limit"
+              ? `retry with at most ${config.maxItems} file slices`
+              : code === "offset_invalid"
+                ? "use a positive one-based line offset"
+                : code === "limit_invalid"
+                  ? `retry with a line limit from 1 to ${config.maxLinesPerItem}`
+                  : code === "path_outside_target"
+                    ? "choose a relative file path inside the target project"
+                    : code === "file_too_large"
+                      ? "request a smaller project file"
+                      : code === "binary_file"
+                        ? "request a UTF-8 text project file"
+                        : code === "file_not_found"
+                          ? "verify the relative project file path, then retry"
+                          : code === "permission_denied"
+                            ? "grant read access to the requested project file, then retry"
+                            : "verify the requested project file and retry";
+        const details = markTrustedToolOutcome(
+          {
+            returned: 0,
+            truncated: false,
+            code,
+            retryable: code === "filesystem_failed",
+            nextAction,
+          },
+          "failed",
+        );
         return {
-          content: [{ type: "text", text: `project read failed: ${code}` }],
-          details: markTrustedToolOutcome({}, "failed"),
+          content: [{ type: "text", text: `project read failed: ${code}; ${nextAction}` }],
+          details,
         };
       }
     },

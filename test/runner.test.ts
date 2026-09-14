@@ -21,6 +21,7 @@ import { ProjectStore } from "../src/project-store/project-store";
 import type { Role } from "../src/role";
 import { defineRole } from "../src/role";
 import {
+  ConfiguredToolsUnavailableError,
   ProviderLimitError,
   providerLimitFrom,
   RunnerError,
@@ -152,6 +153,16 @@ beforeAll(() => {
 
 afterAll(() => {
   fs.rmSync(targetDir, { recursive: true, force: true });
+});
+
+test("configured role tools fail with their typed cause before provider dispatch", async () => {
+  const { faux, models, model, role } = fixtureWithActiveTools(["missing_project_tool"]);
+  faux.setResponses([fauxAssistantMessage("must not dispatch")]);
+  const error = await runRole({ role, targetDir, models, model, prompt: "x" }).catch(
+    (cause) => cause,
+  );
+  expect(error).toBeInstanceOf(ConfiguredToolsUnavailableError);
+  expect(error.cause).toMatchObject({ code: "configured_tools_unavailable" });
 });
 
 test("runRole drives one turn to a settled result and lands the ledger under targetDir", async () => {

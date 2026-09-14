@@ -60,9 +60,16 @@ export function buildExploreProjectTool(
   return defineTool({
     name: EXPLORE_PROJECT_TOOL_NAME,
     description:
-      "Read-only bounded project reconnaissance: structure, language mix, large modules, and code-size decomposition signals. Returns metadata, never file contents.",
+      "Read-only bounded project reconnaissance: structure, language mix, large modules, and code-size decomposition signals. Returns metadata, never file contents. Omit focus to scan the project root; focus is only a relative directory path inside the project, never a natural-language research topic.",
     label: "explore project",
-    parameters: Type.Object({ focus: Type.Optional(Type.String()) }),
+    parameters: Type.Object({
+      focus: Type.Optional(
+        Type.String({
+          description:
+            "Optional relative directory path inside the project, for example src or packages/api. Omit for the project root.",
+        }),
+      ),
+    }),
     async execute(_toolCallId, params) {
       try {
         const root = await fs.realpath(targetDir);
@@ -189,14 +196,56 @@ export function buildExploreProjectTool(
               ].join("\n\n"),
             },
           ],
-          details: { filesScanned: files.length, truncated },
+          details: {
+            filesScanned: files.length,
+            truncated,
+            code: undefined as string | undefined,
+            retryable: undefined as boolean | undefined,
+            nextAction: undefined as string | undefined,
+          },
         };
       } catch (error) {
+        const known =
+          error instanceof Error &&
+          ["focus_outside_target", "focus_not_directory"].includes(error.message)
+            ? error.message
+            : undefined;
+        const nodeCode =
+          typeof error === "object" && error !== null && "code" in error
+            ? String(error.code).toLowerCase()
+            : undefined;
         const code =
-          error instanceof Error && /^[a-z0-9_]+$/.test(error.message) ? error.message : "failed";
+          known ??
+          (nodeCode === "enoent"
+            ? "target_not_found"
+            : nodeCode === "eacces" || nodeCode === "eperm"
+              ? "permission_denied"
+              : nodeCode === "enotdir"
+                ? "focus_not_directory"
+                : "git_failed");
+        const nextAction =
+          code === "focus_outside_target"
+            ? "choose a focus inside the target project"
+            : code === "focus_not_directory"
+              ? "choose a project directory as focus"
+              : code === "target_not_found"
+                ? "verify the target or focus path, then retry"
+                : code === "permission_denied"
+                  ? "grant read access to the target project, then retry"
+                  : "verify the target repository and Git availability, then retry";
+        const details = markTrustedToolOutcome(
+          {
+            filesScanned: 0,
+            truncated: false,
+            code,
+            retryable: code === "git_failed",
+            nextAction,
+          },
+          "failed",
+        );
         return {
-          content: [{ type: "text", text: `project exploration failed: ${code}` }],
-          details: markTrustedToolOutcome({}, "failed"),
+          content: [{ type: "text", text: `project exploration failed: ${code}; ${nextAction}` }],
+          details,
         };
       }
     },
