@@ -18,6 +18,10 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ### Added
 
+- Added a single auto-loaded user runtime inventory at
+  `~/.config/ad-coder/inventories.json`; first use seeds an editable OpenAI
+  profile while preserving explicit per-run provider and model overrides.
+
 - Added persistent OpenRouter API-key login, status, and logout through the
   private credential store, with hidden terminal input and environment fallback.
 - Added `ad-coder update` for clean linked Git checkouts, with fail-closed branch

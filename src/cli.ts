@@ -29,6 +29,7 @@ import {
   forecastCost,
   latestCreditBalance,
 } from "./economics/forecast";
+import { readOrCreateDefaultInventory } from "./inventory/store";
 import { parseModelInventoryConfig } from "./inventory/validate";
 import { Ledger, type LedgerSink, MemoryLedgerSink } from "./ledger/ledger";
 import {
@@ -1720,12 +1721,22 @@ function buildConfigOptions(
     flags["--registry-config"] === undefined
       ? undefined
       : parseRegistryConfig(readJsonConfig(flags["--registry-config"], "--registry-config"));
+  const hasIndependentModelConfig = [
+    provider,
+    registryConfig,
+    flags["--profile-config"],
+    flags["--strong-model"],
+    flags["--mid-model"],
+    flags["--cheap-model"],
+    ...ROLE_NAMES.map((role) => flags[`--${role}-model`]),
+    flags["--orchestrator-model"],
+  ].some((value) => value !== undefined);
   const inventoryConfig =
-    flags["--inventory-config"] === undefined
-      ? undefined
-      : parseModelInventoryConfig(
-          readJsonConfig(flags["--inventory-config"], "--inventory-config"),
-        );
+    flags["--inventory-config"] !== undefined
+      ? parseModelInventoryConfig(readJsonConfig(flags["--inventory-config"], "--inventory-config"))
+      : hasIndependentModelConfig
+        ? undefined
+        : readOrCreateDefaultInventory();
   const profile =
     flags["--profile-config"] === undefined
       ? undefined
