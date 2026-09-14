@@ -72,6 +72,8 @@ export type {
   ConversationTurnResult,
 } from "./conversation/conversation";
 export { startConversation } from "./conversation/conversation";
+export type { CalibrationCostSample, CostForecast } from "./economics/forecast";
+export { forecastCost, latestCreditBalance } from "./economics/forecast";
 export * from "./evaluation/calibration";
 export type { GateRunnerConfig } from "./gates/runner";
 export { DEFAULT_GATE_RUNNER_CONFIG, GateRunner } from "./gates/runner";

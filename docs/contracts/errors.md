@@ -14,6 +14,11 @@ for machines?
 - A CLI failure writes concise diagnostics to stderr and exits non-zero. Machine
   modes preserve a stable structured error shape; progress and diagnostics never
   corrupt result stdout.
+- Public error projections expose a stable `code`, concise safe text,
+  `retryable`, and a next action whenever recovery exists. New front/API work
+  must use this shape rather than inventing an untyped string. CLI exit-code
+  categories are part of the compatibility surface and are tested when added or
+  changed.
 - Preserve the causal error for programmatic callers while projecting only safe
   fields across human, model, ledger, and durable-state boundaries. Never include
   credentials, secret values, prompts, file contents, or uncontrolled response

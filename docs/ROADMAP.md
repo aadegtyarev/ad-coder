@@ -357,11 +357,15 @@ workflows — one substrate, swappable drivers.
   shared barrel/multiple modules, so they are NOT parallel-safe.
 
 - **Profiles + complexity-aware model routing** — DONE (src/profiles/ + runPipeline routing).
-  These are two independent axes. A **profile** is a replaceable model inventory
-  for one account/provider setup: it maps relative capabilities (`cheap`/`mid`/
-  `strong`) and role shaping to concrete registered models. Switching an exhausted
-  Codex account or moving to another provider selects another registry/profile
-  pair without changing workflow semantics. **Complexity** selects the most
+  These are two independent axes. A **profile** is a named replaceable execution
+  context: one model inventory/routing policy plus its private credential binding
+  for each enabled provider. For example, `home` may bind DeepSeek, OpenRouter,
+  and a personal Codex OAuth credential, while `work` binds a separate Codex OAuth
+  credential and any authorised work providers. A provider account scope is
+  therefore `(profile, provider)`, never merely a model name; CreditWallet and
+  ProviderAdmission keep those scopes separate. Switching profiles changes future
+  work without changing workflow semantics; a live or paused durable run remains
+  pinned to its original profile. **Complexity** selects the most
   economically efficient model inside that active inventory. Quality is an
   invariant gate at every complexity, never an economy-versus-quality mode.
   Optimize expected total cost through acceptance, including repair and re-review;
@@ -391,8 +395,8 @@ workflows — one substrate, swappable drivers.
   static table to start, ledger data to refine. Ledger's per-lane attribution
   also lets one workflow run under two profiles and compare two JSONL files.
   The current single selected profile file is the substrate. Named, atomic
-  registry/profile switching for account or provider exhaustion remains a
-  follow-on; it must never silently move an active durable run across providers.
+  named atomic profile switching remains a follow-on; it must never silently move
+  an active durable run across providers or credentials.
 - **In-repository model calibration suite (decided 2026-09-13)** — keep small,
   versioned, realistic evaluation repositories under `evals/fixtures/`, role and
   complexity tasks under `evals/tasks/`, headless execution under `evals/runner/`,
@@ -847,8 +851,19 @@ workflows — one substrate, swappable drivers.
   failures. A daemon/event stream remains a possible later multi-project feature,
   not a dependency of this control plane.
 
-- **Session manager + Telegram driver (decided 2026-09-14)** — before a Telegram
-  transport, add a small private local `SessionManager` service over the existing
+- **Provider admission + Session manager + Telegram driver (decided 2026-09-14)** —
+  before a Telegram transport, introduce the headless, provider/account-scoped
+  `ProviderAdmissionController` defined by `docs/contracts/provider-admission.md`.
+  It admits every LLM generation request through finite configurable permits and
+  a fair priority queue: interactive turns first, background work next, title
+  generation last. It is not a physical provider connection pool. A structured
+  provider-limit/429 response closes one shared cooldown gate using bounded
+  retry hints so queued work does not stampede the provider. Its queue, cooldown,
+  cancellation and recovery projection are durable for durable runs. The
+  SessionManager owns the controller instance in managed operation, so every
+  session sharing provider/account capacity competes fairly; the controller stays
+  reusable by direct headless callers and does not depend on Telegram. The
+  SessionManager then adds a small private local service over the existing
   `ProjectStore`, Orchestrator API, background-run control plane, and durable
   event cursor. It listens only on an owner-private Unix socket; console and
   Telegram are clients, never independent live-session owners. It owns safe
@@ -928,6 +943,18 @@ workflows — one substrate, swappable drivers.
   commands, so both fronts provide the same project-management and run controls.
   No webhook, public listener, SessionManager-wide plugin registry, or multi-user
   policy is required for v1.
+
+- **Empirical forecast + credit wallet v1 (decided 2026-09-14)** — `profile estimate`
+  reads accepted secret-free calibration samples for one requested complexity and
+  returns transparent optimistic/median/adverse reported-cost ranges and an
+  explicit sample-count confidence. An optional
+  explicit credits-per-USD conversion and the latest append-only provider-scoped
+  `credit_balance` observation yield a budget status; unknown balance remains
+  unknown, never guessed. Credit balances are shared by provider across model
+  observations because the account capacity is shared. This v1 does not query a
+  provider automatically, reserve credits, or claim cross-process allocation.
+  The later SessionManager-owned wallet will add durable reservations for active
+  runs and use ProviderAdmission to allocate fairly across all sessions.
 
   Every Telegram command with no required argument returns command-specific
   help including syntax and an example; it never infers or executes a default

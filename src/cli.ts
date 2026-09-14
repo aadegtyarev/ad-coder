@@ -24,6 +24,11 @@ import type {
 import { resolvePipelineConfig } from "./cli/resolve-config";
 import { ToolActivityRenderer } from "./cli/tool-activity";
 import type { CompactionPolicy } from "./context/compactor";
+import {
+  type CalibrationCostSample,
+  forecastCost,
+  latestCreditBalance,
+} from "./economics/forecast";
 import { parseModelInventoryConfig } from "./inventory/validate";
 import { Ledger, type LedgerSink, MemoryLedgerSink } from "./ledger/ledger";
 import {
@@ -1016,10 +1021,13 @@ async function profileCommand(positionals: string[], flags: Record<string, strin
     action !== "export" &&
     action !== "snapshot" &&
     action !== "record" &&
+    action !== "estimate" &&
     action !== "import-preview" &&
     action !== "import-apply"
   )
-    fail("profile requires show, export, snapshot, record, import-preview, or import-apply");
+    fail(
+      "profile requires show, export, snapshot, record, estimate, import-preview, or import-apply",
+    );
   if (positionals[2] !== undefined) fail("profile accepts exactly one action");
   const profilePath = flags["--profile-path"];
   const store =
@@ -1050,6 +1058,28 @@ async function profileCommand(positionals: string[], flags: Record<string, strin
     const profile = await store.appendEconomicRecord(raw);
     process.stdout.write(
       `${JSON.stringify({ path: store.path, record: profile.economicRecords.at(-1) })}\n`,
+    );
+    return;
+  }
+  if (action === "estimate") {
+    const evidence = flags["--evidence"];
+    const complexity = flags["--complexity"] as Complexity | undefined;
+    const provider = flags["--provider"];
+    const creditsPerUsd = flags["--credits-per-usd"];
+    if (evidence === undefined || complexity === undefined || provider === undefined)
+      fail("profile estimate requires --evidence, --complexity, and --provider");
+    if (!(COMPLEXITIES as readonly string[]).includes(complexity)) fail("invalid --complexity");
+    const parsedRate = creditsPerUsd === undefined ? undefined : Number(creditsPerUsd);
+    if (parsedRate !== undefined && (!Number.isFinite(parsedRate) || parsedRate <= 0))
+      fail("--credits-per-usd must be a positive number");
+    const rows = fs
+      .readFileSync(resolveScriptPath(evidence), "utf8")
+      .split("\n")
+      .filter((line) => line.trim() !== "")
+      .map((line) => JSON.parse(line) as CalibrationCostSample);
+    const balance = latestCreditBalance(current, provider)?.value;
+    process.stdout.write(
+      `${JSON.stringify(forecastCost(rows, complexity, { ...(balance !== undefined && { creditBalance: balance }), ...(parsedRate !== undefined && { creditsPerUsd: parsedRate }) }))}\n`,
     );
     return;
   }
@@ -2490,10 +2520,10 @@ const COMMANDS: readonly CommandDefinition[] = [
   {
     name: "profile",
     description:
-      "Show, record economics, export, snapshot, preview, or import the portable user profile.",
+      "Show, record economics, estimate cost, export, snapshot, preview, or import the portable user profile.",
     positionals: [
       {
-        name: "<show|export|snapshot|record|import-preview|import-apply>",
+        name: "<show|export|snapshot|record|estimate|import-preview|import-apply>",
         description: "Profile action.",
       },
     ],
@@ -2505,6 +2535,26 @@ const COMMANDS: readonly CommandDefinition[] = [
       },
       { name: "--target-dir", value: "<dir>", description: "Project receiving a snapshot." },
       { name: "--inventory", value: "<name>", description: "Inventory to snapshot." },
+      {
+        name: "--evidence",
+        value: "<jsonl>",
+        description: "Calibration evidence for profile estimate.",
+      },
+      {
+        name: "--complexity",
+        value: "<trivial|medium|complex>",
+        description: "Task complexity for profile estimate.",
+      },
+      {
+        name: "--provider",
+        value: "<id>",
+        description: "Provider balance scope for profile estimate.",
+      },
+      {
+        name: "--credits-per-usd",
+        value: "<n>",
+        description: "Optional explicit credit conversion for profile estimate.",
+      },
       { name: "--mode", value: "<merge|replace>", description: "Select import semantics." },
       {
         name: "--profile-path",
