@@ -152,23 +152,37 @@ different ways:
 So the map is a **calibration input**, not a safety net: pick levels from it
 rather than around it.
 
-This is worth checking whenever you calibrate a profile — the supported set is
+A level is in one of **three** states, and the difference matters when you read
+a map: *mapped* (the catalog publishes the spelling to send), *marked
+unsupported* (present with a `null`), or simply *absent* (the catalog says
+nothing). Only the first is a level the provider has published support for.
+Absent and `null` behave identically at dispatch — both are forwarded verbatim
+on the `deepseek` and `openrouter` formats — so neither is a level to route at.
+
+This is worth checking whenever you calibrate a profile. The mapped set is
 narrower than it looks, and it differs between the same model on two providers:
 
-| model | provider | supported levels |
-| --- | --- | --- |
-| `glm-5.3-flash` | `opencode-go` | `low`, `high`, `max` |
-| `deepseek-v4-flash` | `opencode-go` | `off`, `low`, `high`, `xhigh`, `max` |
-| `deepseek-v4-pro` | `opencode-go` | `off`, `high`, `xhigh`, `max` |
-| `z-ai/glm-5.3-flash` | `openrouter` | `low`, `high`, `max` |
-| `deepseek/deepseek-v4-flash` | `openrouter` | `off`, `high`, `xhigh` |
-| `deepseek/deepseek-v4-pro` | `openrouter` | `off`, `high`, `xhigh` |
+| model | provider | mapped | marked unsupported |
+| --- | --- | --- | --- |
+| `glm-5.3-flash` | `opencode-go` | `low`, `high`, `max` | `off`, `minimal`, `medium`, `xhigh` |
+| `glm-5.3` | `opencode-go` | `low`, `high`, `max` | `off`, `minimal`, `medium`, `xhigh` |
+| `deepseek-v4-flash` | `opencode-go` | `low`, `high`, `max` | `minimal`, `medium` |
+| `deepseek-v4-pro` | `opencode-go` | `high`, `max` | `minimal`, `low`, `medium` |
+| `z-ai/glm-5.3-flash` | `openrouter` | `low`, `high`, `max` | `off`, `minimal`, `medium`, `xhigh` |
+| `z-ai/glm-5.2` | `openrouter` | `off`, `high`, `xhigh` | `minimal`, `low`, `medium`, `max` |
+| `deepseek/deepseek-v4-flash` | `openrouter` | `off`, `high`, `xhigh` | `minimal`, `low`, `medium`, `max` |
+| `deepseek/deepseek-v4-pro` | `openrouter` | `off`, `high`, `xhigh` | `minimal`, `low`, `medium`, `max` |
 
-Note the last two rows: the same DeepSeek model that accepts `low` on
-`opencode-go` does **not** accept it on OpenRouter. A profile that routes them
-at `low` or `medium` is misconfigured in a way a hand-written model list cannot
-show you. Models with no map at all (`minimax-m3`, `kimi-k2.7-code`,
-`qwen3.7-plus`) take every level verbatim.
+Read the DeepSeek rows against each other: `low` is mapped on `opencode-go` and
+explicitly marked unsupported on OpenRouter, and `max` flips the same way. The
+same model name, the same vendor, two different answers — a hand-written model
+list cannot show you that, and a profile that routes both cells at `low` is
+misconfigured on exactly one of them.
+
+Two models carry no map at all (`minimax-m3` on either provider,
+`kimi-k2.7-code`); every level reaches them verbatim. `minimax/minimax-m2.5`
+carries a map with a single entry — `off`, marked unsupported — and is silent on
+everything else.
 
 ## What a catalog does not do
 

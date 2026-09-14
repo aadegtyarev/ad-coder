@@ -44,6 +44,9 @@ All notable changes to ad-coder are recorded here. The format follows
   fixed table. Every `opencode-go` and OpenRouter model we route rejects at
   least one level we were using, and the same DeepSeek model accepts `low` on
   one provider and not the other — unknowable from a hand-written model list.
+  Note that a level is in one of three states, not two: mapped, explicitly
+  marked unsupported, or absent from the map entirely. The last two behave
+  identically at dispatch, so only a mapped level is one to route at.
 
 ### Fixed
 
