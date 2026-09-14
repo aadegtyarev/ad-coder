@@ -809,6 +809,20 @@ test("raw CSI and SS3 cursor sequences never become foreground prompt text", asy
   expect(session.inputs).toEqual(["foreground"]);
 });
 
+test("raw formatted input echoes text, newline, and destructive backspace", async () => {
+  const input = rawInput();
+  const output = new Capture();
+  const session = fakeSession();
+  const running = runConsole({ session, input, output, error: new Capture() });
+
+  input.write("helx\u007flo\r/exit\r");
+  input.end();
+
+  expect(await running).toEqual({ reason: "exit", completedTurns: 1 });
+  expect(session.inputs).toEqual(["hello"]);
+  expect(output.text()).toContain("ad-coder> helx\b \blo\n");
+});
+
 test("repeated Escape preserves its first deadline and interrupts once", async () => {
   const input = rawInput();
   const started = deferred();
