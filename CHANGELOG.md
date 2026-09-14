@@ -6,6 +6,31 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-14
+
+### Added
+
+- `/help` console command listing every console command with its usage,
+  description, and an example, and naming `--workflows pipeline` for the
+  commands the session did not enable.
+- Exported the console command registry (`CONSOLE_COMMANDS`,
+  `consoleCommandUsage`, `consoleCommandNames`, `findConsoleCommand`) and the
+  typed `ConsoleControlFailure` projection from the library entry point.
+
+### Changed
+
+- Console command dispatch, argument validation, failure guidance, and help now
+  render from one command registry instead of a hand-maintained usage string.
+- Console failures now report a stable `code` with the failed command, concise
+  text naming the failure, a `retryable` flag, and one recovery action in both
+  the formatted and `console_error` JSON projections.
+
+### Fixed
+
+- Replaced the identical, unhelpful guidance every failed console command
+  printed, which listed neither `/help` nor `/exit` and never explained why the
+  command failed.
+
 ## [0.3.4] - 2026-09-14
 
 ### Fixed

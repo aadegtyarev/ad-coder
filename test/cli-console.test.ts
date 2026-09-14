@@ -3,6 +3,11 @@ import { PassThrough, Readable, Writable } from "node:stream";
 import { createModels, fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 import { runConsole } from "../src/cli/console";
 import {
+  CONSOLE_COMMANDS,
+  consoleCommandNames,
+  consoleCommandUsage,
+} from "../src/conversation/console-control";
+import {
   type ConversationSession,
   type ConversationTurnResult,
   startConversation,
@@ -1015,4 +1020,268 @@ test("zero heartbeat keeps the immediate stage event and disables only periodic 
   expect(progress).toEqual([
     { type: "progress", event: "started", stage: "console-turn", elapsedSeconds: 0 },
   ]);
+});
+
+test("/help lists every console command with usage and an example from the registry", async () => {
+  const session = fakeSession();
+  const output = new Capture();
+  await runConsole({
+    session,
+    input: Readable.from("/help\n/exit\n"),
+    output,
+    error: new Capture(),
+    mode: "json",
+  });
+
+  expect(session.inputs).toEqual([]);
+  const record = JSON.parse(output.text().trim()) as {
+    type: string;
+    commands: Array<{
+      name: string;
+      usage: string;
+      description: string;
+      example: string;
+      available: boolean;
+      unavailableAction?: string;
+    }>;
+  };
+  expect(record.type).toBe("console_help");
+  expect(record.commands.map((command) => command.name)).toEqual(
+    CONSOLE_COMMANDS.map((command) => command.name),
+  );
+  for (const command of record.commands) {
+    expect(command.usage.startsWith(command.name)).toBe(true);
+    expect(command.description.length).toBeGreaterThan(0);
+    expect(command.example.startsWith(command.name)).toBe(true);
+  }
+  // Without a background manager the background commands are reported as
+  // unavailable WITH the action that enables them, never silently listed.
+  const list = record.commands.find((command) => command.name === "/list");
+  expect(list?.available).toBe(false);
+  expect(list?.unavailableAction).toContain("--workflows pipeline");
+  expect(record.commands.find((command) => command.name === "/exit")?.available).toBe(true);
+});
+
+test("/help marks background commands available once the session enables them", async () => {
+  const session = fakeSession() as unknown as ConversationSession & {
+    backgroundRuns: BackgroundRunManager;
+  };
+  session.backgroundRuns = { list: () => [] } as unknown as BackgroundRunManager;
+  const output = new Capture();
+  await runConsole({
+    session,
+    input: Readable.from("/help\n/exit\n"),
+    output,
+    error: new Capture(),
+    mode: "json",
+  });
+
+  const record = JSON.parse(output.text().trim()) as {
+    commands: Array<{ name: string; available: boolean; unavailableAction?: string }>;
+  };
+  const list = record.commands.find((command) => command.name === "/list");
+  expect(list?.available).toBe(true);
+  expect(list?.unavailableAction).toBeUndefined();
+});
+
+test("a formatted /help renders one usage and example line per command", async () => {
+  const session = fakeSession();
+  const output = new Capture();
+  await runConsole({
+    session,
+    input: Readable.from("/help\n/exit\n"),
+    output,
+    error: new Capture(),
+    mode: "formatted",
+  });
+
+  const text = output.text();
+  for (const command of CONSOLE_COMMANDS) {
+    expect(text).toContain(consoleCommandUsage(command));
+    expect(text).toContain(`example: ${command.example}`);
+  }
+});
+
+test("a missing run identifier names the command, the cause, and its usage", async () => {
+  const session = fakeSession() as unknown as ConversationSession & {
+    backgroundRuns: BackgroundRunManager;
+  };
+  session.backgroundRuns = { list: () => [] } as unknown as BackgroundRunManager;
+  const error = new Capture();
+  await runConsole({
+    session,
+    input: Readable.from("/status\n/exit\n"),
+    output: new Capture(),
+    error,
+    mode: "json",
+  });
+
+  const record = JSON.parse(error.text().trim()) as {
+    type: string;
+    code: string;
+    command: string;
+    message: string;
+    action: string;
+    retryable: boolean;
+  };
+  expect(record.type).toBe("console_error");
+  expect(record.code).toBe("invalid_command");
+  expect(record.command).toBe("/status");
+  expect(record.message).toContain("requires a background run identifier");
+  expect(record.action).toContain("/status <run-id>");
+  expect(record.action).toContain("example: /status ");
+  expect(record.retryable).toBe(true);
+});
+
+test("an unavailable background command names the flag that enables it", async () => {
+  const session = fakeSession();
+  const error = new Capture();
+  await runConsole({
+    session,
+    input: Readable.from("/list\n/exit\n"),
+    output: new Capture(),
+    error,
+    mode: "json",
+  });
+
+  const record = JSON.parse(error.text().trim()) as {
+    code: string;
+    command: string;
+    action: string;
+    retryable: boolean;
+  };
+  expect(record.code).toBe("not_available");
+  expect(record.command).toBe("/list");
+  expect(record.action).toContain("--workflows pipeline");
+  // Retrying the identical command in this session cannot succeed.
+  expect(record.retryable).toBe(false);
+});
+
+test("an unknown console command points at /help instead of a hardcoded list", async () => {
+  const session = fakeSession();
+  const error = new Capture();
+  await runConsole({
+    session,
+    input: Readable.from("/nope\n/exit\n"),
+    output: new Capture(),
+    error,
+    mode: "json",
+  });
+
+  // An unknown slash command must never be forwarded to the model as a prompt.
+  expect(session.inputs).toEqual([]);
+  const record = JSON.parse(error.text().trim()) as {
+    code: string;
+    message: string;
+    action: string;
+    retryable: boolean;
+  };
+  expect(record.code).toBe("unknown_command");
+  expect(record.message).toContain("/nope");
+  expect(record.action).toContain("/help");
+  expect(record.retryable).toBe(true);
+});
+
+test("a formatted console failure states the cause and the next action", async () => {
+  const session = fakeSession();
+  const error = new Capture();
+  await runConsole({
+    session,
+    input: Readable.from("/list\n/exit\n"),
+    output: new Capture(),
+    error,
+    mode: "formatted",
+  });
+
+  const text = error.text();
+  expect(text).toContain("/list needs background runs");
+  expect(text).toContain("--workflows pipeline");
+  // The retired hand-maintained command list must not reappear.
+  expect(text).not.toContain("use /list, /events, /status, /result, /cancel, or /interrupt");
+});
+
+test("a terminal control sequence in an unknown command cannot reach the terminal", async () => {
+  const session = fakeSession();
+  const error = new Capture();
+  await runConsole({
+    session,
+    input: Readable.from("/\u001b[31mnope\n/exit\n"),
+    output: new Capture(),
+    error,
+    mode: "formatted",
+  });
+
+  expect(error.text()).not.toContain("\u001b");
+});
+
+test("a run the manager does not know reports not_found with a recovery action", async () => {
+  const session = fakeSession() as unknown as ConversationSession & {
+    backgroundRuns: BackgroundRunManager;
+  };
+  session.backgroundRuns = {
+    status: () => {
+      throw new Error("not_found");
+    },
+  } as unknown as BackgroundRunManager;
+  const error = new Capture();
+  await runConsole({
+    session,
+    input: Readable.from("/status 123e4567-e89b-12d3-a456-426614174000\n/exit\n"),
+    output: new Capture(),
+    error,
+    mode: "json",
+  });
+
+  const record = JSON.parse(error.text().trim()) as {
+    code: string;
+    command: string;
+    action: string;
+    retryable: boolean;
+  };
+  expect(record.code).toBe("not_found");
+  expect(record.command).toBe("/status");
+  expect(record.action).toContain("/list");
+  expect(record.retryable).toBe(false);
+});
+
+test("a result requested before termination stays retryable with a wait action", async () => {
+  const session = fakeSession() as unknown as ConversationSession & {
+    backgroundRuns: BackgroundRunManager;
+  };
+  session.backgroundRuns = {
+    result: () => {
+      throw new Error("not_terminal");
+    },
+  } as unknown as BackgroundRunManager;
+  const error = new Capture();
+  await runConsole({
+    session,
+    input: Readable.from("/result 123e4567-e89b-12d3-a456-426614174000\n/exit\n"),
+    output: new Capture(),
+    error,
+    mode: "json",
+  });
+
+  const record = JSON.parse(error.text().trim()) as {
+    code: string;
+    action: string;
+    retryable: boolean;
+  };
+  expect(record.code).toBe("not_terminal");
+  expect(record.action).toContain("/status");
+  expect(record.retryable).toBe(true);
+});
+
+test("every registered console command declares usage, a description, and an example", () => {
+  for (const command of CONSOLE_COMMANDS) {
+    expect(command.name.startsWith("/")).toBe(true);
+    expect(command.description.length).toBeGreaterThan(0);
+    expect(command.example.startsWith(command.name)).toBe(true);
+    expect(consoleCommandUsage(command).startsWith(command.name)).toBe(true);
+    // A required argument must precede every optional one in the usage line.
+    const required = command.args.map((argument) => argument.required);
+    expect([...required].sort((a, b) => Number(b) - Number(a))).toEqual(required);
+  }
+  expect(consoleCommandNames()).toContain("/help");
+  expect(consoleCommandNames()).toContain("/exit");
 });

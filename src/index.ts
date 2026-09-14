@@ -65,6 +65,23 @@ export {
 } from "./context/compactor";
 export { assertContextFitsBudget, assertTurnFitsBudget } from "./context/preflight";
 export type {
+  ConsoleCommandArgument,
+  ConsoleCommandDefinition,
+  ConsoleCommandHelpEntry,
+  ConsoleControlCode,
+  ConsoleControlFailure,
+  ConsoleControlResult,
+} from "./conversation/console-control";
+export {
+  CONSOLE_COMMANDS,
+  ConsoleControlError,
+  consoleCommandNames,
+  consoleCommandUsage,
+  DEFAULT_CONSOLE_CONTROL_PAGE_SIZE,
+  executeConsoleControl,
+  findConsoleCommand,
+} from "./conversation/console-control";
+export type {
   ConversationConfig,
   ConversationSession,
   ConversationStepOptions,

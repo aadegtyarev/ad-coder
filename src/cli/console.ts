@@ -186,7 +186,21 @@ function renderControl(
     };
   };
   let safe: Record<string, unknown>;
-  if (result.type === "console_control")
+  if (result.type === "console_help")
+    safe = {
+      type: result.type,
+      commands: result.commands.map((command) => ({
+        name: command.name,
+        usage: command.usage,
+        description: command.description,
+        example: command.example,
+        available: command.available,
+        ...(command.unavailableAction === undefined
+          ? {}
+          : { unavailableAction: command.unavailableAction }),
+      })),
+    };
+  else if (result.type === "console_control")
     safe = { type: result.type, command: result.command, status: result.status };
   else if (result.type === "background_list")
     safe = {
@@ -215,6 +229,17 @@ function renderControl(
     };
   }
   if (mode === "json") return `${JSON.stringify(safe)}\n`;
+  if (result.type === "console_help") {
+    const width = Math.max(...result.commands.map((command) => command.usage.length));
+    return `${result.commands
+      .map(
+        (command) =>
+          `  ${command.usage.padEnd(width)}  ${command.description}${
+            command.available ? "" : ` (unavailable: ${command.unavailableAction})`
+          }\n    example: ${command.example}`,
+      )
+      .join("\n")}\n`;
+  }
   if (result.type === "console_control") return `ad-coder: current turn ${result.status}\n`;
   if (result.type === "background_list")
     return `${(safe.runs as Record<string, unknown>[]).map((run) => `ad-coder: background ${run.runId} ${run.lifecycle} steps ${(run.metrics as Record<string, unknown>).steps} cost ${(run.metrics as Record<string, unknown>).totalCost}`).join("\n") || "ad-coder: 0 background runs"}\n`;
@@ -469,10 +494,20 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
         );
         reason = "interrupted";
       } else if (error instanceof ConsoleControlError) {
+        // The guidance is derived from the command registry, so it always names
+        // the failed command and one next action (docs/contracts/errors.md).
+        const failure = error.failure;
         params.error.write(
           mode === "json"
-            ? `${JSON.stringify({ type: "console_error", code: error.code })}\n`
-            : `ad-coder: console command ${error.code}; use /list, /events, /status, /result, /cancel, or /interrupt\n`,
+            ? `${JSON.stringify({
+                type: "console_error",
+                code: failure.code,
+                ...(failure.command === undefined ? {} : { command: failure.command }),
+                message: failure.message,
+                action: failure.action,
+                retryable: failure.retryable,
+              })}\n`
+            : `ad-coder: ${sanitizeTerminalText(failure.message)}; ${sanitizeTerminalText(failure.action)}\n`,
         );
         if (mode === "formatted") params.output.write("ad-coder> ");
         return;
