@@ -111,7 +111,7 @@ export async function runAuthCommand(options: AuthCommandOptions): Promise<void>
         : undefined;
     try {
       const supplied = options.interaction;
-      const interaction =
+      const selectedInteraction =
         supplied !== undefined && options.method !== undefined
           ? {
               prompt: async (prompt: AuthPrompt) =>
@@ -121,12 +121,34 @@ export async function runAuthCommand(options: AuthCommandOptions): Promise<void>
               notify: (event: AuthEvent) => supplied.notify(event),
             }
           : supplied;
+      const baseInteraction = selectedInteraction ?? (ownedInteraction as CloseableAuthInteraction);
+      const interaction: AuthInteraction =
+        provider === "openrouter"
+          ? {
+              prompt: async (prompt) => {
+                const answer = await baseInteraction.prompt(prompt);
+                if (prompt.type === "secret" && answer.trim().length === 0)
+                  throw new Error("OpenRouter API key cannot be empty");
+                return answer;
+              },
+              notify: (event) => baseInteraction.notify(event),
+            }
+          : baseInteraction;
       const result = await login(
         models,
         providerId,
         provider === "openrouter" ? "api_key" : "oauth",
-        interaction ?? (ownedInteraction as CloseableAuthInteraction),
+        interaction,
       );
+      if (provider === "openrouter") {
+        const retained = await credentials.read(providerId);
+        if (
+          retained?.type !== "api_key" ||
+          retained.key === undefined ||
+          retained.key.trim().length === 0
+        )
+          throw new Error("OpenRouter API key was not retained; retry login");
+      }
       write(options.json ? `${JSON.stringify(result)}\n` : `${providerId}: authenticated\n`);
     } finally {
       ownedInteraction?.close();

@@ -571,6 +571,38 @@ test("auth login stores an OpenRouter API key without exposing it", async () => 
   }
 });
 
+test("auth login rejects an empty OpenRouter API key without claiming success", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-empty-openrouter-auth-"));
+  const priorConfigHome = process.env.XDG_CONFIG_HOME;
+  process.env.XDG_CONFIG_HOME = root;
+  const targetDir = path.join(root, "project");
+  const credentialPath = path.join(root, "private", "credentials.json");
+  fs.mkdirSync(targetDir);
+  let output = "";
+  try {
+    await expect(
+      runAuthCommand({
+        action: "login",
+        provider: "openrouter",
+        credentialPath,
+        targetDir,
+        interaction: { prompt: async () => "   ", notify: () => undefined },
+        write: (text) => {
+          output += text;
+        },
+      }),
+    ).rejects.toThrow("cannot be empty");
+    expect(output).not.toContain("authenticated");
+    expect(
+      await new FileCredentialStore({ path: credentialPath }).read("openrouter"),
+    ).toBeUndefined();
+  } finally {
+    if (priorConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = priorConfigHome;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("operations exposes FollowUp, documentation, and backlog APIs as JSON", () => {
   const target = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-operations-cli-"));
   fs.mkdirSync(path.join(target, "docs"));
