@@ -116,12 +116,6 @@ Only unresolved work belongs here. Current behavior is in
   selected execution mode until the final transcript. Project safe allowlisted
   built-in names without exposing third-party tool identifiers.
 
-- [high] **Account for failed-stage usage** (`src/runner/`,
-  `src/project-operations/run-coordinator.ts`): a rejected Researcher consumes
-  provider tokens and cost but contributes no entry to workflow `stageMetrics`.
-  Persist safe partial numeric observations for failed and rejected stages so
-  pipeline totals and calibration efficiency include unsuccessful work.
-
 - [high] **Resume an interrupted role without repeating reconnaissance**
   (`src/orchestration/session.ts`, `src/project-operations/run-coordinator.ts`):
   a stage-limit checkpoint preserves the workflow phase but not the unfinished

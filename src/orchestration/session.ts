@@ -22,6 +22,7 @@ import {
   readSafeGitDiffProjection,
 } from "../runner/runner";
 import type { Tool } from "../runner/tool";
+import { SessionLimitError } from "../session-limits";
 import {
   buildSubmitFollowUpTool,
   type FollowUpCapture,
@@ -251,6 +252,19 @@ export class WorkflowStageLimitError extends StageLimitError {
   }
 }
 
+/** A non-limit stage failure with safe ledger-derived metrics for durable accounting. */
+export class WorkflowStageFailureError extends Error {
+  override readonly name = "WorkflowStageFailureError";
+
+  constructor(
+    readonly sourceError: unknown,
+    readonly runId: string,
+    readonly metrics: PipelineStageMetrics,
+  ) {
+    super(sourceError instanceof Error ? sourceError.message : "workflow stage failed");
+  }
+}
+
 function aggregateLedgerRecords(records: readonly LedgerRecord[]) {
   return records.reduce(
     (sum, record) => ({
@@ -465,15 +479,15 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
         }),
       });
     } catch (error) {
-      if (!(error instanceof StageLimitError)) throw error;
+      if (error instanceof SessionLimitError) throw error;
       const usage = aggregateLedgerRecords(readableLedger.records().slice(ledgerStart));
-      throw new WorkflowStageLimitError(error, runId, {
+      const metrics: PipelineStageMetrics = {
         stage: step,
         status: "paused",
         provider: model.provider,
         model: model.id,
         thinkingLevel: role.thinkingLevel ?? "unknown",
-        durationMs: error.snapshot?.elapsedMs ?? 0,
+        durationMs: error instanceof StageLimitError ? (error.snapshot?.elapsedMs ?? 0) : 0,
         input: usage.freshInput + usage.cachedInput,
         cachedInput: usage.cachedInput,
         freshInput: usage.freshInput,
@@ -487,7 +501,10 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
         diffBytes: 0,
         contextStrategy:
           config.compaction?.mode === "disabled-then-halt" ? "disabled-then-halt" : "auto",
-      });
+      };
+      if (error instanceof StageLimitError)
+        throw new WorkflowStageLimitError(error, runId, metrics);
+      throw new WorkflowStageFailureError(error, runId, metrics);
     }
     // runRole closes the session facade it was handed (harness.close ->
     // session.close), while the durable store survives. Reopen a fresh readable

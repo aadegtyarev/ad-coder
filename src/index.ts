@@ -229,6 +229,7 @@ export {
   autoDriver,
   createWorkflowSession,
   selectPipelineContext,
+  WorkflowStageFailureError,
   WorkflowStageLimitError,
 } from "./orchestration/session";
 export type {

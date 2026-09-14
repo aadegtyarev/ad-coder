@@ -43,6 +43,7 @@ import {
   startRepositoryPublishing,
   suggestBacklogMigrationOnce,
   validateFollowUp,
+  WorkflowStageFailureError,
   WorkflowStageLimitError,
 } from "../src";
 import { SUBMIT_VERDICT_TOOL_NAME } from "../src/orchestration/verdict";
@@ -603,6 +604,52 @@ test("RunCoordinator durably pauses a limited stage and resumes only that stage"
     paused.checkpoint.workflowState.stageMetrics,
   );
   expect(attempts).toBe(2);
+});
+
+test("RunCoordinator retains safe usage from a rejected research stage", async () => {
+  const store = new ProjectStore(root());
+  const base = coordinatorSession(store, []);
+  const session: WorkflowSession = {
+    ...base,
+    initialState: () => ({ ...coordinatorState(), phase: "research" }),
+    prepareResearch: () => ({
+      effectId: "failed-research-effect",
+      destination: "example.invalid",
+      queryHash: "a".repeat(64),
+      surfaceIds: [],
+    }),
+    async step() {
+      throw new WorkflowStageFailureError(new Error("transport failed"), "failed-research", {
+        stage: "research",
+        status: "paused",
+        provider: "faux",
+        model: "faux-1",
+        thinkingLevel: "low",
+        durationMs: 0,
+        input: 12,
+        cachedInput: 8,
+        freshInput: 4,
+        output: 3,
+        reasoning: 1,
+        costUsd: 0.25,
+        requestBytes: { systemPrompt: 0, prompt: 0, toolDefinitions: 0, total: 0 },
+        readFiles: [],
+        readFilesTotal: 0,
+        readFilesTruncated: 0,
+        diffBytes: 0,
+        contextStrategy: "auto",
+      });
+    },
+  };
+  const coordinator = new RunCoordinator(session, store, { runId: "failed-research-usage" });
+  expect(await coordinator.prepareStep()).toBeUndefined();
+  expect(coordinator.checkpoint.pause?.code).toBe("research_rejected");
+  expect(coordinator.checkpoint.workflowState.runIds).toContain("failed-research");
+  expect(coordinator.checkpoint.workflowState.stageMetrics?.at(-1)).toMatchObject({
+    stage: "research",
+    costUsd: 0.25,
+    input: 12,
+  });
 });
 
 test("contract decisions persist, require operator authority, and re-review the current change", async () => {
