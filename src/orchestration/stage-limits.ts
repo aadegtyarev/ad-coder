@@ -1,4 +1,4 @@
-import type { AssistantMessage, Models } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Models, UserMessage } from "@earendil-works/pi-ai";
 
 export interface StageLimits {
   maxDurationMs?: number;
@@ -84,6 +84,15 @@ export class StageLimitError extends Error {
 
 export type StageCloseoutReason = "duration" | "model_turns" | "tool_turns" | "input";
 
+/**
+ * The single closeout wording. Tool rejections and the tool-free provider
+ * requests that follow them carry the same instruction, so a model that loses
+ * its tool schema is told why and what to do instead of inferring it.
+ */
+export function stageCloseoutInstruction(detail: string): string {
+  return `stage closeout reserve reached; stop using tools and return the final response (${detail})`;
+}
+
 /** A non-terminal tool rejection that preserves capacity for the role's final answer. */
 export class StageCloseoutError extends Error {
   override readonly name = "StageCloseoutError";
@@ -91,11 +100,9 @@ export class StageCloseoutError extends Error {
 
   constructor(
     readonly reason: StageCloseoutReason,
-    detail: string,
+    readonly detail: string,
   ) {
-    super(
-      `stage closeout reserve reached; stop using tools and return the final response (${detail})`,
-    );
+    super(stageCloseoutInstruction(detail));
   }
 }
 
@@ -141,6 +148,7 @@ export class StageLimitController {
   private costUsd = 0;
   private costInFlight = false;
   private closeoutReason: StageCloseoutReason | undefined;
+  private closeoutDetail = "";
   private terminalReason: StageLimitReason | undefined;
   private boundaryFailure: StageLimitError | undefined;
 
@@ -220,61 +228,59 @@ export class StageLimitController {
     this.onSnapshot?.(this.snapshot());
   }
 
-  admitToolTurn(): void {
-    this.assertActive();
+  /**
+   * First reserve the stage has entered, or `undefined` while all stay clear.
+   * `nextRequestInput` is the conservative estimate the next provider request
+   * will add; tool admission measures only what the stage has already spent.
+   */
+  private detectCloseout(
+    nextRequestInput: number,
+  ): { reason: StageCloseoutReason; detail: string } | undefined {
     const {
       maxDurationMs,
       maxModelTurns,
+      maxToolTurns,
+      maxInputTokens,
       finalResponseReserveDurationMs,
       finalResponseReserveModelTurns,
       finalResponseReserveToolTurns,
       finalResponseReserveInputTokens,
-      maxInputTokens,
-      maxToolTurns,
     } = this.limits;
+    const entered = (limit: number, reserve: number, observed: number): boolean =>
+      limit > 0 && reserve > 0 && observed >= Math.max(0, limit - reserve);
+    const elapsed = Math.round(this.elapsedMs());
+    if (entered(maxDurationMs, finalResponseReserveDurationMs, this.elapsedMs()))
+      return {
+        reason: "duration",
+        detail: `${elapsed}/${maxDurationMs} ms used, ${finalResponseReserveDurationMs} ms reserved`,
+      };
+    if (entered(maxModelTurns, finalResponseReserveModelTurns, this.modelTurns))
+      return {
+        reason: "model_turns",
+        detail: `${this.modelTurns}/${maxModelTurns} model turns used, ${finalResponseReserveModelTurns} reserved`,
+      };
     if (
-      maxDurationMs > 0 &&
-      finalResponseReserveDurationMs > 0 &&
-      this.elapsedMs() >= Math.max(0, maxDurationMs - finalResponseReserveDurationMs)
-    ) {
-      this.closeoutReason = "duration";
-      throw new StageCloseoutError(
-        "duration",
-        `${Math.round(this.elapsedMs())}/${maxDurationMs} ms used, ${finalResponseReserveDurationMs} ms reserved`,
-      );
-    }
-    if (
-      maxModelTurns > 0 &&
-      finalResponseReserveModelTurns > 0 &&
-      this.modelTurns >= Math.max(0, maxModelTurns - finalResponseReserveModelTurns)
-    ) {
-      this.closeoutReason = "model_turns";
-      throw new StageCloseoutError(
-        "model_turns",
-        `${this.modelTurns}/${maxModelTurns} model turns used, ${finalResponseReserveModelTurns} reserved`,
-      );
-    }
-    if (
-      maxInputTokens > 0 &&
-      finalResponseReserveInputTokens > 0 &&
-      this.inputTokens >= Math.max(0, maxInputTokens - finalResponseReserveInputTokens)
-    ) {
-      this.closeoutReason = "input";
-      throw new StageCloseoutError(
-        "input",
-        `${this.inputTokens}/${maxInputTokens} input tokens used, ${finalResponseReserveInputTokens} reserved`,
-      );
-    }
-    if (
-      maxToolTurns > 0 &&
-      finalResponseReserveToolTurns > 0 &&
-      this.toolTurns >= Math.max(0, maxToolTurns - finalResponseReserveToolTurns)
-    ) {
-      this.closeoutReason = "tool_turns";
-      throw new StageCloseoutError(
-        "tool_turns",
-        `${this.toolTurns}/${maxToolTurns} tool turns used, ${finalResponseReserveToolTurns} reserved`,
-      );
+      entered(maxInputTokens, finalResponseReserveInputTokens, this.inputTokens + nextRequestInput)
+    )
+      return {
+        reason: "input",
+        detail: `${this.inputTokens}/${maxInputTokens} input tokens used, ${finalResponseReserveInputTokens} reserved`,
+      };
+    if (entered(maxToolTurns, finalResponseReserveToolTurns, this.toolTurns))
+      return {
+        reason: "tool_turns",
+        detail: `${this.toolTurns}/${maxToolTurns} tool turns used, ${finalResponseReserveToolTurns} reserved`,
+      };
+    return undefined;
+  }
+
+  admitToolTurn(): void {
+    this.assertActive();
+    const closeout = this.detectCloseout(0);
+    if (closeout !== undefined) {
+      this.closeoutReason = closeout.reason;
+      this.closeoutDetail = closeout.detail;
+      throw new StageCloseoutError(closeout.reason, closeout.detail);
     }
     this.toolTurns += 1;
     this.onSnapshot?.(this.snapshot());
@@ -317,42 +323,18 @@ export class StageLimitController {
     };
     const prepareCloseout = () => {
       if (this.closeoutReason !== undefined) return;
-      const {
-        maxDurationMs,
-        maxModelTurns,
-        maxToolTurns,
-        maxInputTokens,
-        finalResponseReserveDurationMs,
-        finalResponseReserveModelTurns,
-        finalResponseReserveToolTurns,
-        finalResponseReserveInputTokens,
-      } = this.limits;
-      if (
-        maxDurationMs > 0 &&
-        finalResponseReserveDurationMs > 0 &&
-        this.elapsedMs() >= maxDurationMs - finalResponseReserveDurationMs
-      )
-        this.closeoutReason = "duration";
-      else if (
-        maxModelTurns > 0 &&
-        finalResponseReserveModelTurns > 0 &&
-        this.modelTurns >= maxModelTurns - finalResponseReserveModelTurns
-      )
-        this.closeoutReason = "model_turns";
-      else if (
-        maxInputTokens > 0 &&
-        finalResponseReserveInputTokens > 0 &&
-        this.inputTokens + this.lastInputTokens >= maxInputTokens - finalResponseReserveInputTokens
-      )
-        this.closeoutReason = "input";
-      else if (
-        maxToolTurns > 0 &&
-        finalResponseReserveToolTurns > 0 &&
-        this.toolTurns >= maxToolTurns - finalResponseReserveToolTurns
-      )
-        this.closeoutReason = "tool_turns";
+      const closeout = this.detectCloseout(this.lastInputTokens);
+      if (closeout === undefined) return;
+      this.closeoutReason = closeout.reason;
+      this.closeoutDetail = closeout.detail;
     };
-    const withoutToolsDuringCloseout = (args: unknown[]): unknown[] => {
+    /**
+     * Removing the tool schema alone leaves the model with an unfinished task
+     * and no way to act, and models answer that by emitting their native
+     * tool-call syntax as prose. The same instruction the tool rejection carries
+     * is appended as a user message so the request says why tools vanished.
+     */
+    const closeoutRequest = (args: unknown[]): unknown[] => {
       if (this.closeoutReason === undefined) return args;
       const context = args[1];
       if (
@@ -362,8 +344,13 @@ export class StageLimitController {
         !Array.isArray(context.messages)
       )
         return args;
+      const instruction: UserMessage = {
+        role: "user",
+        content: stageCloseoutInstruction(this.closeoutDetail),
+        timestamp: Date.now(),
+      };
       const next = [...args];
-      next[1] = { ...context, tools: [] };
+      next[1] = { ...context, messages: [...context.messages, instruction], tools: [] };
       return next;
     };
     const settle = (message: AssistantMessage | undefined) => {
@@ -387,7 +374,7 @@ export class StageLimitController {
               operation = Reflect.apply(
                 value,
                 target,
-                withoutToolsDuringCloseout(args),
+                closeoutRequest(args),
               ) as Promise<AssistantMessage>;
             } catch (error) {
               settle(undefined);
@@ -410,11 +397,7 @@ export class StageLimitController {
             prepareCloseout();
             let stream: { result(): Promise<AssistantMessage> };
             try {
-              stream = Reflect.apply(
-                value,
-                target,
-                withoutToolsDuringCloseout(args),
-              ) as typeof stream;
+              stream = Reflect.apply(value, target, closeoutRequest(args)) as typeof stream;
             } catch (error) {
               settle(undefined);
               throw error;
