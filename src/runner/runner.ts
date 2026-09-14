@@ -273,6 +273,10 @@ export interface SafeGitChangedFiles {
   files: string[];
   total: number;
   truncated: number;
+  /** Safe untracked paths, separately projected because ordinary git diff omits them. */
+  untrackedFiles: string[];
+  /** True when the ordinary diff projection cannot contain all changed content. */
+  requiresFullDiff?: boolean;
 }
 
 export interface SafeGitDiffProjection {
@@ -284,6 +288,27 @@ export interface SafeGitDiffProjection {
 
 const DIFF_SECRET =
   /(?:bearer\s+|api[_-]?key\s*[:=]|password\s*[:=]|secret\s*[:=]|(?:^|\W)sk-[a-z0-9_-]{8,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)/i;
+
+function redactDiffText(decoded: string): { text: string; redactedLines: number } {
+  let redactedLines = 0;
+  const text = decoded
+    .split("\n")
+    .map((line) => {
+      const isHeader =
+        line.startsWith("diff --git ") ||
+        line.startsWith("index ") ||
+        line.startsWith("--- ") ||
+        line.startsWith("+++ ") ||
+        line.startsWith("@@ ");
+      if (!isHeader && DIFF_SECRET.test(line)) {
+        redactedLines += 1;
+        return "+[REDACTED: possible credential]";
+      }
+      return line;
+    })
+    .join("\n");
+  return { text, redactedLines };
+}
 
 /** Read one bounded patch projection and redact credential-like added lines. */
 export function readSafeGitDiffProjection(
@@ -329,23 +354,7 @@ export function readSafeGitDiffProjection(
       } catch {
         return reject(new RunnerError("diff_metric_failed", targetDir, "git diff is not UTF-8"));
       }
-      let redactedLines = 0;
-      const text = decoded
-        .split("\n")
-        .map((line) => {
-          const isHeader =
-            line.startsWith("diff --git ") ||
-            line.startsWith("index ") ||
-            line.startsWith("--- ") ||
-            line.startsWith("+++ ") ||
-            line.startsWith("@@ ");
-          if (!isHeader && DIFF_SECRET.test(line)) {
-            redactedLines += 1;
-            return "+[REDACTED: possible credential]";
-          }
-          return line;
-        })
-        .join("\n");
+      const { text, redactedLines } = redactDiffText(decoded);
       resolve({
         text,
         bytes: Buffer.byteLength(text),
@@ -354,6 +363,52 @@ export function readSafeGitDiffProjection(
       });
     });
   });
+}
+
+/** Add bounded, redacted evidence for untracked paths omitted by ordinary git diff. */
+export function appendSafeUntrackedDiffProjection(
+  targetDir: string,
+  base: SafeGitDiffProjection,
+  untrackedFiles: readonly string[],
+  maxBytes: number,
+): SafeGitDiffProjection {
+  let text = base.text;
+  let redactedLines = base.redactedLines;
+  for (const relative of untrackedFiles) {
+    if (
+      relative === "" ||
+      path.isAbsolute(relative) ||
+      relative.split("/").includes("..") ||
+      !isSafeReportedPath(relative)
+    ) {
+      throw new RunnerError("diff_metric_failed", targetDir, "git changed path is unsafe");
+    }
+    const absolute = path.resolve(targetDir, relative);
+    const contained = path.relative(targetDir, absolute);
+    if (contained.startsWith("..") || path.isAbsolute(contained))
+      throw new RunnerError("diff_metric_failed", targetDir, "git changed path is unsafe");
+    let contents: string;
+    try {
+      contents = new TextDecoder("utf-8", { fatal: true }).decode(fs.readFileSync(absolute));
+    } catch {
+      throw new RunnerError("diff_metric_failed", targetDir, "untracked diff is not UTF-8");
+    }
+    const candidate = `diff --git a/${relative} b/${relative}\n--- /dev/null\n+++ b/${relative}\n${contents
+      .split("\n")
+      .map((line) => `+${line}`)
+      .join("\n")}\n`;
+    if (Buffer.byteLength(text) + Buffer.byteLength(candidate) > maxBytes)
+      throw new RunnerError("diff_metric_failed", targetDir, "git diff projection exceeded limit");
+    const redacted = redactDiffText(candidate);
+    text += redacted.text;
+    redactedLines += redacted.redactedLines;
+  }
+  return {
+    text,
+    bytes: Buffer.byteLength(text),
+    sha256: createHash("sha256").update(text).digest("hex"),
+    redactedLines,
+  };
 }
 
 /** Read changed names with NUL framing and mandatory positive safety ceilings. */
@@ -389,7 +444,7 @@ export function readSafeGitChangedFiles(
       reject(new RunnerError("diff_metric_failed", targetDir, "git changed paths failed")),
     );
     child.once("close", (code) => {
-      if (code === 129) return resolve({ files: [], total: 0, truncated: 0 });
+      if (code === 129) return resolve({ files: [], total: 0, truncated: 0, untrackedFiles: [] });
       if (code !== 0 || overflow)
         return reject(new RunnerError("diff_metric_failed", targetDir, "git changed paths failed"));
       let decoded: string;
@@ -417,6 +472,11 @@ export function readSafeGitChangedFiles(
         files: safe.slice(0, limits.maxPaths),
         total: safe.length,
         truncated: Math.max(0, safe.length - limits.maxPaths),
+        untrackedFiles: entries
+          .filter((entry) => entry.startsWith("?? "))
+          .map((entry) => entry.slice(3))
+          .filter((name) => safe.includes(name)),
+        ...(entries.some((entry) => entry.startsWith("?? ")) && { requiresFullDiff: true }),
       });
     });
   });

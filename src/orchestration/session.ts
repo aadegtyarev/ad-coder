@@ -16,7 +16,11 @@ import { ProjectStore } from "../project-store/project-store";
 import { composeRoleBrief, resolveResearchRoleBrief } from "../prompts/role-briefs";
 import { defineRole } from "../role";
 import { createRoleRunner, type RoleRunner } from "../runner/role-runner";
-import { readSafeGitChangedFiles, readSafeGitDiffProjection } from "../runner/runner";
+import {
+  appendSafeUntrackedDiffProjection,
+  readSafeGitChangedFiles,
+  readSafeGitDiffProjection,
+} from "../runner/runner";
 import type { Tool } from "../runner/tool";
 import {
   buildSubmitFollowUpTool,
@@ -124,7 +128,16 @@ async function safeChangedFilesWithConfig(config: PipelineConfig): Promise<{
     if (files.files.some((file) => SENSITIVE_PATH.test(file)))
       return { ...files, truncated: Math.max(1, files.truncated) };
     const maxBytes = config.pipelineContext?.projection?.maxAggregateBytes ?? 32 * 1024;
-    return { ...files, diff: await readSafeGitDiffProjection(config.targetDir, maxBytes) };
+    const tracked = await readSafeGitDiffProjection(config.targetDir, maxBytes);
+    return {
+      ...files,
+      diff: appendSafeUntrackedDiffProjection(
+        config.targetDir,
+        tracked,
+        files.untrackedFiles,
+        maxBytes,
+      ),
+    };
   } catch {
     // Measurement failure is represented explicitly and forces full context.
     return { files: [], total: 0, truncated: 1 };

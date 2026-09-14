@@ -53,6 +53,10 @@ requires the exhausted limit to change, and retains cumulative budgets. SIGINT
 and SIGTERM abort the active lane, close the in-process resources, and persist
 an `interrupted` pause that can be resumed without changing a budget.
 
+Incremental reviewer context projects both tracked diffs and validated untracked
+UTF-8 files under one byte ceiling; credential-like lines are redacted before
+the projection is handed to a role.
+
 ### Tool activity flow
 
 Runner and conversation adapters publish categorized, correlated harness events
