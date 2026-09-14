@@ -4,8 +4,11 @@ import { createModels, fauxAssistantMessage, fauxProvider } from "@earendil-work
 import { runConsole } from "../src/cli/console";
 import {
   CONSOLE_COMMANDS,
+  ConsoleControlError,
   consoleCommandNames,
   consoleCommandUsage,
+  executeConsoleControl,
+  findConsoleCommand,
 } from "../src/conversation/console-control";
 import {
   type ConversationSession,
@@ -274,7 +277,13 @@ test("typed session exhaustion stops input with no fabricated JSON record", asyn
   expect(output.text()).toBe("");
   expect(error.text()).toBe(
     '{"type":"progress","event":"started","stage":"console-turn","elapsedSeconds":0}\n' +
-      '{"type":"console_error","code":"session_limit"}\n',
+      `${JSON.stringify({
+        type: "console_error",
+        code: "session_limit",
+        message: "session resource limit reached",
+        action: "restart the console to start a session with a fresh budget",
+        retryable: false,
+      })}\n`,
   );
 });
 
@@ -1284,4 +1293,114 @@ test("every registered console command declares usage, a description, and an exa
   }
   expect(consoleCommandNames()).toContain("/help");
   expect(consoleCommandNames()).toContain("/exit");
+});
+
+test("a C1 control sequence cannot reach a terminal through the JSON failure record", async () => {
+  const session = fakeSession();
+  const error = new Capture();
+  await runConsole({
+    session,
+    input: Readable.from("/\u009b31mnope\n/exit\n"),
+    output: new Capture(),
+    error,
+    mode: "json",
+  });
+
+  // JSON.stringify does not escape C1 controls, so the record is sanitized too.
+  expect(error.text()).not.toContain("\u009b");
+  expect(error.text()).not.toContain("\u001b");
+  const record = JSON.parse(error.text().trim()) as { code: string; message: string };
+  expect(record.code).toBe("unknown_command");
+  expect(record.message).not.toContain("\u009b");
+});
+
+test("every console failure projection carries a code, action, and retryability", async () => {
+  const cases: Array<{
+    session: ReturnType<typeof fakeSession>;
+    code: string;
+    retryable: boolean;
+  }> = [
+    {
+      session: fakeSession({ stepError: new Error("boom") }),
+      code: "turn_failed",
+      retryable: true,
+    },
+    {
+      session: fakeSession({ stepError: new SessionLimitError("turns", 1, 1) }),
+      code: "session_limit",
+      retryable: false,
+    },
+  ];
+  for (const { session, code, retryable } of cases) {
+    const error = new Capture();
+    await runConsole({
+      session,
+      input: Readable.from("hello\n"),
+      output: new Capture(),
+      error,
+      mode: "json",
+    });
+    const line = error
+      .text()
+      .trim()
+      .split("\n")
+      .find((entry) => entry.includes('"console_error"')) as string;
+    const record = JSON.parse(line) as {
+      type: string;
+      code: string;
+      message: string;
+      action: string;
+      retryable: boolean;
+    };
+    expect(record.type).toBe("console_error");
+    expect(record.code).toBe(code);
+    expect(record.message.length).toBeGreaterThan(0);
+    expect(record.action.length).toBeGreaterThan(0);
+    expect(record.retryable).toBe(retryable);
+  }
+});
+
+test("the console front dispatches every registered exit command, not one literal", async () => {
+  const exits = CONSOLE_COMMANDS.filter((command) => command.frontAction === "exit");
+  expect(exits.length).toBeGreaterThan(0);
+  // Driving the registry rather than the literal "/exit" means a command added
+  // to the registry cannot be silently unreachable from the front.
+  for (const command of exits) {
+    const session = fakeSession();
+    const result = await runConsole({
+      session,
+      input: Readable.from(`${command.name}\n`),
+      output: new Capture(),
+      error: new Capture(),
+      mode: "json",
+    });
+    expect(result.reason).toBe("exit");
+    expect(session.inputs).toEqual([]);
+  }
+  expect(findConsoleCommand("/exit")?.frontAction).toBe("exit");
+});
+
+test("a manager failure keeps its cause for programmatic callers only", () => {
+  const cause = new Error("not_found");
+  const manager = {
+    status: () => {
+      throw cause;
+    },
+  } as unknown as BackgroundRunManager;
+  let caught: unknown;
+  try {
+    executeConsoleControl("/status 123e4567-e89b-12d3-a456-426614174000", {
+      backgroundRuns: manager,
+      interrupt: async () => false,
+    });
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught).toBeInstanceOf(ConsoleControlError);
+  const failure = caught as ConsoleControlError;
+  expect(failure.cause).toBe(cause);
+  // The public projection never repeats the raw manager text.
+  expect(failure.failure.message).not.toContain("not_found");
+  expect(failure.failure.code).toBe("not_found");
+  expect(failure.failure.action).toContain("/list");
 });

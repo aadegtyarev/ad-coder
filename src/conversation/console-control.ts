@@ -47,6 +47,12 @@ export interface ConsoleCommandDefinition {
   readonly scope: "control" | "front";
   /** Set when the command needs an optional capability the host may not enable. */
   readonly requires?: "background_runs";
+  /**
+   * Set on every `front` command; names the front-side effect to run. A front
+   * looks this up instead of matching the command name literally, so the
+   * registry stays the one source of dispatch (`docs/contracts/cli.md`).
+   */
+  readonly frontAction?: "exit";
 }
 
 export interface ConsoleCommandHelpEntry {
@@ -76,8 +82,15 @@ export type ConsoleControlResult =
 
 export class ConsoleControlError extends Error {
   readonly code: ConsoleControlCode;
-  constructor(readonly failure: ConsoleControlFailure) {
-    super(failure.message);
+  /**
+   * `cause` keeps the originating failure for programmatic callers while only
+   * `failure` crosses human, model, and machine boundaries (docs/contracts/errors.md).
+   */
+  constructor(
+    readonly failure: ConsoleControlFailure,
+    options?: { cause: unknown },
+  ) {
+    super(failure.message, options);
     this.name = "ConsoleControlError";
     this.code = failure.code;
   }
@@ -195,6 +208,7 @@ export const CONSOLE_COMMANDS: readonly ConsoleCommandDefinition[] = [
     args: [],
     example: "/exit",
     scope: "front",
+    frontAction: "exit",
   },
 ];
 
@@ -215,8 +229,8 @@ export function consoleCommandNames(): readonly string[] {
   return CONSOLE_COMMANDS.map((command) => command.name);
 }
 
-function fail(failure: ConsoleControlFailure): never {
-  throw new ConsoleControlError(failure);
+function fail(failure: ConsoleControlFailure, cause?: unknown): never {
+  throw new ConsoleControlError(failure, cause === undefined ? undefined : { cause });
 }
 
 function invalidArguments(command: ConsoleCommandDefinition, reason: string): never {
@@ -377,27 +391,36 @@ export function executeConsoleControl(
     // Manager errors intentionally collapse to safe public codes.
     const message = error instanceof Error ? error.message : "";
     if (message === "not_found")
-      fail({
-        code: "not_found",
-        command: command.name,
-        message: `${command.name} found no background run with that identifier`,
-        action: "use /list to see the background runs in this owner scope",
-        retryable: false,
-      });
+      fail(
+        {
+          code: "not_found",
+          command: command.name,
+          message: `${command.name} found no background run with that identifier`,
+          action: "use /list to see the background runs in this owner scope",
+          retryable: false,
+        },
+        error,
+      );
     if (message === "not_terminal")
-      fail({
-        code: "not_terminal",
+      fail(
+        {
+          code: "not_terminal",
+          command: command.name,
+          message: `${command.name} needs a run that has already terminated`,
+          action: "use /status to watch the run, then retry once it reports a terminal lifecycle",
+          retryable: true,
+        },
+        error,
+      );
+    fail(
+      {
+        code: "invalid_request",
         command: command.name,
-        message: `${command.name} needs a run that has already terminated`,
-        action: "use /status to watch the run, then retry once it reports a terminal lifecycle",
-        retryable: true,
-      });
-    fail({
-      code: "invalid_request",
-      command: command.name,
-      message: `${command.name} was rejected by the background run manager`,
-      action: "use /list to confirm the run identifier and owner scope",
-      retryable: false,
-    });
+        message: `${command.name} was rejected by the background run manager`,
+        action: "use /list to confirm the run identifier and owner scope",
+        retryable: false,
+      },
+      error,
+    );
   }
 }

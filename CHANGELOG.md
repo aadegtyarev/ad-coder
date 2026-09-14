@@ -21,6 +21,10 @@ All notable changes to ad-coder are recorded here. The format follows
 
 - Console command dispatch, argument validation, failure guidance, and help now
   render from one command registry instead of a hand-maintained usage string.
+  `/exit` is dispatched through its registry entry rather than a literal name.
+- Every console failure, including interruption, session limits, empty provider
+  turns, and turn failures, now reports the same typed projection with a
+  recovery action and retryability instead of a bare code.
 - Console failures now report a stable `code` with the failed command, concise
   text naming the failure, a `retryable` flag, and one recovery action in both
   the formatted and `console_error` JSON projections.
@@ -30,6 +34,11 @@ All notable changes to ad-coder are recorded here. The format follows
 - Replaced the identical, unhelpful guidance every failed console command
   printed, which listed neither `/help` nor `/exit` and never explained why the
   command failed.
+- Sanitized terminal control sequences out of the machine-mode `console_error`
+  record; `JSON.stringify` leaves C1 controls intact, so untrusted command text
+  could reach a terminal reading JSON output.
+- Preserved the originating manager error as `cause` on `ConsoleControlError`
+  for programmatic callers while still projecting only safe fields.
 
 ## [0.3.4] - 2026-09-14
 
