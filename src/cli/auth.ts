@@ -1,4 +1,5 @@
 import * as readline from "node:readline/promises";
+import { Writable } from "node:stream";
 import type { AuthEvent, AuthInteraction, AuthPrompt, Models } from "@earendil-works/pi-ai";
 import {
   assertCredentialPathOutsideProject,
@@ -6,7 +7,7 @@ import {
   FileCredentialStore,
 } from "../auth/credential-store";
 import { getAuthStatus, login, logout } from "../auth/operations";
-import { openaiCodexPreset } from "../registry/presets";
+import { openaiCodexPreset, openrouterPreset } from "../registry/presets";
 import { resolveRegistry } from "../registry/resolve";
 
 export type CodexLoginMethod = "browser" | "device_code";
@@ -21,6 +22,7 @@ export interface AuthCommandOptions {
   /** Test/embedder seam; normal CLI resolution always uses the persistent registry models. */
   models?: Models;
   providerId?: string;
+  provider?: "openai-codex" | "openrouter";
   write?: (text: string) => void;
 }
 
@@ -43,7 +45,18 @@ function terminalInteraction(
   method: CodexLoginMethod | undefined,
   write: (text: string) => void,
 ): CloseableAuthInteraction {
-  const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
+  let muted = false;
+  const output = new Writable({
+    write(chunk, _encoding, callback) {
+      if (!muted) process.stderr.write(chunk);
+      callback();
+    },
+  });
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output,
+    terminal: process.stdin.isTTY === true,
+  });
   return {
     async prompt(prompt: AuthPrompt): Promise<string> {
       if (prompt.type === "select" && method !== undefined) return method;
@@ -51,7 +64,16 @@ function terminalInteraction(
         const answer = await rl.question(`${prompt.message} [browser/device_code]: `);
         return answer.trim() || "browser";
       }
-      return rl.question(`${prompt.message} `, { signal: prompt.signal });
+      if (prompt.type !== "secret")
+        return rl.question(`${prompt.message} `, { signal: prompt.signal });
+      write(`${prompt.message} `);
+      muted = true;
+      try {
+        return await rl.question("", { signal: prompt.signal });
+      } finally {
+        muted = false;
+        write("\n");
+      }
     },
     notify: (event) => renderAuthEvent(event, write),
     close: () => rl.close(),
@@ -63,9 +85,11 @@ export async function runAuthCommand(options: AuthCommandOptions): Promise<void>
   const credentialPath = options.credentialPath ?? defaultCredentialPath();
   assertCredentialPathOutsideProject(credentialPath, options.targetDir);
   const credentials = new FileCredentialStore({ path: credentialPath });
-  const registry = resolveRegistry({ providers: [openaiCodexPreset()] }, { credentials });
+  const provider = options.provider ?? "openai-codex";
+  const preset = provider === "openrouter" ? openrouterPreset() : openaiCodexPreset();
+  const registry = resolveRegistry({ providers: [preset] }, { credentials });
   const models = options.models ?? registry.models;
-  const providerId = options.providerId ?? registry.getModel("codex-gpt-5.5").provider;
+  const providerId = options.providerId ?? provider;
   if (options.action === "status") {
     const result = await getAuthStatus(models, providerId);
     write(
@@ -100,7 +124,7 @@ export async function runAuthCommand(options: AuthCommandOptions): Promise<void>
       const result = await login(
         models,
         providerId,
-        "oauth",
+        provider === "openrouter" ? "api_key" : "oauth",
         interaction ?? (ownedInteraction as CloseableAuthInteraction),
       );
       write(options.json ? `${JSON.stringify(result)}\n` : `${providerId}: authenticated\n`);

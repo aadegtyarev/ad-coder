@@ -345,6 +345,23 @@ test("credentials resolve through the injected accessor, not process.env", async
   expect(auth?.auth.apiKey).toBe("fake-injected-value");
 });
 
+test("a stored API key resolves when the environment is empty", async () => {
+  const credentials: CredentialStore = {
+    read: async (providerId) =>
+      providerId === "openrouter" ? { type: "api_key", key: "stored-test-key" } : undefined,
+    list: async () => [],
+    modify: async (_providerId, fn) => fn(undefined),
+    delete: async () => undefined,
+  };
+  const resolved = resolveRegistry(
+    { providers: [openrouterPreset()] },
+    { env: fakeEnv({}), credentials },
+  );
+  const auth = await resolved.models.getAuth("openrouter");
+  expect(auth?.auth.apiKey).toBe("stored-test-key");
+  expect(auth?.source).toBe("stored credential");
+});
+
 test("resolveRegistry gives pi Models the exact injected CredentialStore", async () => {
   let reads = 0;
   const credentials: CredentialStore = {

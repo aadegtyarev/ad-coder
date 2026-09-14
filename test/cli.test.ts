@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { AuthInteraction, Models } from "@earendil-works/pi-ai";
+import { FileCredentialStore } from "../src/auth/credential-store";
 import { renderAuthEvent, runAuthCommand } from "../src/cli/auth";
 import type { DurableRunRecord } from "../src/orchestration/control-plane";
 import { ProjectStore } from "../src/project-store/project-store";
@@ -361,7 +362,7 @@ test("root help succeeds on stdout and failure usage is registry-derived", () =>
     const { code, stdout, stderr } = runCli([flag]);
     expect(code).toBe(0);
     expect(stdout).toContain("usage: ad-coder <command> [options]");
-    expect(stdout).toContain("auth    Manage persistent OpenAI Codex authentication.");
+    expect(stdout).toContain("auth    Manage persistent provider authentication.");
     expect(stdout).toContain("operations Run a project-operations action and emit JSON.");
     expect(stdout).toContain("run     Run a workflow module.");
     expect(stdout).toContain("role    Run one shipped role once.");
@@ -530,6 +531,37 @@ test("auth login selects browser and device-code flows without exposing credenti
       expect(output).not.toContain(refresh);
     }
     expect(selected).toEqual(["browser", "device_code"]);
+  } finally {
+    if (priorConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = priorConfigHome;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("auth login stores an OpenRouter API key without exposing it", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-openrouter-auth-"));
+  const priorConfigHome = process.env.XDG_CONFIG_HOME;
+  process.env.XDG_CONFIG_HOME = root;
+  const targetDir = path.join(root, "project");
+  const credentialPath = path.join(root, "private", "credentials.json");
+  fs.mkdirSync(targetDir);
+  const secret = "sentinel-openrouter-key";
+  let output = "";
+  try {
+    await runAuthCommand({
+      action: "login",
+      provider: "openrouter",
+      credentialPath,
+      targetDir,
+      interaction: { prompt: async () => secret, notify: () => undefined },
+      write: (text) => {
+        output += text;
+      },
+    });
+    expect(output).toContain("openrouter: authenticated");
+    expect(output).not.toContain(secret);
+    const stored = await new FileCredentialStore({ path: credentialPath }).read("openrouter");
+    expect(stored).toEqual({ type: "api_key", key: secret });
   } finally {
     if (priorConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
     else process.env.XDG_CONFIG_HOME = priorConfigHome;

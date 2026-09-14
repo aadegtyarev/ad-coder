@@ -30,7 +30,9 @@ type ProviderStreams = ReturnType<typeof openAICompletionsApi>;
  * Turn declared `RegistryConfig` data plus the harness environment into a live
  * pi `Models` collection with a stable-name lookup.
  *
- * CREDENTIAL BOUNDARY. Keys resolve through the injected `env` accessor ONLY.
+ * CREDENTIAL BOUNDARY. OpenRouter keys may resolve through the injected credential
+ * store first, then the injected `env` accessor. Other env-var providers retain
+ * their fail-fast environment-only contract.
  * The pi `AuthContext` handed to `createModels` routes `env(name)` to that same
  * injected accessor and returns `Promise<false>` from `fileExists`, so pi
  * cannot fall back to a stored credential FILE or an ambient dotenv -- the
@@ -74,7 +76,12 @@ export function resolveRegistry(
   const index = new Map<string, { providerId: string; modelId: string; config: ModelConfig }>();
 
   for (const provider of validated.providers) {
-    const registeredId = registerProvider(provider, models, readEnv);
+    const registeredId = registerProvider(
+      provider,
+      models,
+      readEnv,
+      options?.credentials !== undefined,
+    );
     for (const model of provider.models) {
       index.set(model.name, { providerId: registeredId, modelId: model.modelId, config: model });
     }
@@ -115,6 +122,7 @@ function registerProvider(
   provider: ProviderConfig,
   models: ReturnType<typeof createModels>,
   readEnv: (name: string) => string | undefined,
+  hasCredentialStore: boolean,
 ): string {
   if (provider.credential.kind === "oauth") {
     const codex = openaiCodexProvider();
@@ -124,14 +132,15 @@ function registerProvider(
 
   const envVar = provider.credential.envVar;
   const key = readEnv(envVar);
-  if (key === undefined || key === "") {
+  const canUseStoredCredential = hasCredentialStore && provider.id === "openrouter";
+  if ((key === undefined || key === "") && !canUseStoredCredential) {
     // Load-bearing: envApiKeyAuth.resolve returns undefined (not throw) on a
     // missing key, so without this preflight a missing key would surface only as
     // a later stream failure, not a typed missing_credential naming the var.
     throw new RegistryError(
       "missing_credential",
       envVar,
-      `environment variable "${envVar}" (credential for provider "${provider.id}") is not set`,
+      `credential for provider "${provider.id}" is not stored and environment variable "${envVar}" is not set`,
     );
   }
 
