@@ -9,6 +9,9 @@ import {
   UserProfileError,
   writeProjectCalibrationSnapshot,
 } from "../src";
+import { parseProjectCalibrationSnapshot } from "../src/project-calibration";
+
+const REPO_ROOT = path.resolve(import.meta.dir, "..");
 
 const profile = {
   version: 1 as const,
@@ -125,4 +128,19 @@ test("project snapshot refuses a symlinked target directory", () => {
     fs.rmSync(root, { recursive: true, force: true });
     fs.rmSync(outside, { recursive: true, force: true });
   }
+});
+
+test("this repository's own committed calibration snapshot parses", () => {
+  // `.ad-coder/calibration.json` is tracked on purpose -- the store's gitignore
+  // is `*\n!calibration.json` -- so a project ships the routing it measured. That
+  // makes it data this repository carries, and a stale one breaks every command
+  // that loads a user profile: renaming the `recorder` role to `summarizer`
+  // cleaned the code and left this file naming a role the validator rejects, so
+  // `config show` would not start in a fresh clone. Nothing else reads it during
+  // tests, which is why nothing noticed.
+  const snapshot = path.join(REPO_ROOT, ".ad-coder", "calibration.json");
+  if (!fs.existsSync(snapshot)) return;
+  expect(() =>
+    parseProjectCalibrationSnapshot(JSON.parse(fs.readFileSync(snapshot, "utf8"))),
+  ).not.toThrow();
 });

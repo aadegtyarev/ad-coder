@@ -124,19 +124,19 @@
         "thinkingLevel": "low"
       },
       {
-        "role": "recorder",
+        "role": "summarizer",
         "complexity": "trivial",
         "model": "codex-luna",
         "thinkingLevel": "low"
       },
       {
-        "role": "recorder",
+        "role": "summarizer",
         "complexity": "medium",
         "model": "codex-luna",
         "thinkingLevel": "low"
       },
       {
-        "role": "recorder",
+        "role": "summarizer",
         "complexity": "complex",
         "model": "codex-luna",
         "thinkingLevel": "low"
