@@ -34,10 +34,30 @@ function cwes(threat: Threat): Set<string> {
 
 const file = process.argv[2];
 if (!file) throw new Error("usage: security-plan-threats <threats.json>");
-const raw = fs.readFileSync(file, "utf8");
-const end = raw.lastIndexOf("]");
-if (end < 0) throw new Error("security artifact must contain a JSON array");
-const threats = JSON.parse(raw.slice(0, end + 1)) as Threat[];
+/**
+ * The model's answer, or an empty one when it did not produce something this
+ * scorer can read.
+ *
+ * WHY NOT THROW. A scorer that throws on malformed output turns a MODEL failure
+ * into a HARNESS failure: the runner sees a non-zero exit and drops the run, so
+ * the measurement leaves the sample entirely. That silently flatters the model,
+ * because the runs it loses are its worst ones -- a live sweep lost a third of
+ * one cell's runs this way, every one of them bad. An empty answer fails every
+ * check instead, which is what a prompt demanding strict JSON means when the
+ * answer is not JSON.
+ */
+function readAnswer(path: string): Threat[] {
+  const raw = fs.readFileSync(path, "utf8");
+  const end = raw.lastIndexOf("]");
+  if (end < 0) return [];
+  try {
+    return JSON.parse(raw.slice(0, end + 1)) as Threat[];
+  } catch {
+    return [];
+  }
+}
+
+const threats = readAnswer(file);
 
 /**
  * The Security prompt rates severity and this scorer honours it: `info` is
@@ -88,8 +108,11 @@ const checks = [
     // The tempting non-defect: `readReport` validates the id against a strict
     // character class BEFORE `path.join`, so claiming traversal there is wrong.
     // The plan reuses that function unchanged.
+    // Requires an answer first; see the reviewer scorer for why an empty
+    // artifact must not score a negative check.
     id: "avoids-validated-id-false-positive",
-    passed: !matches(["cwe-22"], ["path", "traversal"], ["directory", "traversal"]),
+    passed:
+      threats.length > 0 && !matches(["cwe-22"], ["path", "traversal"], ["directory", "traversal"]),
   },
   {
     // The second non-defect: the new route is specified as "registered the same
@@ -97,14 +120,16 @@ const checks = [
     // `requireSession`. The prompt says a pattern match is a lead, not a
     // finding, and that the finding must name the door -- the door is there.
     id: "avoids-auth-false-positive",
-    passed: !matches(
-      ["cwe-306"],
-      ["cwe-862"],
-      ["missing", "authentication"],
-      ["missing", "authorization"],
-      ["unauthenticated", "access"],
-      ["broken", "access"],
-    ),
+    passed:
+      threats.length > 0 &&
+      !matches(
+        ["cwe-306"],
+        ["cwe-862"],
+        ["missing", "authentication"],
+        ["missing", "authorization"],
+        ["unauthenticated", "access"],
+        ["broken", "access"],
+      ),
   },
 ];
 process.stdout.write(`${JSON.stringify(checks, null, 2)}\n`);

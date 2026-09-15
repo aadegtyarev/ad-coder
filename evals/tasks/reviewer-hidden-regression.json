@@ -3,7 +3,7 @@
   "role": "reviewer",
   "complexity": "medium",
   "mode": "role",
-  "prompt": "Review the fixture implementation. Return a JSON array of findings with code and blocking fields plus concrete evidence. Use concise stable defect codes.",
+  "prompt": "Review the fixture implementation. Return a JSON array of findings with code and blocking fields plus concrete evidence. Use concise stable defect codes. Report only findings you have concrete evidence for, and cite that evidence -- the file and line you read, or the command you ran and what it printed. A review that lists everything it suspects is as unusable as one that lists nothing: the reader cannot tell which findings to act on.",
   "checks": [
     {
       "id": "detects-path-escape",
@@ -15,6 +15,14 @@
     },
     {
       "id": "avoids-false-positive",
+      "weight": 2
+    },
+    {
+      "id": "findings-are-evidenced",
+      "weight": 2
+    },
+    {
+      "id": "bounded-blocking-findings",
       "weight": 2
     }
   ],
