@@ -21,7 +21,7 @@ const ALL_COMPLEXITIES: readonly Complexity[] = ["trivial", "medium", "complex"]
  *
  * Routing: `planner`, `researcher`, and `security` -> `strong` at every
  * complexity (up-front decisions are where the strong model earns its cost);
- * `reviewer`, `auditor`, and `orchestrator` -> `mid`; `recorder` -> `cheap`;
+ * `reviewer`, `auditor`, and `orchestrator` -> `mid`; `summarizer` -> `cheap`;
  * `coder` scales with the task
  * (`trivial -> cheap`, `medium -> mid`, `complex -> strong`), since a weak coder
  * on a hard task just buys extra review rounds.
@@ -41,7 +41,7 @@ export function buildDefaultProfile(models: DefaultProfileModels): Profile {
       case "reviewer":
       case "auditor":
         return mid;
-      case "recorder":
+      case "summarizer":
         return cheap;
       // The orchestrator reads results and picks the next move rather than
       // producing the work, so it tracks the reviewer tier rather than the
@@ -62,7 +62,7 @@ export function buildDefaultProfile(models: DefaultProfileModels): Profile {
     "reviewer",
     "auditor",
     "security",
-    "recorder",
+    "summarizer",
   ];
   for (const role of roles) {
     for (const complexity of ALL_COMPLEXITIES) {

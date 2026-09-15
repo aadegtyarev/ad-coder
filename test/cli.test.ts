@@ -13,13 +13,28 @@ import { UpdateError } from "../src/update/updater";
 const REPO_ROOT = path.resolve(import.meta.dir, "..");
 const CLI = path.join(REPO_ROOT, "src/cli.ts");
 
+/**
+ * A config home no developer's machine shares, created once for this file.
+ *
+ * `runCli` spawns the real binary, which reads the user profile at
+ * `$XDG_CONFIG_HOME/ad-coder`. Inheriting the environment therefore made these
+ * tests read whatever profile the machine running them happened to have saved,
+ * and a profile the CLI rejects failed a test about something else entirely --
+ * on one machine and not in CI, which is the least useful shape a failure has.
+ */
+const CONFIG_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-cli-config-"));
+
 function runCli(
   args: string[],
   options: { cwd?: string; env?: Record<string, string | undefined> } = {},
 ): { code: number; stdout: string; stderr: string } {
+  const env = { ...(options.env ?? process.env) };
+  // A test that points the config home somewhere of its own keeps it; the
+  // empty directory is only a floor, so no test silently reads the machine's.
+  if (env.XDG_CONFIG_HOME === undefined) env.XDG_CONFIG_HOME = CONFIG_HOME;
   const proc = Bun.spawnSync(["bun", "run", CLI, ...args], {
     cwd: options.cwd ?? REPO_ROOT,
-    env: options.env ?? process.env,
+    env,
   });
   return {
     code: proc.exitCode,

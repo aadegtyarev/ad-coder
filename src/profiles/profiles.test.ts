@@ -259,7 +259,7 @@ test("buildDefaultProfile routes each role and coder scales with complexity", ()
   expect(resolveProfile(profile, registry, "security", "complex").model.id).toBe("S");
   expect(resolveProfile(profile, registry, "reviewer", "medium").model.id).toBe("M");
   expect(resolveProfile(profile, registry, "auditor", "complex").model.id).toBe("M");
-  expect(resolveProfile(profile, registry, "recorder", "complex").model.id).toBe("C");
+  expect(resolveProfile(profile, registry, "summarizer", "complex").model.id).toBe("C");
   // The orchestrator has its OWN cell rather than borrowing the coder's, so it
   // stays on the review tier while the coder scales with complexity.
   expect(resolveProfile(profile, registry, "orchestrator", "trivial").model.id).toBe("M");
