@@ -64,6 +64,22 @@ wasting a live calibration run. Measurements retain the orchestrator and Planner
 votes plus correctness and agreement, so live Planner feedback can calibrate
 project-local triage without silently changing the user baseline.
 
+A task declares what it is FOR, in `purpose`. A `calibration` task may move a
+routing cell. A `smoke` task is kept because it proves the harness still
+dispatches a role, materializes a fixture and scores a diff end to end, and its
+result is never evidence about a model.
+
+The distinction is needed because a saturated task looks exactly like a good one
+from outside. The three trivial coder tasks scored nine of nine at quality 1.00
+for the cheapest model on the provider -- which says nothing about that model
+except that it is not broken, and would have justified routing a whole tier on a
+measurement that cannot discriminate within it. They are now labelled `smoke`,
+and `bun run calibration:corpus -- smoke` reports the two counts separately so a
+sweep cannot quietly total them together.
+
+Labelling is the cheap half. The other half is not quoting a smoke task's score
+when a routing decision is being argued.
+
 Every measurement carries a `harnessOutcome` beside its `quality`, because the
 two answer different questions. A `quality: 0` from a model that answered badly
 and a `quality: 0` from a tool that refused, a stage that ran out of time, or an

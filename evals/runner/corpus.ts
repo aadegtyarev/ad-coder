@@ -12,6 +12,22 @@ import type { TaskSource } from "./task-source";
 import { assertTaskSource } from "./task-source";
 
 type Task = CalibrationTask & {
+  /**
+   * What the task is FOR, which is not the same as what it exercises.
+   *
+   * `calibration` is a task whose result may move a routing cell.
+   * `smoke` is a task kept because it proves the harness can still dispatch a
+   * role, materialize a fixture and score a diff end to end -- and whose result
+   * must never be quoted as evidence about a model.
+   *
+   * The distinction exists because a saturated task looks exactly like a good
+   * one from the outside: three trivial coder tasks scored 9 of 9 at quality 1.00
+   * for the cheapest model on the provider, which says nothing about that model
+   * except that it is not broken. Kept unlabelled, such a score can justify a
+   * routing decision for a tier the task cannot discriminate. Labelling is the
+   * cheap half of the fix; the other half is not quoting them.
+   */
+  purpose?: "calibration" | "smoke";
   fixture?: string;
   scorer?: string;
   scorerInput?: "target" | "artifact" | "report";
@@ -395,6 +411,7 @@ if (action === "list")
         id: task.id,
         role: task.role,
         complexity: task.complexity,
+        purpose: task.purpose ?? "calibration",
         mode: task.mode,
         fixture: task.fixture ?? null,
         source: task.source.url,
@@ -439,8 +456,24 @@ else if (action === "smoke") {
     checkSamples(task);
     sampled++;
   }
+  // `calibration` is what the corpus can say about a model; the rest proves only
+  // that the harness still dispatches, materializes and scores. Counted apart so
+  // a sweep summary cannot quietly treat a smoke task's perfect score as
+  // evidence about a model.
+  const calibration = tasks.filter(
+    ({ task }) => (task.purpose ?? "calibration") === "calibration",
+  ).length;
   console.log(
-    JSON.stringify({ version: 1, count: tasks.length, scored, sampled, unscored, valid: true }),
+    JSON.stringify({
+      version: 1,
+      count: tasks.length,
+      calibration,
+      smoke: tasks.length - calibration,
+      scored,
+      sampled,
+      unscored,
+      valid: true,
+    }),
   );
 } else if (action === "run") {
   const id = argv[1];

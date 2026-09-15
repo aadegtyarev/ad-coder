@@ -3,6 +3,7 @@
   "role": "coder",
   "complexity": "trivial",
   "mode": "role",
+  "purpose": "smoke",
   "fixture": "rust-unicode-prefix",
   "scorer": "rust-unicode-prefix.ts",
   "prompt": "Make prefix return at most max_chars Unicode scalar values without panicking or changing the public signature. Preserve ordinary ASCII behavior and add focused tests for boundary cases.",

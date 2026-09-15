@@ -36,6 +36,8 @@ test(
     expect(smoke.code).toBe(0);
     const result = JSON.parse(smoke.stdout) as {
       count: number;
+      calibration: number;
+      smoke: number;
       scored: number;
       sampled: number;
       unscored: number;
@@ -49,6 +51,12 @@ test(
     // has to show up as `unscored`, where it is visible, rather than vanish.
     expect(result.scored + result.sampled + result.unscored).toBe(result.count);
     expect(result.unscored).toBe(0);
+    // A smoke task proves the harness still works; only a calibration task may
+    // move a routing cell. Counting them apart is what stops a saturated task's
+    // perfect score being read as evidence about a model, so the split has to
+    // survive in the output rather than living in someone's memory.
+    expect(result.calibration + result.smoke).toBe(result.count);
+    expect(result.calibration).toBeGreaterThan(0);
   },
   TIMEOUT_MS,
 );
