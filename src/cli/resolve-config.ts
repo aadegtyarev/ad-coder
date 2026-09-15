@@ -751,20 +751,36 @@ function resolveConfig(
    *
    * KEYED ON `modelId`, NOT `name`. A role holds a live `Model<Api>`, whose
    * `id` is the provider-native id; the registry-scoped `name` is a lookup key
-   * that never leaves the registry. When two providers publish the same native
-   * id under different windows the entry is dropped rather than guessed at --
-   * an unlabelled number is better than a confidently wrong label.
+   * that never leaves the registry. When two entries share a native id but
+   * settle to different windows -- or settle the same window differently --
+   * the entry is dropped rather than guessed at: an unlabelled number is
+   * better than a confidently wrong label.
    */
-  const windowProvenance = new Map<string, { source: string; catalog?: number } | undefined>();
+  const windowProvenance = new Map<
+    string,
+    { window: number; source: string; catalog?: number } | undefined
+  >();
   for (const entry of registryConfig.providers) {
     for (const model of entry.models) {
       const settled = {
+        window: model.contextWindow,
         source: model.contextWindowSource,
         ...(model.catalogContextWindow !== undefined && { catalog: model.catalogContextWindow }),
       };
       const seen = windowProvenance.get(model.modelId);
       if (windowProvenance.has(model.modelId)) {
-        if (seen?.source !== settled.source || seen?.catalog !== settled.catalog)
+        // The WINDOW is part of what makes two entries the same, not just the
+        // source label. Two hand-declared entries sharing a native id under
+        // different windows are both `declared` with no catalog number, so
+        // comparing labels alone called the real collision a match and let
+        // whichever was registered first answer for both -- a specific,
+        // confident, arbitrary number, which is worse than the unlabelled
+        // fallback this branch exists to produce.
+        if (
+          seen?.window !== settled.window ||
+          seen?.source !== settled.source ||
+          seen?.catalog !== settled.catalog
+        )
           windowProvenance.set(model.modelId, undefined);
         continue;
       }

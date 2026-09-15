@@ -23,6 +23,23 @@ All notable changes to ad-coder are recorded here. The format follows
   (`declared` | `catalog` | `catalog-clamped` | `built-in-default`) and, when
   the clamp discarded something, `catalogContextWindow`. Provenance only -- a
   name and two integers.
+- The provenance survives being validated twice, which is what every real
+  `config show` does: the CLI validates the registry at its entry points and
+  the config resolver validates again. Provenance was derived from whether a
+  `contextWindow` was present, and after one pass it always is -- the pass
+  itself wrote it -- so the second pass concluded an operator had declared
+  every catalog window and dropped the clamped-from number. The projection was
+  correct only when called as a library and wrong for the operators it was
+  built for. Validation now carries an already-settled provenance through
+  rather than re-deriving it, and refuses a source string it does not
+  recognise.
+- Two registry entries sharing one provider-native id but settling on
+  different windows are now reported with the number and no source label,
+  which is what the collision rule always promised. The comparison looked only
+  at the source label, so two hand-declared entries -- both `declared`, both
+  without a catalog number -- were judged identical and whichever was
+  registered first answered for the other: a confident, specific, arbitrary
+  attribution. The resolved window is now part of the comparison.
 
 ## [0.6.1] - 2026-09-15
 
