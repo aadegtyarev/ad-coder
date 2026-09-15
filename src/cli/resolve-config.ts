@@ -1,5 +1,5 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { Api, CredentialStore, Model } from "@earendil-works/pi-ai";
+import type { Api, CacheRetention, CredentialStore, Model } from "@earendil-works/pi-ai";
 import { assertCredentialPathOutsideProject, FileCredentialStore } from "../auth/credential-store";
 import { type ContextBudgetPercents, deriveContextBudget } from "../context/budget";
 import type { CompactionMode } from "../context/compactor";
@@ -571,7 +571,12 @@ function resolveConfig(
         modelId: model.id,
         systemPrompt: resolvePrompt(name, { projectDir: options.targetDir }),
         activeToolNames: tools,
-        cacheRetention: "short",
+        // The profile's value when it states one, "short" otherwise. This is
+        // the sink `ResolvedSelection.cacheRetention` was surfaced for: without
+        // it a declared "long"/"none" parsed, validated, and was then silently
+        // discarded here, so the config said one thing and every request did
+        // another.
+        cacheRetention: selection.cacheRetention ?? "short",
         contextBudget: budget,
         ...(selection.thinkingLevel !== undefined && { thinkingLevel: selection.thinkingLevel }),
         requestTimeoutMs,
@@ -625,6 +630,7 @@ function resolveConfig(
     orchestratorSelection.model,
     ["read", "bash"],
     options.orchestratorThinkingLevel ?? orchestratorSelection.thinkingLevel,
+    orchestratorSelection.cacheRetention,
   );
   const registeredPluginNames = new Set(pluginTools.map(({ name }) => name));
   const projectToolNames =
@@ -704,6 +710,7 @@ function resolveConfig(
     model: Model<Api>,
     tools: string[],
     thinkingLevel?: ThinkingLevel,
+    cacheRetention?: CacheRetention,
   ): RoleSpec {
     const budget = deriveContextBudget(
       model.contextWindow,
@@ -718,7 +725,9 @@ function resolveConfig(
           modelId: model.id,
           systemPrompt: resolvePrompt(name, { projectDir: options.targetDir }),
           activeToolNames: tools,
-          cacheRetention: "short",
+          // Same sink as the routed roles above: a profile that states a
+          // retention must reach the request, not be dropped on the floor.
+          cacheRetention: cacheRetention ?? "short",
           contextBudget: budget,
           ...(thinkingLevel !== undefined && { thinkingLevel }),
           requestTimeoutMs,

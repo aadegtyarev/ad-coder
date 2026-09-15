@@ -366,7 +366,17 @@ function fromCatalog(
     baseUrl: declared.baseUrl ?? entry.baseUrl,
     reasoning: declared.reasoning ?? entry.reasoning,
     input: declared.input ?? [...entry.input],
-    contextWindow: declared.contextWindow ?? entry.contextWindow,
+    // The catalog's window is the PROVIDER's limit, not ad-coder's operating
+    // ceiling. Several shipped models publish 1M+ windows, and inheriting those
+    // verbatim made the registry non-uniform: a run's real ceiling then depended
+    // on which model a routing cell happened to pick, and any summarizer with a
+    // smaller window failed `assertSummarizerWindow` against the largest
+    // reachable model. Clamp the INHERITED default to the same
+    // DEFAULT_CONTEXT_WINDOW a hand-declared model gets, so every model ad-coder
+    // routes to shares one ceiling unless an operator says otherwise. An
+    // explicit `contextWindow` still wins verbatim -- including a larger one --
+    // because that is the operator stating a limit they actually want.
+    contextWindow: declared.contextWindow ?? Math.min(entry.contextWindow, DEFAULT_CONTEXT_WINDOW),
     maxTokens: declared.maxTokens ?? entry.maxTokens,
     cost: declared.cost ?? {
       input: entry.cost.input,

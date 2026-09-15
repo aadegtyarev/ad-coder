@@ -24,8 +24,9 @@ import type { Profile, ProfileRole, ResolvedSelection, SpawnOverride } from "./t
  * unexpected and is deliberately allowed to propagate unchanged rather than
  * being mislabelled as an unknown model.
  *
- * `maxOutput`/`cacheRetention` are surfaced as advisory data (no sink in this
- * unit); see `ResolvedSelection`.
+ * `maxOutput`/`cacheRetention` are surfaced here and consumed elsewhere:
+ * `resolve-config` maps `cacheRetention` onto the role; `maxOutput` still has
+ * no sink. See `ResolvedSelection`.
  */
 export function resolveProfile(
   profile: Profile,

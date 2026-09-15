@@ -333,6 +333,38 @@ test("explicit profile and spawn override keep precedence over provider defaults
   expect(config.roles.coder.role.thinkingLevel).toBe("high");
 });
 
+test("a profile cacheRetention reaches the role instead of being discarded", () => {
+  // The whole point: "long" is parsed and validated upstream, so the only way
+  // it can fail is by being dropped between the profile and the role. On an
+  // Anthropic-shaped model that difference is a 5-minute vs 1-hour cache TTL,
+  // i.e. real money, and it fails silently.
+  const profile = buildDefaultProfile({
+    strong: "codex-astra",
+    mid: "codex-terra",
+    cheap: "codex-luna",
+  });
+  profile.entries = profile.entries.map((entry) =>
+    entry.role === "coder" ? { ...entry, cacheRetention: "long" as const } : entry,
+  );
+  const config = resolvePipelineConfig({
+    task: "x",
+    targetDir: "/tmp/target",
+    provider: "openai-codex",
+    profile,
+    env: fakeEnv({}),
+    warn: silent,
+  });
+  expect(config.roles.coder.role.cacheRetention).toBe("long");
+  // A role the profile says nothing about keeps the default, so the wiring is
+  // "honor what was stated", not "overwrite everything".
+  expect(config.roles.reviewer.role.cacheRetention).toBe("short");
+  // The orchestrator has no cell of its own -- it selects through the coder's,
+  // so the declared value has to reach it too. Asserted separately because the
+  // orchestrator is built by a different code path than the routed roles, and
+  // that path is exactly where the value was dropped a second time.
+  expect(config.roles.orchestrator?.role.cacheRetention).toBe("long");
+});
+
 test("non-Codex provider retains generic profile defaults without a thinking level", () => {
   const config = resolvePipelineConfig({
     task: "x",

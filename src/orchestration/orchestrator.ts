@@ -1060,7 +1060,12 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
       provider: orchestratorModel.provider,
       modelId: orchestratorModel.id,
       systemPrompt: `${resolvePrompt("orchestrator", { projectDir: config.targetDir })}${skillInstructions("orchestrator")}`,
-      cacheRetention: "short",
+      // Read off the spec like every other field here. `resolve-config` has
+      // already applied the profile's value (defaulting to "short"), so
+      // restating a literal here would discard a declared "long"/"none" for
+      // the conversational role alone -- the delegated roles a few lines up
+      // inherit it correctly through `...base.role`.
+      cacheRetention: orchestratorSpec.role.cacheRetention,
       contextBudget: orchestratorSpec.role.contextBudget,
       ...(orchestratorSpec.role.thinkingLevel !== undefined && {
         thinkingLevel: orchestratorSpec.role.thinkingLevel,

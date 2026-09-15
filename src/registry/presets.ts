@@ -29,6 +29,11 @@ export function deepseekPreset(models?: ModelConfig[]): ProviderConfig {
         {
           name: "deepseek-chat",
           modelId: "deepseek-chat",
+          // NOT 200000 like every other shipped model: deepseek-chat's real
+          // window is 64000. A declared window is a claim about the provider's
+          // limit, and claiming more than the model has does not buy context --
+          // it lets the budget grow past what the endpoint accepts and turns a
+          // local, predictable ceiling into a provider-side request failure.
           contextWindow: 64000,
           maxTokens: 8192,
           cost: { input: 0.27, output: 1.1, cacheRead: 0.07, cacheWrite: 0.27 },
@@ -57,7 +62,7 @@ export function openrouterPreset(models?: ModelConfig[]): ProviderConfig {
         {
           name: "openrouter-auto",
           modelId: "openrouter/auto",
-          contextWindow: 128000,
+          contextWindow: 200000,
           maxTokens: 8192,
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
         },
@@ -130,7 +135,7 @@ export function openaiCodexPreset(models?: ModelConfig[]): ProviderConfig {
         {
           name: "codex-sol",
           modelId: "gpt-5.6-sol",
-          contextWindow: 272000,
+          contextWindow: 200000,
           maxTokens: 128000,
           reasoning: true,
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -138,7 +143,7 @@ export function openaiCodexPreset(models?: ModelConfig[]): ProviderConfig {
         {
           name: "codex-terra",
           modelId: "gpt-5.6-terra",
-          contextWindow: 272000,
+          contextWindow: 200000,
           maxTokens: 128000,
           reasoning: true,
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -146,7 +151,7 @@ export function openaiCodexPreset(models?: ModelConfig[]): ProviderConfig {
         {
           name: "codex-luna",
           modelId: "gpt-5.6-luna",
-          contextWindow: 272000,
+          contextWindow: 200000,
           maxTokens: 128000,
           reasoning: true,
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -154,7 +159,7 @@ export function openaiCodexPreset(models?: ModelConfig[]): ProviderConfig {
         {
           name: "codex-astra",
           modelId: "gpt-6-astra",
-          contextWindow: 272000,
+          contextWindow: 200000,
           maxTokens: 128000,
           reasoning: true,
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -162,7 +167,7 @@ export function openaiCodexPreset(models?: ModelConfig[]): ProviderConfig {
         {
           name: "codex-gpt-5.5",
           modelId: "gpt-5.5",
-          contextWindow: 272000,
+          contextWindow: 200000,
           maxTokens: 128000,
           reasoning: true,
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
