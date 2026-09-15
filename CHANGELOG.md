@@ -6,6 +6,16 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.13.2] - 2026-09-16
+
+### Fixed
+- The committed project calibration snapshot still named the `recorder` role, so
+  every command that loads a user profile failed with `invalid user profile:
+  calibrated routing profile is invalid` -- `ad-coder config show` would not run
+  at all in a fresh clone. The 0.13.0 rename cleaned the code and the machine's
+  own config but missed the data this repository carries in `.ad-coder/`, which
+  is tracked deliberately so a project can ship its routing.
+
 ## [0.13.1] - 2026-09-16
 
 ### Fixed
