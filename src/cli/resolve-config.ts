@@ -1,5 +1,5 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { Api, CredentialStore, Model } from "@earendil-works/pi-ai";
+import type { Api, CacheRetention, CredentialStore, Model } from "@earendil-works/pi-ai";
 import { assertCredentialPathOutsideProject, FileCredentialStore } from "../auth/credential-store";
 import { type ContextBudgetPercents, deriveContextBudget } from "../context/budget";
 import type { CompactionMode } from "../context/compactor";
@@ -37,7 +37,13 @@ import { resolvePrompt } from "../prompts/prompts";
 import type { ResearchPurpose, RoleBriefSource } from "../prompts/role-briefs";
 import { deepseekPreset, openaiCodexPreset, openrouterPreset } from "../registry/presets";
 import { resolveRegistry } from "../registry/resolve";
-import type { ProviderConfig, RegistryConfig, ResolvedRegistry } from "../registry/types";
+import type {
+  ProviderConfig,
+  RegistryConfig,
+  ResolvedRegistry,
+  ResolvedRegistryConfig,
+} from "../registry/types";
+import { parseRegistryConfig } from "../registry/validate";
 import type { Role } from "../role";
 import { defineRole } from "../role";
 import type { Tool } from "../runner/tool";
@@ -421,15 +427,19 @@ function resolveConfig(
       ? selectProvider(env, options.provider, warn)
       : undefined;
   const presetSelection = provider === undefined ? undefined : PROVIDER_PRESETS[provider];
-  let registryConfig: RegistryConfig;
+  let authoredRegistry: RegistryConfig;
   if (inventory !== undefined)
-    registryConfig = options.inventoryConfig?.profiles.find(
+    authoredRegistry = options.inventoryConfig?.profiles.find(
       (entry) => entry.name === inventory.name,
     )?.registry as RegistryConfig;
-  else if (options.registryConfig !== undefined) registryConfig = options.registryConfig;
+  else if (options.registryConfig !== undefined) authoredRegistry = options.registryConfig;
   else if (presetSelection !== undefined)
-    registryConfig = { providers: [presetSelection.preset()] };
+    authoredRegistry = { providers: [presetSelection.preset()] };
   else throw new Error("provider preset could not be selected");
+  // Validate here too, not only inside resolveRegistry: the default-model pick
+  // and the destination warning below both read model facts, and under a
+  // provider `catalog` those facts exist only after validation fills them in.
+  const registryConfig: ResolvedRegistryConfig = parseRegistryConfig(authoredRegistry);
   const defaultModel =
     presetSelection?.defaultModel ?? registryConfig.providers[0]?.models[0]?.name;
   if (defaultModel === undefined) throw new Error("registryConfig must declare at least one model");
@@ -561,7 +571,12 @@ function resolveConfig(
         modelId: model.id,
         systemPrompt: resolvePrompt(name, { projectDir: options.targetDir }),
         activeToolNames: tools,
-        cacheRetention: "short",
+        // The profile's value when it states one, "short" otherwise. This is
+        // the sink `ResolvedSelection.cacheRetention` was surfaced for: without
+        // it a declared "long"/"none" parsed, validated, and was then silently
+        // discarded here, so the config said one thing and every request did
+        // another.
+        cacheRetention: selection.cacheRetention ?? "short",
         contextBudget: budget,
         ...(selection.thinkingLevel !== undefined && { thinkingLevel: selection.thinkingLevel }),
         requestTimeoutMs,
@@ -615,6 +630,7 @@ function resolveConfig(
     orchestratorSelection.model,
     ["read", "bash"],
     options.orchestratorThinkingLevel ?? orchestratorSelection.thinkingLevel,
+    orchestratorSelection.cacheRetention,
   );
   const registeredPluginNames = new Set(pluginTools.map(({ name }) => name));
   const projectToolNames =
@@ -694,6 +710,7 @@ function resolveConfig(
     model: Model<Api>,
     tools: string[],
     thinkingLevel?: ThinkingLevel,
+    cacheRetention?: CacheRetention,
   ): RoleSpec {
     const budget = deriveContextBudget(
       model.contextWindow,
@@ -708,7 +725,9 @@ function resolveConfig(
           modelId: model.id,
           systemPrompt: resolvePrompt(name, { projectDir: options.targetDir }),
           activeToolNames: tools,
-          cacheRetention: "short",
+          // Same sink as the routed roles above: a profile that states a
+          // retention must reach the request, not be dropped on the floor.
+          cacheRetention: cacheRetention ?? "short",
           contextBudget: budget,
           ...(thinkingLevel !== undefined && { thinkingLevel }),
           requestTimeoutMs,

@@ -310,6 +310,59 @@ data; the CLI never discovers configuration from `target-dir`.
 Custom registry models declare `"input": ["text", "image"]` when they accept
 images; omission intentionally means text-only.
 
+A provider whose API mandates a non-auth request header — a routing or tenancy
+marker — declares it once on the provider; every model of that provider sends
+it:
+
+```json
+{
+  "id": "example",
+  "baseUrl": "https://example.com/v1",
+  "credential": { "kind": "env-var", "envVar": "EXAMPLE_API_KEY" },
+  "headers": { "x-example-session": "adcoder-{{session}}" },
+  "models": [{ "name": "fast", "modelId": "example-fast", "maxTokens": 16384,
+               "api": "anthropic-messages", "baseUrl": "https://example.com",
+               "cost": { "input": 0.15, "output": 0.5, "cacheRead": 0.03, "cacheWrite": 0 } }]
+}
+```
+
+`headers` is **not a credential channel**: values are literal config text sent
+verbatim, so names that carry or displace authentication (`authorization`,
+`x-api-key`, `cookie`, ...) and names the HTTP client owns (`user-agent`,
+`content-type`, ...) are rejected. An API key belongs in `credential`, whose
+value never appears in a config file. A model may declare its own `headers`,
+merged over the provider's on a case-insensitive name match.
+
+`{{session}}` expands to one opaque random identifier per resolved registry —
+the same value for every model of a run, a new value for the next run — for
+APIs that require a per-conversation routing marker a static file cannot know.
+It carries no credential or project data. An unknown placeholder is rejected
+rather than transmitted literally.
+
+A model may override `baseUrl` when one account fronts two request APIs under
+different path prefixes, since each adapter appends its own suffix to whatever
+base URL it is given. Both the provider and model forms are https-only.
+
+A provider may instead name a shipped model catalog, taking ids, prices,
+context windows, token ceilings, base URLs and supported thinking levels from
+the pinned pi-ai data rather than restating them:
+
+```json
+{
+  "id": "opencode-go",
+  "api": "openai-completions",
+  "catalog": "opencode-go",
+  "credential": { "kind": "env-var", "envVar": "OPENCODE_API_KEY" },
+  "models": [{ "modelId": "glm-5.3-flash", "name": "flash" }]
+}
+```
+
+Anything you declare still wins, an id the catalog does not publish is rejected
+rather than resolved with invented economics, and an account-scoped id such as
+an OpenRouter `@preset/...` is admitted by marking it `"catalog": false` and
+supplying its `cost` and `maxTokens` by hand. See
+[provider catalogs](docs/provider-catalogs.md).
+
 To switch a complete account/provider model inventory atomically, put named
 registry and routing-profile pairs in one trusted JSON file, then select one:
 
@@ -406,6 +459,7 @@ bun run check
 ## Documentation
 
 - [Architecture](docs/ARCHITECTURE.md) — current system map
+- [Provider catalogs](docs/provider-catalogs.md) — declaring providers without hand-written prices
 - [Roadmap](docs/ROADMAP.md) — decisions and future work
 - [Backlog](docs/BACKLOG.md) — unresolved work
 - [Contracts](docs/contracts/) — enforceable rules

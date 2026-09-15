@@ -6,7 +6,7 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
-## [0.5.2] - 2026-09-15
+## [0.8.1] - 2026-09-15
 
 ### Changed
 
@@ -23,6 +23,122 @@ All notable changes to ad-coder are recorded here. The format follows
   durable evidence record in `docs/calibration-evidence.jsonl` rather than
   figures that lived only in a scratch ledger. Documentation only; no
   behavior change.
+
+## [0.6.1] - 2026-09-15
+
+### Fixed
+
+- A profile's `cacheRetention` now reaches the request. It was parsed,
+  validated, and carried as far as `ResolvedSelection`, where it was dropped:
+  all three role-construction sites hardcoded `"short"` -- the two in
+  `resolve-config` and, separately, the conversational role built by
+  `startOrchestrator`, which read every neighbouring field off the resolved spec
+  but restated this one as a literal. A declared `"long"` or `"none"` was
+  silently inert, so the config said one thing while every request did another.
+  On an Anthropic-shaped model that is the difference between a 5-minute and a
+  1-hour cache TTL. A role whose profile states nothing still gets `"short"`.
+  `maxOutput` remains advisory with no sink and is now documented as the only
+  such field.
+
+### Changed
+
+- Every model ad-coder routes to now shares one 200000-token operating ceiling.
+  A catalog-backed model previously inherited the provider's published window
+  verbatim, which for several shipped models is 1000000 or more, so a run's real
+  context ceiling depended on which model a routing cell happened to select, and
+  a summarizer with a smaller window failed `assertSummarizerWindow` against the
+  largest reachable model. The INHERITED window is now clamped to the same
+  `DEFAULT_CONTEXT_WINDOW` a hand-declared model already received. An explicit
+  `contextWindow` still wins verbatim, including one above the ceiling: the
+  clamp is a default, not a cap. A window below the ceiling is left alone, since
+  raising it would claim capacity the endpoint does not have. Shipped presets
+  are aligned to the same number, except `deepseek-chat`, whose real window is
+  64000 and which keeps it for that reason.
+
+## [0.6.0] - 2026-09-15
+
+### Added
+
+- A registry provider can declare static request headers, so an API that
+  mandates a non-auth header is reachable at all. Previously no such provider
+  could be admitted: `ProviderConfig` had no header field, and while pi-ai
+  accepts provider headers it never transmits them — both stream adapters read
+  `model.headers` — so declared headers are flattened onto every model. Measured
+  against a provider that rejects an unmarked request: without the header the
+  role returned an empty turn with a zero-usage ledger record and no error at
+  all; with it, all five models answered across both request APIs.
+- A header value may contain `{{session}}`, expanded by the resolver to one
+  opaque random identifier per resolved registry — the same value for every
+  model of a run, a new value for the next — for APIs that demand a
+  per-conversation routing marker a static config file cannot hold. Unknown
+  placeholders are rejected rather than sent literally, where they would fail as
+  an opaque provider routing error instead of a config error.
+- A model can override the provider `baseUrl`, for one account fronting two
+  request APIs under different path prefixes; each adapter appends its own
+  suffix to the base URL it is handed.
+- A provider can name a shipped model catalog (`"catalog": "openrouter"`, 31
+  catalogs from 2 to 366 models) and take model ids, per-token costs, context
+  windows, token ceilings, base URLs, request APIs and supported thinking
+  levels from the pinned pi-ai data instead of restating them. Hand-written
+  economics go stale silently and corrupt every routing and budget decision
+  computed from them; building this surfaced four wrong values in our own draft
+  inventory, including a price 2x over and a model assigned the wrong request
+  API. Declared fields still win, `models` becomes an optional filter, and
+  omitting it admits the whole catalog.
+- Catalog-supplied thinking-level maps now reach the provider request, so a
+  supported level is sent under the spelling that model expects rather than
+  pi's. The map also names the levels a model does NOT support, which is a
+  calibration input and not a repair: depending on the request format an
+  unsupported level is forwarded verbatim, silently dropped, or replaced from a
+  fixed table. Every `opencode-go` and OpenRouter model we route rejects at
+  least one level we were using, and the same DeepSeek model accepts `low` on
+  one provider and not the other — unknowable from a hand-written model list.
+  Note that a level is in one of three states, not two: mapped, explicitly
+  marked unsupported, or absent from the map entirely. The last two behave
+  identically at dispatch, so only a mapped level is one to route at.
+
+### Fixed
+
+- The `reviewer-hidden-regression-v1` scorer matched finding codes against an
+  exact string list, so it graded spelling rather than review quality: the task
+  prompt asks for "concise stable defect codes" and names no vocabulary, and six
+  models produced four spellings of the same path-traversal defect. Three
+  reviews that found every seeded defect with executed evidence and correctly
+  refused the tempting false positive scored 0.2. Codes are now reduced to word
+  tokens and matched on a PAIR of words naming the specific defect, so a vague
+  finding still fails and a non-blocking one still does not count. A finding
+  that omits `blocking` but carries `severity: "blocker"` is read as blocking:
+  an explicit `blocking: false` still wins, so a deliberate non-blocking finding
+  is never credited.
+
+### Security
+
+- Declared headers are not a credential channel. The validator rejects any name
+  that would carry or displace authentication (`authorization`, `x-api-key`,
+  `cookie`, `cf-aig-authorization`, ...) or that the HTTP client owns
+  (`user-agent`, `content-type`, ...), along with malformed field names, values
+  outside printable ASCII (a newline would splice an extra header into the
+  request), and duplicate names differing only by case. Failures name the
+  header and never echo its value. Per-model `baseUrl` is https-only, as the
+  provider field already was.
+- A catalog provider must always resolve to a destination it named. Previously a
+  provider that named a catalog, declared no `baseUrl`, and marked every one of
+  its models `"catalog": false` produced `baseUrl: undefined` on the resolved pi
+  model — and both vendor SDKs read an absent base URL as "use my own default
+  host", so the declared credential would have been transmitted to the SDK
+  vendor's endpoint rather than the operator's provider. That config is now an
+  `invalid_config` rejection, and the provider's reported fallback takes the
+  first model that actually has a base URL instead of whichever model is first.
+- A model id the named catalog does not publish is rejected rather than
+  resolved with whatever economics sit next to it, so a typo cannot silently
+  become a priced model. An account-scoped id (an OpenRouter `@preset/...`,
+  which no static catalog can know) requires an explicit `"catalog": false`
+  marker, keeping the hand-written exception deliberate. An `api` override that
+  contradicts the catalog is refused instead of producing an unroutable model,
+  and catalog entries on request APIs the resolver cannot construct are never
+  admitted. Operator-declared `compat` remains inert, unvalidated data; only the
+  catalog's own compat — from the pinned dependency, not config text — is
+  forwarded.
 
 ## [0.5.1] - 2026-09-14
 

@@ -49,6 +49,7 @@ import type {
   Verdict,
 } from "../src/orchestration/types";
 import { SUBMIT_VERDICT_TOOL_NAME } from "../src/orchestration/verdict";
+import { buildDefaultProfile } from "../src/profiles/default-profile";
 import { RunCoordinator } from "../src/project-operations/run-coordinator";
 import { ProjectStore } from "../src/project-store/project-store";
 import { EXPLORE_PROJECT_TOOL_NAME } from "../src/project-tools/explore";
@@ -416,6 +417,48 @@ test("pipeline-disabled startOrchestrator delegates Researcher and Auditor with 
   expect(delegated[0]?.tools).toContain(WEB_SEARCH_TOOL_NAME);
   expect(delegated[1]?.tools).toContain(EXPLORE_PROJECT_TOOL_NAME);
   expect(delegated.flatMap(({ tools }) => tools)).not.toContain("write");
+});
+
+test("a declared cacheRetention survives into the orchestrator's own conversation role", async () => {
+  // `resolve-config` resolves this correctly, so the only way it can fail is by
+  // being discarded again when `startOrchestrator` builds the conversation role
+  // -- which is a DIFFERENT construction path from the routed roles, and one no
+  // test reached. It hardcoded "short" while reading every neighbouring field
+  // off the same spec, so a declared "long" was silently dropped for the role
+  // the operator actually talks to.
+  const targetDir = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-orchestrator-cache-")),
+  );
+  const credentials: CredentialStore = {
+    read: async () => ({ type: "oauth", access: "a", refresh: "r", expires: 0 }),
+    list: async () => [],
+    modify: async (_providerId, fn) => fn(undefined),
+    delete: async () => {},
+  };
+  const profile = buildDefaultProfile({
+    strong: "codex-astra",
+    mid: "codex-terra",
+    cheap: "codex-luna",
+  });
+  // The orchestrator has no cell of its own: it selects through the coder's.
+  profile.entries = profile.entries.map((entry) =>
+    entry.role === "coder" ? { ...entry, cacheRetention: "long" as const } : entry,
+  );
+  let captured: Role | undefined;
+  const session = await startOrchestrator({
+    targetDir,
+    env: () => undefined,
+    warn: () => {},
+    credentials,
+    profile,
+    enabledWorkflows: [],
+    startConversation: async (config) => {
+      captured = config.role;
+      return fakeConversation("cache-session");
+    },
+  });
+  expect(captured?.cacheRetention).toBe("long");
+  await session.close();
 });
 
 function fakeConversation(runId: string) {

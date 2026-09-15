@@ -29,12 +29,12 @@ export type ProfileRole =
  * advisory shaping hints and an optional harness thinking level.
  *
  * `model` is a stable registry lookup key (resolved through `ResolvedRegistry`),
- * never a provider-native id and never a credential. `maxOutput` and
- * `cacheRetention` are ADVISORY: this module carries them through to
- * `ResolvedSelection` but has NO sink for them today. The wiring follow-on maps
- * `maxOutput` onto pi `StreamOptions.maxTokens` and `cacheRetention` onto the
- * role's stream options; until then they are inert declared data.
- * `thinkingLevel` is consumed when routed roles are created.
+ * never a provider-native id and never a credential. `cacheRetention` IS
+ * consumed: `resolve-config` maps it onto the role, which carries it to pi
+ * `StreamOptions`. `maxOutput` remains advisory -- this module carries it to
+ * `ResolvedSelection` but nothing maps it onto `StreamOptions.maxTokens` yet,
+ * so a declared value is still inert. `thinkingLevel` is consumed when routed
+ * roles are created.
  *
  * `cacheRetention` reuses pi-ai's `CacheRetention` verbatim (`none|short|long`)
  * the same type `Role` uses never redefined here.
@@ -57,10 +57,10 @@ export interface Profile {
  * A per-spawn override that takes precedence over the `(role, complexity)` cell.
  *
  * When present, `resolveProfile` uses this override's `model`, `thinkingLevel`,
- * and advisory `maxOutput`/`cacheRetention` INSTEAD OF looking up a profile entry so a
- * caller can pin one spawn to a specific model without editing the profile.
- * `model` is a registry NAME, resolved the same way; the same advisory caveat
- * applies to `maxOutput`/`cacheRetention` (no sink today).
+ * `cacheRetention` and advisory `maxOutput` INSTEAD OF looking up a profile
+ * entry so a caller can pin one spawn to a specific model without editing the
+ * profile. `model` is a registry NAME, resolved the same way; `maxOutput` keeps
+ * the advisory caveat (no sink today), `cacheRetention` does not.
  */
 export interface SpawnOverride {
   model: string;
@@ -74,9 +74,9 @@ export interface SpawnOverride {
  * `ResolvedRegistry`: the live pi `Model<Api>`, optional thinking level, and
  * advisory shaping hints.
  *
- * `maxOutput`/`cacheRetention` are produced here but have NO consumer in this
- * unit the wiring follow-on maps `maxOutput` onto pi `StreamOptions.maxTokens`.
- * They are surfaced now so the consuming layer needs no signature change later.
+ * `cacheRetention` is consumed by `resolve-config`, which maps it onto the
+ * role. `maxOutput` is produced here but still has no consumer: nothing maps it
+ * onto pi `StreamOptions.maxTokens` yet.
  */
 export interface ResolvedSelection {
   model: Model<Api>;
