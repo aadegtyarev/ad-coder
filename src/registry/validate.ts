@@ -377,6 +377,17 @@ function fromCatalog(
     // explicit `contextWindow` still wins verbatim -- including a larger one --
     // because that is the operator stating a limit they actually want.
     contextWindow: declared.contextWindow ?? Math.min(entry.contextWindow, DEFAULT_CONTEXT_WINDOW),
+    contextWindowSource:
+      declared.contextWindow !== undefined
+        ? "declared"
+        : entry.contextWindow > DEFAULT_CONTEXT_WINDOW
+          ? "catalog-clamped"
+          : "catalog",
+    // Recorded only when the clamp actually discarded something, so the
+    // projection can show the operator the window they did NOT get.
+    ...(declared.contextWindow === undefined && entry.contextWindow > DEFAULT_CONTEXT_WINDOW
+      ? { catalogContextWindow: entry.contextWindow }
+      : {}),
     maxTokens: declared.maxTokens ?? entry.maxTokens,
     cost: declared.cost ?? {
       input: entry.cost.input,
@@ -501,6 +512,7 @@ function parseModel(
   return {
     ...parseModelOverrides(record, modelName, modelId, bad),
     contextWindow: (record.contextWindow as number | undefined) ?? DEFAULT_CONTEXT_WINDOW,
+    contextWindowSource: record.contextWindow !== undefined ? "declared" : "built-in-default",
     maxTokens: record.maxTokens as number,
     cost,
   };

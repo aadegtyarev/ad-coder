@@ -6,6 +6,24 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-15
+
+### Added
+
+- `config show` now reports the context window each role will ACTUALLY use, per
+  role, with the source of that number and the budget derived from it
+  (`contextWindow.<role>`, `contextBudgetMaxTokens.<role>`). The effective
+  window was the one routing decision the command did not project: the number
+  existed -- every role derives its budget from `model.contextWindow` -- but
+  nothing surfaced it, so a config declaring `1000000` ran at `200000` with no
+  way to see it. A window the resolver settled on its own now names what it was
+  settled from: a catalog value clamped to the shared operating ceiling reads
+  `catalog-clamped from 1000000`, not a bare `200000`.
+- `ResolvedModelConfig` carries `contextWindowSource`
+  (`declared` | `catalog` | `catalog-clamped` | `built-in-default`) and, when
+  the clamp discarded something, `catalogContextWindow`. Provenance only -- a
+  name and two integers.
+
 ## [0.6.1] - 2026-09-15
 
 ### Fixed

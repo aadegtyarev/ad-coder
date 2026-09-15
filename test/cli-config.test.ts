@@ -87,6 +87,66 @@ test("mixed-window roles select independently and derive independent budgets", (
   expect(config.roles.orchestrator?.model.contextWindow).toBe(32000);
 });
 
+test("config show reports the context window each role will actually use", () => {
+  const config = resolvePipelineConfig({
+    task: "x",
+    targetDir: "/tmp/target",
+    registryConfig: mixedRegistry(),
+    profile: buildDefaultProfile({ strong: "large", mid: "small", cheap: "small" }),
+    plannerModel: "small",
+    reviewerModel: "large",
+    summarizerModel: "large",
+    env: fakeEnv({ LOCAL_KEY: "k" }),
+    warn: silent,
+  });
+  // Per-role, because two roles on different models have different windows and
+  // a single number would be wrong for at least one of them.
+  expect(config.effectiveConfig?.["contextWindow.planner"]).toEqual({
+    value: 32_000,
+    source: "declared",
+  });
+  expect(config.effectiveConfig?.["contextWindow.reviewer"]).toEqual({
+    value: 200_000,
+    source: "declared",
+  });
+  // The window is not the ceiling a turn gets; the derived budget is, so both
+  // are projected and the operator can see the relationship.
+  expect(config.effectiveConfig?.["contextBudgetMaxTokens.planner"]).toEqual({
+    value: 28_800,
+    source: "derived",
+  });
+  expect(config.effectiveConfig?.["contextWindow.orchestrator"]).toBeDefined();
+});
+
+test("a clamped context window names the window it was clamped from", () => {
+  // The operator's actual complaint: a config that reads 1000000 runs at
+  // 200000 with nothing anywhere saying so.
+  const config = resolvePipelineConfig({
+    task: "x",
+    targetDir: "/tmp/target",
+    registryConfig: {
+      providers: [
+        {
+          id: "opencode-go",
+          api: "openai-completions",
+          catalog: "opencode-go",
+          credential: { kind: "env-var", envVar: "OPENCODE_API_KEY" },
+          models: [{ modelId: "glm-5.3-flash", name: "flash" }],
+        },
+      ],
+    },
+    profile: buildDefaultProfile({ strong: "flash", mid: "flash", cheap: "flash" }),
+    summarizerModel: "flash",
+    env: fakeEnv({ OPENCODE_API_KEY: "k" }),
+    warn: silent,
+  });
+  const projected = config.effectiveConfig?.["contextWindow.coder"];
+  expect(projected?.value).toBe(200_000);
+  // Both halves of the surprise: that it was clamped, and what it lost.
+  expect(String(projected?.source)).toContain("catalog-clamped");
+  expect(String(projected?.source)).toMatch(/from \d+/);
+});
+
 test("every complexity route and override derives from its dispatched model window", () => {
   const config = resolvePipelineConfig({
     task: "x",
