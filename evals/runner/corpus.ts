@@ -378,11 +378,21 @@ function runTask(
 }
 
 /**
- * Runs a non-target scorer against its two checked-in sample artifacts.
+ * Runs a non-target scorer against its checked-in sample artifacts.
  *
  * The samples are hand-written stand-ins for a model answer, not recorded runs:
  * they exist to prove the scorer can still say both yes and no. `.pass.json`
  * must score every check, `.fail.json` must miss at least one.
+ *
+ * `.gamed.json` is optional and different in kind. Where the other two prove the
+ * scorer can discriminate a good answer from a bad one, this one proves it
+ * resists the SPECIFIC evasion the task was built to catch -- the plan that
+ * pastes a whole contract file, the review that lists its suspicions. Every task
+ * whose scorer carries a comment explaining why it checks a thing that way is
+ * asserting such a defence; until this sample existed, that assertion was prose.
+ * Three of those defences turned out to be wrong when they were finally executed
+ * against the evasion they claimed to stop, which is the argument for making the
+ * claim run.
  */
 function checkSamples(task: Task): void {
   const scorer = task.scorer;
@@ -398,7 +408,35 @@ function checkSamples(task: Task): void {
       throw new Error(`pass sample does not score every check: ${task.id}`);
     if (kind === "fail" && allPassed) throw new Error(`fail sample scores every check: ${task.id}`);
   }
+  const gamed = path.join(root, "samples", `${task.id}.gamed.json`);
+  if (!fs.existsSync(gamed)) return;
+  const checks = runScorer(scorer, gamed);
+  assertScorerMatchesTask(task, checks);
+  // Scored on the task's own weights rather than on a count, because the evasion
+  // is meant to be plausible: it will pass the checks it is not attacking, and
+  // the question is whether what it wins is materially less than an honest
+  // answer wins.
+  const weights = new Map(task.checks.map((check) => [check.id, check.weight]));
+  const total = [...weights.values()].reduce((sum, weight) => sum + weight, 0);
+  const earned = checks
+    .filter((check) => check.passed)
+    .reduce((sum, check) => sum + (weights.get(check.id) ?? 0), 0);
+  if (earned / total > GAMED_SAMPLE_CEILING)
+    throw new Error(
+      `gamed sample scores ${(earned / total).toFixed(2)} of 1.00, above the ${GAMED_SAMPLE_CEILING} ceiling: ${task.id}`,
+    );
 }
+
+/**
+ * How much of a task's weight the evasion it defends against may still earn.
+ *
+ * Not zero: a plausible evasion answers the rest of the task properly, and
+ * demanding it score nothing would only select for implausible samples. Two
+ * thirds is the line at which the answer is no longer competitive with an honest
+ * one -- an evasion scoring more than that is being rewarded for the thing the
+ * task exists to catch.
+ */
+const GAMED_SAMPLE_CEILING = 0.67;
 
 const argv = process.argv.slice(2);
 const action = argv[0] ?? "list";

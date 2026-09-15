@@ -6,6 +6,22 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-09-16
+
+### Added
+- An artifact-scored task may ship a `.gamed.json` sample: the specific evasion
+  its scorer claims to defend against, required to score at most two thirds of
+  the task's weight. Pass and fail samples prove a scorer can separate good from
+  bad; this one proves the claimed defence actually holds. It caught one
+  immediately -- the reviewer task's precision check was weighted so that six
+  blocking findings instead of two cost an evasion fourteen percent of the
+  score, leaving a list of guesses scoring 0.86.
+
+### Changed
+- `bounded-blocking-findings` is weighted 7 of 19 on the reviewer task. Precision
+  is not a footnote to a review: an evasion that reports both real defects and
+  four plausible guesses now scores 0.63 against an honest review's 1.00.
+
 ## [0.15.2] - 2026-09-16
 
 ### Fixed

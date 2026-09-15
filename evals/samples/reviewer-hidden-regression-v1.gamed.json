@@ -1,0 +1,16 @@
+[
+  { "code": "PATH_TRAVERSAL_DECODED_ID", "blocking": true, "evidence": "src/result-store.ts:5" },
+  {
+    "code": "METADATA_WRITE_ORDER_REVERSED",
+    "blocking": true,
+    "evidence": "src/result-store.ts:10"
+  },
+  {
+    "code": "POSSIBLE_RACE_ON_CONCURRENT_SAVE",
+    "blocking": true,
+    "evidence": "src/result-store.ts"
+  },
+  { "code": "MISSING_INPUT_LENGTH_LIMIT", "blocking": true, "evidence": "src/result-store.ts" },
+  { "code": "NO_STRUCTURED_LOGGING", "blocking": true, "evidence": "src/result-store.ts" },
+  { "code": "UNBOUNDED_DIRECTORY_GROWTH", "blocking": true, "evidence": "src/result-store.ts" }
+]
