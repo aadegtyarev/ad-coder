@@ -696,6 +696,9 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     let runId = firstAttempt.stage.runId;
     let capture: PlanCapture = {};
     let text = "";
+    let lastRejection: OrchestrationError | undefined;
+    let retryInstruction =
+      "Your preceding response did not call submit_plan. Call submit_plan now with the complete required object, then stop.";
     let followUps: FollowUp[] = [];
     let accumulatedState = state;
     const prompt = `${config.task}\n\n${formatPlannerInstruction()}`;
@@ -723,9 +726,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       const turn = await runWorkflowTurn(
         plannerWithRequiredTool,
         selection,
-        index === 0
-          ? prompt
-          : `${prompt}\n\nYour preceding response did not call submit_plan. Call submit_plan now with the complete required object, then stop.`,
+        index === 0 ? prompt : `${prompt}\n\n${retryInstruction}`,
         "plan",
         runId,
         [
@@ -750,16 +751,28 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
           else throw error;
         }
       }
-      if (capture.error !== undefined || capture.plan !== undefined) break;
+      if (capture.plan !== undefined) break;
+      // A rejected submission is RETRIED rather than thrown on the spot. It used
+      // to break immediately, which inverted the strictness: a planner that
+      // called submit_plan with one bad field got zero retries, while a planner
+      // that ignored the tool entirely got a second attempt. The near-miss was
+      // punished harder than the total miss. Keep the error so the final throw
+      // can report the real reason if every attempt is spent.
+      if (capture.error !== undefined) {
+        lastRejection = capture.error;
+        // The next turn is told WHICH failure to correct. The message is fixed
+        // structure plus the validator's own wording -- never planner text.
+        retryInstruction = `Your preceding submit_plan submission was rejected: ${capture.error.message}. Call submit_plan now with the complete corrected object, then stop.`;
+      }
     }
-    // A captured error is parsePlan's OrchestrationError, swallowed by the
-    // harness into an error tool-result and re-thrown here (HARD malformed_plan).
-    // A captured plan sets the governance and routing signals. An empty holder
-    // fails closed before any coder dispatch.
-    if (capture.error !== undefined) {
-      throw capture.error;
-    }
+    // A captured plan sets the governance and routing signals. Exhausting the
+    // budget fails closed before any coder dispatch, reporting WHICH failure it
+    // was: a rejected submission re-throws parsePlan's own OrchestrationError
+    // (HARD malformed_plan), and only genuine silence is missing_plan. Reporting
+    // a rejection as missing_plan sent the operator looking for a planner that
+    // never ran instead of at the field that was refused.
     if (capture.plan === undefined) {
+      if (lastRejection !== undefined) throw lastRejection;
       throw new OrchestrationError(
         "missing_plan",
         runId,

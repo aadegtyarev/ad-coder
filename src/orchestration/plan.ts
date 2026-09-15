@@ -270,20 +270,198 @@ export function parsePlan(
   };
 }
 
-/** Accept only a complete JSON structured-output fallback, then validate it identically to tool args. */
+/**
+ * Scan out the first brace-balanced JSON object starting at or after `from`.
+ *
+ * String- and escape-aware, so a `{`/`}` inside a summary or rationale does not
+ * shift the depth count. Returns the candidate substring, or `undefined` when no
+ * `{` is present or the object never closes -- the truncation case, which the
+ * caller must NOT confuse with "no plan was submitted".
+ */
+function sliceBalancedObject(text: string, from = 0): string | undefined {
+  const start = text.indexOf("{", from);
+  if (start === -1) return undefined;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = start; index < text.length; index += 1) {
+    const char = text[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (char === "{") depth += 1;
+    else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) return text.slice(start, index + 1);
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Every plan-shaped candidate in one planner response, most specific first.
+ *
+ * A model that is told to call `submit_plan` and answers in text does it in a
+ * handful of observed shapes: the bare object, a ```json fence, and the object
+ * preceded by prose or by a run-together tool name (`submit_planarguments: {`).
+ * All of them carry a complete plan, so all of them are extracted and tried;
+ * only text with no `{` at all means the planner genuinely submitted nothing.
+ *
+ * EVERY top-level object is collected, not just the first. The ambiguity
+ * rejection in `parsePlanText` can only fire on candidates it was given, so
+ * stopping at the first balanced object made that rejection depend on the
+ * shape of the response rather than on its content: a draft and its correction
+ * both fenced were caught, but a BARE draft followed by a second plan yielded
+ * exactly one candidate -- the draft -- and was returned silently. That is the
+ * governance bypass the rejection exists to close, so the scan walks the whole
+ * text. It stays linear: the cursor only ever moves forward, past each object
+ * it has already consumed.
+ */
+function planTextCandidates(value: string): string[] {
+  const candidates: string[] = [];
+  // Membership by Set, not by scanning the array. Deduping with `includes`
+  // costs a full string comparison against every candidate already collected,
+  // which was invisible while only a handful were ever extracted and became
+  // quadratic the moment the scan started walking the whole text: a response
+  // padded with brace-asides took 2s at 20k objects and ~59s at 1MB, stalling
+  // the plan stage on output no model is prevented from producing.
+  const seen = new Set<string>();
+  const add = (candidate: string | undefined): void => {
+    const trimmed = candidate?.trim();
+    if (trimmed === undefined || trimmed === "" || seen.has(trimmed)) return;
+    seen.add(trimmed);
+    candidates.push(trimmed);
+  };
+  if (value.startsWith("{") && value.endsWith("}")) add(value);
+  for (const match of value.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)) add(match[1]);
+  for (let cursor = 0; ; ) {
+    const start = value.indexOf("{", cursor);
+    if (start === -1) break;
+    const sliced = sliceBalancedObject(value, start);
+    // An object that never closes ends the scan: nothing after it is reachable,
+    // and an empty candidate list is what tells the caller it was truncated.
+    if (sliced === undefined) break;
+    add(sliced);
+    cursor = start + sliced.length;
+  }
+  return candidates;
+}
+
+/**
+ * Recover a plan from a planner turn that answered in TEXT instead of calling
+ * `submit_plan`, and distinguish the three outcomes the caller must tell apart.
+ *
+ * - a `Plan`: one candidate parsed AND validated.
+ * - `undefined`: the response contained nothing plan-shaped (no `{` anywhere).
+ *   Only this is "the planner submitted nothing".
+ * - throws `malformed_plan`: a plan-shaped candidate WAS present and every one
+ *   of them failed. Truncated JSON lands here, not in `undefined`. So does an
+ *   AMBIGUOUS response carrying two different valid plans -- see below.
+ *
+ * WHY THE THREE-WAY SPLIT. This used to be a bare-object gate returning
+ * `undefined` for anything else, which put a fenced plan, a prose-prefixed plan
+ * and a truncated plan in the same bucket as silence. The caller consumed the
+ * attempt without recording a failure and finally reported `missing_plan`
+ * ("planner did not submit required surface analysis") for a planner that had
+ * submitted a complete analysis -- a diagnosis that sent the operator looking in
+ * the wrong place. Observed on three consecutive real runs.
+ *
+ * The thrown message is a FIXED structural string (or one `parsePlan` itself
+ * emits); the planner's own text is never interpolated into it, so no model
+ * content crosses the error boundary.
+ */
 export function parsePlanText(
   text: string,
   detail: string,
   limits: SurfaceAnalysisLimits = DEFAULT_SURFACE_ANALYSIS_LIMITS,
 ): Plan | undefined {
   const value = text.trim();
-  if (!value.startsWith("{") || !value.endsWith("}")) return undefined;
-  try {
-    return parsePlan(JSON.parse(value), detail, limits);
-  } catch (error) {
-    if (error instanceof OrchestrationError) throw error;
-    throw new OrchestrationError("malformed_plan", detail, "planner JSON handoff is invalid");
+  const candidates = planTextCandidates(value);
+  if (candidates.length === 0) {
+    // No `{` at all. If the text nonetheless opens an object that never closes,
+    // the planner was cut off mid-handoff -- a malformed submission, not silence.
+    if (value.includes("{"))
+      throw new OrchestrationError(
+        "malformed_plan",
+        detail,
+        "planner JSON handoff is truncated: the submitted object never closes",
+      );
+    return undefined;
   }
+  // Parse EVERY candidate rather than returning on the first that validates.
+  //
+  // WHY. A planner that drafts a plan and then corrects itself emits two
+  // plan-shaped objects, and the real submission is the LAST one. Returning the
+  // first silently accepted the draft -- which, when the draft said
+  // `securitySurface: "none"` and the correction said `"elevated"`, skipped the
+  // mandatory security phase with no error and no retry. That is a governance
+  // bypass, and it is worse than the all-or-nothing gate this recovery replaced.
+  // Guessing which of two submissions the planner meant is not this parser's
+  // call to make, so two DIFFERENT valid plans are a rejection: the retry loop
+  // then tells the planner to submit exactly one, which is recoverable.
+  // Byte-different candidates that decode to the SAME plan (the bare object and
+  // its own fenced copy) are one submission, not two, so they are compared
+  // after parsing rather than as text.
+  const plans: Plan[] = [];
+  const errors: { error: OrchestrationError; planShaped: boolean }[] = [];
+  for (const candidate of candidates) {
+    let decoded: unknown;
+    try {
+      decoded = JSON.parse(candidate);
+    } catch {
+      errors.push({
+        error: new OrchestrationError("malformed_plan", detail, "planner JSON handoff is invalid"),
+        planShaped: false,
+      });
+      continue;
+    }
+    try {
+      plans.push(parsePlan(decoded, detail, limits));
+    } catch (error) {
+      if (!(error instanceof OrchestrationError)) throw error;
+      // A nested fragment -- one `coverage` entry lifted out of a larger object
+      // -- fails on whichever field it happens to lack first, and reporting THAT
+      // sends the operator after a field the planner never got wrong. An object
+      // carrying `complexity` is the one that was meant to be the plan.
+      errors.push({
+        error,
+        planShaped:
+          typeof decoded === "object" && decoded !== null && Object.hasOwn(decoded, "complexity"),
+      });
+    }
+  }
+  // Same reason as the candidate dedup above: a pairwise `findIndex` re-encodes
+  // every plan against every other one. Encode each once, and let a Set answer
+  // whether it was already seen.
+  const distinctKeys = new Set<string>();
+  const distinct = plans.filter((plan) => {
+    const key = JSON.stringify(plan);
+    if (distinctKeys.has(key)) return false;
+    distinctKeys.add(key);
+    return true;
+  });
+  if (distinct.length > 1)
+    throw new OrchestrationError(
+      "malformed_plan",
+      detail,
+      "planner text contains more than one distinct plan; submit exactly one",
+    );
+  if (distinct[0] !== undefined) return distinct[0];
+  const reported = errors.find((entry) => entry.planShaped) ?? errors[0];
+  throw (
+    reported?.error ??
+    new OrchestrationError("malformed_plan", detail, "planner JSON handoff is invalid")
+  );
 }
 
 /**
@@ -399,7 +577,12 @@ export function formatPlannerInstruction(): string {
     "Call it with this shape:",
     '{ "complexity": "trivial" | "medium" | "complex", "securitySurface": "none" | "low" | "elevated", "summary": "<short summary>", "contractRequirements": ["<rule>"], "surfaceAnalysis": { "projectType": "<type>", "surfaces": [{"id":"<stable-id>","name":"<surface>","rationale":"<why affected>"}], "coverage": [{"surfaceId":"<stable-id>","status":"covered|not_applicable|research_required","contractIds":["<canonical id>"],"evidence":["<source or gap evidence>"],"rationale":"<decision>"}] } }',
     "This structured submission is mandatory. Identify every affected product surface before coding.",
-    `Call ${SUBMIT_PLAN_TOOL_NAME} first. If the provider returns text instead, emit exactly one JSON object with that shape and no Markdown or prose.`,
+    // The text fallback used to demand a bare object with "no Markdown", which
+    // asked models to suppress the fenced form they emit by default and made a
+    // recoverable handoff look like a refusal. State what the parser accepts
+    // instead, and put the weight on the one property that is NOT recoverable:
+    // the object has to be finished.
+    `Call ${SUBMIT_PLAN_TOOL_NAME} first. If the provider returns text instead, emit one complete JSON object with that shape -- alone, or inside a single \`\`\`json fence -- and nothing after it. A cut-off object cannot be read; keep the fields short enough to close it.`,
     'For status "covered", contractIds and evidence must both be non-empty. Use only canonical contract IDs.',
     `Canonical contract IDs accepted by this pipeline: ${canonicalIds}.`,
     'For status "not_applicable", contractIds must be empty and evidence must explain why no contract applies.',

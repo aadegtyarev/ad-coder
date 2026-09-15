@@ -6,6 +6,57 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.8.4] - 2026-09-15
+
+### Fixed
+
+- The planner text fallback now reads the shapes planners actually emit, and a
+  rejected submission is retried instead of being fatal on the first try. Three
+  consecutive real runs died in the plan stage after the planner HAD produced a
+  complete surface analysis: `parsePlanText` accepted only a bare `{...}`
+  object, so a ```json fence, a `submit_plan arguments: {...}` prefix and a
+  response truncated mid-field all returned `undefined` -- indistinguishable
+  from a planner that said nothing. The caller consumed the attempt without
+  recording a failure and finally reported `missing_plan`, "planner did not
+  submit required surface analysis", which sent the operator looking for a stage
+  that never ran instead of at the handoff that was refused.
+
+  The fallback now extracts the first balanced object (string- and
+  escape-aware), unwraps a fenced block, and splits its outcome three ways:
+  a plan, `undefined` only for genuine silence, and `malformed_plan` whenever
+  plan-shaped content was present but unusable -- including truncation, which
+  now says so by name rather than passing as silence. The retry loop gives a
+  rejected submission the same attempt budget a missing one already had (it used
+  to break on the first rejection, punishing a near-miss harder than a total
+  miss), tells the next turn which failure to correct, and reports the rejection
+  itself once the budget is spent. `missing_plan` is now raised only when no
+  attempt ever produced plan-shaped content. The retry text and the thrown
+  message are fixed structure plus the validator's own wording; planner text
+  never crosses the error boundary.
+
+  Recovery does not get to guess. Every top-level object in the response is
+  collected, and every candidate is parsed rather than just the first that
+  validates: a planner that drafts a plan and then corrects itself emits two,
+  and the real submission is the last -- so returning the first accepted a
+  draft whose `securitySurface: "none"` overrode the correction's `"elevated"`
+  and skipped the mandatory security phase with no error and no retry. Scanning
+  only as far as the first balanced object made that protection depend on the
+  shape of the response instead of its content: two fenced plans were caught,
+  but a bare draft followed by a correction produced a single candidate and was
+  returned silently -- the same bypass, still open for the commonest shape. Two
+  DIFFERENT valid plans are now a rejection telling the planner to submit
+  exactly one, which the retry budget can still fix; the same plan reaching the
+  parser twice (a bare object and its own fenced copy) is one submission and
+  still resolves. When every candidate fails, the one carrying `complexity` is
+  reported rather than a nested `coverage` fragment the brace scan happened to
+  lift out -- that fragment fails on whichever field it lacks first, and naming
+  it sent the operator after a field the planner never got wrong.
+
+- The planner instruction no longer forbids a shape the parser accepts. It
+  demanded "no Markdown or prose", asking models to suppress the fenced form
+  they emit by default; it now states that a complete object -- alone or inside
+  one ```json fence -- is read, and that a cut-off object cannot be.
+
 ## [0.8.3] - 2026-09-15
 
 ### Added
