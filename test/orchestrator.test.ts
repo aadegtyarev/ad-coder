@@ -563,10 +563,7 @@ test("a caller-supplied activity channel outlives the orchestrated session", asy
     },
     startConversation: async () => fakeConversation("outer"),
   });
-  await session.close();
-
-  expect(activityChannel.snapshot().closed).toBe(false);
-  activityChannel.publish({
+  const event = {
     lifecycle: "completed",
     activity: "Read",
     role: "coder",
@@ -576,10 +573,19 @@ test("a caller-supplied activity channel outlives the orchestrated session", asy
     toolCallId: "call",
     parentOperation: "step",
     toolName: "read",
-  });
+  } as const;
+
+  activityChannel.publish(event);
+  // Subscribed exactly once against the supplied channel: a consumer attached
+  // per conversation instead would render the same event more than once.
+  expect(rendered).toEqual(["coder"]);
+
+  await session.close();
+  expect(activityChannel.snapshot().closed).toBe(false);
+  activityChannel.publish(event);
   // Closing the session detached the consumer, so no stray render arrives, and
   // the channel itself stays usable for whoever built it.
-  expect(rendered).toEqual([]);
+  expect(rendered).toEqual(["coder"]);
   await activityChannel.close();
 });
 
