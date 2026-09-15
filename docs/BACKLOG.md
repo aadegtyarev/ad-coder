@@ -224,6 +224,59 @@ Only unresolved work belongs here. Current behavior is in
 - [medium] **Distributed GitHub claims** (`src/project-operations/`): provide a
   built-in shared `GitHubClaimCoordinator`; mutations currently require an
   injected coordinator and fail closed without one.
+- [medium] **A wall-clock ratio test reddens CI at random**
+  (`test/orchestration.test.ts`, "scanning the whole planner response stays
+  linear, not quadratic, in its objects"): the test divides one timed run by
+  another and requires the ratio under 8. Run alone it passes every time;
+  inside the full suite it fails intermittently (observed 2026-09-15, one
+  failure in two consecutive full runs on an unchanged tree), because both
+  samples compete with every other test file for the same cores and the noise
+  lands unevenly on the smaller one. The property is worth pinning — it caught
+  a real quadratic — but it must be pinned by something that does not depend on
+  machine load: count the comparisons the dedup performs, or assert against a
+  deterministic operation count, rather than timing two runs. Until then a red
+  CI run may mean nothing, which is the state where nobody reads CI.
+
+- [medium] **The console cannot say which provider and models it is using**
+  (`src/conversation/console-control.ts`): the command registry offers `/help`,
+  `/list`, `/events`, `/status`, `/result`, `/cancel`, `/interrupt` and `/exit`
+  — nothing reports the resolved routing. The startup banner prints the
+  provider and the strong/mid/cheap layout once, then scrolls away, so an
+  operator mid-session has no way to confirm which model a role will actually
+  reach without restarting (asked 2026-09-15). Add a read-only command that
+  projects the resolved profile: provider, per-role model, context window, and
+  where each value came from. `ResolvedModelConfig` already carries
+  `contextWindowSource` for exactly this kind of projection. Names and numbers
+  only — never credentials, and never the credential's value.
+
+- [medium] **Report what a turn spent, in the turn** (`src/cli/console.ts`
+  `renderFormatted`, `src/conversation/conversation.ts`
+  `ConversationTurnResult`): the console turn footer prints the step, status,
+  runId and dropped-record count but no economics, so an operator watching a
+  live session cannot see what a turn cost without leaving the session. The
+  accounting already exists — `SessionLimitController` tracks `observedCostUsd`
+  and exposes it through `snapshot()` — so this is carrying tokens and cost onto
+  the turn result and rendering them, not new measurement. Operator preference
+  (2026-09-15): a summary at the END of the turn rather than a live counter.
+
+- [medium] **Give the Orchestrator its own spend history**
+  (`src/orchestration/orchestrator.ts` `buildOrchestratorTools`): asked what a
+  run has cost, the Orchestrator shells out through `bash` to find and parse the
+  ledger — burning tokens to rediscover a number the process already holds
+  (observed 2026-09-15). It owns the `sink`, and every `LedgerRecord` already
+  carries `usage`, `provider`, `model`, `role` and `step`, so the work is a
+  bounded aggregating tool over `sink.records()`. It must return names and
+  numbers only — never prompts, arguments, or tool output — so the ledger's
+  safe-to-share invariant survives being handed to a model.
+
+- [low] **Colour the console** (`src/cli/console.ts`, `src/cli/tool-activity.ts`):
+  every line renders in one colour, so activity, turn boundaries, errors and
+  assistant text are indistinguishable while scrolling a live run. Colour only
+  in `formatted` mode on a TTY: never in `json` mode, never when stdout is
+  redirected, and honour `NO_COLOR`. A rendering concern only — no line may
+  depend on colour to be understood, since the same text is read from logs and
+  from pipes.
+
 - [low] **Usage tracker retention** (`src/ledger/usage.ts`): bound or release
   unique `UsageDeltaTracker` stream keys, or document why per-run lifetime is safe.
 - [low] **Ledger retention** (`src/ledger/`, README): define an operator-facing

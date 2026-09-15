@@ -6,6 +6,20 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-09-15
+
+### Added
+- Three operator-reported backlog items recorded, none implemented: report what
+  a turn spent inside the turn rather than only against session limits; give the
+  Orchestrator a bounded read-only view of its own spend history, so that asking
+  what a run cost stops meaning shelling out to parse the ledger; and colour the
+  console, which currently renders activity, turn boundaries and errors in one
+  undifferentiated stream. A fourth records that the console has no command to
+  report which provider and models the running session resolved to. A fifth
+  records that one orchestration test
+  pins a performance property by comparing wall-clock times, so it fails at
+  random under full-suite load on an unchanged tree.
+
 ## [0.10.0] - 2026-09-15
 
 ### Fixed
