@@ -32,6 +32,18 @@ export interface CalibrationCheckResult {
 /** One (role, model) pair the run actually used, with the work it did. */
 export interface CalibrationModelShare {
   role: string;
+  /**
+   * The provider that served this model, from the ledger row.
+   *
+   * A model name alone does not identify what ran. The same name behind two
+   * providers can be a different quantization, a different context ceiling and a
+   * different set of supported thinking levels -- `docs/provider-catalogs.md`
+   * records `deepseek-v4-pro` accepting `low` on opencode-go and marked
+   * unsupported on openrouter, same vendor, same name. A measurement published
+   * without it invites a reader to carry a score to a host where it does not
+   * hold.
+   */
+  provider: string;
   model: string;
   modelTurns: number;
   inputTokens: number;
@@ -52,7 +64,12 @@ export interface CalibrationMeasurement {
    * carries the full breakdown; this field only names the role under test.
    */
   model: string | null;
-  /** Every (role, model) pair the run used, ordered by cost, highest first. */
+  /**
+   * The provider that served `model`, or `null` when no ledger row carries the
+   * measured role. Recorded for the same reason as `CalibrationModelShare.provider`.
+   */
+  provider: string | null;
+  /** Every (role, provider, model) triple the run used, ordered by cost, highest first. */
   models: CalibrationModelShare[];
   thinkingLevel: string;
   role: string;
@@ -138,9 +155,10 @@ export function scoreCalibrationRun(input: {
   const accepted = quality === 1 && (input.escapedDefects ?? 0) === 0;
   const shares = new Map<string, CalibrationModelShare>();
   for (const row of input.ledger) {
-    const key = `${row.role}\u0000${row.model}`;
+    const key = `${row.role}\u0000${row.provider}\u0000${row.model}`;
     const share = shares.get(key) ?? {
       role: row.role,
+      provider: row.provider,
       model: row.model,
       modelTurns: 0,
       inputTokens: 0,
@@ -167,6 +185,7 @@ export function scoreCalibrationRun(input: {
     taskId: input.task.id,
     inventory: input.inventory,
     model: declared?.model ?? null,
+    provider: declared?.provider ?? null,
     models,
     thinkingLevel: input.thinkingLevel,
     role: input.task.role,
