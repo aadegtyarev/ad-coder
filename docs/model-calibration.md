@@ -15,8 +15,11 @@ research evidence, seeded security defects, three coding complexities, hidden
 review regressions, orchestration choices, and summarizer fact retention.
 
 The first executable scorer is `bun run calibration:score -- <task.json>
-<ledger.jsonl> <checks.json> <inventory> <duration-ms> <thinking-level>`. It consumes the real
-safe ledger and emits one machine-readable measurement. `costEfficiency` is
+<ledger.jsonl> <checks.json> <inventory> <duration-ms> <thinking-level>
+[report.json]`. It consumes the real safe ledger and emits one machine-readable
+measurement. Both complexity votes come from that optional observed report, never
+from an argument: an operator who types the tier the run was supposed to produce
+scores their own expectation, not the run. `costEfficiency` is
 quality points per provider dollar; it is diagnostic only (and `null` for free
 runs). Routing requires full acceptance and zero escaped defects before cost or
 wall time can break ties.
@@ -46,6 +49,27 @@ executes every target-based scorer; artifact/report scorers declare their input
 kind explicitly. Measurements retain the orchestrator and Planner complexity
 votes plus correctness and agreement, so live Planner feedback can calibrate
 project-local triage without silently changing the user baseline.
+
+`bun run calibration:corpus -- run <task-id>` executes one task for real: it
+materializes the fixture, invokes ad-coder in the task's declared mode
+(`ad-coder role`, `ad-coder drive --auto`, or a scripted `ad-coder console
+--json` session), reads the ledger from the path the front printed, scores it,
+and emits the measurement. Nothing about the result is supplied by whoever
+started it.
+
+What the run is allowed to claim is bounded by what it can observe. A ledger row
+stepped `role:<name>` is the only proof a role was independently delegated —
+console JSON carries tool NAMES without arguments, so it cannot distinguish one
+delegated role from another. Cost is attributed per `(role, model)` pair from
+ledger-record position, so a multi-role run reports every model's share rather
+than crediting whoever took the first turn.
+
+A task's `role` is its dispatch label, not necessarily a ledger role: a pipeline
+task dispatches as `pipeline`, while its rows are stamped with the workers that
+took the turns. Such a task declares `measuredRoles` — the ledger roles whose
+model the measurement names — and the corpus runner refuses to load an
+`automatic-pipeline` task without it. A single-role task omits the field and
+falls back to its `role`, which its rows do carry.
 
 Run each corpus task at least once as its declared mode: a standalone `run_role`,
 manual `run_step`/`choose_transition`, or complete `run_pipeline`. Repeat samples

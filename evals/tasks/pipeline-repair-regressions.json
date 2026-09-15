@@ -3,6 +3,7 @@
   "role": "pipeline",
   "complexity": "medium",
   "mode": "automatic-pipeline",
+  "measuredRoles": ["coder"],
   "prompt": "Repair the regressions in the current implementation according to docs/contracts/errors.md. Encoded IDs must never escape baseDir, malformed encoding must fail with the same stable invalid-id boundary, and metadata failure must preserve the original thrown error object and must not leave an unreported primary write. Add independently runnable regression tests that fail against HEAD, including malformed decoding and root baseDir behavior, and keep the API as small as possible. Use docs/contracts/errors.md as canonical contract evidence for every affected surface.",
   "checks": [
     {

@@ -9,6 +9,18 @@ export interface CalibrationTask {
   mode: CalibrationMode;
   prompt: string;
   checks: Array<{ id: string; weight: number }>;
+  /**
+   * Which LEDGER roles count as the work this task measures.
+   *
+   * `role` is the task's dispatch label, and for a pipeline task it is the
+   * synthetic string `"pipeline"` -- no ledger row ever carries it, because a
+   * pipeline's rows are stamped with the worker that took the turn (`coder`,
+   * `reviewer`, ...). Matching `model` on `role` alone therefore reported
+   * `null` for exactly the multi-role runs the attribution was built for. A
+   * pipeline task names its measured workers here; a single-role task omits
+   * this and falls back to `role`, which its ledger rows do carry.
+   */
+  measuredRoles?: string[];
 }
 
 export interface CalibrationCheckResult {
@@ -17,10 +29,31 @@ export interface CalibrationCheckResult {
   detail?: string;
 }
 
+/** One (role, model) pair the run actually used, with the work it did. */
+export interface CalibrationModelShare {
+  role: string;
+  model: string;
+  modelTurns: number;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+}
+
 export interface CalibrationMeasurement {
   taskId: string;
   inventory: string;
-  model: string;
+  /**
+   * The model that ran the task's MEASURED role (see
+   * `CalibrationTask.measuredRoles`), or `null` when no ledger row carries one.
+   *
+   * It used to be `ledger[0].model` -- whoever happened to take the first turn
+   * -- which labelled an eight-turn pipeline with its planner's model and made
+   * every cross-model comparison of a multi-role run meaningless. `models`
+   * carries the full breakdown; this field only names the role under test.
+   */
+  model: string | null;
+  /** Every (role, model) pair the run used, ordered by cost, highest first. */
+  models: CalibrationModelShare[];
   thinkingLevel: string;
   role: string;
   complexity: CalibrationTask["complexity"];
@@ -43,6 +76,23 @@ export interface CalibrationMeasurement {
   complexityCorrect: boolean | null;
   plannerAgreement: boolean | null;
   costEfficiency: number | null;
+}
+
+/**
+ * The ledger roles a task measures: its explicit `measuredRoles`, or its
+ * dispatch `role` when it is itself a ledger role. Throws on a declared but
+ * unusable list rather than silently falling back -- a typo there would
+ * reinstate the silent `model: null` this field exists to prevent.
+ */
+export function measuredRolesOf(task: CalibrationTask): string[] {
+  if (task.measuredRoles === undefined) return [task.role];
+  if (
+    !Array.isArray(task.measuredRoles) ||
+    task.measuredRoles.length === 0 ||
+    task.measuredRoles.some((role) => typeof role !== "string" || role.trim() === "")
+  )
+    throw new Error(`calibration task ${task.id} has invalid measuredRoles`);
+  return task.measuredRoles;
 }
 
 export function scoreCalibrationRun(input: {
@@ -86,10 +136,38 @@ export function scoreCalibrationRun(input: {
     { input: 0, cacheRead: 0, cacheWrite: 0, output: 0, reasoning: 0, cost: 0, toolTurns: 0 },
   );
   const accepted = quality === 1 && (input.escapedDefects ?? 0) === 0;
+  const shares = new Map<string, CalibrationModelShare>();
+  for (const row of input.ledger) {
+    const key = `${row.role}\u0000${row.model}`;
+    const share = shares.get(key) ?? {
+      role: row.role,
+      model: row.model,
+      modelTurns: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      costUsd: 0,
+    };
+    share.modelTurns += 1;
+    share.inputTokens += row.usage.input;
+    share.outputTokens += row.usage.output;
+    share.costUsd += row.usage.cost.total;
+    shares.set(key, share);
+  }
+  const models = [...shares.values()].sort((left, right) => right.costUsd - left.costUsd);
+  // The measured roles are what the task claims to measure -- `measuredRoles`
+  // when the dispatch label is not itself a ledger role (pipeline tasks), the
+  // label otherwise. A delegated role's rows carry a `role:<name>` step, so the
+  // plain role name is the one under test; ties go to the most turns, then to
+  // the highest cost, so the pick is stable when two measured roles tie.
+  const measured = new Set(measuredRolesOf(input.task));
+  const declared = models
+    .filter((share) => measured.has(share.role))
+    .sort((left, right) => right.modelTurns - left.modelTurns || right.costUsd - left.costUsd)[0];
   return {
     taskId: input.task.id,
     inventory: input.inventory,
-    model: input.ledger[0]?.model ?? "unknown",
+    model: declared?.model ?? null,
+    models,
     thinkingLevel: input.thinkingLevel,
     role: input.task.role,
     complexity: input.task.complexity,

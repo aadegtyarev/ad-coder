@@ -3,7 +3,7 @@
   "role": "orchestrator",
   "complexity": "complex",
   "mode": "manual-workflow",
-  "prompt": "Inspect the complex-reservation fixture, classify task complexity with evidence, invoke Planner to independently check the classification, then manually drive the workflow to an approved result. Do not use the automatic pipeline tool.",
+  "prompt": "Inspect this project, classify the task complexity with evidence, then state your verdict as a line reading exactly `COMPLEXITY: <trivial|medium|complex>` and stop. Do not call any tool that delegates or starts workflow work in this turn.",
   "checks": [
     {
       "id": "classifies-complex",
@@ -23,5 +23,11 @@
     }
   ],
   "scorerInput": "report",
-  "scorer": "orchestrator-tool-use.ts"
+  "scorer": "orchestrator-tool-use.ts",
+  "fixture": "complex-reservation",
+  "prompts": [
+    "Inspect this project and classify the complexity of making Pool.reserve linearizable under concurrent calls without changing its public API. Cite evidence from the files you read. End your reply with a line reading exactly `COMPLEXITY: <trivial|medium|complex>`. Do not delegate and do not start any workflow in this turn.",
+    "Now invoke the Planner through run_role to independently classify the same task. Report the tier it returned as a line reading exactly `PLANNER_COMPLEXITY: <trivial|medium|complex>`.",
+    "Drive the work to an approved result by hand: use run_step and choose_transition and repeat until the workflow is done. Do not use run_pipeline or start_pipeline."
+  ]
 }

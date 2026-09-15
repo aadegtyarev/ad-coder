@@ -6,6 +6,42 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-09-15
+
+### Added
+- `bun run calibration:corpus -- run <task-id>` executes one corpus task for
+  real: it materializes the fixture, invokes ad-coder in the task's declared mode
+  (`role`, `drive --auto`, or a scripted `console --json` session), reads the
+  ledger the front reports, scores it and emits the measurement. Until now the
+  corpus could only list, validate and smoke-test its scorers -- it never ran the
+  agent it was supposed to be measuring.
+- Every front that runs model turns now names its run on stderr before the first
+  turn: `ad-coder: runId=<id> ledger=<path>`. An operator (and the bench) can
+  point at a run's evidence without guessing how the file was named.
+
+### Changed
+- `drive`, `console` and detached pipeline workers write the durable ledger file
+  again. Each front needs a readable sink to report its own cost, and installing
+  one used to REPLACE the file sink -- so whole multi-role sessions left nothing
+  under `.ad-coder/ledger` while `ad-coder role` did. The readable sink now
+  mirrors to that file instead of displacing it, and takes its in-memory copy
+  first so a failing mirror cannot also cost the caller the numbers it reads back.
+- A calibration measurement attributes cost per `(role, model)` pair instead of
+  crediting the whole run to whoever took the first turn. `model` names the model
+  that ran the roles the task measures; the new `models[]` lists every pair,
+  costliest first. A task whose dispatch `role` is not itself a ledger role --
+  every `automatic-pipeline` task dispatches as `pipeline`, while its rows carry
+  `coder`/`reviewer` -- declares `measuredRoles`, and the corpus runner refuses to
+  load one that does not. Without it those runs reported `model: null` silently,
+  which is the one mode multi-role attribution exists for.
+- The orchestrator complexity votes are read from the run instead of being passed
+  in: `calibration:score` no longer takes the two complexity positionals, and the
+  orchestrator scorer derives them from an observed report. It additionally
+  requires the classification to PRECEDE any delegating tool call, and requires a
+  ledger row stepped `role:planner` to credit the planner cross-check -- console
+  JSON carries tool names without arguments, so nothing else can prove which role
+  was delegated.
+
 ## [0.11.0] - 2026-09-15
 
 ### Added

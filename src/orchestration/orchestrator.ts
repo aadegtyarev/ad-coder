@@ -1,4 +1,5 @@
 import * as crypto from "node:crypto";
+import * as path from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import type { ResolvePipelineConfigOptions } from "../cli/resolve-config";
 import { resolveOrchestratorSeed, resolvePipelineConfig } from "../cli/resolve-config";
@@ -6,7 +7,7 @@ import type { ConversationSession } from "../conversation/conversation";
 import { startConversation as startConversationImpl } from "../conversation/conversation";
 import type { CostAnomalyDetector } from "../economics/cost-anomaly";
 import type { MemoryLedgerSink } from "../ledger/ledger";
-import { MemoryLedgerSink as MemoryLedgerSinkImpl } from "../ledger/ledger";
+import { FileLedgerSink, MemoryLedgerSink as MemoryLedgerSinkImpl } from "../ledger/ledger";
 import type { ToolActivityConsumer, ToolActivitySnapshot } from "../observability/tool-activity";
 import { ToolActivityChannel } from "../observability/tool-activity";
 import { ProjectOperationsError } from "../project-operations/errors";
@@ -313,7 +314,15 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     control: { cancelled: () => boolean; onStage: (step: StepCost) => void },
   ): Promise<RunPipelineResult> => {
     const resolved = deps.buildConfig(task);
-    const workerSink = new MemoryLedgerSinkImpl();
+    // Same mirror as the session sink: a detached pipeline worker is the run
+    // LEAST likely to have anyone watching its stderr, so its rows must reach
+    // disk under its own runId.
+    const workerSink = new MemoryLedgerSinkImpl(
+      new FileLedgerSink(
+        path.join(resolved.targetDir, ".ad-coder", "ledger", `${runId}.jsonl`),
+        resolved.projectStoreConfig?.byteLimits?.jsonlRecord ?? 0,
+      ),
+    );
     const inheritedLimits =
       resolved.sessionLimitController?.limits ?? deps.sessionLimitController?.limits;
     const workerLimits = new SessionLimitController(inheritedLimits);
@@ -330,17 +339,25 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     });
     const perStep: StepCost[] = [];
     let cursor = 0;
-    const completed = await workerCoordinator.run(autoDriver, ({ result }) => {
-      const records = workerSink.records();
-      let cost = 0;
-      for (let index = cursor; index < records.length; index += 1)
-        cost += records[index]?.usage.cost.total ?? 0;
-      cursor = records.length;
-      const step = { phase: result.phase, step: perStep.length + 1, cost };
-      perStep.push(step);
-      if (control.cancelled()) throw new BackgroundCancellation();
-      control.onStage(step);
-    });
+    // The worker sink owns a file descriptor now, so it is released on EVERY
+    // exit -- a cancelled or failed background run included.
+    const completed = await (async () => {
+      try {
+        return await workerCoordinator.run(autoDriver, ({ result }) => {
+          const records = workerSink.records();
+          let cost = 0;
+          for (let index = cursor; index < records.length; index += 1)
+            cost += records[index]?.usage.cost.total ?? 0;
+          cursor = records.length;
+          const step = { phase: result.phase, step: perStep.length + 1, cost };
+          perStep.push(step);
+          if (control.cancelled()) throw new BackgroundCancellation();
+          control.onStage(step);
+        });
+      } finally {
+        workerSink.close();
+      }
+    })();
     if (completed.result === undefined) {
       if (completed.status === "paused" && completed.checkpoint.pause !== undefined)
         throw new OrchestrationError(
@@ -915,6 +932,12 @@ export function buildOrchestratorTools(
  * closed over here and never a tool parameter.
  */
 export type OrchestratorConfig = Omit<ResolvePipelineConfigOptions, "task"> & {
+  /**
+   * Run id for the orchestrator's own conversation AND for the session ledger
+   * file. A front that wants to point at the evidence before the first turn
+   * (or to resume onto the same file) supplies it; otherwise one is minted.
+   */
+  runId?: string;
   /** Explicit lazy skills for this managed conversation; absent means none. */
   selectedSkills?: readonly string[];
   sessionLimits?: SessionLimits;
@@ -950,7 +973,22 @@ export type OrchestratorConfig = Omit<ResolvePipelineConfigOptions, "task"> & {
  * `PipelineConfig.task` -- never interpolated into a shell command, path, or URL.
  */
 export async function startOrchestrator(config: OrchestratorConfig): Promise<ConversationSession> {
-  const sink = new MemoryLedgerSinkImpl();
+  // ONE file for the whole orchestrated session, named after the orchestrator's
+  // own run. The shared in-memory sink is what `show_cost` and the per-step cost
+  // arithmetic read back, but it MIRRORS to that file so a conversational front
+  // leaves the same audit trail `ad-coder role` does -- every delegated
+  // `run_role` row lands there too, each carrying its own runId and its
+  // `role:<name>` step, which is what later makes the delegation provable.
+  const orchestratorRunId = config.runId ?? crypto.randomUUID();
+  const ledgerPath = path.join(
+    config.targetDir,
+    ".ad-coder",
+    "ledger",
+    `${orchestratorRunId}.jsonl`,
+  );
+  const sink = new MemoryLedgerSinkImpl(
+    new FileLedgerSink(ledgerPath, config.projectStoreConfig?.byteLimits?.jsonlRecord ?? 0),
+  );
   const ownerId = config.backgroundOwnerId ?? crypto.randomUUID();
   const controller = new SessionLimitController(config.sessionLimits);
   // ONE activity channel for the whole orchestrated session. A conversation
@@ -1111,6 +1149,7 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
     targetDir: config.targetDir,
     models: seed.models,
     model: orchestratorModel,
+    runId: orchestratorRunId,
     tools,
     ledgerSink: sink,
     sessionLimitController: controller,
@@ -1144,6 +1183,10 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
     return {
       ...conversation,
       ...sharedActivity,
+      // The conversation reports `undefined` because it was handed a sink; the
+      // durable path is known HERE, and a front that cannot name it cannot tell
+      // the operator where the run's evidence went.
+      ledgerPath,
       step: conversation.step.bind(conversation),
       close: async () => {
         try {
@@ -1163,6 +1206,7 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
   return {
     ...conversation,
     ...sharedActivity,
+    ledgerPath,
     step: conversation.step.bind(conversation),
     close: async () => {
       try {

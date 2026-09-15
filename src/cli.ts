@@ -33,7 +33,7 @@ import {
 } from "./economics/forecast";
 import { readOrCreateDefaultInventory } from "./inventory/store";
 import { parseModelInventoryConfig } from "./inventory/validate";
-import { Ledger, type LedgerSink, MemoryLedgerSink } from "./ledger/ledger";
+import { FileLedgerSink, Ledger, type LedgerSink, MemoryLedgerSink } from "./ledger/ledger";
 import {
   DEFAULT_TOOL_ACTIVITY_CONFIG,
   resolveToolActivityConfig,
@@ -2135,18 +2135,33 @@ async function driveCommand(
     task,
   });
 
+  // The run id is chosen HERE rather than inside the coordinator so the ledger
+  // file, the checkpoint and the resume token all name the same run: resuming
+  // then appends to the very file the interrupted attempt wrote.
+  const resumeRun = flags["--resume-run"];
+  const driveRunId = resumeRun ?? crypto.randomUUID();
   // resolvePipelineConfig assigns its own internal LedgerSink (typed as the
   // non-readable interface); replace it with a readable instance the drive loop
   // sums per-step and total cost from, and drive against that same instance.
-  const ledgerSink = new MemoryLedgerSink();
+  // It MIRRORS to the same durable file `ad-coder role` writes: a readable sink
+  // is what this front needs to report cost, not a reason for the whole run to
+  // leave no audit trail behind.
+  const driveLedgerPath = path.join(
+    resolveTargetDir(targetDirArg),
+    ".ad-coder",
+    "ledger",
+    `${driveRunId}.jsonl`,
+  );
+  const ledgerSink = new MemoryLedgerSink(new FileLedgerSink(driveLedgerPath));
   config.ledgerSink = ledgerSink;
   const renderer = new ToolActivityRenderer(process.stderr, "human", config.toolActivity);
   config.activityConsumer = renderer.consume;
   const session = createWorkflowSession(config);
+  process.stderr.write(`ad-coder: runId=${driveRunId} ledger=${driveLedgerPath}\n`);
   try {
-    const resumeRun = flags["--resume-run"];
     const coordinator = new RunCoordinator(session, session.projectStore, {
-      ...(resumeRun === undefined ? {} : { runId: resumeRun, resumeExisting: true }),
+      runId: driveRunId,
+      ...(resumeRun === undefined ? {} : { resumeExisting: true }),
       task,
     });
     if (retryResearch) coordinator.resumeResearch({ source: "operator", action: "retry" });
@@ -2162,6 +2177,9 @@ async function driveCommand(
       coordinator,
     });
   } finally {
+    // The mirrored sink holds a descriptor for the whole drive; release it
+    // whether the loop finished, threw, or was interrupted.
+    ledgerSink.close();
     renderer.close();
   }
 }
@@ -2229,6 +2247,11 @@ async function consoleCommand(
     backgroundHostLauncher: createBackgroundHostLauncher(backgroundTargetDir, backgroundOwnerId),
     ...(Object.keys(configuredLimits).length === 0 ? {} : { backgroundRuns: configuredLimits }),
   });
+  // Same line `role` and `drive` print: whichever front an operator reaches
+  // for, stderr names the run and the file its evidence is in.
+  process.stderr.write(
+    `ad-coder: runId=${session.runId} ledger=${session.ledgerPath ?? "custom"}\n`,
+  );
   const costAnomaly = (session as { costAnomalyDetector?: CostAnomalyDetector })
     .costAnomalyDetector;
   const result = await runConsole({

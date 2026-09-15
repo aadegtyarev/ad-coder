@@ -3,6 +3,7 @@
   "role": "pipeline",
   "complexity": "complex",
   "mode": "automatic-pipeline",
+  "measuredRoles": ["coder"],
   "fixture": "complex-reservation",
   "scorer": "complex-reservation.ts",
   "prompt": "Make Pool.reserve linearizable under concurrent calls without changing its public API. Capacity must never become negative, failed reservations must not consume capacity, invalid amounts must fail loudly, and thrown internal work must not strand future calls. Add deterministic concurrency regression tests.",

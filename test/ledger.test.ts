@@ -480,3 +480,67 @@ function addUsage(a: UsageAmounts, b: UsageAmounts): UsageAmounts {
     },
   };
 }
+
+test("a mirrored memory sink keeps the records AND writes the durable file", () => {
+  const dir = scratchDir("mirror");
+  const file = path.join(dir, "run.jsonl");
+  const sink = new MemoryLedgerSink(new FileLedgerSink(file));
+  const ledger = new Ledger({ runId: "run-1", role: "coder", step: "implement", sink });
+  const off = ledger.attach(fakeHooks().hooks);
+  off();
+  sink.write({
+    ts: 1,
+    runId: "run-1",
+    lane: "main",
+    role: "coder",
+    step: "implement",
+    provider: "anthropic",
+    model: "m",
+    stopReason: "stop",
+    usage: {
+      input: 1,
+      output: 1,
+      reasoning: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 2,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.25 },
+    },
+  } as LedgerRecord);
+  sink.close();
+
+  expect(sink.records()).toHaveLength(1);
+  const lines = fs.readFileSync(file, "utf8").trim().split("\n");
+  expect(lines).toHaveLength(1);
+  expect((JSON.parse(lines[0] as string) as LedgerRecord).step).toBe("implement");
+});
+
+test("a failing mirror does not cost the caller the records it reads back", () => {
+  const failing: LedgerSink = {
+    write() {
+      throw new Error("disk full");
+    },
+  };
+  const sink = new MemoryLedgerSink(failing);
+  const record = {
+    ts: 1,
+    runId: "run-1",
+    lane: "main",
+    role: "coder",
+    step: "implement",
+    provider: "anthropic",
+    model: "m",
+    stopReason: "stop",
+    usage: {
+      input: 1,
+      output: 1,
+      reasoning: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 2,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.25 },
+    },
+  } as LedgerRecord;
+  expect(() => sink.write(record)).toThrow(/disk full/);
+  expect(sink.records()).toHaveLength(1);
+});
