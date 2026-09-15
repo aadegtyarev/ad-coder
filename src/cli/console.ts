@@ -1,5 +1,6 @@
 import {
   ConsoleControlError,
+  type CostAnomalyControl,
   DEFAULT_CONSOLE_CONTROL_PAGE_SIZE,
   executeConsoleControl,
   findConsoleCommand,
@@ -10,6 +11,7 @@ import type {
   ConversationTurnResult,
 } from "../conversation/conversation";
 import { TurnInterruptedError } from "../conversation/conversation";
+import { CostAnomalyBlockedError } from "../economics/cost-anomaly";
 import type { ToolActivityConfig } from "../observability/tool-activity";
 import type { BackgroundRunManager, BackgroundRunNotice } from "../orchestration/background-runs";
 import { EmptyTurnError, ProviderRejectionError } from "../runner/errors";
@@ -58,6 +60,13 @@ export interface RunConsoleParams {
   interrupted?: () => boolean;
   /** Exact operator command shown after an empty provider turn. */
   authenticationCommand?: string;
+  /**
+   * The project's cost-anomaly detector. The SAME object the run uses, so a
+   * block raised mid-turn is liftable by `/cost release` without leaving the
+   * console -- rendering differs between fronts, the decision does not
+   * (`docs/contracts/cli.md`).
+   */
+  costAnomaly?: CostAnomalyControl;
 }
 
 export interface ConsoleRunResult {
@@ -297,6 +306,23 @@ function renderControl(
       nextCursor: safeNoticeInteger(result.nextCursor),
       gap: result.gap === true,
     };
+  else if (result.type === "cost_status")
+    safe = {
+      type: result.type,
+      // Numbers and scope names only -- exactly what the durable block holds.
+      blocked: result.blocked.map((scope) => ({
+        provider: sanitizeTerminalText(scope.provider),
+        model: sanitizeTerminalText(scope.model),
+        block: { ...scope.block },
+      })),
+    };
+  else if (result.type === "cost_release")
+    safe = {
+      type: result.type,
+      provider: sanitizeTerminalText(result.provider),
+      model: sanitizeTerminalText(result.model),
+      released: { ...result.released },
+    };
   else {
     const projected = status(result.type === "background_result" ? result.result : result.run);
     safe = {
@@ -321,6 +347,14 @@ function renderControl(
       .join("\n")}\n`;
   }
   if (result.type === "console_control") return `ad-coder: current turn ${result.status}\n`;
+  if (result.type === "cost_status")
+    return `${
+      result.blocked
+        .map((scope) => renderCostBlock(scope.provider, scope.model, scope.block))
+        .join("\n") || "ad-coder: no model is blocked for billing above its declared price"
+    }\n`;
+  if (result.type === "cost_release")
+    return `ad-coder: accepted ${formatCostRatio(result.released.ratio)} as the price of ${result.provider}/${result.model}; this model runs again\n`;
   if (result.type === "background_start") {
     const run = safe.run as Record<string, unknown>;
     return `ad-coder: background ${run.runId} ${run.lifecycle}\n`;
@@ -346,6 +380,38 @@ function renderControl(
       ? `${run.approved === undefined ? "" : ` approved ${run.approved}`}${run.rounds === undefined ? "" : ` rounds ${run.rounds}`}${run.verdict === undefined ? "" : ` verdict ${run.verdict}`}`
       : "";
   return `ad-coder: background ${run.runId} ${run.lifecycle} steps ${(run.metrics as Record<string, unknown>).steps} cost ${(run.metrics as Record<string, unknown>).totalCost}${terminal}\n`;
+}
+
+/**
+ * A price block as an operator reads it: the two amounts, the overcharge as a
+ * percentage, how many responses confirmed it, and the exact console command
+ * that accepts the new price. Every number comes from the durable block --
+ * scope names and amounts only, never a prompt or a provider body
+ * (`docs/contracts/errors.md`).
+ */
+function renderCostBlock(
+  provider: string,
+  model: string,
+  block: { chargedUsd: number; expectedUsd: number; ratio: number; confirmingObservations: number },
+): string {
+  const scope = `${sanitizeTerminalText(provider)}/${sanitizeTerminalText(model)}`;
+  return (
+    `ad-coder: ${scope} is blocked — declared ${formatCostUsd(block.expectedUsd)}, ` +
+    `billed ${formatCostUsd(block.chargedUsd)} (${formatCostRatio(block.ratio)}), ` +
+    `confirmed by ${block.confirmingObservations} responses; ` +
+    `accept the new price with: /cost release ${scope}`
+  );
+}
+
+/** A single response costs fractions of a cent, so a two-decimal dollar amount reads as "$0.00". */
+function formatCostUsd(amount: number): string {
+  return `$${amount.toPrecision(3)}`;
+}
+
+/** The ratio as the overcharge an operator compares against an invoice: 1.62 reads as "+62%". */
+function formatCostRatio(ratio: number): string {
+  const percent = (ratio - 1) * 100;
+  return `${percent >= 0 ? "+" : ""}${percent.toFixed(0)}%`;
 }
 
 function renderFormatted(result: ConversationTurnResult): string {
@@ -528,6 +594,7 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
       ).backgroundRuns;
       const managed = executeConsoleControl(line.trim(), {
         ...(backgroundRuns === undefined ? {} : { backgroundRuns }),
+        ...(params.costAnomaly === undefined ? {} : { costAnomaly: params.costAnomaly }),
         interrupt: params.session.interrupt ?? (async () => false),
         maxPageSize: controlPageSize,
       });
@@ -628,6 +695,34 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
           ),
         );
         reason = "session_limit";
+      } else if (error instanceof CostAnomalyBlockedError) {
+        // The operator decides, in this session: the block names both amounts,
+        // the overcharge, and the `/cost release` that accepts the new price,
+        // and input stays open so they can type it. Collapsing this into the
+        // generic turn failure left the console advising a retry that could
+        // only fail again (`docs/contracts/errors.md`).
+        const scope = `${error.provider}/${error.model}`;
+        params.error.write(
+          renderFailure(
+            {
+              code: error.code,
+              message:
+                `${scope} billed ${formatCostUsd(error.block.chargedUsd)} against ` +
+                `${formatCostUsd(error.block.expectedUsd)} declared ` +
+                `(${formatCostRatio(error.block.ratio)}, confirmed by ` +
+                `${error.block.confirmingObservations} responses); this model is blocked`,
+              action: `accept the new price with: /cost release ${scope} — or route this role to another model`,
+              // Retrying the same prompt on a blocked model cannot succeed;
+              // the operator has to decide first.
+              retryable: false,
+            },
+            mode,
+          ),
+        );
+        // The session is intact and the block is liftable from this prompt, so
+        // the console keeps reading input rather than tearing down.
+        if (mode === "formatted") params.output.write("ad-coder> ");
+        return;
       } else if (error instanceof ProviderRejectionError) {
         // Never offer the authentication command here: the provider answered.
         params.error.write(

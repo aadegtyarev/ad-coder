@@ -6,6 +6,33 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.10.5] - 2026-09-15
+
+### Added
+- `/cost` and `/cost release <provider>/<model>` in the console: list the models
+  this project has blocked for billing above their declared price, and accept a
+  model's new price without leaving the session. The console reaches the SAME
+  detector the run refuses on -- it is handed the session's own object, not a
+  second copy over the same file -- so a release lifts the block that is actually
+  standing.
+
+### Fixed
+- A price block mid-turn no longer renders as the generic "console turn failed;
+  retry the prompt". The console now has a typed `CostAnomalyBlockedError` branch
+  naming the declared amount, the billed amount, the overcharge, how many
+  responses confirmed it, and the `/cost release` that accepts it; the prompt
+  comes back so the operator can type it. The old text advised a retry that could
+  only fail again.
+- `ad-coder cost release ...` failed with `targetDir must be a non-empty path`
+  when run without `--target-dir`. It now defaults to the current directory, the
+  same as `console`, so the refusal's own advice is followable.
+
+### Changed
+- Two contract lines: a front must branch on EVERY typed error its surface can
+  raise (`docs/contracts/errors.md`), and every front offers the same
+  capabilities, differing only in rendering, with the decision in shared headless
+  code (`docs/contracts/cli.md`).
+
 ## [0.10.4] - 2026-09-15
 
 ### Added
