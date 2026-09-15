@@ -1996,6 +1996,65 @@ test("parsePlanText recovers fenced and prefixed plans and names a truncated one
   expect((caught as OrchestrationError).message).toContain("truncated");
 });
 
+test("two different plans in one planner response are rejected, not silently resolved", () => {
+  // A planner that drafts and then corrects itself puts the REAL submission
+  // last. Taking the first candidate accepted the draft -- and a draft saying
+  // securitySurface "none" where the correction said "elevated" skipped the
+  // mandatory security phase with no error and no retry. Guessing which one was
+  // meant is not this parser's job; ambiguity is a rejection the planner can fix.
+  const draft = JSON.stringify(
+    governedPlan({ complexity: "trivial", securitySurface: "none", summary: "draft" }),
+  );
+  const final = JSON.stringify(
+    governedPlan({ complexity: "complex", securitySurface: "elevated", summary: "final" }),
+  );
+  let caught: unknown;
+  try {
+    parsePlanText(
+      `Let me draft this:\n\`\`\`json\n${draft}\n\`\`\`\n\nFinal answer:\n\`\`\`json\n${final}\n\`\`\``,
+      "run-id",
+    );
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught).toBeInstanceOf(OrchestrationError);
+  expect((caught as OrchestrationError).code).toBe("malformed_plan");
+  expect((caught as OrchestrationError).message).toContain("more than one distinct plan");
+
+  // The SAME plan reaching the parser twice -- the bare object and its own
+  // fenced copy -- is one submission, not two, and must still resolve.
+  const single = JSON.stringify(
+    governedPlan({ complexity: "medium", securitySurface: "none", summary: "one" }),
+  );
+  expect(parsePlanText(`\`\`\`json\n${single}\n\`\`\``, "run-id")?.complexity).toBe("medium");
+});
+
+test("a nested fragment never becomes the reported plan rejection", () => {
+  // Observed on a real run: a model emitted its tool call as pseudo-XML, the
+  // balanced-brace slice lifted out one `coverage` entry, and the operator was
+  // told "plan.complexity must be one of ..." -- a field the planner never got
+  // wrong. Prefer the candidate that actually carries `complexity`.
+  const fragment = JSON.stringify({
+    surfaceId: "core",
+    status: "covered",
+    contractIds: [],
+    evidence: [],
+    rationale: "r",
+  });
+  const real = JSON.stringify(
+    governedPlan({ complexity: "medium", securitySurface: "sideways", summary: "s" }),
+  );
+  let caught: unknown;
+  try {
+    parsePlanText(`\`\`\`json\n${fragment}\n\`\`\`\n\n\`\`\`json\n${real}\n\`\`\``, "run-id");
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught).toBeInstanceOf(OrchestrationError);
+  expect((caught as OrchestrationError).message).toContain("securitySurface");
+  expect((caught as OrchestrationError).message).not.toContain("complexity");
+});
+
 test("a fenced planner JSON fallback is accepted and validated before code", async () => {
   const fx = fixture();
   fx.faux.setResponses([

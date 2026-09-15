@@ -34,6 +34,19 @@ All notable changes to ad-coder are recorded here. The format follows
   message are fixed structure plus the validator's own wording; planner text
   never crosses the error boundary.
 
+  Recovery does not get to guess. Every candidate is parsed, not just the first
+  that validates: a planner that drafts a plan and then corrects itself emits
+  two, and the real submission is the last -- so returning the first accepted a
+  draft whose `securitySurface: "none"` overrode the correction's `"elevated"`
+  and skipped the mandatory security phase with no error and no retry. Two
+  DIFFERENT valid plans are now a rejection telling the planner to submit
+  exactly one, which the retry budget can still fix; the same plan reaching the
+  parser twice (a bare object and its own fenced copy) is one submission and
+  still resolves. When every candidate fails, the one carrying `complexity` is
+  reported rather than a nested `coverage` fragment the brace scan happened to
+  lift out -- that fragment fails on whichever field it lacks first, and naming
+  it sent the operator after a field the planner never got wrong.
+
 - The planner instruction no longer forbids a shape the parser accepts. It
   demanded "no Markdown or prose", asking models to suppress the fenced form
   they emit by default; it now states that a complete object -- alone or inside

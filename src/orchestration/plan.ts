@@ -338,7 +338,8 @@ function planTextCandidates(value: string): string[] {
  * - `undefined`: the response contained nothing plan-shaped (no `{` anywhere).
  *   Only this is "the planner submitted nothing".
  * - throws `malformed_plan`: a plan-shaped candidate WAS present and every one
- *   of them failed. Truncated JSON lands here, not in `undefined`.
+ *   of them failed. Truncated JSON lands here, not in `undefined`. So does an
+ *   AMBIGUOUS response carrying two different valid plans -- see below.
  *
  * WHY THE THREE-WAY SPLIT. This used to be a bare-object gate returning
  * `undefined` for anything else, which put a fenced plan, a prose-prefixed plan
@@ -370,24 +371,62 @@ export function parsePlanText(
       );
     return undefined;
   }
-  let firstError: OrchestrationError | undefined;
+  // Parse EVERY candidate rather than returning on the first that validates.
+  //
+  // WHY. A planner that drafts a plan and then corrects itself emits two
+  // plan-shaped objects, and the real submission is the LAST one. Returning the
+  // first silently accepted the draft -- which, when the draft said
+  // `securitySurface: "none"` and the correction said `"elevated"`, skipped the
+  // mandatory security phase with no error and no retry. That is a governance
+  // bypass, and it is worse than the all-or-nothing gate this recovery replaced.
+  // Guessing which of two submissions the planner meant is not this parser's
+  // call to make, so two DIFFERENT valid plans are a rejection: the retry loop
+  // then tells the planner to submit exactly one, which is recoverable.
+  // Byte-different candidates that decode to the SAME plan (the bare object and
+  // its own fenced copy) are one submission, not two, so they are compared
+  // after parsing rather than as text.
+  const plans: Plan[] = [];
+  const errors: { error: OrchestrationError; planShaped: boolean }[] = [];
   for (const candidate of candidates) {
+    let decoded: unknown;
     try {
-      return parsePlan(JSON.parse(candidate), detail, limits);
+      decoded = JSON.parse(candidate);
+    } catch {
+      errors.push({
+        error: new OrchestrationError("malformed_plan", detail, "planner JSON handoff is invalid"),
+        planShaped: false,
+      });
+      continue;
+    }
+    try {
+      plans.push(parsePlan(decoded, detail, limits));
     } catch (error) {
-      if (error instanceof OrchestrationError) {
-        firstError ??= error;
-        continue;
-      }
-      firstError ??= new OrchestrationError(
-        "malformed_plan",
-        detail,
-        "planner JSON handoff is invalid",
-      );
+      if (!(error instanceof OrchestrationError)) throw error;
+      // A nested fragment -- one `coverage` entry lifted out of a larger object
+      // -- fails on whichever field it happens to lack first, and reporting THAT
+      // sends the operator after a field the planner never got wrong. An object
+      // carrying `complexity` is the one that was meant to be the plan.
+      errors.push({
+        error,
+        planShaped:
+          typeof decoded === "object" && decoded !== null && Object.hasOwn(decoded, "complexity"),
+      });
     }
   }
+  const distinct = plans.filter(
+    (plan, index) =>
+      plans.findIndex((other) => JSON.stringify(other) === JSON.stringify(plan)) === index,
+  );
+  if (distinct.length > 1)
+    throw new OrchestrationError(
+      "malformed_plan",
+      detail,
+      "planner text contains more than one distinct plan; submit exactly one",
+    );
+  if (distinct[0] !== undefined) return distinct[0];
+  const reported = errors.find((entry) => entry.planShaped) ?? errors[0];
   throw (
-    firstError ??
+    reported?.error ??
     new OrchestrationError("malformed_plan", detail, "planner JSON handoff is invalid")
   );
 }
