@@ -95,6 +95,13 @@ delegated role from another. Cost is attributed per `(role, model)` pair from
 ledger-record position, so a multi-role run reports every model's share rather
 than crediting whoever took the first turn.
 
+A task's `complexity` is passed to the run as `--default-complexity`, so the
+cell being measured is the cell the task declares. Until 0.13.3 it was not, and
+every task routed at the built-in `medium`: a trivial task's measurement was
+labelled `trivial` while the work had been done by whatever model the medium cell
+named. A caller who wants a task run against a neighbouring cell still can, by
+passing the flag after `--`, since the later occurrence wins.
+
 A task's `role` is its dispatch label, not necessarily a ledger role: a pipeline
 task dispatches as `pipeline`, while its rows are stamped with the workers that
 took the turns. Such a task declares `measuredRoles` — the ledger roles whose
