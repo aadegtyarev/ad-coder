@@ -45,6 +45,14 @@ export interface RunConsoleParams {
    * sequences are parsed deterministically; raise this for slow remote TTYs.
    */
   escapeSequenceTimeoutMs?: number;
+  /**
+   * Time shutdown gives an in-flight console control to finish. A control calls
+   * out to a manager that can stall -- a host launcher that never spawns, a
+   * provider that ignores cancellation -- and shutdown must stay finite anyway,
+   * so the wait is bounded rather than unconditional. Zero abandons in-flight
+   * controls immediately.
+   */
+  controlDrainMs?: number;
   toolActivity?: Partial<ToolActivityConfig>;
   /** Process-local cooperative shutdown probe supplied by the CLI front. */
   interrupted?: () => boolean;
@@ -70,6 +78,15 @@ const INPUT_FAILED_FAILURE = {
   code: "input_failed",
   message: "console input failed",
   action: "restart the console; the input stream is no longer readable",
+  retryable: false,
+} as const;
+const CONTROL_DRAIN_TIMEOUT_FAILURE = {
+  code: "deadline_exceeded",
+  message: "a console control was still running when the console shut down",
+  // Shutdown is finite by contract, so the control is abandoned rather than
+  // waited on. Whatever it asked the manager to do may or may not have landed,
+  // and only the durable record can answer that.
+  action: "check for runs the abandoned control may have started with: ad-coder background list",
   retryable: false,
 } as const;
 const CLOSE_FAILED_FAILURE = {
@@ -111,6 +128,7 @@ function renderFailure(
   return `ad-coder: ${message}; ${action}\n`;
 }
 export const DEFAULT_CONSOLE_ESCAPE_SEQUENCE_TIMEOUT_MS = 1_000;
+export const DEFAULT_CONSOLE_CONTROL_DRAIN_MS = 2_000;
 
 interface TtyReadableStream extends NodeJS.ReadableStream {
   isTTY?: boolean;
@@ -255,6 +273,11 @@ function renderControl(
     };
   else if (result.type === "console_control")
     safe = { type: result.type, command: result.command, status: result.status };
+  else if (result.type === "background_start")
+    safe = {
+      type: result.type,
+      run: { runId: safeNoticeText(result.run.runId), lifecycle: result.run.lifecycle },
+    };
   else if (result.type === "background_list")
     safe = {
       type: result.type,
@@ -298,6 +321,10 @@ function renderControl(
       .join("\n")}\n`;
   }
   if (result.type === "console_control") return `ad-coder: current turn ${result.status}\n`;
+  if (result.type === "background_start") {
+    const run = safe.run as Record<string, unknown>;
+    return `ad-coder: background ${run.runId} ${run.lifecycle}\n`;
+  }
   if (result.type === "background_list")
     return `${(safe.runs as Record<string, unknown>[]).map((run) => `ad-coder: background ${run.runId} ${run.lifecycle} steps ${(run.metrics as Record<string, unknown>).steps} cost ${(run.metrics as Record<string, unknown>).totalCost}`).join("\n") || "ad-coder: 0 background runs"}\n`;
   if (result.type === "background_events") {
@@ -433,6 +460,7 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
   const controlPageSize = params.controlPageSize ?? DEFAULT_CONSOLE_CONTROL_PAGE_SIZE;
   const escapeSequenceTimeoutMs =
     params.escapeSequenceTimeoutMs ?? DEFAULT_CONSOLE_ESCAPE_SEQUENCE_TIMEOUT_MS;
+  const controlDrainMs = params.controlDrainMs ?? DEFAULT_CONSOLE_CONTROL_DRAIN_MS;
   if (!Number.isInteger(maxInputBytes) || maxInputBytes <= 0) {
     throw new RangeError("maxInputBytes must be a positive integer");
   }
@@ -442,14 +470,22 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
     throw new RangeError("controlPageSize must be a positive safe integer");
   if (!Number.isSafeInteger(escapeSequenceTimeoutMs) || escapeSequenceTimeoutMs < 1)
     throw new RangeError("escapeSequenceTimeoutMs must be a positive safe integer");
+  if (!Number.isSafeInteger(controlDrainMs) || controlDrainMs < 0)
+    throw new RangeError("controlDrainMs must be a non-negative safe integer");
 
   let reason: ConsoleExitReason = "eof";
   let completedTurns = 0;
   let lineBytes: number[] = [];
   let stopped = false;
   let lineQueue = Promise.resolve();
+  // Controls run outside the prompt lane but stay ordered among themselves:
+  // `/start` awaits a host launcher, so an unserialized lane would render a
+  // later `/list` before the `/start` that admitted the run it lists.
+  let controlQueue = Promise.resolve();
   let queuedPromptCount = 0;
   let exitPromptCount: number | undefined;
+  let queuedControlCount = 0;
+  let exitControlCount: number | undefined;
   const ttyInput = params.input as TtyReadableStream;
   const rawTty = ttyInput.isTTY === true && typeof ttyInput.setRawMode === "function";
   let rawModeEnabled = false;
@@ -462,24 +498,26 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
       params.error.write("ad-coder: current turn interrupt failed\n");
     });
   };
-  const handleLine = async (rawLine: string, promptNumber?: number): Promise<void> => {
-    if (
-      stopped &&
-      (promptNumber === undefined ||
-        exitPromptCount === undefined ||
-        promptNumber > exitPromptCount)
-    )
-      return;
+  const handleLine = async (
+    rawLine: string,
+    lane: { prompt?: number; control?: number } = {},
+  ): Promise<void> => {
+    // A line queued before `/exit` still runs; one queued after it does not.
+    // Prompts and controls are counted separately because they drain in two
+    // independent lanes.
+    if (stopped) {
+      const admitted =
+        (lane.prompt !== undefined &&
+          exitPromptCount !== undefined &&
+          lane.prompt <= exitPromptCount) ||
+        (lane.control !== undefined &&
+          exitControlCount !== undefined &&
+          lane.control <= exitControlCount);
+      if (!admitted) return;
+    }
     const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
     if (line.trim() === "") {
       if (mode === "formatted") params.output.write("ad-coder> ");
-      return;
-    }
-    if (findConsoleCommand(line.trim())?.frontAction === "exit") {
-      reason = "exit";
-      exitPromptCount = queuedPromptCount;
-      stopped = true;
-      interruptForeground();
       return;
     }
     try {
@@ -638,17 +676,52 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
       stopped = true;
     }
   };
+  /**
+   * Wait for in-flight controls, but never longer than `controlDrainMs`. A
+   * control awaits a manager that can stall indefinitely -- a host launcher that
+   * never spawns, a provider that ignores cancellation -- and shutdown must stay
+   * finite regardless, or `/exit` and Ctrl-C leave the session unclosed and the
+   * terminal in raw mode (docs/contracts/ui-responsiveness.md). Zero abandons an
+   * in-flight control immediately.
+   */
+  const drainControls = async (): Promise<void> => {
+    // Zero still resolves for an already-settled lane: a settled promise wins the
+    // race in a microtask, ahead of any timer. So zero abandons work in flight
+    // without penalising a console that simply had none.
+    const drained = await Promise.race([
+      controlQueue.then(() => true),
+      new Promise<false>((resolve) => {
+        const timer = setTimeout(() => resolve(false), controlDrainMs);
+        void controlQueue.then(() => clearTimeout(timer));
+      }),
+    ]);
+    // Abandoning work silently would read as a clean shutdown; say so instead.
+    if (!drained) params.error.write(renderFailure(CONTROL_DRAIN_TIMEOUT_FAILURE, mode));
+  };
+
   const queueLine = (): void => {
     const line = Buffer.from(lineBytes).toString("utf8");
     lineBytes = [];
     // Controls own no model-turn state, so dispatch them outside the serialized
     // prompt lane. This keeps list/status/cancel and exit available while a turn waits.
     if (line.trim().startsWith("/")) {
-      void handleLine(line);
+      // Exit takes effect when it is READ, not when the control lane reaches
+      // it: the counts it freezes are what separates already-queued work from
+      // input typed after the operator asked to leave.
+      if (findConsoleCommand(line.trim())?.frontAction === "exit") {
+        reason = "exit";
+        exitPromptCount = queuedPromptCount;
+        exitControlCount = queuedControlCount;
+        stopped = true;
+        interruptForeground();
+        return;
+      }
+      const controlNumber = ++queuedControlCount;
+      controlQueue = controlQueue.then(() => handleLine(line, { control: controlNumber }));
       return;
     }
     const promptNumber = ++queuedPromptCount;
-    lineQueue = lineQueue.then(() => handleLine(line, promptNumber));
+    lineQueue = lineQueue.then(() => handleLine(line, { prompt: promptNumber }));
   };
   const requestEscapeInterrupt = (): void => {
     escapeTimer = undefined;
@@ -750,6 +823,7 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
       if (stopped) break;
     }
     if (!stopped && lineBytes.length > 0) queueLine();
+    await drainControls();
     await lineQueue;
   } catch {
     params.error.write(renderFailure(INPUT_FAILED_FAILURE, mode));

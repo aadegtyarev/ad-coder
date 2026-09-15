@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -1563,6 +1564,18 @@ function backgroundLimits(flags: Record<string, string | undefined>): Partial<Ba
   };
 }
 
+/**
+ * A stable owner scope for one user + one target directory, so a console and a
+ * later `ad-coder background status` in the same project see the same runs.
+ * The directory is hashed rather than embedded: the manager's owner id is a
+ * bounded opaque token (`^[A-Za-z0-9._:-]{1,128}$`), and a raw path both breaks
+ * that shape on the first slash and puts a filesystem path into durable state.
+ */
+function defaultBackgroundOwnerId(targetDir: string): string {
+  const digest = createHash("sha256").update(targetDir).digest("base64url").slice(0, 32);
+  return `local.${process.getuid?.() ?? "user"}.${digest}`;
+}
+
 /** The CLI owns process creation; orchestration only receives this provider. */
 function createBackgroundHostLauncher(targetDir: string, ownerId: string): BackgroundHostLauncher {
   return async ({ runId, task, limits }) => {
@@ -1613,7 +1626,7 @@ async function backgroundCommand(
   const targetArg = flags["--target-dir"];
   if (targetArg === undefined) fail("--target-dir is required for the background command");
   const targetDir = resolveTargetDir(targetArg);
-  const ownerId = flags["--owner-id"] ?? `${process.getuid?.() ?? "user"}:${targetDir}`;
+  const ownerId = flags["--owner-id"] ?? defaultBackgroundOwnerId(targetDir);
   const configuredLimits = backgroundLimits(flags);
   const workerLimits = (() => {
     const encoded = process.env.AD_CODER_BACKGROUND_LIMITS;
@@ -2159,9 +2172,12 @@ async function consoleCommand(
   const maxInputBytes = parseMaxInputBytesFlag(flags["--max-input-bytes"]);
   const heartbeatMs =
     parseNonNegativeIntegerFlag("--heartbeat-ms", flags["--heartbeat-ms"]) ?? DEFAULT_HEARTBEAT_MS;
+  // Parsed once: the console's own page default and the manager it builds must
+  // read the same limits, not two independent parses of the same flags.
+  const configuredLimits = backgroundLimits(flags);
   const controlPageSize =
     parsePositiveIntegerFlag("--console-page-size", flags["--console-page-size"]) ??
-    backgroundLimits(flags).maxPageSize;
+    configuredLimits.maxPageSize;
   const escapeSequenceTimeoutMs = parsePositiveIntegerFlag(
     "--escape-sequence-timeout-ms",
     flags["--escape-sequence-timeout-ms"],
@@ -2192,12 +2208,22 @@ async function consoleCommand(
     authenticationProvider === "openrouter" || authenticationProvider === "openai-codex"
       ? `ad-coder auth login --provider ${authenticationProvider} --target-dir ${shellArgument(path.resolve(targetDirArg))}`
       : undefined;
+  // Without a launcher the console can admit a background run but never start
+  // one: `start_pipeline` and `/start` both fail `launch_failed`. The owner id
+  // is derived from the target directory rather than generated, so runs a
+  // console starts stay addressable from the next console and from
+  // `ad-coder background status` in the same project.
+  const backgroundTargetDir = resolveTargetDir(targetDirArg);
+  const backgroundOwnerId = flags["--owner-id"] ?? defaultBackgroundOwnerId(backgroundTargetDir);
   const session = await startOrchestrator({
     ...configOptions,
     sessionLimits,
     workflowModules: [BUILT_IN_PIPELINE_WORKFLOW],
     enabledWorkflows,
     selectedSkills,
+    backgroundOwnerId,
+    backgroundHostLauncher: createBackgroundHostLauncher(backgroundTargetDir, backgroundOwnerId),
+    ...(Object.keys(configuredLimits).length === 0 ? {} : { backgroundRuns: configuredLimits }),
   });
   const result = await runConsole({
     session,
@@ -2537,6 +2563,58 @@ const PIPELINE_OPTIONS: CommandDefinition["options"] = [
   },
 ];
 
+/**
+ * Owner scope and admission limits for background pipeline runs. Shared by
+ * `background` and `console`: both construct a `BackgroundRunManager`, so a
+ * flag one accepts and the other silently ignores would be exactly the drift
+ * the single command registry exists to prevent (`docs/contracts/cli.md`).
+ */
+const BACKGROUND_RUN_OPTIONS: CommandDefinition["options"] = [
+  {
+    name: "--owner-id",
+    value: "<id>",
+    description: "Stable private owner scope for reconnect; defaults to this user and target.",
+  },
+  {
+    name: "--same-target-policy",
+    value: "<allow|reject|serialize>",
+    description: "Admission policy for concurrent target runs.",
+  },
+  {
+    name: "--background-max-active",
+    value: "<n>",
+    description: "Maximum active runs in this owner scope.",
+  },
+  {
+    name: "--background-max-process-active",
+    value: "<n>",
+    description: "Maximum active runs in this process.",
+  },
+  {
+    name: "--background-max-task-bytes",
+    value: "<n>",
+    description: "Maximum UTF-8 task size.",
+  },
+  {
+    name: "--background-max-events",
+    value: "<n>",
+    description: "Maximum retained events per run.",
+  },
+  { name: "--background-max-page-size", value: "<n>", description: "Maximum events per page." },
+  {
+    name: "--background-max-page-bytes",
+    value: "<n>",
+    description: "Maximum serialized page size.",
+  },
+  { name: "--background-max-run-ms", value: "<n>", description: "Run deadline; 0 disables." },
+  { name: "--lease-ms", value: "<n>", description: "Worker lease heartbeat ceiling." },
+  {
+    name: "--background-close-drain-ms",
+    value: "<n>",
+    description: "Shutdown drain deadline.",
+  },
+];
+
 const COMMANDS: readonly CommandDefinition[] = [
   {
     name: "about",
@@ -2763,49 +2841,7 @@ const COMMANDS: readonly CommandDefinition[] = [
       { name: "--id", value: "<id>", description: "Background run identifier." },
       { name: "--after", value: "<sequence>", description: "Event cursor (exclusive)." },
       { name: "--limit", value: "<n>", description: "Maximum events to return." },
-      {
-        name: "--owner-id",
-        value: "<id>",
-        description: "Stable private owner scope for reconnect.",
-      },
-      {
-        name: "--same-target-policy",
-        value: "<allow|reject|serialize>",
-        description: "Admission policy for concurrent target runs.",
-      },
-      {
-        name: "--background-max-active",
-        value: "<n>",
-        description: "Maximum active runs in this owner scope.",
-      },
-      {
-        name: "--background-max-process-active",
-        value: "<n>",
-        description: "Maximum active runs in this process.",
-      },
-      {
-        name: "--background-max-task-bytes",
-        value: "<n>",
-        description: "Maximum UTF-8 task size.",
-      },
-      {
-        name: "--background-max-events",
-        value: "<n>",
-        description: "Maximum retained events per run.",
-      },
-      { name: "--background-max-page-size", value: "<n>", description: "Maximum events per page." },
-      {
-        name: "--background-max-page-bytes",
-        value: "<n>",
-        description: "Maximum serialized page size.",
-      },
-      { name: "--background-max-run-ms", value: "<n>", description: "Run deadline; 0 disables." },
-      { name: "--lease-ms", value: "<n>", description: "Worker lease heartbeat ceiling." },
-      {
-        name: "--background-close-drain-ms",
-        value: "<n>",
-        description: "Shutdown drain deadline.",
-      },
+      ...BACKGROUND_RUN_OPTIONS,
       { name: "--json", description: "Emit one JSON result (default)." },
     ],
     run: ({ positionals, flags }) => backgroundCommand(positionals, flags),
@@ -2957,6 +2993,7 @@ const COMMANDS: readonly CommandDefinition[] = [
         value: "<n>",
         description: "Maximum background records shown by each console-local command.",
       },
+      ...BACKGROUND_RUN_OPTIONS,
       {
         name: "--escape-sequence-timeout-ms",
         value: "<n>",

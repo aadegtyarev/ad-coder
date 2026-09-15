@@ -75,6 +75,28 @@ test("background start propagates an explicit owner to the detached worker", asy
   );
 });
 
+test("the default background owner is stable across processes for one target", async () => {
+  // The default owner used to embed the target path, which the manager rejects
+  // (`^[A-Za-z0-9._:-]{1,128}$`), so every ownerless background command failed
+  // invalid_request before it could reach a record.
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-default-owner-"));
+  const started = runCli([
+    "background",
+    "start",
+    "ownerless regression task",
+    "--target-dir",
+    target,
+  ]);
+  expect(started.code).toBe(0);
+  const runId = JSON.parse(started.stdout).runId as string;
+
+  // A separate process derives the same owner from the same target, so the
+  // record admitted above is addressable rather than foreign.
+  const status = runCli(["background", "status", "--target-dir", target, "--id", runId]);
+  expect(status.code).toBe(0);
+  expect(JSON.parse(status.stdout).runId).toBe(runId);
+});
+
 test("target dotenv cannot supply provider credentials", () => {
   const target = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-target-env-"));
   fs.writeFileSync(path.join(target, ".env"), "DEEPSEEK_API_KEY=target-owned-value\n");
@@ -927,6 +949,11 @@ test("console help is registry-derived and invalid input limits fail before prov
     "--json",
     "--max-input-bytes <n>",
     "--console-page-size <n>",
+    // The console constructs a background run manager too, so its admission
+    // flags must be declared here rather than only on `background`.
+    "--owner-id <id>",
+    "--background-max-active <n>",
+    "--same-target-policy <allow|reject|serialize>",
     "--escape-sequence-timeout-ms <n>",
     "--max-session-turns <n>",
     "--max-session-cost-usd <amount>",

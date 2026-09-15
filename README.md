@@ -186,9 +186,11 @@ from, and marks the background commands as unavailable, naming
 
 In an interactive terminal, press `Escape` to interrupt only the current
 orchestrator turn. The conversation stays open and detached pipelines continue.
-Use `/list`, `/events <run-id>`, `/status <run-id>`, `/result <run-id>`, or
-`/cancel <run-id>` to manage detached work locally without a model request.
-Those five need `--workflows pipeline`; `/help`, `/interrupt`, and `/exit` are
+Use `/start <task>`, `/list`, `/events <run-id>`, `/status <run-id>`,
+`/result <run-id>`, or `/cancel <run-id>` to manage detached work locally
+without a model request. `/start` takes the rest of the line verbatim as the
+task and detaches the run, so the dialogue stays yours while it proceeds. Those
+six need `--workflows pipeline`; `/help`, `/interrupt`, and `/exit` are
 always available. `/interrupt` provides the same turn-only interruption for
 scripted terminals.
 

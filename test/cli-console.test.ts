@@ -1508,3 +1508,218 @@ test("a front command reaching control dispatch fails with an action the caller 
     expect(failure.retryable).toBe(false);
   }
 });
+
+test("/start admits a detached run and passes the whole line as one task", async () => {
+  const runId = "123e4567-e89b-12d3-a456-426614174000";
+  const tasks: string[] = [];
+  const session = fakeSession() as unknown as ConversationSession & {
+    inputs: string[];
+    backgroundRuns: BackgroundRunManager;
+  };
+  session.backgroundRuns = {
+    startDetached: async (task: string) => {
+      tasks.push(task);
+      return { runId, lifecycle: "requested" as const };
+    },
+  } as unknown as BackgroundRunManager;
+  const output = new Capture();
+  await runConsole({
+    session,
+    input: Readable.from("/start add a regression test for the retry path\n/exit\n"),
+    output,
+    error: new Capture(),
+    mode: "json",
+  });
+
+  // A task is a sentence: splitting on whitespace would truncate it to "add".
+  expect(tasks).toEqual(["add a regression test for the retry path"]);
+  // Starting a run is console-local; it must not consume a model turn.
+  expect(session.inputs).toEqual([]);
+  const record = JSON.parse(output.text().trim()) as {
+    type: string;
+    run: { runId: string; lifecycle: string };
+  };
+  expect(record).toEqual({ type: "background_start", run: { runId, lifecycle: "requested" } });
+});
+
+test("shutdown stays finite when a control never settles", async () => {
+  // docs/contracts/ui-responsiveness.md: shutdown is finite and terminal modes
+  // are restored on EVERY exit path. A host launcher that never spawns must not
+  // be able to hold the console open.
+  const session = fakeSession() as unknown as ConversationSession & {
+    closes: number;
+    backgroundRuns: BackgroundRunManager;
+  };
+  const launching = deferred();
+  session.backgroundRuns = {
+    startDetached: () => {
+      launching.resolve();
+      return new Promise<never>(() => undefined);
+    },
+  } as unknown as BackgroundRunManager;
+  const input = rawInput();
+  const error = new Capture();
+  const running = runConsole({
+    session,
+    input,
+    output: new Capture(),
+    error,
+    mode: "json",
+    controlDrainMs: 20,
+  });
+  input.write("/start this never launches\r");
+  // Shut down only once the launch is genuinely in flight. A control still
+  // queued when shutdown begins is dropped rather than drained, which would
+  // make this assert nothing.
+  await launching.promise;
+  // Ctrl-C, not /exit: the stuck control must not block the harshest exit path.
+  input.write("\u0003");
+  input.end();
+
+  const result = await Promise.race([
+    running,
+    new Promise<"hung">((resolve) => setTimeout(() => resolve("hung"), 2_000)),
+  ]);
+  expect(result).not.toBe("hung");
+  expect(result).toMatchObject({ reason: "exit" });
+  // The abandoned control is reported, not swallowed into a clean exit.
+  const record = JSON.parse(error.text().trim()) as { code: string; retryable: boolean };
+  expect(record.code).toBe("deadline_exceeded");
+  expect(record.retryable).toBe(false);
+  // The session still closes and the terminal still leaves raw mode.
+  expect(session.closes).toBe(1);
+  expect(input.isRaw).toBe(false);
+});
+
+test("controls render in the order they were typed even when one of them awaits", async () => {
+  const runId = "123e4567-e89b-12d3-a456-426614174000";
+  const started: { runId: string; lifecycle: "requested" }[] = [];
+  const session = fakeSession() as unknown as ConversationSession & {
+    inputs: string[];
+    backgroundRuns: BackgroundRunManager;
+  };
+  session.backgroundRuns = {
+    startDetached: async () => {
+      // A real launcher spawns a host process; the console must not render a
+      // later control before this settles.
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      const run = { runId, lifecycle: "requested" as const };
+      started.push(run);
+      return run;
+    },
+    list: () =>
+      started.map(({ runId: id, lifecycle }) => ({
+        runId: id,
+        lifecycle,
+        metrics: { steps: 0, totalCost: 0 },
+      })),
+  } as unknown as BackgroundRunManager;
+  const output = new Capture();
+  await runConsole({
+    session,
+    input: Readable.from("/start ship it\n/list\n/exit\n"),
+    output,
+    error: new Capture(),
+    mode: "json",
+  });
+
+  const records = output
+    .text()
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as { type: string; runs?: unknown[] });
+  expect(records.map(({ type }) => type)).toEqual(["background_start", "background_list"]);
+  // The list is taken after the start, so it sees the run the operator just asked for.
+  expect(records[1]?.runs).toMatchObject([{ runId, lifecycle: "requested" }]);
+});
+
+test("/start without a task names the missing argument instead of starting a run", async () => {
+  let started = 0;
+  const session = fakeSession() as unknown as ConversationSession & {
+    backgroundRuns: BackgroundRunManager;
+  };
+  session.backgroundRuns = {
+    startDetached: async () => {
+      started += 1;
+      return { runId: "123e4567-e89b-12d3-a456-426614174000", lifecycle: "requested" as const };
+    },
+  } as unknown as BackgroundRunManager;
+  const error = new Capture();
+  await runConsole({
+    session,
+    input: Readable.from("/start\n/exit\n"),
+    output: new Capture(),
+    error,
+    mode: "json",
+  });
+
+  expect(started).toBe(0);
+  const record = JSON.parse(error.text().trim()) as {
+    code: string;
+    command: string;
+    action: string;
+    retryable: boolean;
+  };
+  expect(record.code).toBe("invalid_command");
+  expect(record.command).toBe("/start");
+  expect(record.action).toContain("/start <task>");
+  expect(record.retryable).toBe(true);
+});
+
+test("a failed detached launch is retryable and points at the failed record", async () => {
+  const session = fakeSession() as unknown as ConversationSession & {
+    backgroundRuns: BackgroundRunManager;
+  };
+  session.backgroundRuns = {
+    startDetached: async () => {
+      throw new Error("launch_failed");
+    },
+  } as unknown as BackgroundRunManager;
+  const error = new Capture();
+  await runConsole({
+    session,
+    input: Readable.from("/start ship it\n/exit\n"),
+    output: new Capture(),
+    error,
+    mode: "json",
+  });
+
+  const record = JSON.parse(error.text().trim()) as {
+    code: string;
+    command: string;
+    action: string;
+    retryable: boolean;
+  };
+  expect(record.code).toBe("launch_failed");
+  expect(record.command).toBe("/start");
+  expect(record.action).toContain("/list");
+  expect(record.retryable).toBe(true);
+});
+
+test("a refused admission reports the limit rather than an opaque rejection", async () => {
+  const session = fakeSession() as unknown as ConversationSession & {
+    backgroundRuns: BackgroundRunManager;
+  };
+  session.backgroundRuns = {
+    startDetached: async () => {
+      throw new Error("resource_limit");
+    },
+  } as unknown as BackgroundRunManager;
+  const error = new Capture();
+  await runConsole({
+    session,
+    input: Readable.from("/start ship it\n/exit\n"),
+    output: new Capture(),
+    error,
+    mode: "json",
+  });
+
+  const record = JSON.parse(error.text().trim()) as {
+    code: string;
+    action: string;
+    retryable: boolean;
+  };
+  expect(record.code).toBe("resource_limit");
+  expect(record.action).toContain("/cancel");
+  expect(record.retryable).toBe(true);
+});
