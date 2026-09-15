@@ -551,8 +551,22 @@ else if (action === "smoke") {
     // worst run is what an operator actually lives with, and a task where every
     // model scores identically is a task that has stopped discriminating.
     const runs: CalibrationMeasurement[] = [];
-    for (let index = 0; index < repeat; index++)
-      runs.push(runTask(entry.task, entry.file, { ...options, quiet: true }));
+    // A run that never reached a scored answer -- a stage limit, a provider that
+    // refused -- is a fact about the cell, not a reason to lose the runs that
+    // did. The first repeat run to throw took four completed runs down with it,
+    // which is the same failure the scorers had: one bad run erasing the sample
+    // it belongs to. So each run is caught, counted, and the series continues.
+    const aborted: string[] = [];
+    for (let index = 0; index < repeat; index++) {
+      try {
+        runs.push(runTask(entry.task, entry.file, { ...options, quiet: true }));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        aborted.push(message.split("\n")[0] ?? message);
+      }
+    }
+    if (runs.length === 0)
+      throw new Error(`every run aborted: ${aborted[0] ?? "no reason recorded"}`);
     const qualities = runs.map((run) => run.quality);
     const costs = runs.map((run) => run.costUsd);
     const sum = (values: number[]) => values.reduce((total, value) => total + value, 0);
@@ -565,6 +579,11 @@ else if (action === "smoke") {
           complexity: entry.task.complexity,
           thinkingLevel: options.thinkingLevel,
           repeat,
+          scored: runs.length,
+          // Named rather than counted only: a stage limit and a provider refusal
+          // are different problems, and a repeat that hides which one happened
+          // is the summary telling an operator to go read the logs anyway.
+          ...(aborted.length > 0 && { aborted }),
           accepted: runs.filter((run) => run.accepted).length,
           quality: {
             worst: Math.min(...qualities),
