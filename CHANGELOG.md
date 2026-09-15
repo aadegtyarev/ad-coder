@@ -6,7 +6,7 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
-## [0.8.0] - 2026-09-15
+## [0.8.3] - 2026-09-15
 
 ### Added
 
@@ -40,6 +40,23 @@ All notable changes to ad-coder are recorded here. The format follows
   without a catalog number -- were judged identical and whichever was
   registered first answered for the other: a confident, specific, arbitrary
   attribution. The resolved window is now part of the comparison.
+## [0.8.1] - 2026-09-15
+
+### Changed
+
+- Recorded four measured provider-admission and usage-accounting defects in the
+  backlog. A provider whose API mandates a non-auth request header cannot be
+  admitted at all, because `ProviderConfig` has no place to declare one;
+  measured against OpenCode Zen, which rejects every completion without
+  `x-opencode-session` and surfaces through ad-coder only as an empty turn with
+  a zero-usage ledger record. `auth login` can persist an api key for exactly
+  one hardcoded provider id. A per-role model override silently resets the
+  selected inventory's provider destination. A provider that reports reasoning
+  tokens outside its output count aborts an already-completed, already-paid-for
+  role run over an accounting convention. The last of these now cites a
+  durable evidence record in `docs/calibration-evidence.jsonl` rather than
+  figures that lived only in a scratch ledger. Documentation only; no
+  behavior change.
 ## [0.7.0] - 2026-09-15
 
 ### Fixed
