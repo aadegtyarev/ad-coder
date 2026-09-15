@@ -12,12 +12,15 @@ All notable changes to ad-coder are recorded here. The format follows
 
 - A profile's `cacheRetention` now reaches the request. It was parsed,
   validated, and carried as far as `ResolvedSelection`, where it was dropped:
-  both role-construction sites in `resolve-config` hardcoded `"short"`, so a
-  declared `"long"` or `"none"` was silently inert and the config said one thing
-  while every request did another. On an Anthropic-shaped model that is the
-  difference between a 5-minute and a 1-hour cache TTL. A role whose profile
-  states nothing still gets `"short"`. `maxOutput` remains advisory with no sink
-  and is now documented as the only such field.
+  all three role-construction sites hardcoded `"short"` -- the two in
+  `resolve-config` and, separately, the conversational role built by
+  `startOrchestrator`, which read every neighbouring field off the resolved spec
+  but restated this one as a literal. A declared `"long"` or `"none"` was
+  silently inert, so the config said one thing while every request did another.
+  On an Anthropic-shaped model that is the difference between a 5-minute and a
+  1-hour cache TTL. A role whose profile states nothing still gets `"short"`.
+  `maxOutput` remains advisory with no sink and is now documented as the only
+  such field.
 
 ### Changed
 

@@ -36,8 +36,12 @@ export interface ModelConfig {
   name: string;
   modelId: string;
   /**
-   * Defaults to 200000 for a hand-declared model. A catalog-backed model
-   * inherits the catalog value, and an explicit number overrides it.
+   * Defaults to 200000, the one operating ceiling every routed model shares.
+   * A catalog-backed model inherits the catalog value CLAMPED to that ceiling,
+   * so a provider publishing 1M+ does not make the registry's real limit
+   * depend on which model a routing cell picked. An explicit number overrides
+   * both -- including a larger one, which is the operator stating a limit they
+   * actually want.
    */
   contextWindow?: number;
   /** Required unless the provider declares a `catalog` that supplies it. */

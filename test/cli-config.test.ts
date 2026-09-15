@@ -358,6 +358,11 @@ test("a profile cacheRetention reaches the role instead of being discarded", () 
   // A role the profile says nothing about keeps the default, so the wiring is
   // "honor what was stated", not "overwrite everything".
   expect(config.roles.reviewer.role.cacheRetention).toBe("short");
+  // The orchestrator has no cell of its own -- it selects through the coder's,
+  // so the declared value has to reach it too. Asserted separately because the
+  // orchestrator is built by a different code path than the routed roles, and
+  // that path is exactly where the value was dropped a second time.
+  expect(config.roles.orchestrator?.role.cacheRetention).toBe("long");
 });
 
 test("non-Codex provider retains generic profile defaults without a thinking level", () => {
