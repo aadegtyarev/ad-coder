@@ -299,8 +299,8 @@ test("provider rejection is attributed from a status and never carries a body", 
   // Structured status: the shape pi-agent-core's OperationError exposes.
   expect(providerRejectionStatusFrom({ status: 400 })).toBe(400);
   expect(providerRejectionStatusFrom({ statusCode: 422 })).toBe(422);
-  // The one message shape pi-ai composes: "<status>: <body>" and the prefixed
-  // "<prefix> (<status>): <body>" variant.
+  // Message shape 1, `formatProviderError`: "<status>: <body>" and the
+  // prefixed "<prefix> (<status>): <body>" variant.
   expect(
     providerRejectionStatusFrom({
       message: '400: {"error":{"message":"one of `type`, `anyOf` field is required"}}',
@@ -317,6 +317,44 @@ test("provider rejection is attributed from a status and never carries a body", 
   expect(providerRejectionStatusFrom({ status: 503 })).toBeUndefined();
   expect(providerRejectionStatusFrom({ message: "assistant stopped with error" })).toBeUndefined();
   expect(providerRejectionStatusFrom(undefined)).toBeUndefined();
+
+  // Message shape 2, the provider SDK's own `APIError.message`: "<status>
+  // <body>", a SPACE and no colon. `anthropic-messages` -- one of the three
+  // `ApiKind`s this registry resolves, and what OpenRouter's dual-api models
+  // override to -- never calls `formatProviderError`; its catch block assigns
+  // the raw SDK message. Reading only shape 1 left every Anthropic-native
+  // rejection falling through to `EmptyTurnError`, telling the operator to
+  // check credentials about a request refused on its merits.
+  expect(
+    providerRejectionStatusFrom({
+      code: "assistant_error",
+      message:
+        '400 {"type":"error","error":{"message":"tools.0.custom.input_schema: JSON schema is invalid"}}',
+    }),
+  ).toBe(400);
+  // Body-less is still a refusal: the status is this function's whole output,
+  // and excluding it would hand the run back to the credential advice.
+  expect(providerRejectionStatusFrom({ message: "400 status code (no body)" })).toBe(400);
+  // The same exclusions hold for shape 2, which the SDK composes identically
+  // for every status.
+  expect(providerRejectionStatusFrom({ message: '401 {"error":{"message":"bad key"}}' })).toBe(
+    undefined,
+  );
+  expect(providerRejectionStatusFrom({ message: '429 {"error":{"message":"slow down"}}' })).toBe(
+    undefined,
+  );
+  expect(providerRejectionStatusFrom({ message: '503 {"error":{"message":"overloaded"}}' })).toBe(
+    undefined,
+  );
+  // A three-digit run inside prose is not a status: shape 2 is anchored at the
+  // start, and a longer number fails because the fourth digit sits where the
+  // space must be.
+  expect(providerRejectionStatusFrom({ message: "Request failed after 400 attempts" })).toBe(
+    undefined,
+  );
+  expect(providerRejectionStatusFrom({ message: "2024 was a year of provider outages" })).toBe(
+    undefined,
+  );
 
   const rejected = new ProviderRejectionError("run-1", 400);
   expect(rejected.code).toBe("provider_rejected");

@@ -173,12 +173,38 @@ const PROVIDER_REJECTION_STATUSES = new Set([400, 404, 405, 409, 413, 415, 422])
  * Recover the HTTP status a settled provider failure was refused with, or
  * `undefined` when the failure names no status this runner will attribute.
  *
- * TWO SOURCES, IN ORDER OF TRUST. A structured `status`/`statusCode` field is
- * read directly. Failing that, the message is matched against the ONE shape
- * pi-ai composes for a status-bearing provider error (`formatProviderError`:
- * `"<status>: <body>"`, or `"<prefix> (<status>): <body>"`). Nothing else in
- * the message is read, and the body is never returned -- this function's whole
- * output is a number from a fixed allow-list.
+ * SOURCES, IN ORDER OF TRUST. A structured `status`/`statusCode` field is read
+ * directly when one is present. In practice it never is on this path --
+ * pi-agent-core's `providerError` composes `{ code, message }` and carries no
+ * status field and no `details` -- so the message is the only channel, and the
+ * patterns below are what actually decide every attribution.
+ *
+ * TWO MESSAGE SHAPES, because pi-ai does not compose provider errors one way.
+ *
+ * 1. `formatProviderError` -- `"<status>: <body>"` or
+ *    `"<prefix> (<status>): <body>"`. Used by the openai-completions,
+ *    -responses and codex-responses adapters, i.e. two of the three `ApiKind`s
+ *    this registry resolves.
+ *
+ * 2. The provider SDK's own `APIError.message` -- `"<status> <body>"`, a SPACE
+ *    and no colon. This is the third `ApiKind`: `anthropic-messages` never
+ *    calls `formatProviderError` at all; its catch block assigns the raw SDK
+ *    message. Matching only shape 1 left every Anthropic-native model -- and
+ *    every OpenRouter model overriding to `anthropic-messages` -- falling
+ *    through to `EmptyTurnError`, telling the operator to check their
+ *    credentials about a request the provider had refused on its merits. That
+ *    is precisely the misattribution this function exists to end, so a fix
+ *    covering only two of three APIs would not have fixed it.
+ *
+ * Shape 2 is anchored at the start and bounded to exactly three digits
+ * followed by a space, so it reads a leading status and not a longer number
+ * ("2024 ..." fails, because the fourth digit is where a space must be). It
+ * deliberately also accepts the SDK's body-less `"<status> status code (no
+ * body)"`: the status is the whole output here, and a 400 with an empty body
+ * is still a 400 the provider refused -- excluding it would hand that run back
+ * to the credential advice this function exists to stop. Nothing else
+ * in the message is read, and the body is never returned -- this function's
+ * whole output is a number from a fixed allow-list.
  */
 export function providerRejectionStatusFrom(error: unknown): number | undefined {
   if (error === null || typeof error !== "object") return undefined;
@@ -189,7 +215,7 @@ export function providerRejectionStatusFrom(error: unknown): number | undefined 
   }
   const message = value.message;
   if (typeof message !== "string") return undefined;
-  const match = /^(?:[^():]{0,64} )?\(?(\d{3})\)?: /.exec(message);
+  const match = /^(?:[^():]{0,64} )?\(?(\d{3})\)?: /.exec(message) ?? /^(\d{3}) /.exec(message);
   if (match === null) return undefined;
   const parsed = Number(match[1]);
   return PROVIDER_REJECTION_STATUSES.has(parsed) ? parsed : undefined;

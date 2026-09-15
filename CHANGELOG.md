@@ -24,6 +24,17 @@ All notable changes to ad-coder are recorded here. The format follows
   and the console offers the request -- model id, tool schemas, parameters --
   instead of an authentication command. 401 and 403 stay `empty_turn`, which is
   what those statuses actually mean; 429 is still `provider_limit`.
+- The status is read from BOTH shapes pi-ai composes, not just one. Adapters
+  that route through `formatProviderError` produce `"<status>: <body>"`, but
+  `anthropic-messages` never calls it -- it assigns the provider SDK's own
+  `APIError.message`, which is `"<status> <body>"` with a space and no colon.
+  Matching only the first shape would have left every Anthropic-native model,
+  and every OpenRouter model that overrides to `anthropic-messages`, still
+  being told to verify authentication over a request the provider had refused
+  on its merits -- the exact misattribution above, unfixed for one of the three
+  request APIs this registry resolves. The second shape is anchored at the
+  start and bounded to three digits followed by a space, so it reads a leading
+  status and not a number appearing in prose.
 
 ### Added
 
