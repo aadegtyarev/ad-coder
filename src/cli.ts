@@ -127,15 +127,22 @@ const ROLE_NAMES = ["planner", "researcher", "coder", "reviewer", "auditor", "se
 type RoleName = (typeof ROLE_NAMES)[number];
 const PROVIDERS = ["deepseek", "openrouter", "openai-codex"] as const;
 const COMPLEXITIES = ["trivial", "medium", "complex"] as const;
-let operationsJsonFront = false;
 let consoleJsonFront = false;
-let updateJsonFront = false;
+/**
+ * True when the invoked command speaks JSON rather than to a person.
+ *
+ * ONE flag rather than one per command: the three OR-chains this replaced had
+ * to be updated together, and `cost --json` was added to none of them -- so a
+ * usage error answered a machine caller with 14 lines of human help text. A
+ * single flag makes the next command's omission impossible to split.
+ */
+let machineJsonFront = false;
 const DEFAULT_HEARTBEAT_MS = 10_000;
 
 function fail(message: string): never {
   // Any machine front gets the structured shape; only a human front gets the
   // help text, which would otherwise corrupt a caller parsing stderr.
-  if (operationsJsonFront || consoleJsonFront || updateJsonFront) {
+  if (machineJsonFront) {
     process.stderr.write(`${JSON.stringify({ error: { code: "usage", detail: message } })}\n`);
     process.exit(2);
   }
@@ -259,7 +266,14 @@ function buildRunner(targetDirArg: string): WorkflowContext["runRole"] {
         fs.existsSync(file.startsWith("~/") ? path.join(os.homedir(), file.slice(2)) : file),
     },
   });
-  return createRoleRunner({ targetDir: absTargetDir, models });
+  // A workflow module's `ctx.runRole` is a real provider call, so it passes the
+  // same operator block every other entry point does. Built here rather than
+  // taken from a resolved pipeline config because `run` resolves none.
+  return createRoleRunner({
+    targetDir: absTargetDir,
+    models,
+    costAnomalyDetector: new CostAnomalyDetector({}, new FileCostAnomalyStore(absTargetDir)),
+  });
 }
 
 /**
@@ -308,6 +322,15 @@ export async function runRoleStandalone(params: {
   projectStoreConfig?: ProjectStoreConfig;
   toolActivity?: Partial<ToolActivityConfig>;
   stageLimits?: StageLimits;
+  /**
+   * Refuses the run when the operator has blocked this (provider, model).
+   *
+   * A standalone role reaches the provider through its own role runner, not
+   * through the pipeline, so it needs the block handed to it explicitly --
+   * otherwise `ad-coder role` keeps running a scope `cost status` reports as
+   * blocked.
+   */
+  costAnomalyDetector?: CostAnomalyDetector;
   /** Cancels a live role run and persists a resumable pause. */
   abortSignal?: AbortSignal;
 }): Promise<{
@@ -455,6 +478,9 @@ export async function runRoleStandalone(params: {
       ...(params.toolActivity !== undefined && { toolActivity: params.toolActivity }),
       ...(params.activityConsumer !== undefined && { activityConsumer: params.activityConsumer }),
       ...(params.stageLimits !== undefined && { stageLimits: params.stageLimits }),
+      ...(params.costAnomalyDetector !== undefined && {
+        costAnomalyDetector: params.costAnomalyDetector,
+      }),
     }).runRole(params.role, params.model, params.task, {
       runId,
       session,
@@ -2024,6 +2050,9 @@ async function roleCommand(
         }),
         ...(config.toolActivity !== undefined && { toolActivity: config.toolActivity }),
         ...(standaloneStageLimits !== undefined && { stageLimits: standaloneStageLimits }),
+        ...(config.costAnomalyDetector !== undefined && {
+          costAnomalyDetector: config.costAnomalyDetector,
+        }),
         abortSignal: abortController.signal,
       });
     } catch (error) {
@@ -2997,13 +3026,17 @@ async function main(argv: string[]): Promise<void> {
     return;
   }
   const commandName = argv[0];
-  consoleJsonFront = commandName === "console" && argv.slice(1).includes("--json");
-  updateJsonFront = commandName === "update" && argv.slice(1).includes("--json");
-  operationsJsonFront =
+  const passedJsonFlag = argv.slice(1).includes("--json");
+  consoleJsonFront = commandName === "console" && passedJsonFlag;
+  machineJsonFront =
+    consoleJsonFront ||
+    // Always JSON, with or without the flag.
     commandName === "operations" ||
     commandName === "control" ||
     commandName === "background" ||
-    commandName === "profile";
+    commandName === "profile" ||
+    // JSON only when asked for it.
+    ((commandName === "update" || commandName === "cost") && passedJsonFlag);
   const command = COMMANDS.find(({ name }) => name === commandName);
   if (command === undefined)
     fail(commandName === undefined ? "missing command" : `unknown command: ${commandName}`);
@@ -3058,7 +3091,7 @@ if (import.meta.main) {
   try {
     await main(process.argv.slice(2));
   } catch (error) {
-    if (operationsJsonFront || consoleJsonFront || updateJsonFront)
+    if (machineJsonFront)
       process.stderr.write(`${JSON.stringify({ error: projectCliError(error) })}\n`);
     else process.stderr.write(renderCliError(error));
     process.exit(1);

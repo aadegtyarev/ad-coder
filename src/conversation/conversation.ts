@@ -26,6 +26,7 @@ import {
   resolveCompactionPolicy,
 } from "../context/compactor";
 import { assertContextFitsBudget, assertTurnFitsBudget } from "../context/preflight";
+import type { CostAnomalyDetector } from "../economics/cost-anomaly";
 import type { LedgerSink } from "../ledger/ledger";
 import { FileLedgerSink, Ledger } from "../ledger/ledger";
 import {
@@ -92,6 +93,17 @@ export interface ConversationConfig {
   sessionLimits?: SessionLimits;
   /** Internal sharing seam for nested work; takes precedence over sessionLimits. */
   sessionLimitController?: SessionLimitController;
+  /**
+   * Refuses a turn whose (provider, model) scope the operator has blocked.
+   *
+   * Carried here because a conversation reaches the provider through its OWN
+   * `Models` wrap, not through `runRole`: wiring the detector only into the
+   * pipeline left the console -- and the `run_role` tool the orchestrator
+   * delegates through -- able to start a run on a scope `cost status` reports
+   * as blocked. The block is core behavior, so every front that can begin a
+   * turn passes the same gate.
+   */
+  costAnomalyDetector?: CostAnomalyDetector;
   activityChannel?: ToolActivityChannel;
   activityConsumer?: ToolActivityConsumer;
   toolActivity?: Partial<ToolActivityConfig>;
@@ -198,7 +210,13 @@ export async function startConversation(config: ConversationConfig): Promise<Con
 
   const controller =
     config.sessionLimitController ?? new SessionLimitController(config.sessionLimits);
-  const limitedModels = controller.wrap(config.models);
+  const sessionModels = controller.wrap(config.models);
+  // OUTERMOST for the same reason as `runRole`: each proxy delegates inward, so
+  // the wrapper applied LAST is entered FIRST, and a refused start must not
+  // first consume one of the session's counted turns.
+  const limitedModels =
+    config.costAnomalyDetector?.wrap(sessionModels, config.model.provider, config.model.id) ??
+    sessionModels;
   const explicitPolicy =
     config.compaction ??
     (config.summarizer === undefined ? undefined : { mode: "auto", summarizer: config.summarizer });
@@ -383,10 +401,12 @@ export async function startConversation(config: ConversationConfig): Promise<Con
       });
       const prompted = await Promise.race([providerPrompt, interruption]).catch((error) => {
         if (interrupted) throw new TurnInterruptedError();
+        config.costAnomalyDetector?.assertNoBoundaryFailure();
         controller.assertNoBoundaryFailure();
         throw error;
       });
       if (interrupted) throw new TurnInterruptedError();
+      config.costAnomalyDetector?.assertNoBoundaryFailure();
       controller.assertNoBoundaryFailure();
       const result = getOrThrow(prompted);
       if ("status" in result && result.status === "suspended") {
