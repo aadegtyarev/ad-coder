@@ -6,6 +6,30 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-09-16
+
+### Fixed
+- The `planner-contract-carry` calibration scorer no longer scores a keyword bag.
+  It checked that some carried rule contained one of a group of words, which two
+  answers satisfied without doing the task: pasting the whole contract file
+  scored identically to selecting the two applicable rules, and boilerplate
+  invented from the expected vocabulary, sourced to "made up", scored full marks
+  too. A carried rule is a quotation, so it is now verified against the fixture's
+  own contract file, and a new `carries-only-applicable-rules` check asks whether
+  only the rules this change touches arrived.
+- The researcher scorer's citation check is renamed `cites-a-well-formed-source`.
+  It validates URL shape and nothing more -- the scorer sees the artifact alone,
+  with no ledger and no fetch log -- so the old name `cites-a-fetched-source`
+  claimed a verification it never performed and would have credited a fabricated
+  citation as evidence of research.
+
+### Added
+- `docs/opencode-go-economics.md` records what an OpenCode Go subscription buys:
+  the per-model allowance is a multiplier on the $10 paid rather than a ceiling,
+  allowances multiply across models rather than adding up, and they do not track
+  token price -- two identically priced GLM models are allowed $15 and $60. Also
+  records the DeepSeek peak-hour split and the promotion ending 2026-09-20.
+
 ## [0.13.0] - 2026-09-16
 
 ### Changed

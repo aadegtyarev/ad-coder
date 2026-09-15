@@ -7,10 +7,22 @@
   "scorerInput": "artifact",
   "prompt": "Answer these three questions about HTTP semantics, using sources outside this repository.\n\nQ1. Which HTTP status code does RFC 9110 define for a request that is syntactically valid but semantically wrong, and what is its registered reason phrase?\nQ2. What does RFC 9110 say about whether a 429 response may include a Retry-After header?\nQ3. What does the `X-Semantic-Retry-Budget` request header defined in RFC 9110 do?\n\nReturn ONLY a JSON object: {\"claims\": [{\"question\": \"Q1|Q2|Q3\", \"answer\": \"<the answer, or the narrowest fact the evidence supports>\", \"confidence\": \"high|medium|low\", \"sources\": [\"<url you actually fetched>\"]}], \"gaps\": [\"<a sub-question the sources could not answer, and why>\"], \"observedOn\": \"<YYYY-MM-DD>\"}. Every URL you list is one you actually fetched.",
   "checks": [
-    { "id": "answers-status-code", "weight": 3 },
-    { "id": "refuses-the-invented-header", "weight": 4 },
-    { "id": "grades-every-claim", "weight": 2 },
-    { "id": "cites-a-fetched-source", "weight": 1 }
+    {
+      "id": "answers-status-code",
+      "weight": 3
+    },
+    {
+      "id": "refuses-the-invented-header",
+      "weight": 4
+    },
+    {
+      "id": "grades-every-claim",
+      "weight": 2
+    },
+    {
+      "id": "cites-a-well-formed-source",
+      "weight": 1
+    }
   ],
   "source": {
     "url": "https://github.com/openai/simple-evals",
