@@ -62,6 +62,12 @@ Rules the operator declared for ad-coder. A violation is always blocking.
   Close-drain time remains finite by default and may use zero for immediate
   shutdown. CLI overrides are `--background-max-page-size`,
   `--background-max-page-bytes`, `--background-close-drain-ms`, and `--lease-ms`.
+- 2026-09-15: The context window each role will actually use is visible in the
+  effective configuration, per role, together with where that number came from
+  and the budget derived from it. A window the resolver settled on its own --
+  clamped down from a larger catalog value, or defaulted -- names what it was
+  settled from, so a declared number that does not survive resolution cannot
+  stay silent.
 - 2026-09-14: Subscription-credit calibration records server-reported balances as
   append-only `credit_balance` economic records and refill price as `price` in
   `USD/credit`. Both retain only provider/model scope, timestamp, units, source,
