@@ -187,11 +187,30 @@ interface Execution {
   report?: OrchestratorReport;
 }
 
+/**
+ * The routing cell the task declares, as a flag ad-coder will honour.
+ *
+ * A task names the `(role, complexity)` cell it exists to measure, and the
+ * measurement is labelled with that cell -- but nothing used to tell the run
+ * about it, so every task routed at the built-in default of `medium`. A trivial
+ * task therefore reported a trivial-cell measurement taken on whatever model the
+ * medium cell happened to name: not a wrong number, a number about a different
+ * model than the one it credits.
+ *
+ * An explicit `--default-complexity` later in `extra` still wins, since ad-coder
+ * takes the last occurrence; that is what lets a caller deliberately run one
+ * task against a neighbouring cell.
+ */
+const complexityFlag = (task: Task): string[] => ["--default-complexity", task.complexity];
+
 function executeRole(task: Task, target: string, extra: string[], timeoutMs: number): Execution {
-  const run = spawnAdCoder(["role", task.role, task.prompt, "--target-dir", target, ...extra], {
-    cwd: repoRoot,
-    timeoutMs,
-  });
+  const run = spawnAdCoder(
+    ["role", task.role, task.prompt, "--target-dir", target, ...complexityFlag(task), ...extra],
+    {
+      cwd: repoRoot,
+      timeoutMs,
+    },
+  );
   if (run.status !== 0) throw new Error(run.stderr || "ad-coder role failed");
   return { target, ledgerFile: ledgerPathFrom(run.stderr), stdout: run.stdout };
 }
@@ -202,10 +221,13 @@ function executePipeline(
   extra: string[],
   timeoutMs: number,
 ): Execution {
-  const run = spawnAdCoder(["drive", task.prompt, "--auto", "--target-dir", target, ...extra], {
-    cwd: repoRoot,
-    timeoutMs,
-  });
+  const run = spawnAdCoder(
+    ["drive", task.prompt, "--auto", "--target-dir", target, ...complexityFlag(task), ...extra],
+    {
+      cwd: repoRoot,
+      timeoutMs,
+    },
+  );
   if (run.status !== 0) throw new Error(run.stderr || "ad-coder drive failed");
   return { target, ledgerFile: ledgerPathFrom(run.stderr), stdout: run.stdout };
 }
@@ -218,7 +240,16 @@ function executeManualWorkflow(
 ): Execution {
   const prompts = task.prompts ?? [task.prompt];
   const run = spawnAdCoder(
-    ["console", "--json", "--target-dir", target, "--workflows", "pipeline", ...extra],
+    [
+      "console",
+      "--json",
+      "--target-dir",
+      target,
+      "--workflows",
+      "pipeline",
+      ...complexityFlag(task),
+      ...extra,
+    ],
     { cwd: repoRoot, input: `${prompts.join("\n")}\n`, timeoutMs },
   );
   if (run.status !== 0) throw new Error(run.stderr || "ad-coder console failed");

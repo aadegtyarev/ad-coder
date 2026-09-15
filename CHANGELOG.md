@@ -6,6 +6,18 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.13.3] - 2026-09-16
+
+### Fixed
+- The calibration corpus now tells a run which routing cell it is measuring.
+  Every task names the `(role, complexity)` cell it exists to measure and the
+  measurement is labelled with it, but nothing passed that on, so each task ran
+  at the built-in default of `medium`. A trivial task therefore reported a
+  trivial-cell result taken on whatever model the medium cell named -- not a
+  wrong number, a number crediting the wrong model. A later explicit
+  `--default-complexity` still wins, so a task can still be aimed at a
+  neighbouring cell deliberately.
+
 ## [0.13.2] - 2026-09-16
 
 ### Fixed
