@@ -4,7 +4,13 @@ import type { Complexity } from "../orchestration/types";
 import { ProfileError } from "./errors";
 import type { Profile, ProfileEntry, ProfileRole } from "./types";
 
-const PROFILE_ROLES: readonly ProfileRole[] = [
+/**
+ * Every routing role a profile can name, in the order a reader expects to meet
+ * them. Exported because a front that reports the LIVE routing has to walk the
+ * same list validation accepts -- a second hand-kept copy would report a layout
+ * missing whichever role was added last.
+ */
+export const PROFILE_ROLES: readonly ProfileRole[] = [
   "planner",
   "researcher",
   "coder",

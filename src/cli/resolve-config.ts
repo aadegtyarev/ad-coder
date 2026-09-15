@@ -28,7 +28,7 @@ import { SUBMIT_VERDICT_TOOL_NAME } from "../orchestration/verdict";
 import { buildDefaultProfile } from "../profiles/default-profile";
 import { resolveProfile } from "../profiles/resolve";
 import type { Profile, ProfileRole, ResolvedSelection } from "../profiles/types";
-import { parseProfile } from "../profiles/validate";
+import { PROFILE_ROLES, parseProfile } from "../profiles/validate";
 import { readProjectCalibrationSnapshot } from "../project-calibration";
 import type { ProjectStoreConfig } from "../project-store/types";
 import { buildExploreProjectTool, EXPLORE_PROJECT_TOOL_NAME } from "../project-tools/explore";
@@ -552,9 +552,36 @@ function resolveConfig(
     overrides[role as ProfileRole] = { model };
   }
 
-  warn(
-    `ad-coder: provider "${provider ?? "custom"}" | strong "${strong}" mid "${mid}" cheap "${cheap}"\n`,
-  );
+  // What the run will ACTUALLY do, not the three tiers the default profile is
+  // built from: under an inventory those tiers all collapse onto one default
+  // model, so the old banner printed `strong "x" mid "x" cheap "x"` for a
+  // profile routing seven roles across several models -- true of nothing.
+  // Roles are grouped by the model they resolve to at the default complexity,
+  // which is the routing decision an operator checks before letting a run go.
+  const layout = new Map<string, ProfileRole[]>();
+  for (const role of PROFILE_ROLES) {
+    let modelName: string;
+    try {
+      modelName = resolveProfile(profile, registry, role, defaultComplexity, overrides[role]).model
+        .name;
+    } catch {
+      // A role the profile does not map at this complexity is reported as
+      // unrouted rather than crashing the banner: the run may never reach it,
+      // and if it does, the resolver raises the real typed error there.
+      modelName = "unrouted";
+    }
+    const roles = layout.get(modelName);
+    if (roles === undefined) layout.set(modelName, [role]);
+    else roles.push(role);
+  }
+  const source =
+    inventory !== undefined
+      ? `inventory "${inventory.name}"`
+      : `provider "${provider ?? "custom"}"`;
+  const routing = [...layout]
+    .map(([modelName, roles]) => `${modelName}: ${roles.join(", ")}`)
+    .join(" | ");
+  warn(`ad-coder: ${source} | complexity "${defaultComplexity}" | ${routing}\n`);
 
   const buildRole = (name: ProfileRole, tools: string[]): RoleSpec => {
     // The role's live model is whatever the default profile routes it to at
