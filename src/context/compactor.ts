@@ -82,11 +82,21 @@ export function createSummarizer(models: Models, model: Model<Api>): Summarizer 
         `createSummarizer: measured ${measured} tokens exceeds summarizer context window ${model.contextWindow}`,
       );
     }
-    const response = await models.completeSimple(model, {
-      systemPrompt: SUMMARIZATION_PROMPT,
-      messages: providerMessages,
-      tools: [],
-    });
+    const response = await models.completeSimple(
+      model,
+      {
+        systemPrompt: SUMMARIZATION_PROMPT,
+        messages: providerMessages,
+        tools: [],
+      },
+      // Compaction is ONE request over a transcript that is about to be
+      // replaced by its own summary, so no later request can ever share this
+      // prefix. pi-ai defaults `cacheRetention` to "short", which would write a
+      // prompt cache on the largest input a run produces -- paying the cache
+      // WRITE premium for an entry with no possible reader. A role turn is the
+      // opposite case and keeps its configured retention (see `src/role.ts`).
+      { cacheRetention: "none" },
+    );
     if (response.stopReason === "error" || response.stopReason === "aborted") {
       throw new Error(`createSummarizer: provider returned ${response.stopReason}`);
     }

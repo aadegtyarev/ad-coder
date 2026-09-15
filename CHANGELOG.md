@@ -6,6 +6,17 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.12.2] - 2026-09-15
+
+### Fixed
+- Compaction no longer writes a prompt cache nobody can read. The summarizer
+  request took pi-ai's default `cacheRetention` of `"short"`, so every
+  compaction paid the cache-WRITE premium on the largest input a run produces --
+  a transcript that is replaced by its own summary the moment the call returns,
+  leaving the entry with no possible reader. On Anthropic that premium is 25%
+  over the plain input price. The request now asks for `"none"`; role turns,
+  whose prefix genuinely repeats, keep their configured retention.
+
 ## [0.12.1] - 2026-09-15
 
 ### Added

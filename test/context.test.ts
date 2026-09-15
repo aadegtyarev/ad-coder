@@ -267,6 +267,26 @@ test("createSummarizer makes one owned-prompt request without tools and extracts
   expect(controller.snapshot().admittedTurns).toBe(1);
 });
 
+test("createSummarizer asks for no prompt cache on its one-shot request", async () => {
+  // pi-ai defaults cacheRetention to "short". Compaction's input is the largest
+  // a run produces and is discarded the moment its summary replaces it, so a
+  // cache written here can never be read back -- the write premium is pure
+  // loss. Pinned by a test because the default returns SILENTLY: dropping the
+  // option costs money on every compaction and breaks nothing observable.
+  const faux = fauxProvider({ provider: "summary", models: [{ id: "cheap" }] });
+  const models = createModels();
+  models.setProvider(faux.provider);
+  faux.setResponses([
+    (_context, options) => {
+      expect(options?.cacheRetention).toBe("none");
+      return fauxAssistantMessage([{ type: "text", text: "brief" }]);
+    },
+  ]);
+  const summarizer = createSummarizer(models, faux.getModel() as Model<Api>);
+  expect(await summarizer([small("source")])).toBe("brief");
+  expect(faux.state.callCount).toBe(1);
+});
+
 test("createSummarizer rejects custom messages and empty provider output", async () => {
   const faux = fauxProvider({ provider: "summary", models: [{ id: "cheap" }] });
   const models = createModels();
