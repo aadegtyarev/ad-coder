@@ -19,6 +19,7 @@ import type {
 import type { ProjectStore } from "../project-store/project-store";
 import type { VersionedState } from "../project-store/types";
 import { ProjectStoreError } from "../project-store/types";
+import { ProviderRejectionError } from "../runner/errors";
 import { type BacklogStore, FileBacklogStore } from "./backlog";
 import {
   appendDocumentationProposal,
@@ -76,6 +77,41 @@ export interface RunCheckpoint {
     action: string;
     limitReason?: StageLimitReason;
     limit?: number;
+  };
+}
+
+/**
+ * The durable pause a non-limit stage failure leaves behind.
+ *
+ * WHY THE CAUSE IS INSPECTED HERE. The checkpoint is often the only thing an
+ * operator reads after an unattended run stops, and a fixed "inspect the
+ * provider failure" told them nothing about WHICH failure -- a provider that
+ * refused a malformed request read exactly like one that was never
+ * authenticated. `WorkflowStageFailureError` preserves its `sourceError`, so a
+ * typed rejection can name the status and the party at fault right in the
+ * pause.
+ *
+ * NUMBERS AND CODES ONLY. `ProviderRejectionError` carries no body, so nothing
+ * uncontrolled reaches durable state -- the same discipline the stage-limit
+ * pause above follows.
+ */
+function stageFailurePause(
+  phase: WorkflowState["phase"],
+  sourceError: unknown,
+): { phase: WorkflowState["phase"]; code: string; action: string } {
+  if (sourceError instanceof ProviderRejectionError) {
+    return {
+      phase,
+      code: "provider_rejected",
+      action:
+        `the provider rejected the request with HTTP ${sourceError.status}; ` +
+        "inspect the request this stage sends (model id, tool schemas, parameters), then retry the stage explicitly",
+    };
+  }
+  return {
+    phase,
+    code: "stage_failed",
+    action: "inspect the provider failure and retry the stage explicitly",
   };
 }
 
@@ -243,7 +279,13 @@ export class RunCoordinator {
     const pauseCode = pause?.code;
     if (
       (resolution.source !== "operator" && resolution.source !== "host_config") ||
-      (pauseCode !== "stage_limit" && pauseCode !== "stage_failed" && pauseCode !== "interrupted")
+      (pauseCode !== "stage_limit" &&
+        pauseCode !== "stage_failed" &&
+        // A provider rejection is the same class of pause as `stage_failed` --
+        // it is that pause with the cause named -- so it must stay resumable by
+        // the same operator act, or naming the cause would cost recoverability.
+        pauseCode !== "provider_rejected" &&
+        pauseCode !== "interrupted")
     )
       throw new ProjectOperationsError("unauthorized_resolution", checkpoint.runId);
     if (pauseCode !== "stage_limit") {
@@ -447,11 +489,7 @@ export class RunCoordinator {
             runIds: [...checkpoint.workflowState.runIds, error.runId],
             stageMetrics: [...(checkpoint.workflowState.stageMetrics ?? []), error.metrics],
           },
-          pause: {
-            phase: checkpoint.workflowState.phase,
-            code: "stage_failed",
-            action: "inspect the provider failure and retry the stage explicitly",
-          },
+          pause: stageFailurePause(checkpoint.workflowState.phase, error.sourceError),
         });
         return undefined;
       }

@@ -32,6 +32,7 @@ import {
   inspectImportedLdoWork,
   ProjectOperationsError,
   ProjectStore,
+  ProviderRejectionError,
   preflightRepositoryPublishing,
   previewLdoImport,
   probeGitHubBacklogCapability,
@@ -575,6 +576,56 @@ test("RunCoordinator persists a failed stage's safe metrics and permits an expli
     expect.objectContaining({ stage: "code:1", costUsd: 0.25 }),
   ]);
   expect(JSON.stringify(paused.checkpoint)).not.toContain("provider detail must not persist");
+  coordinator.resumeStage({ source: "operator", action: "retry" });
+  expect((await coordinator.run()).status).toBe("complete");
+  expect(attempts).toBe(2);
+});
+
+test("RunCoordinator names the rejecting provider in the pause instead of a generic stage failure", async () => {
+  const target = root();
+  const store = new ProjectStore(target);
+  const base = coordinatorSession(store, []);
+  let attempts = 0;
+  const session: WorkflowSession = {
+    ...base,
+    async step(state) {
+      attempts += 1;
+      if (attempts === 1) {
+        throw new WorkflowStageFailureError(
+          new ProviderRejectionError("failed-code", 400),
+          "failed-code",
+          {
+            stage: "code:1",
+            status: "paused",
+            provider: "faux",
+            model: "faux-1",
+            thinkingLevel: "unknown",
+            durationMs: 12,
+            input: 0,
+            cachedInput: 0,
+            freshInput: 0,
+            output: 0,
+            reasoning: 0,
+            costUsd: 0,
+            requestBytes: { systemPrompt: 0, prompt: 0, toolDefinitions: 0, total: 0 },
+            readFiles: [],
+            readFilesTotal: 0,
+            readFilesTruncated: 0,
+            diffBytes: 0,
+            contextStrategy: "auto",
+          },
+        );
+      }
+      return base.step(state);
+    },
+  };
+  const coordinator = new RunCoordinator(session, store, { runId: "rejected-stage-pause" });
+  const paused = await coordinator.run();
+  expect(paused.checkpoint.pause?.code).toBe("provider_rejected");
+  expect(paused.checkpoint.pause?.action).toContain("HTTP 400");
+  // The whole point of the fix: the pause must not send the operator to check
+  // credentials for a request the provider answered and refused.
+  expect(paused.checkpoint.pause?.action).not.toContain("authentication");
   coordinator.resumeStage({ source: "operator", action: "retry" });
   expect((await coordinator.run()).status).toBe("complete");
   expect(attempts).toBe(2);
