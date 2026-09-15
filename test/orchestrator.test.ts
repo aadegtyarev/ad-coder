@@ -11,6 +11,7 @@ import {
 } from "@earendil-works/pi-ai";
 import type { FauxProviderHandle } from "@earendil-works/pi-ai/providers/faux";
 import { MemoryLedgerSink } from "../src/ledger/ledger";
+import { ToolActivityChannel } from "../src/observability/tool-activity";
 import {
   buildControlPlaneTools,
   createOrchestratorControlPlane,
@@ -459,6 +460,127 @@ test("a declared cacheRetention survives into the orchestrator's own conversatio
   });
   expect(captured?.cacheRetention).toBe("long");
   await session.close();
+});
+
+test("delegated role activity reaches one session-wide subscriber", async () => {
+  // Every conversation that is handed no channel builds its own, so before this
+  // the `run_role` worker published where nobody could subscribe: a console
+  // watching the session saw only the orchestrator's own tool calls while a
+  // delegated role ran for minutes. The seam below stands in for that worker
+  // and publishes exactly as the real runner does.
+  const targetDir = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-shared-activity-")),
+  );
+  const credentials: CredentialStore = {
+    read: async () => ({ type: "oauth", access: "a", refresh: "r", expires: 0 }),
+    list: async () => [],
+    modify: async (_providerId, fn) => fn(undefined),
+    delete: async () => {},
+  };
+  let outerTools: Tool[] = [];
+  let outerChannel: ToolActivityChannel | undefined;
+  let delegatedChannel: ToolActivityChannel | undefined;
+  const session = await startOrchestrator({
+    targetDir,
+    env: () => undefined,
+    warn: () => {},
+    credentials,
+    enabledWorkflows: [],
+    startConversation: async (config) => {
+      outerTools = config.tools ?? [];
+      outerChannel = config.activityChannel;
+      return fakeConversation("outer");
+    },
+    startDelegatedConversation: async (config) => {
+      delegatedChannel = config.activityChannel;
+      return {
+        ...fakeConversation(config.role.name),
+        step: async () => {
+          config.activityChannel?.publish({
+            lifecycle: "completed",
+            activity: "Read",
+            role: config.role.name,
+            runId: "delegated-run",
+            operationId: "op",
+            turnId: "turn",
+            toolCallId: "call",
+            parentOperation: "step",
+            toolName: "read",
+          });
+          return {
+            runId: config.role.name,
+            step: "turn:1",
+            status: "completed",
+            assistantText: "focused result",
+            toolCalls: [],
+            droppedRecords: 0,
+          };
+        },
+      };
+    },
+  });
+  const seen: string[] = [];
+  const unsubscribe = session.subscribeToolActivity?.((event) => {
+    if (event.type === "tool_activity") seen.push(`${event.role}:${event.toolName}`);
+  });
+
+  const runRole = outerTools.find(({ name }) => name === RUN_ROLE_TOOL_NAME) as Tool;
+  await callTool(runRole, { role: "planner", task: "make a plan" });
+
+  expect(outerChannel).toBeDefined();
+  // One channel, not two: the delegated worker publishes where the session's
+  // subscriber is listening.
+  expect(delegatedChannel).toBe(outerChannel as ToolActivityChannel);
+  expect(seen).toEqual(["planner:read"]);
+  unsubscribe?.();
+  await session.close();
+});
+
+test("a caller-supplied activity channel outlives the orchestrated session", async () => {
+  // The console constructs a renderer before the session and may keep it after:
+  // closing a channel the orchestrator did not create would break that, and
+  // re-subscribing a supplied consumer per conversation would double-render.
+  const targetDir = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-supplied-activity-")),
+  );
+  const credentials: CredentialStore = {
+    read: async () => ({ type: "oauth", access: "a", refresh: "r", expires: 0 }),
+    list: async () => [],
+    modify: async (_providerId, fn) => fn(undefined),
+    delete: async () => {},
+  };
+  const activityChannel = new ToolActivityChannel();
+  const rendered: string[] = [];
+  const session = await startOrchestrator({
+    targetDir,
+    env: () => undefined,
+    warn: () => {},
+    credentials,
+    enabledWorkflows: [],
+    activityChannel,
+    activityConsumer: (event) => {
+      if (event.type === "tool_activity") rendered.push(event.role);
+    },
+    startConversation: async () => fakeConversation("outer"),
+  });
+  await session.close();
+
+  expect(activityChannel.snapshot().closed).toBe(false);
+  activityChannel.publish({
+    lifecycle: "completed",
+    activity: "Read",
+    role: "coder",
+    runId: "run",
+    operationId: "op",
+    turnId: "turn",
+    toolCallId: "call",
+    parentOperation: "step",
+    toolName: "read",
+  });
+  // Closing the session detached the consumer, so no stray render arrives, and
+  // the channel itself stays usable for whoever built it.
+  expect(rendered).toEqual([]);
+  await activityChannel.close();
 });
 
 function fakeConversation(runId: string) {
