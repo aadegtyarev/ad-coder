@@ -105,6 +105,18 @@ function materialize(fixture: string, target: string): void {
   if (result.status !== 0) throw new Error(result.stderr || "materialize failed");
 }
 
+/** Whether the model's answer is JSON a scorer can read at all. */
+function isReadableJson(answer: string): boolean {
+  const end = Math.max(answer.lastIndexOf("}"), answer.lastIndexOf("]"));
+  if (end < 0) return false;
+  try {
+    JSON.parse(answer.slice(0, end + 1));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function runScorer(scorer: string, argument: string): { id: string; passed: boolean }[] {
   const result = spawnSync("bun", [path.join(root, "scorers", scorer), argument], {
     encoding: "utf8",
@@ -298,15 +310,20 @@ function runTask(
     const durationMs = Date.now() - started;
     const scorerInput = task.scorerInput ?? "target";
     let checks: { id: string; passed: boolean }[];
+    // An answer the scorer could not read is a fact about the RUN, not only a
+    // score: the scorers now fail every check rather than throwing, so without
+    // recording it here a model that returned prose would be indistinguishable
+    // from one that returned a wrong answer.
+    let unreadableAnswer = false;
     if (scorerInput === "target") checks = runScorer(task.scorer, target);
     else {
       const file = path.join(target, scorerInput === "artifact" ? "artifact.json" : "report.json");
-      fs.writeFileSync(
-        file,
+      const answer =
         scorerInput === "artifact"
           ? extractJsonArtifact(execution.stdout)
-          : `${JSON.stringify(execution.report ?? {}, null, 2)}\n`,
-      );
+          : `${JSON.stringify(execution.report ?? {}, null, 2)}\n`;
+      fs.writeFileSync(file, answer);
+      unreadableAnswer = !isReadableJson(answer);
       checks = runScorer(task.scorer, file);
     }
     assertScorerMatchesTask(task, checks);
@@ -316,6 +333,7 @@ function runTask(
       ledger: readLedger(execution.ledgerFile),
       inventory: options.inventory,
       thinkingLevel: options.thinkingLevel,
+      ...(unreadableAnswer && { harnessOutcome: "unreadable_answer" as const }),
       durationMs,
       ...(execution.report?.predictedComplexity !== null &&
         execution.report?.predictedComplexity !== undefined && {

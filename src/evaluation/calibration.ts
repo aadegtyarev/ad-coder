@@ -51,6 +51,26 @@ export interface CalibrationModelShare {
   costUsd: number;
 }
 
+/**
+ * What happened to the RUN, as distinct from how good the answer was.
+ *
+ * A `quality: 0` from a model that answered badly and a `quality: 0` from a tool
+ * that refused, a stage that ran out of time, or an answer no scorer could read
+ * are three different facts, and the one number cannot tell them apart. That
+ * matters twice over: the second and third are evidence about the harness rather
+ * than the model, and a sweep that cannot separate them reports a model as worse
+ * -- or, when the unreadable runs are simply dropped, better -- than it is.
+ *
+ * `clean` means the run reached a scored answer with nothing to report about the
+ * harness. Everything else names what intervened.
+ */
+export type HarnessOutcome =
+  | "clean"
+  | "unreadable_answer"
+  | "tool_error"
+  | "stage_limit"
+  | "provider_error";
+
 export interface CalibrationMeasurement {
   taskId: string;
   inventory: string;
@@ -93,6 +113,8 @@ export interface CalibrationMeasurement {
   complexityCorrect: boolean | null;
   plannerAgreement: boolean | null;
   costEfficiency: number | null;
+  /** What happened to the run, beside how good the answer was. */
+  harnessOutcome: HarnessOutcome;
 }
 
 /**
@@ -112,6 +134,23 @@ export function measuredRolesOf(task: CalibrationTask): string[] {
   return task.measuredRoles;
 }
 
+/**
+ * What the ledger alone says about a run, when the caller did not say.
+ *
+ * The ledger stamps every response with the provider's `stopReason`, so a run
+ * whose last turn ended in an error or a limit is visible here without any new
+ * instrumentation. It cannot see an unreadable answer -- the scorer knows that,
+ * not the ledger -- so the runner passes that one in explicitly.
+ */
+function derivedOutcome(ledger: readonly LedgerRecord[]): HarnessOutcome {
+  for (const row of ledger) {
+    const reason = row.stopReason.toLowerCase();
+    if (reason.includes("error")) return "provider_error";
+    if (reason.includes("limit") || reason.includes("max")) return "stage_limit";
+  }
+  return "clean";
+}
+
 export function scoreCalibrationRun(input: {
   task: CalibrationTask;
   checks: CalibrationCheckResult[];
@@ -124,6 +163,12 @@ export function scoreCalibrationRun(input: {
   escapedDefects?: number;
   orchestratorComplexity?: CalibrationTask["complexity"];
   plannerComplexity?: CalibrationTask["complexity"];
+  /**
+   * What the runner observed about the run itself. Defaults to `clean`, so a
+   * caller that knows nothing about the harness reports nothing rather than
+   * claiming the run was fine.
+   */
+  harnessOutcome?: HarnessOutcome;
 }): CalibrationMeasurement {
   if (!Number.isFinite(input.durationMs) || input.durationMs < 0)
     throw new Error("durationMs must be a non-negative number");
@@ -214,6 +259,7 @@ export function scoreCalibrationRun(input: {
       input.orchestratorComplexity === undefined || input.plannerComplexity === undefined
         ? null
         : input.orchestratorComplexity === input.plannerComplexity,
+    harnessOutcome: input.harnessOutcome ?? derivedOutcome(input.ledger),
     costEfficiency: usage.cost > 0 ? quality / usage.cost : null,
   };
 }
