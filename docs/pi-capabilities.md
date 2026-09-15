@@ -390,3 +390,59 @@ cost, contextWindow, maxTokens, thinkingLevelMap, compat`. `baseUrl` есть.
 Role→идущий ход. Нужен `createAgentHarness(toHarnessOptions(role, {session,
 models, model}), context)` + драйвер. Плюс `.env` грузится из cwd (Bun) —
 раннер должен явно решать, откуда креды, а не полагаться на «где запустили».
+
+## Context handoff при смене модели: что делает pi-ai, а что должны мы
+
+Проверено 2026-09-15 чтением установленного `pi-ai` 0.85.1 (`dist/api/*.js`),
+не документации. Повод — разбор [pi-coding-agent, раздел «Context
+handoff»](https://mariozechner.at/posts/2025-11-30-pi-coding-agent/).
+
+`Context` в pi-ai провайдер-нейтрален — `{ systemPrompt?, messages, tools? }`
+(`pi-ai/dist/types.d.ts`, `interface Context`). Перекодирование под целевого
+провайдера происходит на каждом `stream()`/`complete()`, поэтому один и тот же
+транскрипт можно догнать любой моделью, а сам `Context` сериализуем
+`JSON.stringify`.
+
+**Handoff уже реализован в адаптерах, ad-coder получает его молча.** Каждый
+адаптер сравнивает сообщение с целевой моделью и деградирует чужое:
+
+- `api/transform-messages.js` (`transformMessages`) — общий путь для
+  `anthropic-messages`, `openai-completions`, `mistral-conversations`,
+  `bedrock-converse-stream` и `google-shared`. При `isSameModel === false`:
+  redacted-thinking **выбрасывается** (опаковый шифротекст валиден только для
+  своей модели), обычный thinking конвертируется в `{type:"text"}`,
+  `thoughtSignature` у tool-call удаляется, id tool-call перенормируется под
+  требования целевого API, а осиротевшие tool-call добиваются синтетическим
+  `toolResult` с `isError: true`.
+- `api/openai-responses-shared.js` (`convertResponsesMessages`) — для
+  `openai-responses` и `openai-codex-responses`. Различает три состояния:
+  та же модель, другая модель того же провайдера, чужой провайдер. У «другой
+  модели того же провайдера» обнуляется `id` у `function_call`, чтобы не
+  сработала проверка парности `fc_*`↔`rs_*`.
+- `api/google-shared.js` (`convertMessages`) — `resolveThoughtSignature`
+  пропускает подпись только при `isSameProviderAndModel`.
+
+Вывод по опасению «наступить на грабли прокси»: **склейку подписей и thinking
+на границе моделей переизобретать не надо** — она есть, и она срабатывает в том
+числе при смене модели ВНУТРИ одного провайдера, а не только между провайдерами.
+
+**Чего нет и что остаётся нашей зоной ответственности:**
+
+1. Компакция при переходе в модель с меньшим окном. pi-ai handoff — это
+   перевод формата, а не сжатие: 200k-транскрипт останется 200k-транскриптом.
+   У нас `deriveContextBudget` пересчитывает бюджет от окна НОВОЙ модели
+   (`src/orchestration/session.ts`, ветка `routing !== undefined`), и дальше
+   `assertTurnFitsBudget` либо пропускает ход, либо кидает `ContextBudgetError`.
+   Явной саммаризации на самой границе переключения нет; `ContextCompactor`
+   сработает уже внутри хода — если успеет.
+2. Resume пайплайна не сверяет модель. Standalone `ad-coder role` отказывается
+   продолжать чекпоинт при `prior.provider !== params.model.provider ||
+   prior.modelId !== params.model.id` (`src/cli.ts`). В пайплайне
+   `runTurn` делает `projectStore.resumeSession(runId)` и берёт модель заново
+   через `pickSelection`, без сверки с тем, чем стадия игралась до паузы.
+3. Деградация не наблюдаема. Выброшенный redacted-thinking, срезанные подписи
+   и синтетические `toolResult` не попадают ни в леджер, ни в stderr, поэтому
+   «модель после переключения поглупела» нечем подтвердить постфактум.
+
+Остаток нашей зоны ответственности отслеживается в
+[#125](https://github.com/aadegtyarev/ad-coder/issues/125).
