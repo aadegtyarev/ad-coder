@@ -25,6 +25,7 @@ import {
 } from "../src/orchestration/follow-up";
 import { runPipeline } from "../src/orchestration/pipeline";
 import {
+  buildSubmitPlanTool,
   formatPlannerInstruction,
   parsePlan,
   parsePlanText,
@@ -348,19 +349,34 @@ test("parseVerdict rejects a bad status, non-array issues, a missing what, and a
   }
 });
 
-test("submit_follow_up advertises discriminated variants and rejects all-fields calls safely", () => {
+test("submit_follow_up advertises one typed object and rejects all-fields calls safely", () => {
   const tool = buildSubmitFollowUpTool({ followUps: [] }, { producer: "coder", runId: "run-1" });
   const schema = tool.parameters as unknown as {
-    anyOf: Array<{ properties: Record<string, unknown>; additionalProperties?: boolean }>;
+    type?: string;
+    anyOf?: unknown;
+    required: string[];
+    properties: Record<string, { type?: string }>;
+    additionalProperties?: boolean;
   };
-  expect(schema.anyOf.map((variant) => Object.keys(variant.properties).sort())).toEqual([
-    ["contract", "evidence", "kind", "title"],
-    ["evidence", "kind", "title"],
-    ["document", "evidence", "kind", "title"],
-    ["evidence", "kind", "priority", "title"],
+  // A top-level `anyOf` -- what a Type.Union of the four kinds produces -- is
+  // rejected outright by providers that validate tool schemas ("schema must be
+  // a JSON Schema of 'type: \"object\"'"), and this tool rides along on EVERY
+  // workflow turn, so the whole run dies. One object, per-kind fields optional.
+  expect(schema.type).toBe("object");
+  expect(schema.anyOf).toBeUndefined();
+  expect(schema.required.sort()).toEqual(["evidence", "kind", "title"]);
+  expect(Object.keys(schema.properties).sort()).toEqual([
+    "contract",
+    "document",
+    "evidence",
+    "kind",
+    "priority",
+    "title",
   ]);
-  expect(schema.anyOf.every((variant) => variant.additionalProperties === false)).toBe(true);
+  expect(schema.additionalProperties).toBe(false);
 
+  // The looser schema does NOT loosen the gate: a kind carrying another kind's
+  // field is still refused, by the validator rather than by the schema.
   const allFields = {
     kind: "note",
     title: "Auxiliary note",
@@ -379,6 +395,19 @@ test("submit_follow_up advertises discriminated variants and rejects all-fields 
   expect((diagnostic as ProjectOperationsError).code).toBe("invalid_follow_up");
   expect((diagnostic as ProjectOperationsError).detail).toBe("follow-up has an unknown field");
   expect((diagnostic as Error).message).not.toContain("Auxiliary note");
+
+  // And an unknown kind is still refused even though `kind` is now a bare string.
+  let unknownKind: unknown;
+  try {
+    tool.prepareArguments?.({
+      kind: "invented",
+      title: "t",
+      evidence: [{ summary: "s" }],
+    });
+  } catch (error) {
+    unknownKind = error;
+  }
+  expect((unknownKind as ProjectOperationsError).detail).toBe("kind is unsupported");
 });
 
 test("Coder and Reviewer primary results survive rejected all-fields follow-up metadata", async () => {
@@ -2152,6 +2181,160 @@ test("a planner emitting only text is told no call was made, not that one was re
     },
   });
   expect(plannerPrompts.at(-1) ?? "").toContain("did not call submit_plan");
+});
+
+test("every node of the submit_plan schema declares a type, so a validating provider accepts it", () => {
+  // A node serialised as a bare `{}` -- what `Type.Any()` produces -- makes
+  // providers that validate tool schemas reject the ENTIRE request: DeepSeek
+  // answers 400 "one of `type`, `anyOf`, `$ref` field is required", so the
+  // planner never runs and the stage fails having spent nothing. Walk the
+  // serialised schema and assert no such node survives anywhere in it.
+  const schema = buildSubmitPlanTool({}, "run").parameters as Record<string, unknown>;
+  const untyped: string[] = [];
+  const walk = (node: unknown, pointer: string): void => {
+    if (node === null || typeof node !== "object" || Array.isArray(node)) return;
+    const record = node as Record<string, unknown>;
+    if (record.type === undefined && record.anyOf === undefined && record.$ref === undefined)
+      untyped.push(pointer);
+    for (const key of ["properties", "items", "patternProperties"]) {
+      const child = record[key];
+      if (child === undefined) continue;
+      if (key === "items") walk(child, `${pointer}/items`);
+      else
+        for (const [name, value] of Object.entries(child as Record<string, unknown>))
+          walk(value, `${pointer}/${key}/${name}`);
+    }
+  };
+  walk(schema, "");
+  expect(untyped).toEqual([]);
+  // The enum leaves stay plain strings on purpose: parsePlan is the gate.
+  const properties = schema.properties as Record<string, Record<string, unknown>>;
+  expect(properties.complexity?.type).toBe("string");
+  expect(properties.surfaceAnalysis?.type).toBe("object");
+});
+
+test("an incomplete submit_plan reaches parsePlan and is named, not reported as a missing plan", async () => {
+  // THE REGRESSION THIS GUARDS. Spelling `surfaceAnalysis` out structurally
+  // makes TypeBox emit a `required` list for every non-optional nested field,
+  // and pi-ai's `validateToolArguments` runs that schema INSIDE the harness,
+  // before `execute`. A submission missing one leaf would then be bounced
+  // pre-execute: `capture.error` never set, the retry prompt telling the
+  // planner it "did not call submit_plan" when it did, and the run finally
+  // failing as `missing_plan`. `docs/contracts/errors.md` forbids exactly that
+  // -- an invalid input reported as an absent one. Every nested field is
+  // therefore `Type.Optional`, so `parsePlan` stays the single content gate.
+  const fx = fixture();
+  const planner = plannerRole(fx);
+  const coder = fx.role("coder", "You code.");
+  const reviewer = reviewerRole(fx);
+  // A coverage entry missing `contractIds` -- a leaf, three levels deep.
+  fx.faux.setResponses([
+    ...plannerTurn({
+      complexity: "medium",
+      securitySurface: "low",
+      summary: "s",
+      surfaceAnalysis: {
+        projectType: "TypeScript CLI/library",
+        surfaces: [{ id: "core", name: "programmatic core", rationale: "changes core" }],
+        coverage: [
+          {
+            surfaceId: "core",
+            status: "not_applicable",
+            evidence: ["no contract-sensitive behavior"],
+            rationale: "no applicable contract",
+          },
+        ],
+      },
+    }),
+  ]);
+
+  let caught: unknown;
+  try {
+    await runPipeline({
+      targetDir: fx.targetDir,
+      models: fx.models,
+      task: "implement R",
+      maxRounds: 1,
+      roles: { planner, coder, reviewer },
+    });
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught).toBeInstanceOf(OrchestrationError);
+  // The specific cause, not "you did not submit a plan".
+  expect((caught as OrchestrationError).code).toBe("malformed_plan");
+  expect((caught as OrchestrationError).message).toContain("coverage.contractIds");
+  expect((caught as OrchestrationError).code).not.toBe("missing_plan");
+});
+
+test("an incomplete submit_verdict reaches parseVerdict and is named, not reported as a missing verdict", async () => {
+  // Same pre-execute hazard on the reviewer's side, and worse here: the
+  // coverage branch of `parseVerdict` answers with the exact contract IDs to
+  // resubmit, which is the reviewer's only route to a correct second attempt.
+  // A nested `required` would replace that guidance with a schema bounce.
+  const fx = fixture();
+  const planner = plannerRole(fx);
+  const coder = fx.role("coder", "You code.");
+  const reviewer = reviewerRole(fx);
+  // An issue missing `what` -- a leaf inside an array inside the arguments.
+  fx.faux.setResponses([
+    ...plannerTurn({ complexity: "medium", securitySurface: "low", summary: "s" }),
+    fauxAssistantMessage("coded"),
+    ...reviewerTurn({
+      status: "changes_requested",
+      issues: [{ severity: "major" }],
+      summary: "needs work",
+    }),
+  ]);
+
+  let caught: unknown;
+  try {
+    await runPipeline({
+      targetDir: fx.targetDir,
+      models: fx.models,
+      task: "implement R",
+      maxRounds: 1,
+      roles: { planner, coder, reviewer },
+    });
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught).toBeInstanceOf(OrchestrationError);
+  expect((caught as OrchestrationError).code).toBe("malformed_verdict");
+  expect((caught as OrchestrationError).message).toContain("issues[0].what");
+});
+
+test("no tool schema requires a nested field, so the harness never pre-empts the parser", () => {
+  // A structural guard over BOTH mandatory handoffs at once, so a later hand
+  // spelling out another nested shape cannot silently reintroduce the
+  // pre-execute bounce. Only the top level may carry `required`: that is the
+  // contract with the provider (the tool's own arguments), while everything
+  // below it belongs to `parsePlan`/`parseVerdict`.
+  const schemas: Array<[string, Record<string, unknown>]> = [
+    ["submit_plan", buildSubmitPlanTool({}, "run").parameters as Record<string, unknown>],
+    ["submit_verdict", buildSubmitVerdictTool({}, "run").parameters as Record<string, unknown>],
+  ];
+  const offenders: string[] = [];
+  const walk = (node: unknown, pointer: string, depth: number): void => {
+    if (node === null || typeof node !== "object" || Array.isArray(node)) return;
+    const record = node as Record<string, unknown>;
+    if (depth > 0 && Array.isArray(record.required) && record.required.length > 0) {
+      offenders.push(`${pointer}: ${(record.required as string[]).join(", ")}`);
+    }
+    const properties = record.properties;
+    if (properties !== undefined)
+      for (const [name, value] of Object.entries(properties as Record<string, unknown>))
+        walk(value, `${pointer}/${name}`, depth + 1);
+    if (record.items !== undefined) walk(record.items, `${pointer}/items`, depth + 1);
+  };
+  for (const [name, schema] of schemas) walk(schema, name, 0);
+  expect(offenders).toEqual([]);
+  // ...while the top level still names what the tool call itself must carry.
+  const topLevel = Object.fromEntries(
+    schemas.map(([name, schema]) => [name, schema.required as string[]]),
+  );
+  expect(topLevel.submit_plan).toContain("surfaceAnalysis");
+  expect(topLevel.submit_verdict).toContain("status");
 });
 
 test("a malformed submit_plan throws OrchestrationError malformed_plan", async () => {

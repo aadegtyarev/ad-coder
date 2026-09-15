@@ -12,7 +12,7 @@ import type {
 import { TurnInterruptedError } from "../conversation/conversation";
 import type { ToolActivityConfig } from "../observability/tool-activity";
 import type { BackgroundRunManager, BackgroundRunNotice } from "../orchestration/background-runs";
-import { EmptyTurnError } from "../runner/errors";
+import { EmptyTurnError, ProviderRejectionError } from "../runner/errors";
 import { SessionLimitError } from "../session-limits";
 import { ToolActivityRenderer } from "./tool-activity";
 
@@ -590,6 +590,20 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
           ),
         );
         reason = "session_limit";
+      } else if (error instanceof ProviderRejectionError) {
+        // Never offer the authentication command here: the provider answered.
+        params.error.write(
+          renderFailure(
+            {
+              code: "provider_rejected",
+              message: `provider rejected the request with HTTP ${error.status}`,
+              action: "inspect the request this role sends (model id, tool schemas, parameters)",
+              retryable: false,
+            },
+            mode,
+          ),
+        );
+        reason = "turn_failed";
       } else if (error instanceof EmptyTurnError) {
         const recovery =
           params.authenticationCommand === undefined

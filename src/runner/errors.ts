@@ -22,6 +22,38 @@ export class EmptyTurnError extends Error {
   }
 }
 
+/**
+ * A provider REFUSED the request before running the model, naming an HTTP
+ * status.
+ *
+ * WHY A SEPARATE TYPE FROM `EmptyTurnError`. Both settle with empty assistant
+ * text and zero usage, so the runner cannot tell them apart from the transcript
+ * alone -- and collapsing them told the operator to "verify authentication"
+ * when a 400 over a malformed tool schema had nothing to do with credentials.
+ * The errors contract requires provider rejection and missing credentials to
+ * stay distinguishable, so the settled status is what separates them: a status
+ * present means the provider answered and refused, and an answer is not a
+ * credential problem.
+ *
+ * CARRIES A NUMBER, NEVER A BODY. Only the numeric status crosses this
+ * boundary. The provider's response body is uncontrolled text the contract
+ * forbids propagating into an error, so it is read for the status and dropped.
+ */
+export class ProviderRejectionError extends Error {
+  override readonly name = "ProviderRejectionError";
+  readonly code = "provider_rejected" as const;
+
+  constructor(
+    readonly runId: string,
+    readonly status: number,
+  ) {
+    super(
+      `the provider rejected the request with HTTP ${status} before running the model; ` +
+        "inspect the request this role sends -- model id, tool schemas, parameters -- and retry",
+    );
+  }
+}
+
 /** A role referenced tools that were not registered in the selected plugin set. */
 export class ConfiguredToolsUnavailableError extends Error {
   override readonly name = "ConfiguredToolsUnavailableError";
@@ -124,6 +156,69 @@ export function providerLimitFrom(
     retryAfterMs = resetAtMs - nowMs;
   }
   return new ProviderLimitError(retryAfterMs);
+}
+
+/**
+ * The client-error statuses a REJECTION can legitimately carry.
+ *
+ * 401/403 are deliberately EXCLUDED: those are the credential failures
+ * `EmptyTurnError` already names, and re-labelling them "inspect the request"
+ * would trade one wrong instruction for another. 5xx is excluded too -- a
+ * server fault is not a statement about the request -- and 429 never reaches
+ * here because `providerLimitFrom` converts it first.
+ */
+const PROVIDER_REJECTION_STATUSES = new Set([400, 404, 405, 409, 413, 415, 422]);
+
+/**
+ * Recover the HTTP status a settled provider failure was refused with, or
+ * `undefined` when the failure names no status this runner will attribute.
+ *
+ * SOURCES, IN ORDER OF TRUST. A structured `status`/`statusCode` field is read
+ * directly when one is present. In practice it never is on this path --
+ * pi-agent-core's `providerError` composes `{ code, message }` and carries no
+ * status field and no `details` -- so the message is the only channel, and the
+ * patterns below are what actually decide every attribution.
+ *
+ * TWO MESSAGE SHAPES, because pi-ai does not compose provider errors one way.
+ *
+ * 1. `formatProviderError` -- `"<status>: <body>"` or
+ *    `"<prefix> (<status>): <body>"`. Used by the openai-completions,
+ *    -responses and codex-responses adapters, i.e. two of the three `ApiKind`s
+ *    this registry resolves.
+ *
+ * 2. The provider SDK's own `APIError.message` -- `"<status> <body>"`, a SPACE
+ *    and no colon. This is the third `ApiKind`: `anthropic-messages` never
+ *    calls `formatProviderError` at all; its catch block assigns the raw SDK
+ *    message. Matching only shape 1 left every Anthropic-native model -- and
+ *    every OpenRouter model overriding to `anthropic-messages` -- falling
+ *    through to `EmptyTurnError`, telling the operator to check their
+ *    credentials about a request the provider had refused on its merits. That
+ *    is precisely the misattribution this function exists to end, so a fix
+ *    covering only two of three APIs would not have fixed it.
+ *
+ * Shape 2 is anchored at the start and bounded to exactly three digits
+ * followed by a space, so it reads a leading status and not a longer number
+ * ("2024 ..." fails, because the fourth digit is where a space must be). It
+ * deliberately also accepts the SDK's body-less `"<status> status code (no
+ * body)"`: the status is the whole output here, and a 400 with an empty body
+ * is still a 400 the provider refused -- excluding it would hand that run back
+ * to the credential advice this function exists to stop. Nothing else
+ * in the message is read, and the body is never returned -- this function's
+ * whole output is a number from a fixed allow-list.
+ */
+export function providerRejectionStatusFrom(error: unknown): number | undefined {
+  if (error === null || typeof error !== "object") return undefined;
+  const value = error as Record<string, unknown>;
+  const structured = value.status ?? value.statusCode;
+  if (typeof structured === "number" && PROVIDER_REJECTION_STATUSES.has(structured)) {
+    return structured;
+  }
+  const message = value.message;
+  if (typeof message !== "string") return undefined;
+  const match = /^(?:[^():]{0,64} )?\(?(\d{3})\)?: /.exec(message) ?? /^(\d{3}) /.exec(message);
+  if (match === null) return undefined;
+  const parsed = Number(match[1]);
+  return PROVIDER_REJECTION_STATUSES.has(parsed) ? parsed : undefined;
 }
 
 /**

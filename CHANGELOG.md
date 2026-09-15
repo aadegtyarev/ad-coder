@@ -6,7 +6,7 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
-## [0.6.2] - 2026-09-15
+## [0.8.2] - 2026-09-15
 
 ### Fixed
 
@@ -51,6 +51,124 @@ All notable changes to ad-coder are recorded here. The format follows
   demanded "no Markdown or prose", asking models to suppress the fenced form
   they emit by default; it now states that a complete object -- alone or inside
   one ```json fence -- is read, and that a cut-off object cannot be.
+## [0.8.1] - 2026-09-15
+
+### Changed
+
+- Recorded four measured provider-admission and usage-accounting defects in the
+  backlog. A provider whose API mandates a non-auth request header cannot be
+  admitted at all, because `ProviderConfig` has no place to declare one;
+  measured against OpenCode Zen, which rejects every completion without
+  `x-opencode-session` and surfaces through ad-coder only as an empty turn with
+  a zero-usage ledger record. `auth login` can persist an api key for exactly
+  one hardcoded provider id. A per-role model override silently resets the
+  selected inventory's provider destination. A provider that reports reasoning
+  tokens outside its output count aborts an already-completed, already-paid-for
+  role run over an accounting convention. The last of these now cites a
+  durable evidence record in `docs/calibration-evidence.jsonl` rather than
+  figures that lived only in a scratch ledger. Documentation only; no
+  behavior change.
+## [0.7.0] - 2026-09-15
+
+### Fixed
+
+- A provider that REFUSED a request is no longer reported as a missing
+  credential. A settled failure with empty assistant text and zero usage has two
+  very different causes and the transcript cannot tell them apart, so the runner
+  called every one of them `empty_turn` and told the operator to "verify
+  authentication and retry". A provider 400 over a malformed tool schema --
+  rejected before the model ever ran, at zero cost -- therefore pointed at the
+  one party that was not at fault, and the durable checkpoint recorded only
+  "inspect the provider failure", naming neither the status nor the request.
+  `runRole` and the conversation loop now read the settled failure's HTTP status
+  and raise the new `ProviderRejectionError` for a client-error status,
+  `RunCoordinator` pauses with `provider_rejected` and the status in its action,
+  and the console offers the request -- model id, tool schemas, parameters --
+  instead of an authentication command. 401 and 403 stay `empty_turn`, which is
+  what those statuses actually mean; 429 is still `provider_limit`.
+- The status is read from BOTH shapes pi-ai composes, not just one. Adapters
+  that route through `formatProviderError` produce `"<status>: <body>"`, but
+  `anthropic-messages` never calls it -- it assigns the provider SDK's own
+  `APIError.message`, which is `"<status> <body>"` with a space and no colon.
+  Matching only the first shape would have left every Anthropic-native model,
+  and every OpenRouter model that overrides to `anthropic-messages`, still
+  being told to verify authentication over a request the provider had refused
+  on its merits -- the exact misattribution above, unfixed for one of the three
+  request APIs this registry resolves. The second shape is anchored at the
+  start and bounded to three digits followed by a space, so it reads a leading
+  status and not a number appearing in prose.
+
+### Added
+
+- `ProviderRejectionError` and `providerRejectionStatusFrom` are exported.
+  The error carries the run id and the numeric status ONLY: the response body
+  that produced the status is read for the number and dropped, because an
+  uncontrolled provider body must never cross an error boundary.
+## [0.6.4] - 2026-09-15
+
+### Added
+
+- `docs/contracts/cost-anomaly.md`: an enforceable rule for what happens when a
+  model suddenly starts costing more than it did. The failure it names is a step
+  change in the unit price actually charged -- a provider repricing, a preset
+  rerouting to a costlier backend, a cache that stopped being hit -- observed
+  only after an unattended session has already paid it many times. Per-stage
+  `maxCostUsd` does not catch it: every run stays under its own ceiling while
+  every run costs several times yesterday's rate.
+
+  Detection is on provider-reported cost per token for one `(provider, model)`
+  scope, against a durable baseline of that same scope, confirmed by more than
+  one settled observation, because providers report incomplete usage and a
+  single anomalous reading is an artifact until it repeats. A first observation
+  establishes a baseline and can never itself be a spike; too thin a baseline
+  reports insufficient evidence rather than a verdict.
+
+  On a confirmed spike new runs in the affected scope are REFUSED with a typed
+  error naming the scope, the baseline, the observed rate, the ratio and the
+  release action; work already in flight is not killed, since the money for the
+  running stage is already committed and aborting it saves nothing. Release is
+  an explicit, durable, per-scope operator act that re-baselines the scope, so a
+  permanent reprice is accepted once rather than re-alarming forever. Enabled by
+  default and configurable throughout. Implementation is tracked in
+  `docs/BACKLOG.md`; no behavior ships in this release.
+## [0.6.3] - 2026-09-15
+
+### Fixed
+
+- Two mandatory tool schemas no longer make a provider reject the whole
+  request. `submit_plan` declared `surfaceAnalysis` as `Type.Any()`, which
+  serialises to a bare `{}`, and `submit_follow_up` was a `Type.Union` of its
+  four kinds, which serialises to a top-level `anyOf` rather than an object.
+  Providers that validate tool schemas refuse both: DeepSeek answers
+  400 "one of `type`, `anyOf`, `$ref` field is required" for the first and
+  "schema must be a JSON Schema of `type: \"object\"`" for the second. Because
+  `submit_follow_up` rides along on every workflow turn, a run against such a
+  provider paused at the plan stage on an empty turn, having spent zero tokens
+  and reporting only "inspect the provider failure" -- pointing the operator at
+  the provider for a defect in this repository's own schemas. `surfaceAnalysis`
+  is now spelled out structurally and the follow-up schema is one object with
+  the per-kind fields optional. Neither change loosens a gate: the enum leaves
+  stay plain strings exactly as `complexity` and `securitySurface` already did,
+  and `parsePlan` and `validateFollowUpCandidate` remain the authoritative
+  validators -- an unknown kind, or one kind carrying another kind's field, is
+  still refused.
+- An incomplete `submit_plan` or `submit_verdict` is now named instead of being
+  reported as a submission that never happened. The harness validates tool
+  arguments against the declared schema *before* `execute` runs, and a nested
+  field that is not optional is listed in that schema's `required`. So a
+  submission missing one leaf -- a coverage entry without `contractIds`, an
+  issue without `what` -- was refused by the harness before the parser saw it:
+  nothing was captured, the retry prompt told the role it had not called the
+  tool when it had, and the run ended as `missing_plan` / `missing_verdict`.
+  That is an invalid input reported as an absent one, which
+  `docs/contracts/errors.md` forbids, and on the reviewer's side it also
+  suppressed `parseVerdict`'s corrective message naming the exact contract IDs
+  to resubmit -- the role's only route to a correct second attempt. Every
+  nested field in both schemas is now optional, so each node still declares the
+  `type` a validating provider demands while `parsePlan` and `parseVerdict`
+  remain the single content gate. `submit_verdict` carried this defect before
+  the schema work in this release; `submit_plan` acquired it with the fix
+  above.
 
 ## [0.6.1] - 2026-09-15
 

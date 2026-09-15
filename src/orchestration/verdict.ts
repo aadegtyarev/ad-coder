@@ -159,16 +159,30 @@ export function buildSubmitVerdictTool(
     // Prefer provider-native strict schemas without excluding portable
     // tool-calling providers from the review workflow.
     constrainedSampling: { type: "json_schema", strict: "prefer" },
+    // Every NESTED field is `Type.Optional`, for the same reason the enum
+    // leaves stay bare strings: the harness validates these args before
+    // `execute`, and TypeBox lists each non-optional property in its object's
+    // `required`. A required nested leaf would bounce an incomplete submission
+    // pre-execute, so `capture.error` would never be set and the reviewer
+    // would be told it did not submit a verdict when it did. That also
+    // silences `parseVerdict`'s corrective messages -- the coverage branch
+    // names the exact contract IDs to resubmit -- which are the reviewer's
+    // only route to a correct second attempt. `parseVerdict` is the gate.
     parameters: Type.Object({
       status: Type.String(),
-      issues: Type.Array(Type.Object({ severity: Type.String(), what: Type.String() })),
+      issues: Type.Array(
+        Type.Object({
+          severity: Type.Optional(Type.String()),
+          what: Type.Optional(Type.String()),
+        }),
+      ),
       summary: Type.String(),
       coverage: Type.Optional(
         Type.Array(
           Type.Object({
-            surfaceId: Type.String(),
-            contractIds: Type.Array(Type.String()),
-            evidence: Type.Array(Type.String()),
+            surfaceId: Type.Optional(Type.String()),
+            contractIds: Type.Optional(Type.Array(Type.String())),
+            evidence: Type.Optional(Type.Array(Type.String())),
           }),
         ),
       ),
