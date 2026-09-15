@@ -64,6 +64,19 @@ wasting a live calibration run. Measurements retain the orchestrator and Planner
 votes plus correctness and agreement, so live Planner feedback can calibrate
 project-local triage without silently changing the user baseline.
 
+`bun run calibration:corpus -- run <task-id> --repeat N` runs a task N times and
+reports the spread rather than one number. One run does not measure a model, it
+samples one: the same model on the same reviewer task produced 0.43, 0.79, an
+unreadable answer and 1.00 in a single sitting, so a cell decided from any one of
+them was decided by which run came first. A later five-run repeat on the same
+pair reported four accepted of five, worst 0.47 against a mean of 0.89 -- the
+mean is the number that reads well and the worst is the one an operator lives
+with, so both are printed. The per-run measurements are kept in the summary, and
+the `harnessOutcome` tally says how many runs reached a scored answer at all.
+
+No routing cell should move on a single run. Repeats cost what the task costs:
+those five runs came to two cents.
+
 An artifact-scored task may also ship `.gamed.json` beside its pass and fail
 samples. The other two prove the scorer can tell a good answer from a bad one;
 this one proves it resists the SPECIFIC evasion the task was built to catch --

@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { CalibrationTask } from "../../src/evaluation/calibration";
+import type { CalibrationMeasurement, CalibrationTask } from "../../src/evaluation/calibration";
 import { measuredRolesOf, scoreCalibrationRun } from "../../src/evaluation/calibration";
 import type { LedgerRecord } from "../../src/ledger/types";
 import type { ConsoleTurn, OrchestratorReport } from "./report";
@@ -308,8 +308,10 @@ function runTask(
     extra: string[];
     timeoutMs: number;
     keep: boolean;
+    /** Suppress the per-run print, for a repeat loop that reports a summary. */
+    quiet?: boolean;
   },
-): void {
+): CalibrationMeasurement {
   if (!task.scorer) throw new Error(`task has no scorer: ${task.id}`);
   const target = freshTarget(task.id);
   if (task.fixture) materialize(task.fixture, target);
@@ -361,17 +363,19 @@ function runTask(
           plannerComplexity: execution.report.plannerComplexity as CalibrationTask["complexity"],
         }),
     });
-    console.log(
-      JSON.stringify(
-        {
-          ...measurement,
-          ...(execution.report === undefined ? {} : { report: execution.report }),
-          ...(options.keep ? { target, ledger: execution.ledgerFile } : {}),
-        },
-        null,
-        2,
-      ),
-    );
+    if (options.quiet !== true)
+      console.log(
+        JSON.stringify(
+          {
+            ...measurement,
+            ...(execution.report === undefined ? {} : { report: execution.report }),
+            ...(options.keep ? { target, ledger: execution.ledgerFile } : {}),
+          },
+          null,
+          2,
+        ),
+      );
+    return measurement;
   } finally {
     if (!options.keep) fs.rmSync(target, { recursive: true, force: true });
   }
@@ -526,11 +530,57 @@ else if (action === "smoke") {
     return index < 0 ? undefined : own[index + 1];
   };
   const timeoutRaw = flag("--timeout-ms");
-  runTask(entry.task, entry.file, {
+  const repeatRaw = flag("--repeat");
+  const repeat = repeatRaw === undefined ? 1 : Number(repeatRaw);
+  if (!Number.isInteger(repeat) || repeat < 1)
+    throw new Error("--repeat must be a positive integer");
+  const options = {
     inventory: flag("--inventory") ?? "unspecified",
     thinkingLevel: flag("--thinking-level") ?? "unspecified",
     extra,
     timeoutMs: timeoutRaw === undefined ? 45 * 60_000 : Number(timeoutRaw),
     keep: own.includes("--keep"),
-  });
+  };
+  if (repeat === 1) runTask(entry.task, entry.file, options);
+  else {
+    // WHY REPEATS ARE A FIRST-CLASS ACTION. One run does not measure a model, it
+    // samples one. The same model on the same task produced 0.43, 0.79, an
+    // unreadable answer and 1.00 in one sitting -- a routing cell decided from
+    // any single one of those is decided by which run happened to come first.
+    // So a repeat reports the spread rather than an average that hides it: the
+    // worst run is what an operator actually lives with, and a task where every
+    // model scores identically is a task that has stopped discriminating.
+    const runs: CalibrationMeasurement[] = [];
+    for (let index = 0; index < repeat; index++)
+      runs.push(runTask(entry.task, entry.file, { ...options, quiet: true }));
+    const qualities = runs.map((run) => run.quality);
+    const costs = runs.map((run) => run.costUsd);
+    const sum = (values: number[]) => values.reduce((total, value) => total + value, 0);
+    console.log(
+      JSON.stringify(
+        {
+          taskId: entry.task.id,
+          model: runs[0]?.model ?? null,
+          provider: runs[0]?.provider ?? null,
+          complexity: entry.task.complexity,
+          thinkingLevel: options.thinkingLevel,
+          repeat,
+          accepted: runs.filter((run) => run.accepted).length,
+          quality: {
+            worst: Math.min(...qualities),
+            mean: sum(qualities) / qualities.length,
+            best: Math.max(...qualities),
+          },
+          costUsd: { total: sum(costs), mean: sum(costs) / costs.length },
+          harnessOutcomes: runs.reduce<Record<string, number>>((counts, run) => {
+            counts[run.harnessOutcome] = (counts[run.harnessOutcome] ?? 0) + 1;
+            return counts;
+          }, {}),
+          runs,
+        },
+        null,
+        2,
+      ),
+    );
+  }
 } else throw new Error("usage: corpus.ts [list|validate|smoke|run <task-id>]");

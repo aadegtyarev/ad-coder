@@ -6,6 +6,17 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-09-16
+
+### Added
+- `calibration:corpus -- run <task-id> --repeat N` runs a task N times and reports
+  the spread: how many runs were accepted, worst/mean/best quality, total cost,
+  and a tally of `harnessOutcome` saying how many runs reached a scored answer at
+  all. One run does not measure a model, it samples one -- the same model on the
+  same task produced 0.43, 0.79, an unreadable answer and 1.00 in one sitting.
+  The worst run is printed beside the mean because that is the one an operator
+  lives with.
+
 ## [0.16.0] - 2026-09-16
 
 ### Added
