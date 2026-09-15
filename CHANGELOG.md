@@ -6,6 +6,18 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.10.7] - 2026-09-15
+
+### Fixed
+- The startup banner reported three collapsed tiers instead of the routing the
+  run will actually use. With an inventory, `strong`/`mid`/`cheap` all fall back
+  to the same default model, so the line read `provider "custom" | strong "x" mid
+  "x" cheap "x"` for a profile routing seven roles across four models -- true of
+  nothing. It now names the routing source (the inventory by name, or the
+  provider), the default complexity, and every role grouped by the model it
+  resolves to at that complexity. The role list is walked from the profile
+  layer's own exported vocabulary, so a role added there cannot go unreported.
+
 ## [0.10.6] - 2026-09-15
 
 ### Fixed

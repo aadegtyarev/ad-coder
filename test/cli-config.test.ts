@@ -1055,3 +1055,46 @@ test("matching project calibration overrides named inventory routing and can be 
     fs.rmSync(targetDir, { recursive: true, force: true });
   }
 });
+
+test("the startup banner reports the live role layout, not three collapsed tiers", () => {
+  const warnings: string[] = [];
+  resolvePipelineConfig({
+    task: "x",
+    targetDir: "/tmp/target",
+    registryConfig: mixedRegistry(),
+    profile: buildDefaultProfile({ strong: "large", mid: "small", cheap: "small" }),
+    plannerModel: "large",
+    coderModel: "small",
+    summarizerModel: "large",
+    env: fakeEnv({ LOCAL_KEY: "k" }),
+    warn: (message) => warnings.push(message),
+  });
+
+  const banner = warnings.find((line) => line.includes("complexity"));
+  expect(banner).toBeDefined();
+  // Roles grouped by the model they actually resolve to: the operator checks
+  // the routing decision, and under an inventory the three tiers collapse onto
+  // one name and describe nothing.
+  expect(banner).toContain('provider "custom"');
+  expect(banner).toContain('complexity "medium"');
+  expect(banner).toContain("large: planner");
+  expect(banner).toContain("small: ");
+  expect(banner).toContain("coder");
+  // Every routing role appears exactly once -- a role added to the profile
+  // vocabulary but missed by the banner would leave the operator checking a
+  // routing that is silently incomplete.
+  const listed = (banner ?? "")
+    .slice((banner ?? "").indexOf('" | ', (banner ?? "").indexOf("complexity")) + 4)
+    .split(" | ")
+    .flatMap((group) => group.slice(group.indexOf(": ") + 2).split(", "))
+    .map((role) => role.trim());
+  expect([...listed].sort()).toEqual([
+    "auditor",
+    "coder",
+    "planner",
+    "recorder",
+    "researcher",
+    "reviewer",
+    "security",
+  ]);
+});
