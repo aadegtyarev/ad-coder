@@ -8,11 +8,23 @@ import { measuredRolesOf, scoreCalibrationRun } from "../../src/evaluation/calib
 import type { LedgerRecord } from "../../src/ledger/types";
 import type { ConsoleTurn, OrchestratorReport } from "./report";
 import { buildOrchestratorReport, extractJsonArtifact } from "./report";
+import type { TaskSource } from "./task-source";
+import { assertTaskSource } from "./task-source";
 
 type Task = CalibrationTask & {
   fixture?: string;
   scorer?: string;
   scorerInput?: "target" | "artifact" | "report";
+  /**
+   * Required on every task, including the ones that invented their own problem.
+   *
+   * Made mandatory rather than optional-for-new-tasks because a grandfather list
+   * rots: within two additions nobody remembers which ids predate the rule, and
+   * an absent field becomes indistinguishable from an oversight. A task whose
+   * shape is this project's own says so with `url: "original"` -- which is a
+   * claim someone can dispute, unlike silence.
+   */
+  source: TaskSource;
   /**
    * Ordered console inputs for a manual-workflow task. Splitting the work into
    * turns is what makes ORDER observable: a claim the model makes in turn one
@@ -55,6 +67,7 @@ function loadTasks(): { file: string; task: Task }[] {
       throw new Error(`invalid scorer input: ${task.id}`);
     if (task.scorer && !fs.statSync(path.join(root, "scorers", task.scorer)).isFile())
       throw new Error(`missing scorer: ${task.id}`);
+    assertTaskSource(task.id, task.source);
     if (task.prompts !== undefined) {
       if (!Array.isArray(task.prompts) || task.prompts.some((p) => typeof p !== "string" || !p))
         throw new Error(`invalid prompts: ${task.id}`);
@@ -312,6 +325,7 @@ if (action === "list")
         complexity: task.complexity,
         mode: task.mode,
         fixture: task.fixture ?? null,
+        source: task.source.url,
       })),
       null,
       2,

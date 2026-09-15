@@ -20,5 +20,10 @@
       "weight": 2
     }
   ],
-  "scorerInput": "target"
+  "scorerInput": "target",
+  "source": {
+    "url": "original",
+    "license": "n/a",
+    "note": "Whitespace leaking into a persisted key, posed as a one-line defect with a regression test. Shape invented here against this project's own tag-normalization surface."
+  }
 }

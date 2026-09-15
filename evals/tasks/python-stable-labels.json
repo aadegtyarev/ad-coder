@@ -7,11 +7,31 @@
   "scorer": "python-stable-labels.ts",
   "prompt": "Make normalize_labels return normalized unique labels in first-seen order for any iterable. Preserve case-insensitive Unicode normalization, ignore blank values, do not mutate caller-owned inputs, and add focused tests.",
   "checks": [
-    { "id": "stable-order", "weight": 3 },
-    { "id": "iterable-support", "weight": 2 },
-    { "id": "unicode-normalization", "weight": 2 },
-    { "id": "input-preserved", "weight": 1 },
-    { "id": "has-tests", "weight": 2 }
+    {
+      "id": "stable-order",
+      "weight": 3
+    },
+    {
+      "id": "iterable-support",
+      "weight": 2
+    },
+    {
+      "id": "unicode-normalization",
+      "weight": 2
+    },
+    {
+      "id": "input-preserved",
+      "weight": 1
+    },
+    {
+      "id": "has-tests",
+      "weight": 2
+    }
   ],
-  "scorerInput": "target"
+  "scorerInput": "target",
+  "source": {
+    "url": "original",
+    "license": "n/a",
+    "note": "First-seen-order deduplication with Unicode case folding. Shape invented here."
+  }
 }

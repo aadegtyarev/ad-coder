@@ -20,5 +20,10 @@
   ],
   "fixture": "reviewer-hidden-regression",
   "scorer": "reviewer-hidden-regression.ts",
-  "scorerInput": "artifact"
+  "scorerInput": "artifact",
+  "source": {
+    "url": "original",
+    "license": "n/a",
+    "note": "Two seeded defects plus one tempting non-defect in a reviewed diff. Shape invented here."
+  }
 }

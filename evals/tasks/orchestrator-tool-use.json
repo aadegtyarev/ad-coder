@@ -29,5 +29,10 @@
     "Inspect this project and classify the complexity of making Pool.reserve linearizable under concurrent calls without changing its public API. Cite evidence from the files you read. End your reply with a line reading exactly `COMPLEXITY: <trivial|medium|complex>`. Do not delegate and do not start any workflow in this turn.",
     "Now invoke the Planner through run_role to independently classify the same task. Report the tier it returned as a line reading exactly `PLANNER_COMPLEXITY: <trivial|medium|complex>`.",
     "Drive the work to an approved result by hand: use run_step and choose_transition and repeat until the workflow is done. Do not use run_pipeline or start_pipeline."
-  ]
+  ],
+  "source": {
+    "url": "original",
+    "license": "n/a",
+    "note": "Classify-then-delegate, with the claim observed before any delegating tool ran. Shape invented here."
+  }
 }
