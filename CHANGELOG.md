@@ -6,6 +6,18 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-09-15
+
+### Added
+- `docs/pi-capabilities.md` records a research note on cross-model context handoff, verified by reading the installed
+  pi-ai 0.85.1 adapter sources rather than its documentation. Handoff is already implemented inside those adapters:
+  on a model mismatch they drop redacted thinking, downgrade ordinary thinking to text, strip tool-call thought
+  signatures, renormalise tool-call ids for the target API, and backfill orphaned tool calls with synthetic error
+  results. It fires on a model switch WITHIN one provider too, not only across providers -- so ad-coder need not
+  reinvent signature and thinking splicing at the model boundary. What remains ours: compaction when moving to a
+  smaller context window, pipeline resume not checking the model a stage previously ran on, and the fact that this
+  degradation is invisible in the ledger and on stderr.
+
 ## [0.12.0] - 2026-09-15
 
 ### Added
