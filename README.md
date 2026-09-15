@@ -359,6 +359,12 @@ the pinned pi-ai data rather than restating them:
 }
 ```
 
+opencode-go additionally requires an `x-opencode-session` header on every
+request, which no provider or catalog supplies today — declare it by hand as
+`"headers": {"x-opencode-session": "{{session}}"}` until
+[#120](https://github.com/aadegtyarev/ad-coder/issues/120) lands, or the account
+answers HTTP 400 `MissingSessionID`.
+
 Anything you declare still wins, an id the catalog does not publish is rejected
 rather than resolved with invented economics, and an account-scoped id such as
 an OpenRouter `@preset/...` is admitted by marking it `"catalog": false` and
