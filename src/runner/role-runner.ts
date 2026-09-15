@@ -1,6 +1,7 @@
 import type { Context, Session } from "@earendil-works/pi-agent-core";
 import type { Api, Model, Models } from "@earendil-works/pi-ai";
 import type { CompactionPolicy, Summarizer } from "../context/compactor";
+import type { CostAnomalyDetector } from "../economics/cost-anomaly";
 import type { LedgerSink } from "../ledger/ledger";
 import type {
   ToolActivityChannel,
@@ -79,6 +80,7 @@ export interface RoleRunnerConfig {
   session?: Session;
   projectStoreConfig?: ProjectStoreConfig;
   sessionLimitController?: SessionLimitController;
+  costAnomalyDetector?: CostAnomalyDetector;
   stageLimits?: StageLimits;
   observability?: { maxReadPaths?: number; maxReadPathBytes?: number };
   activityChannel?: ToolActivityChannel;
@@ -113,6 +115,9 @@ export function createRoleRunner(config: RoleRunnerConfig): RoleRunner {
         ...(config.compaction !== undefined && { compaction: config.compaction }),
         ...(config.sessionLimitController !== undefined && {
           sessionLimitController: config.sessionLimitController,
+        }),
+        ...(config.costAnomalyDetector !== undefined && {
+          costAnomalyDetector: config.costAnomalyDetector,
         }),
         ...((opts?.stageLimits !== undefined || config.stageLimits !== undefined) && {
           stageLimitController: new StageLimitController(

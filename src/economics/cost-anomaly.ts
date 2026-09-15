@@ -1,3 +1,5 @@
+import * as fs from "node:fs";
+import * as path from "node:path";
 import type { AssistantMessage, Models } from "@earendil-works/pi-ai";
 
 /**
@@ -94,6 +96,62 @@ export class MemoryCostAnomalyStore implements CostAnomalyStore {
 
   save(snapshot: CostAnomalyStateSnapshot): void {
     this.snapshot = structuredClone(snapshot);
+  }
+}
+
+/** Where a project's cost-anomaly state lives, and nowhere else. */
+export const COST_ANOMALY_STATE_PATH = ".ad-coder/cost-anomaly.json";
+
+/**
+ * Scope state on disk, so a block and an accepted price survive a restart.
+ *
+ * WHY A WHOLE-FILE REWRITE rather than the ledger's append-only descriptor:
+ * this is current state, not history. A release must ERASE a block, and an
+ * append-only log can only record that it happened, leaving the next start to
+ * replay a block the operator already lifted.
+ *
+ * Written through a temp file and renamed, because the alternative -- truncate
+ * then write -- leaves an empty file if the process dies between the two, and
+ * an empty state file reads as "no blocks" and silently unblocks every scope.
+ *
+ * Reads are TOLERANT and writes are not: a corrupt or unreadable file yields
+ * `undefined`, which costs a baseline and re-learns it, while a failed write
+ * throws, because silently not persisting a block is how an unattended session
+ * pays the spike again tomorrow.
+ */
+export class FileCostAnomalyStore implements CostAnomalyStore {
+  private readonly filePath: string;
+
+  constructor(targetDir: string) {
+    this.filePath = path.resolve(targetDir, COST_ANOMALY_STATE_PATH);
+  }
+
+  load(): CostAnomalyStateSnapshot | undefined {
+    let raw: string;
+    try {
+      raw = fs.readFileSync(this.filePath, "utf8");
+    } catch {
+      return undefined;
+    }
+    try {
+      const parsed = JSON.parse(raw) as CostAnomalyStateSnapshot;
+      // A file from a future or hand-edited shape is discarded rather than
+      // half-trusted: a `scopes` that is not an object would otherwise reach
+      // the detector as entries it cannot read.
+      if (parsed?.version !== 1) return undefined;
+      if (typeof parsed.scopes !== "object" || parsed.scopes === null) return undefined;
+      return parsed;
+    } catch {
+      return undefined;
+    }
+  }
+
+  save(snapshot: CostAnomalyStateSnapshot): void {
+    const dir = path.dirname(this.filePath);
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const temp = `${this.filePath}.${process.pid}.tmp`;
+    fs.writeFileSync(temp, JSON.stringify(snapshot), { mode: 0o600 });
+    fs.renameSync(temp, this.filePath);
   }
 }
 
@@ -202,6 +260,13 @@ export class CostAnomalyDetector {
    * mid-stage spends it without buying the result.
    */
   admit(provider: string, model: string): void {
+    // Cleared FIRST, on every path. The stash below outlives the throw that
+    // set it, and this detector is long-lived and shared across every scope a
+    // session routes to -- so without this reset, one blocked scope would
+    // replay its refusal into the next run on a DIFFERENT model, and into the
+    // same model after the operator released it. The refusal must be reachable
+    // exactly once, by the call that actually failed.
+    this.boundaryFailure = undefined;
     if (!this.config.enabled) return;
     const state = this.scopes.get(costAnomalyScopeKey(provider, model));
     if (state?.block === undefined) return;
@@ -215,9 +280,18 @@ export class CostAnomalyDetector {
     throw error;
   }
 
-  /** Replay a boundary refusal the harness converted into a generic fault. */
+  /**
+   * Replay a boundary refusal the harness converted into a generic fault.
+   *
+   * Consumes it: a refusal answers the one run it refused. Leaving it set
+   * would blame the next run for a block that is not its own -- and the
+   * throw here means no later `admit` on this path gets to clear it.
+   */
   assertNoBoundaryFailure(): void {
-    if (this.boundaryFailure !== undefined) throw this.boundaryFailure;
+    const error = this.boundaryFailure;
+    if (error === undefined) return;
+    this.boundaryFailure = undefined;
+    throw error;
   }
 
   /**

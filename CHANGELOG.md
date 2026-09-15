@@ -31,6 +31,27 @@ All notable changes to ad-coder are recorded here. The format follows
 - A block names only scope, ratio and both rates, plus the release command --
   no prompts, payloads or credentials, in the error message or in persisted
   state.
+- The detector is constructed for every run resolved through the CLI and
+  threaded to the runner, so "on by default" is a property of the shipped
+  pipeline rather than of a class nobody builds.
+- Scope state is durable per project (`.ad-coder/cost-anomaly.json`), written
+  whole through a temp file and renamed. A block raised by an unattended run is
+  therefore still standing at the next start, and an accepted price stays
+  accepted. A corrupt or unreadable file costs a baseline and re-learns it,
+  rather than reading as a false all-clear that unblocks every scope.
+- `ad-coder cost status` lists what is blocked and `ad-coder cost release
+  <provider>/<model>` accepts a model's new price -- the command the refusal
+  itself names, so its advice can actually be followed. Releasing a scope that
+  is not blocked is reported rather than treated as success, so a mistyped
+  scope cannot read as "released" while the real block stays up.
+
+### Fixed
+- A refusal no longer outlives the run it refused. The typed error stashed for
+  replay past the harness boundary was never cleared, so one blocked scope
+  reported its block for the next run on a DIFFERENT model, and kept reporting
+  it after the operator released it -- wedging every model in the session shut.
+  It is now cleared on entry to every admission and consumed when replayed.
+
 ## [0.7.0] - 2026-09-15
 
 ### Fixed

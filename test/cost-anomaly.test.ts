@@ -1,8 +1,13 @@
 import { expect, test } from "bun:test";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import {
+  COST_ANOMALY_STATE_PATH,
   CostAnomalyBlockedError,
   CostAnomalyDetector,
   DEFAULT_COST_ANOMALY_CONFIG,
+  FileCostAnomalyStore,
   MemoryCostAnomalyStore,
 } from "../src/economics/cost-anomaly";
 
@@ -119,6 +124,91 @@ test("a block is per scope: another model keeps running", () => {
   expect(() => detector.admit("openrouter", "deepseekflash")).toThrow(CostAnomalyBlockedError);
   expect(() => detector.admit("openrouter", "glm53flash")).not.toThrow();
   expect(() => detector.admit("anthropic", "deepseekflash")).not.toThrow();
+});
+
+test("a refusal is replayed once, and never charged to a later run or another scope", () => {
+  const detector = new CostAnomalyDetector();
+  for (let index = 0; index < 5; index += 1) detector.observe(at(0.000002));
+  detector.observe(at(0.000008));
+  detector.observe(at(0.000008));
+
+  // The blocked scope refuses, and the stashed refusal is what the runner
+  // replays after the harness swallows the throw.
+  expect(() => detector.admit("openrouter", "deepseekflash")).toThrow(CostAnomalyBlockedError);
+  expect(() => detector.assertNoBoundaryFailure()).toThrow(CostAnomalyBlockedError);
+  // Replayed ONCE: the refusal answered the run it refused. A second replay
+  // would blame whatever ran next for a block that was never about it.
+  expect(() => detector.assertNoBoundaryFailure()).not.toThrow();
+
+  // A different model is not implicated by another scope's block, and the
+  // detector is long-lived, so the stale refusal must not survive into it.
+  expect(() => detector.admit("openrouter", "glm53flash")).not.toThrow();
+  expect(() => detector.assertNoBoundaryFailure()).not.toThrow();
+
+  // And after the operator accepts the new price, the released scope runs.
+  expect(() => detector.admit("openrouter", "deepseekflash")).toThrow(CostAnomalyBlockedError);
+  detector.release("openrouter", "deepseekflash");
+  expect(() => detector.admit("openrouter", "deepseekflash")).not.toThrow();
+  expect(() => detector.assertNoBoundaryFailure()).not.toThrow();
+});
+
+test("a block and a release survive on disk, so a later process sees and can lift them", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cost-anomaly-"));
+  try {
+    const spike = (detector: CostAnomalyDetector): void => {
+      for (let index = 0; index < 5; index += 1) detector.observe(at(0.000002));
+      detector.observe(at(0.000008));
+      detector.observe(at(0.000008));
+    };
+    spike(new CostAnomalyDetector({}, new FileCostAnomalyStore(dir)));
+
+    // A SEPARATE detector over the same directory -- what the next invocation
+    // of the CLI is -- still refuses the scope. An in-memory store would have
+    // forgotten the block the moment the blocked run exited.
+    const reopened = new CostAnomalyDetector({}, new FileCostAnomalyStore(dir));
+    expect(reopened.blocked().map((entry) => entry.model)).toEqual(["deepseekflash"]);
+    expect(() => reopened.admit("openrouter", "deepseekflash")).toThrow(CostAnomalyBlockedError);
+
+    // Nothing but names and numbers is written where an operator can read it.
+    const raw = fs.readFileSync(path.join(dir, COST_ANOMALY_STATE_PATH), "utf8");
+    for (const secret of ["sk-", "Authorization", "apiKey", "prompt", "http"])
+      expect(raw).not.toContain(secret);
+
+    // And the release is durable too: accepting the price must not need to be
+    // repeated on every subsequent start.
+    reopened.release("openrouter", "deepseekflash");
+    const afterRelease = new CostAnomalyDetector({}, new FileCostAnomalyStore(dir));
+    expect(afterRelease.blocked()).toEqual([]);
+    expect(() => afterRelease.admit("openrouter", "deepseekflash")).not.toThrow();
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("an unreadable or corrupt state file costs a baseline, never a false all-clear", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cost-anomaly-"));
+  try {
+    // No file at all: a first run in a fresh project, not an error.
+    expect(new FileCostAnomalyStore(dir).load()).toBeUndefined();
+
+    // Garbage, and a well-formed document of the WRONG version, are both
+    // discarded rather than half-read into scopes the detector cannot use.
+    const file = path.join(dir, COST_ANOMALY_STATE_PATH);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, "{not json");
+    expect(new FileCostAnomalyStore(dir).load()).toBeUndefined();
+    fs.writeFileSync(file, JSON.stringify({ version: 2, scopes: {} }));
+    expect(new FileCostAnomalyStore(dir).load()).toBeUndefined();
+    fs.writeFileSync(file, JSON.stringify({ version: 1, scopes: null }));
+    expect(new FileCostAnomalyStore(dir).load()).toBeUndefined();
+
+    // A detector over the bad file starts clean rather than throwing.
+    expect(() =>
+      new CostAnomalyDetector({}, new FileCostAnomalyStore(dir)).admit("openrouter", "x"),
+    ).not.toThrow();
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("a spike never folds into the baseline it is measured against", () => {

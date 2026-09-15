@@ -24,6 +24,7 @@ import type {
 import { resolvePipelineConfig } from "./cli/resolve-config";
 import { ToolActivityRenderer } from "./cli/tool-activity";
 import type { CompactionPolicy } from "./context/compactor";
+import { CostAnomalyDetector, FileCostAnomalyStore } from "./economics/cost-anomaly";
 import {
   type CalibrationCostSample,
   forecastCost,
@@ -1028,6 +1029,44 @@ function readProfileJsonInput(input: string | undefined): unknown {
       cause: error,
     });
   }
+}
+
+/**
+ * The operator side of a cost-anomaly block: see what is blocked, accept a price.
+ *
+ * Reads the same durable store the runtime writes, so a block raised by an
+ * unattended run is visible and liftable from a later, separate invocation --
+ * which is the only way the refusal's own advice can be followed at all.
+ */
+function costCommand(positionals: string[], flags: Record<string, string | undefined>): void {
+  const action = positionals[1];
+  if (action !== "status" && action !== "release") fail("the cost command takes status or release");
+
+  const targetDir = resolveTargetDir(flags["--target-dir"]);
+  const detector = new CostAnomalyDetector({}, new FileCostAnomalyStore(targetDir));
+
+  if (action === "status") {
+    if (positionals[2] !== undefined) fail("cost status accepts no scope argument");
+    process.stdout.write(`${JSON.stringify({ blocked: detector.blocked() })}\n`);
+    return;
+  }
+
+  const scope = positionals[2];
+  // Spelled exactly as the refusal names it, so the operator can paste the
+  // command back verbatim instead of translating it.
+  if (scope === undefined) fail("cost release needs a <provider>/<model> scope");
+  const separator = scope.indexOf("/");
+  if (separator <= 0 || separator === scope.length - 1)
+    fail("a cost scope is spelled <provider>/<model>");
+  const provider = scope.slice(0, separator);
+  const model = scope.slice(separator + 1);
+
+  const released = detector.release(provider, model);
+  // A scope that was not blocked is reported, not silently treated as success:
+  // a typo in the scope would otherwise read as "released" while the real
+  // block stayed up.
+  if (released === undefined) fail(`no block is recorded for ${scope}`);
+  process.stdout.write(`${JSON.stringify({ released: { provider, model, block: released } })}\n`);
 }
 
 async function profileCommand(positionals: string[], flags: Record<string, string | undefined>) {
@@ -2617,6 +2656,22 @@ const COMMANDS: readonly CommandDefinition[] = [
           process.stdout.write(`${name}=${entry.value} (${entry.source})\n`);
       }
       await Promise.resolve();
+    },
+  },
+  {
+    name: "cost",
+    description: "Show scopes blocked by a cost spike, or accept a model's new price.",
+    positionals: [
+      { name: "<status|release>", description: "Cost-anomaly action." },
+      { name: "[provider/model]", description: "Scope to release." },
+    ],
+    options: [
+      { name: "--target-dir", value: "<dir>", description: "Project whose state is read." },
+      { name: "--json", description: "Accepted for machine-mode parity; output is always JSON." },
+    ],
+    run: ({ positionals, flags }) => {
+      costCommand(positionals, flags);
+      return Promise.resolve();
     },
   },
   {

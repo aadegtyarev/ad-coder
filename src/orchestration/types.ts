@@ -1,6 +1,7 @@
 import type { Api, Model, Models } from "@earendil-works/pi-ai";
 import type { ContextBudgetPercents } from "../context/budget";
 import type { CompactionPolicy } from "../context/compactor";
+import type { CostAnomalyDetector } from "../economics/cost-anomaly";
 import type { LedgerSink } from "../ledger/ledger";
 import type {
   ToolActivityChannel,
@@ -303,6 +304,8 @@ export interface PipelineConfig {
   effectiveConfig?: Readonly<Record<string, { value: string | number | boolean; source: string }>>;
   /** Shared generation-call accounting for every role in this workflow session. */
   sessionLimitController?: SessionLimitController;
+  /** Shared cost-per-token anomaly tracking for every role in this session. */
+  costAnomalyDetector?: CostAnomalyDetector;
   /** Per-stage limits. Omitted/zero fields preserve unlimited historical behavior. */
   stageLimits?: StageLimits;
   /** Optional role-specific stage-limit overlays, resolved over `stageLimits`. */
