@@ -6,6 +6,17 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.10.2] - 2026-09-15
+
+### Changed
+- Unresolved work moved out of `docs/BACKLOG.md` and into nine grouped GitHub
+  epic issues (#100-#108), so more than one person can pick items up without
+  colliding and so discussion sits next to the item instead of in a commit that
+  rewrote a shared file. `docs/BACKLOG.md` is now an index of those epics; its
+  prose history remains in git. `AGENTS.md`, `README.md`, `docs/ARCHITECTURE.md`
+  and `docs/ROADMAP.md` now point unresolved work at an issue rather than at the
+  file. No behavior changes.
+
 ## [0.10.1] - 2026-09-15
 
 ### Added

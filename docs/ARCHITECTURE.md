@@ -9,7 +9,7 @@ the CLI is only an adapter.
 
 This document is a map for contributors. Detailed invariants live in
 `docs/contracts/`, accepted future design lives in `docs/ROADMAP.md`, and open
-work lives in `docs/BACKLOG.md`.
+work lives in GitHub issues indexed by `docs/BACKLOG.md`.
 
 ## Runtime and dependencies
 
@@ -263,6 +263,6 @@ frozen-installs, and relinks.
 - Treat project prompts as trusted overrides, but never let an ad-coder worker
   recursively invoke LDO or another orchestration pipeline.
 - Put enforceable rules in contracts, current structure here, future design in
-  ROADMAP, and unresolved work in BACKLOG.
+  ROADMAP, unresolved work in issues.
 - Keep this file a map. Move detailed algorithms and incident evidence to their
   canonical homes instead of appending them here.
