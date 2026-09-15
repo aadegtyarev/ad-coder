@@ -738,6 +738,89 @@ function resolveConfig(
     };
   }
 
+  const roles =
+    pipelineRoles === undefined
+      ? { coder: orchestrator, reviewer: orchestrator, orchestrator }
+      : { ...pipelineRoles, orchestrator };
+
+  /**
+   * Provider-native model id -> how that model's context window was settled.
+   *
+   * Built from the VALIDATED registry config rather than the live pi `Model`,
+   * because the pi model carries the resolved number and nothing about where it
+   * came from -- and "where it came from" is the whole point of the projection.
+   *
+   * KEYED ON `modelId`, NOT `name`. A role holds a live `Model<Api>`, whose
+   * `id` is the provider-native id; the registry-scoped `name` is a lookup key
+   * that never leaves the registry. When two entries share a native id but
+   * settle to different windows -- or settle the same window differently --
+   * the entry is dropped rather than guessed at: an unlabelled number is
+   * better than a confidently wrong label.
+   */
+  const windowProvenance = new Map<
+    string,
+    { window: number; source: string; catalog?: number } | undefined
+  >();
+  for (const entry of registryConfig.providers) {
+    for (const model of entry.models) {
+      const settled = {
+        window: model.contextWindow,
+        source: model.contextWindowSource,
+        ...(model.catalogContextWindow !== undefined && { catalog: model.catalogContextWindow }),
+      };
+      const seen = windowProvenance.get(model.modelId);
+      if (windowProvenance.has(model.modelId)) {
+        // The WINDOW is part of what makes two entries the same, not just the
+        // source label. Two hand-declared entries sharing a native id under
+        // different windows are both `declared` with no catalog number, so
+        // comparing labels alone called the real collision a match and let
+        // whichever was registered first answer for both -- a specific,
+        // confident, arbitrary number, which is worse than the unlabelled
+        // fallback this branch exists to produce.
+        if (
+          seen?.window !== settled.window ||
+          seen?.source !== settled.source ||
+          seen?.catalog !== settled.catalog
+        )
+          windowProvenance.set(model.modelId, undefined);
+        continue;
+      }
+      windowProvenance.set(model.modelId, settled);
+    }
+  }
+
+  /**
+   * Project the context window each role will ACTUALLY use, and why.
+   *
+   * WHY THIS EXISTS. `config show` reported every other routing decision but
+   * not this one, and the effective window is the one number an operator sizes
+   * a task against. It is also the number most likely to differ from what they
+   * declared: a catalog model publishing 1M is clamped to the shared operating
+   * ceiling, so a config that reads `1000000` silently runs at 200000 with no
+   * way to see it. Naming the source -- and, on a clamp, the window that was
+   * given up -- is what makes the number explainable rather than merely
+   * present.
+   *
+   * `maxTokens` is projected beside it because the window is not the ceiling a
+   * turn actually gets: `deriveContextBudget` takes a percentage of it, and
+   * that derived number is what the compactor enforces.
+   */
+  const contextWindowProjection = Object.fromEntries(
+    Object.entries(roles).flatMap(([name, spec]) => {
+      const provenance = windowProvenance.get(spec.model.id);
+      const origin = provenance?.source ?? "registry";
+      const clamped =
+        provenance?.catalog !== undefined ? `${origin} from ${provenance.catalog}` : origin;
+      return [
+        [`contextWindow.${name}`, { value: spec.model.contextWindow, source: clamped }],
+        [
+          `contextBudgetMaxTokens.${name}`,
+          { value: spec.role.contextBudget.maxTokens, source: "derived" },
+        ],
+      ];
+    }),
+  );
+
   return {
     targetDir: options.targetDir,
     models: registry.models,
@@ -758,10 +841,7 @@ function resolveConfig(
     ...(options.monotonicNow !== undefined && { monotonicNow: options.monotonicNow }),
     ...(options.researchPurpose !== undefined && { researchPurpose: options.researchPurpose }),
     ...(options.researchBrief !== undefined && { researchBrief: options.researchBrief }),
-    roles:
-      pipelineRoles === undefined
-        ? { coder: orchestrator, reviewer: orchestrator, orchestrator }
-        : { ...pipelineRoles, orchestrator },
+    roles,
     ledgerSink: new MemoryLedgerSink(),
     compaction:
       compactionMode === "disabled-then-halt"
@@ -800,6 +880,7 @@ function resolveConfig(
       }),
     },
     effectiveConfig: {
+      ...contextWindowProjection,
       inventoryProfile: {
         value: inventory?.name ?? "not-configured",
         source: inventory?.source ?? "built-in-default",

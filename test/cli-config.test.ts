@@ -16,6 +16,7 @@ import { resolveProfile } from "../src/profiles/resolve";
 import { writeProjectCalibrationSnapshot } from "../src/project-calibration";
 import { RegistryError } from "../src/registry/errors";
 import type { RegistryConfig } from "../src/registry/types";
+import { parseRegistryConfig } from "../src/registry/validate";
 
 /** A fake env accessor over a plain record; nothing touches the real process.env. */
 function fakeEnv(vars: Record<string, string>): (name: string) => string | undefined {
@@ -127,6 +128,162 @@ test("mixed-window roles select independently and derive independent budgets", (
   expect(config.roles.reviewer.role.contextBudget.maxTokens).toBe(180000);
   expect(config.roles.auditor?.role.contextBudget.maxTokens).toBe(28800);
   expect(config.roles.orchestrator?.model.contextWindow).toBe(32000);
+});
+
+test("config show reports the context window each role will actually use", () => {
+  const config = resolvePipelineConfig({
+    task: "x",
+    targetDir: "/tmp/target",
+    registryConfig: mixedRegistry(),
+    profile: buildDefaultProfile({ strong: "large", mid: "small", cheap: "small" }),
+    plannerModel: "small",
+    reviewerModel: "large",
+    summarizerModel: "large",
+    env: fakeEnv({ LOCAL_KEY: "k" }),
+    warn: silent,
+  });
+  // Per-role, because two roles on different models have different windows and
+  // a single number would be wrong for at least one of them.
+  expect(config.effectiveConfig?.["contextWindow.planner"]).toEqual({
+    value: 32_000,
+    source: "declared",
+  });
+  expect(config.effectiveConfig?.["contextWindow.reviewer"]).toEqual({
+    value: 200_000,
+    source: "declared",
+  });
+  // The window is not the ceiling a turn gets; the derived budget is, so both
+  // are projected and the operator can see the relationship.
+  expect(config.effectiveConfig?.["contextBudgetMaxTokens.planner"]).toEqual({
+    value: 28_800,
+    source: "derived",
+  });
+  expect(config.effectiveConfig?.["contextWindow.orchestrator"]).toBeDefined();
+});
+
+test("a clamped context window names the window it was clamped from", () => {
+  // The operator's actual complaint: a config that reads 1000000 runs at
+  // 200000 with nothing anywhere saying so.
+  const config = resolvePipelineConfig({
+    task: "x",
+    targetDir: "/tmp/target",
+    registryConfig: {
+      providers: [
+        {
+          id: "opencode-go",
+          api: "openai-completions",
+          catalog: "opencode-go",
+          credential: { kind: "env-var", envVar: "OPENCODE_API_KEY" },
+          models: [{ modelId: "glm-5.3-flash", name: "flash" }],
+        },
+      ],
+    },
+    profile: buildDefaultProfile({ strong: "flash", mid: "flash", cheap: "flash" }),
+    summarizerModel: "flash",
+    env: fakeEnv({ OPENCODE_API_KEY: "k" }),
+    warn: silent,
+  });
+  const projected = config.effectiveConfig?.["contextWindow.coder"];
+  expect(projected?.value).toBe(200_000);
+  // Both halves of the surprise: that it was clamped, and what it lost.
+  expect(String(projected?.source)).toContain("catalog-clamped");
+  expect(String(projected?.source)).toMatch(/from \d+/);
+});
+
+test("the clamp stays visible when the registry was already validated once", () => {
+  // THE PATH EVERY REAL `config show` TAKES. `cli.ts` validates the registry at
+  // its entry points and `resolveConfig` validates again, so the config that
+  // reaches the projection has been through two passes. The test above calls
+  // the library with a raw object and takes only one, which is why it passed
+  // while the CLI printed "declared" for a window nobody declared -- the second
+  // pass read back the number the first pass had written and concluded an
+  // operator must have written it.
+  const authored = {
+    providers: [
+      {
+        id: "opencode-go",
+        api: "openai-completions" as const,
+        catalog: "opencode-go",
+        credential: { kind: "env-var" as const, envVar: "OPENCODE_API_KEY" },
+        models: [{ modelId: "glm-5.3-flash", name: "flash" }],
+      },
+    ],
+  };
+  const once = parseRegistryConfig(authored);
+  // Validation is idempotent at the source, so the projection cannot depend on
+  // how many times the config was handled on its way there.
+  const twice = parseRegistryConfig(once);
+  expect(twice.providers[0]?.models[0]?.contextWindowSource).toBe("catalog-clamped");
+  expect(twice.providers[0]?.models[0]?.catalogContextWindow).toBe(1_000_000);
+
+  const config = resolvePipelineConfig({
+    task: "x",
+    targetDir: "/tmp/target",
+    registryConfig: once,
+    profile: buildDefaultProfile({ strong: "flash", mid: "flash", cheap: "flash" }),
+    summarizerModel: "flash",
+    env: fakeEnv({ OPENCODE_API_KEY: "k" }),
+    warn: silent,
+  });
+  const projected = config.effectiveConfig?.["contextWindow.coder"];
+  expect(projected?.value).toBe(200_000);
+  expect(String(projected?.source)).toContain("catalog-clamped");
+  expect(String(projected?.source)).toContain("1000000");
+});
+
+test("two entries sharing a native id under different windows are left unlabelled", () => {
+  // A real ambiguity: both are hand-declared, so both read `declared` with no
+  // catalog number, and comparing labels alone called them identical. The
+  // first one registered then answered for the other -- a specific number,
+  // confidently sourced, and arbitrary. Dropping the label is the honest
+  // answer, and it is what the docstring already promised.
+  const config = resolvePipelineConfig({
+    task: "x",
+    targetDir: "/tmp/target",
+    registryConfig: {
+      providers: [
+        {
+          id: "one",
+          api: "openai-completions",
+          baseUrl: "https://one.example",
+          credential: { kind: "env-var", envVar: "LOCAL_KEY" },
+          models: [
+            {
+              modelId: "shared-id",
+              name: "wide",
+              contextWindow: 128_000,
+              maxTokens: 4_000,
+              cost: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
+            },
+          ],
+        },
+        {
+          id: "two",
+          api: "openai-completions",
+          baseUrl: "https://two.example",
+          credential: { kind: "env-var", envVar: "LOCAL_KEY" },
+          models: [
+            {
+              modelId: "shared-id",
+              name: "narrow",
+              contextWindow: 32_000,
+              maxTokens: 4_000,
+              cost: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
+            },
+          ],
+        },
+      ],
+    },
+    profile: buildDefaultProfile({ strong: "wide", mid: "wide", cheap: "wide" }),
+    summarizerModel: "wide",
+    env: fakeEnv({ LOCAL_KEY: "k" }),
+    warn: silent,
+  });
+  const projected = config.effectiveConfig?.["contextWindow.coder"];
+  // The number is still the one the role actually uses -- only the claim about
+  // where it came from is withheld.
+  expect(projected?.value).toBe(128_000);
+  expect(projected?.source).toBe("registry");
 });
 
 test("every complexity route and override derives from its dispatched model window", () => {

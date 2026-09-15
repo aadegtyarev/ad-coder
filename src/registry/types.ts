@@ -164,6 +164,23 @@ export interface RegistryConfig {
  */
 export interface ResolvedModelConfig extends ModelConfig {
   contextWindow: number;
+  /**
+   * WHERE `contextWindow` came from, so a front can say it out loud.
+   *
+   * The resolved number alone cannot be explained: `200000` may be the
+   * operator's own declaration, a catalog value that happened to match, the
+   * built-in default, or a 1M catalog window CLAMPED down to the shared
+   * operating ceiling. Those are very different facts to an operator sizing a
+   * task, and the last one is the surprising one -- it is a limit nobody wrote
+   * anywhere. `catalogContextWindow` carries the pre-clamp number so the
+   * projection can name what was given up.
+   *
+   * Provenance only: a name and two integers, nothing an operator authored as
+   * a secret.
+   */
+  contextWindowSource: "declared" | "catalog" | "catalog-clamped" | "built-in-default";
+  /** The catalog's own window, present only when it differs from the resolved one. */
+  catalogContextWindow?: number;
   maxTokens: number;
   cost: {
     input: number;

@@ -143,6 +143,44 @@ Only unresolved work belongs here. Current behavior is in
   savings until the comparison is measured. Scoped Planner reconnaissance and
   stable per-finding response identifiers remain follow-on work.
 
+- [high] **Admit providers that require a custom request header**
+  (`src/registry/types.ts`, `src/registry/validate.ts`, `src/registry/resolve.ts`):
+  `ProviderConfig` declares only `id`, `api`, `baseUrl`, `credential`, and
+  `models`, so a provider whose API mandates a non-auth header cannot be
+  admitted at all. Measured 2026-09-15 against OpenCode Zen
+  (`https://opencode.ai/zen/go/v1`): `GET /models` returns 200 on a valid key,
+  while `POST /chat/completions` returns HTTP 400 `MissingSessionID` unless the
+  request carries `x-opencode-session`; the same request with that header
+  returns 200. Through ad-coder the role fails as an empty turn with a
+  zero-usage ledger record and `stopReason: "error"`, naming neither the header
+  nor the status. `pi-ai` already accepts `CreateProviderOptions.headers`, but
+  `registerProvider` never passes any. Add a validated, secret-free declared
+  header map, require per-request values (such as a run-scoped session id) to be
+  derived by the resolver rather than stored in config, keep the existing
+  unvalidated-`compat` boundary intact, and project a typed provider-rejection
+  error that names the failing status instead of an empty turn.
+
+- [medium] **Persist api-key credentials for any declared env-var provider**
+  (`src/cli/auth.ts`, `src/registry/resolve.ts`): `ad-coder auth login` accepts
+  only `--provider <openai-codex|openrouter>`, and `registerProvider` gates the
+  stored-credential path on the literal `provider.id === "openrouter"`. Every
+  other env-var provider an inventory can declare is therefore reachable only
+  through a process environment variable, with no supported way to store its key
+  outside the project. Generalize storage to any declared `kind: "env-var"`
+  provider, keyed by provider id, preserving the credential-outside-target-dir
+  boundary and the typed `missing_credential` preflight that names the variable.
+
+- [medium] **A per-role model override must not silently reset the provider**
+  (`src/cli/resolve-config.ts`): with a user inventory default in place,
+  `config show` reports `inventoryProfile=openrouter-presets (default)` and the
+  OpenRouter destination. Adding only `--coder-model <name>` drops the inventory
+  and falls through to the built-in preset selection, reporting
+  `provider destination "deepseek"` and then failing with `profile model "<name>"
+  is not registered`. The operator asked to change one role and silently changed
+  the destination for all of them. Either keep the selected inventory when a
+  role override names a model it registers, or reject the combination with a
+  typed error that names both the inventory and the override.
+
 ## Security and runtime boundaries
 
 - [high] **Real tool sandboxing** (`src/runner/`): `targetDir` is only a
@@ -153,6 +191,24 @@ Only unresolved work belongs here. Current behavior is in
   must not be returned or logged wholesale.
 
 ## Reliability and observability
+
+- [high] **A usage-counter discrepancy must not destroy a completed role run**
+  (`src/runner/runner.ts`): the `after_response` hook rejects any turn where the
+  provider reports `reasoning > output`, records a `RangeError` in
+  `usageFailure`, and rethrows it after the role has already finished all of its
+  work and the tokens are already paid for. The mismatch is an accounting
+  convention, not a defect in the result: OpenAI-style `completion_tokens`
+  includes reasoning, while some providers report reasoning outside it, so the
+  guard fires on a correct response. Measured 2026-09-14 on a MiniMax M3
+  Reviewer run recorded in `docs/calibration-evidence.jsonl`
+  (`reviewer-hidden-regression-v1`): over 40s of completed review discarded,
+  $0.01636788 spent across 12 turns with no result returned, three of which
+  reported reasoning above output (922>902, 1374>1306, 1656>1472). Per the
+  error contract a counter discrepancy is an observation, not an
+  unrecoverable boundary failure — record it as typed,
+  safe, non-fatal usage-integrity metadata, keep the result, and reserve the
+  fatal path for values that are actually unusable (negative, non-finite,
+  unsafe-integer).
 
 - [medium] **Expose built-in workflow tool identity in activity streams**
   (`src/observability/`, `src/orchestration/orchestrator.ts`): Orchestrator

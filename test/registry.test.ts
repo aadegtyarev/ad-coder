@@ -791,6 +791,62 @@ test("an inherited catalog window is clamped to the default operating ceiling", 
   expect(registry.getModel("small").contextWindow).toBe(131_072);
 });
 
+test("a resolved context window carries where it came from", () => {
+  // The resolved number alone cannot be explained: 200000 may be declared,
+  // inherited, defaulted, or CLAMPED down from a far larger catalog window.
+  // Only the last case surprises an operator, so it must be distinguishable.
+  const clamped = parseRegistryConfig({
+    providers: [
+      {
+        id: "opencode-go",
+        api: "openai-completions",
+        catalog: "opencode-go",
+        credential: { kind: "env-var", envVar: "OPENCODE_API_KEY" },
+        models: [
+          { modelId: "glm-5.3-flash", name: "flash" },
+          { modelId: "glm-5.3-flash", name: "stated", contextWindow: 900_000 },
+        ],
+      },
+    ],
+  }).providers[0]!.models;
+  const inherited = clamped.find((entry) => entry.name === "flash");
+  expect(inherited?.contextWindow).toBe(200_000);
+  expect(inherited?.contextWindowSource).toBe("catalog-clamped");
+  // The window that was given up is recorded, so a front can show both.
+  expect(inherited?.catalogContextWindow).toBeGreaterThan(200_000);
+
+  const stated = clamped.find((entry) => entry.name === "stated");
+  expect(stated?.contextWindowSource).toBe("declared");
+  // Nothing was discarded when the operator stated the window themselves.
+  expect(stated?.catalogContextWindow).toBeUndefined();
+
+  // A catalog window already under the ceiling is inherited, not clamped.
+  const under = parseRegistryConfig({
+    providers: [
+      {
+        id: "openrouter",
+        api: "openai-completions",
+        catalog: "openrouter",
+        credential: { kind: "env-var", envVar: "OPENROUTER_API_KEY" },
+        models: [{ modelId: "aion-labs/aion-2.0", name: "small" }],
+      },
+    ],
+  }).providers[0]!.models[0];
+  expect(under?.contextWindow).toBe(131_072);
+  expect(under?.contextWindowSource).toBe("catalog");
+  expect(under?.catalogContextWindow).toBeUndefined();
+
+  // A hand-declared model with no window at all falls back to the default, and
+  // says so rather than claiming the operator asked for 200000.
+  const handDeclared = { ...model() };
+  delete handDeclared.contextWindow;
+  const defaulted = parseRegistryConfig({
+    providers: [provider({ models: [handDeclared] })],
+  }).providers[0]!.models[0];
+  expect(defaulted?.contextWindow).toBe(200_000);
+  expect(defaulted?.contextWindowSource).toBe("built-in-default");
+});
+
 test("an explicit window larger than the ceiling is still honored verbatim", () => {
   // The clamp is a DEFAULT, not a cap. An operator who states a window is
   // stating the limit they want; silently shrinking it would make the declared
