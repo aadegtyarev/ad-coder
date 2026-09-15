@@ -6,6 +6,32 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-09-15
+
+### Added
+- Cost-anomaly detection: a per-`(provider, model)` price-step detector that
+  refuses to START new runs on a scope whose observed cost-per-token has
+  stepped up, until the operator explicitly releases it. On by default,
+  disableable, and every threshold configurable.
+- The baseline is the MEDIAN of a recent window, not the mean. A mean is
+  dragged toward any outlier inside the window -- including the leading edge of
+  the very repricing being detected -- so a real step can push the baseline far
+  enough to mask itself. A measured case: with a baseline window carrying one
+  large reading, the mean puts a genuine 3x step at ratio 0.14 and stays
+  silent, while the median reports it at 3.0.
+- A suspected spike is held in a separate `pending` list and never folded into
+  the baseline it is measured against; otherwise the alarm would teach itself
+  to stop ringing. A single reading never blocks -- a confirming count is
+  required, and any return to normal discards the pending evidence, so
+  unrelated artifacts hours apart cannot accumulate into a false alarm.
+- The refusal is a START-only refusal, applied at the single `Models` boundary
+  in the runner, OUTSIDE the session and stage limit controllers. Work already
+  in flight is never killed, because that money is already committed, and a
+  refused start does not consume one of the session's counted turns.
+- A block names only scope, ratio and both rates, plus the release command --
+  no prompts, payloads or credentials, in the error message or in persisted
+  state.
+
 ## [0.6.1] - 2026-09-15
 
 ### Fixed
