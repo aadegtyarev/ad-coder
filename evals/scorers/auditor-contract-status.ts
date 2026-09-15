@@ -33,10 +33,30 @@ function statusOf(verdicts: readonly SurfaceVerdict[], fn: string): string | und
 
 const file = process.argv[2];
 if (!file) throw new Error("usage: auditor-contract-status <audit.json>");
-const raw = fs.readFileSync(file, "utf8");
-const end = raw.lastIndexOf("]");
-if (end < 0) throw new Error("auditor artifact must contain a JSON array");
-const verdicts = JSON.parse(raw.slice(0, end + 1)) as SurfaceVerdict[];
+/**
+ * The model's answer, or an empty one when it did not produce something this
+ * scorer can read.
+ *
+ * WHY NOT THROW. A scorer that throws on malformed output turns a MODEL failure
+ * into a HARNESS failure: the runner sees a non-zero exit and drops the run, so
+ * the measurement leaves the sample entirely. That silently flatters the model,
+ * because the runs it loses are its worst ones -- a live sweep lost a third of
+ * one cell's runs this way, every one of them bad. An empty answer fails every
+ * check instead, which is what a prompt demanding strict JSON means when the
+ * answer is not JSON.
+ */
+function readAnswer(path: string): SurfaceVerdict[] {
+  const raw = fs.readFileSync(path, "utf8");
+  const end = raw.lastIndexOf("]");
+  if (end < 0) return [];
+  try {
+    return JSON.parse(raw.slice(0, end + 1)) as SurfaceVerdict[];
+  } catch {
+    return [];
+  }
+}
+
+const verdicts = readAnswer(file);
 
 const checks = [
   {

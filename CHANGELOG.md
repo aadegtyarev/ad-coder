@@ -6,6 +6,25 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-09-16
+
+### Fixed
+- A scorer that could not read a model's answer threw, which the runner reported
+  as a failed run rather than a failed review -- so the measurement left the
+  sample entirely. A live sweep lost a third of one cell's runs that way, every
+  one of them a bad answer, which flattered the model. All five artifact scorers
+  now treat an unreadable answer as an empty one and fail every check.
+- Negative checks scored an empty answer for free: "avoided the false positive"
+  and "kept findings bounded" were both satisfied by producing nothing, so
+  garbage output earned points for restraint. They now require an answer first.
+- The reviewer task asks for evidence per finding and bounds how many blocking
+  findings a review may raise. Published code-review benchmarks put the
+  bottleneck on precision rather than recall: a review that lists everything it
+  suspects is as unusable as one that lists nothing, because the reader cannot
+  tell which findings to act on. The cap is four against two seeded defects --
+  room to split one defect in two, none for a list of guesses -- and the
+  requirement is stated in the task prompt rather than assumed by the scorer.
+
 ## [0.14.0] - 2026-09-16
 
 ### Added

@@ -1,1 +1,32 @@
-[{ "code": "ID_SLASH_ALLOWED", "blocking": true, "evidence": "src/result-store.ts:3" }]
+[
+  {
+    "code": "PATH_TRAVERSAL_DECODED_ID",
+    "blocking": true,
+    "evidence": "src/result-store.ts:5"
+  },
+  {
+    "code": "METADATA_WRITE_ORDER_REVERSED",
+    "blocking": true,
+    "evidence": "src/result-store.ts:10"
+  },
+  {
+    "code": "POSSIBLE_RACE_ON_WRITE",
+    "blocking": true,
+    "evidence": "possible race on write"
+  },
+  {
+    "code": "MISSING_INPUT_VALIDATION",
+    "blocking": true,
+    "evidence": "missing input validation"
+  },
+  {
+    "code": "NO_ERROR_LOGGING",
+    "blocking": true,
+    "evidence": "no error logging"
+  },
+  {
+    "code": "UNBOUNDED_MEMORY_GROWTH",
+    "blocking": true,
+    "evidence": "unbounded memory growth"
+  }
+]

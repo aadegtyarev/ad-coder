@@ -15,10 +15,30 @@ interface Report {
 
 const file = process.argv[2];
 if (!file) throw new Error("usage: researcher-absence-claim <report.json>");
-const raw = fs.readFileSync(file, "utf8");
-const end = raw.lastIndexOf("}");
-if (end < 0) throw new Error("researcher artifact must contain a JSON object");
-const report = JSON.parse(raw.slice(0, end + 1)) as Report;
+/**
+ * The model's answer, or an empty one when it did not produce something this
+ * scorer can read.
+ *
+ * WHY NOT THROW. A scorer that throws on malformed output turns a MODEL failure
+ * into a HARNESS failure: the runner sees a non-zero exit and drops the run, so
+ * the measurement leaves the sample entirely. That silently flatters the model,
+ * because the runs it loses are its worst ones -- a live sweep lost a third of
+ * one cell's runs this way, every one of them bad. An empty answer fails every
+ * check instead, which is what a prompt demanding strict JSON means when the
+ * answer is not JSON.
+ */
+function readAnswer(path: string): Report {
+  const raw = fs.readFileSync(path, "utf8");
+  const end = raw.lastIndexOf("}");
+  if (end < 0) return {};
+  try {
+    return JSON.parse(raw.slice(0, end + 1)) as Report;
+  } catch {
+    return {};
+  }
+}
+
+const report = readAnswer(file);
 const claims = report.claims ?? [];
 
 const claimFor = (question: string): Claim | undefined =>
