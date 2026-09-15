@@ -325,23 +325,42 @@ export function buildSubmitPlanTool(
       // rejects the whole request for it -- DeepSeek answers "one of `type`,
       // `anyOf`, `$ref` field is required" with a 400, so the planner never
       // ran and the pipeline paused on an empty turn with zero tokens spent.
-      // The shape here mirrors `SurfaceAnalysis`; the enum leaves stay
-      // `Type.String()` on purpose, exactly as `complexity` and
-      // `securitySurface` do, so `parsePlan` below remains the one
-      // authoritative gate on which values are actually allowed.
+      // The shape mirrors `SurfaceAnalysis` so every node declares a `type`,
+      // which is all the provider asked for.
+      //
+      // EVERY NESTED FIELD IS `Type.Optional`, and that is load-bearing rather
+      // than lenient typing. TypeBox lists each non-optional property in its
+      // object's `required`, and point (1) above applies to the WHOLE schema,
+      // not just its enum leaves: the harness validates these args before
+      // `execute`, so a required leaf makes a submission missing one field
+      // bounce pre-execute. `capture.error` would then never be set, and the
+      // pipeline would report "the planner did not submit a plan" about a
+      // planner that submitted one -- naming the wrong cause, which
+      // `docs/contracts/errors.md` forbids. Optional here restores the
+      // pre-`Type.Any()` behaviour exactly: the payload reaches `parsePlan`,
+      // which says which field is wrong. `surfaceAnalysis` itself stays
+      // required because it was required before this schema existed too.
       surfaceAnalysis: Type.Object({
-        projectType: Type.String(),
-        surfaces: Type.Array(
-          Type.Object({ id: Type.String(), name: Type.String(), rationale: Type.String() }),
+        projectType: Type.Optional(Type.String()),
+        surfaces: Type.Optional(
+          Type.Array(
+            Type.Object({
+              id: Type.Optional(Type.String()),
+              name: Type.Optional(Type.String()),
+              rationale: Type.Optional(Type.String()),
+            }),
+          ),
         ),
-        coverage: Type.Array(
-          Type.Object({
-            surfaceId: Type.String(),
-            status: Type.String(),
-            contractIds: Type.Array(Type.String()),
-            evidence: Type.Array(Type.String()),
-            rationale: Type.String(),
-          }),
+        coverage: Type.Optional(
+          Type.Array(
+            Type.Object({
+              surfaceId: Type.Optional(Type.String()),
+              status: Type.Optional(Type.String()),
+              contractIds: Type.Optional(Type.Array(Type.String())),
+              evidence: Type.Optional(Type.Array(Type.String())),
+              rationale: Type.Optional(Type.String()),
+            }),
+          ),
         ),
       }),
     }),

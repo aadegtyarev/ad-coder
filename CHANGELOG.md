@@ -27,6 +27,23 @@ All notable changes to ad-coder are recorded here. The format follows
   and `parsePlan` and `validateFollowUpCandidate` remain the authoritative
   validators -- an unknown kind, or one kind carrying another kind's field, is
   still refused.
+- An incomplete `submit_plan` or `submit_verdict` is now named instead of being
+  reported as a submission that never happened. The harness validates tool
+  arguments against the declared schema *before* `execute` runs, and a nested
+  field that is not optional is listed in that schema's `required`. So a
+  submission missing one leaf -- a coverage entry without `contractIds`, an
+  issue without `what` -- was refused by the harness before the parser saw it:
+  nothing was captured, the retry prompt told the role it had not called the
+  tool when it had, and the run ended as `missing_plan` / `missing_verdict`.
+  That is an invalid input reported as an absent one, which
+  `docs/contracts/errors.md` forbids, and on the reviewer's side it also
+  suppressed `parseVerdict`'s corrective message naming the exact contract IDs
+  to resubmit -- the role's only route to a correct second attempt. Every
+  nested field in both schemas is now optional, so each node still declares the
+  `type` a validating provider demands while `parsePlan` and `parseVerdict`
+  remain the single content gate. `submit_verdict` carried this defect before
+  the schema work in this release; `submit_plan` acquired it with the fix
+  above.
 
 ## [0.6.1] - 2026-09-15
 

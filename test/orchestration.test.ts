@@ -2008,6 +2008,130 @@ test("every node of the submit_plan schema declares a type, so a validating prov
   expect(properties.surfaceAnalysis?.type).toBe("object");
 });
 
+test("an incomplete submit_plan reaches parsePlan and is named, not reported as a missing plan", async () => {
+  // THE REGRESSION THIS GUARDS. Spelling `surfaceAnalysis` out structurally
+  // makes TypeBox emit a `required` list for every non-optional nested field,
+  // and pi-ai's `validateToolArguments` runs that schema INSIDE the harness,
+  // before `execute`. A submission missing one leaf would then be bounced
+  // pre-execute: `capture.error` never set, the retry prompt telling the
+  // planner it "did not call submit_plan" when it did, and the run finally
+  // failing as `missing_plan`. `docs/contracts/errors.md` forbids exactly that
+  // -- an invalid input reported as an absent one. Every nested field is
+  // therefore `Type.Optional`, so `parsePlan` stays the single content gate.
+  const fx = fixture();
+  const planner = plannerRole(fx);
+  const coder = fx.role("coder", "You code.");
+  const reviewer = reviewerRole(fx);
+  // A coverage entry missing `contractIds` -- a leaf, three levels deep.
+  fx.faux.setResponses([
+    ...plannerTurn({
+      complexity: "medium",
+      securitySurface: "low",
+      summary: "s",
+      surfaceAnalysis: {
+        projectType: "TypeScript CLI/library",
+        surfaces: [{ id: "core", name: "programmatic core", rationale: "changes core" }],
+        coverage: [
+          {
+            surfaceId: "core",
+            status: "not_applicable",
+            evidence: ["no contract-sensitive behavior"],
+            rationale: "no applicable contract",
+          },
+        ],
+      },
+    }),
+  ]);
+
+  let caught: unknown;
+  try {
+    await runPipeline({
+      targetDir: fx.targetDir,
+      models: fx.models,
+      task: "implement R",
+      maxRounds: 1,
+      roles: { planner, coder, reviewer },
+    });
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught).toBeInstanceOf(OrchestrationError);
+  // The specific cause, not "you did not submit a plan".
+  expect((caught as OrchestrationError).code).toBe("malformed_plan");
+  expect((caught as OrchestrationError).message).toContain("coverage.contractIds");
+  expect((caught as OrchestrationError).code).not.toBe("missing_plan");
+});
+
+test("an incomplete submit_verdict reaches parseVerdict and is named, not reported as a missing verdict", async () => {
+  // Same pre-execute hazard on the reviewer's side, and worse here: the
+  // coverage branch of `parseVerdict` answers with the exact contract IDs to
+  // resubmit, which is the reviewer's only route to a correct second attempt.
+  // A nested `required` would replace that guidance with a schema bounce.
+  const fx = fixture();
+  const planner = plannerRole(fx);
+  const coder = fx.role("coder", "You code.");
+  const reviewer = reviewerRole(fx);
+  // An issue missing `what` -- a leaf inside an array inside the arguments.
+  fx.faux.setResponses([
+    ...plannerTurn({ complexity: "medium", securitySurface: "low", summary: "s" }),
+    fauxAssistantMessage("coded"),
+    ...reviewerTurn({
+      status: "changes_requested",
+      issues: [{ severity: "major" }],
+      summary: "needs work",
+    }),
+  ]);
+
+  let caught: unknown;
+  try {
+    await runPipeline({
+      targetDir: fx.targetDir,
+      models: fx.models,
+      task: "implement R",
+      maxRounds: 1,
+      roles: { planner, coder, reviewer },
+    });
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught).toBeInstanceOf(OrchestrationError);
+  expect((caught as OrchestrationError).code).toBe("malformed_verdict");
+  expect((caught as OrchestrationError).message).toContain("issues[0].what");
+});
+
+test("no tool schema requires a nested field, so the harness never pre-empts the parser", () => {
+  // A structural guard over BOTH mandatory handoffs at once, so a later hand
+  // spelling out another nested shape cannot silently reintroduce the
+  // pre-execute bounce. Only the top level may carry `required`: that is the
+  // contract with the provider (the tool's own arguments), while everything
+  // below it belongs to `parsePlan`/`parseVerdict`.
+  const schemas: Array<[string, Record<string, unknown>]> = [
+    ["submit_plan", buildSubmitPlanTool({}, "run").parameters as Record<string, unknown>],
+    ["submit_verdict", buildSubmitVerdictTool({}, "run").parameters as Record<string, unknown>],
+  ];
+  const offenders: string[] = [];
+  const walk = (node: unknown, pointer: string, depth: number): void => {
+    if (node === null || typeof node !== "object" || Array.isArray(node)) return;
+    const record = node as Record<string, unknown>;
+    if (depth > 0 && Array.isArray(record.required) && record.required.length > 0) {
+      offenders.push(`${pointer}: ${(record.required as string[]).join(", ")}`);
+    }
+    const properties = record.properties;
+    if (properties !== undefined)
+      for (const [name, value] of Object.entries(properties as Record<string, unknown>))
+        walk(value, `${pointer}/${name}`, depth + 1);
+    if (record.items !== undefined) walk(record.items, `${pointer}/items`, depth + 1);
+  };
+  for (const [name, schema] of schemas) walk(schema, name, 0);
+  expect(offenders).toEqual([]);
+  // ...while the top level still names what the tool call itself must carry.
+  const topLevel = Object.fromEntries(
+    schemas.map(([name, schema]) => [name, schema.required as string[]]),
+  );
+  expect(topLevel.submit_plan).toContain("surfaceAnalysis");
+  expect(topLevel.submit_verdict).toContain("status");
+});
+
 test("a malformed submit_plan throws OrchestrationError malformed_plan", async () => {
   const fx = fixture();
   const planner = plannerRole(fx);
