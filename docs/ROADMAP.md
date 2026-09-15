@@ -50,8 +50,8 @@ conversation turns remain available.
 
 The repository uses the durable handoff structure: README is orientation and
 navigation; this roadmap owns decisions, delivery status, and forward design;
-`ARCHITECTURE.md` is the concise current-system map; `BACKLOG.md` holds only
-the current priority and unresolved work; `contracts/` holds enforceable rules;
+`ARCHITECTURE.md` is the concise current-system map; unresolved work lives in
+GitHub issues that `BACKLOG.md` indexes; `contracts/` holds enforceable rules;
 thematic operational knowledge belongs under `docs/notes/` while an existing
 `docs/NOTES.md` remains compatible; and `reviews/` retains exceptional incident
 evidence plus historical receipts. Routine verification belongs in durable run
@@ -999,9 +999,10 @@ workflows — one substrate, swappable drivers.
 
 ## Open backlog (mechanical)
 
-See docs/BACKLOG.md. Notably: ContextBudgetError should surface the effective
-ceiling min(maxTokens, contextWindow) (minor); UsageDeltaTracker Map growth;
-ledger JSONL retention policy.
+See the repository's GitHub issues, indexed by docs/BACKLOG.md. Notably:
+ContextBudgetError should surface the effective ceiling
+min(maxTokens, contextWindow) (minor); UsageDeltaTracker Map growth; ledger
+JSONL retention policy.
 ### Control-plane notification contract
 
 TUI, chat, and remote adapters consume the same durable event cursor. They may present runs in the

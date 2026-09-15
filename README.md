@@ -484,7 +484,7 @@ bun run check
 - [Architecture](docs/ARCHITECTURE.md) — current system map
 - [Provider catalogs](docs/provider-catalogs.md) — declaring providers without hand-written prices
 - [Roadmap](docs/ROADMAP.md) — decisions and future work
-- [Backlog](docs/BACKLOG.md) — unresolved work
+- [Backlog](docs/BACKLOG.md) — index of the GitHub issues holding unresolved work
 - [Contracts](docs/contracts/) — enforceable rules
 - [Changelog](CHANGELOG.md) — shipped history
 

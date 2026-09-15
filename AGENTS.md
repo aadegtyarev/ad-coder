@@ -16,7 +16,9 @@ NOT cross GitHub to another machine, so it is lost the moment you switch hardwar
 - A design decision → `docs/ROADMAP.md` (or a decision record). ROADMAP is canonical.
 - A working convention or operator preference → this file.
 - Architecture / how a module works → `docs/ARCHITECTURE.md`.
-- An unresolved item and the current product priority → `docs/BACKLOG.md`.
+- An unresolved item and the current product priority → a GitHub issue on this
+  repository, filed under one of the epics `docs/BACKLOG.md` indexes. That file
+  is a pointer now, not a list; do not restore prose items to it.
 - Exceptional incident evidence → a dated file in `docs/reviews/`; routine
   verification belongs in durable run state, not a committed receipt.
 - Measured provider or SDK research → the relevant `docs/*-economics.md` or
@@ -114,7 +116,8 @@ After every material implementation step, persist the handoff before stopping:
 record verdict and command evidence in durable run state; create a dated
 `docs/reviews/` receipt only when an exceptional incident needs durable evidence;
 update `docs/ARCHITECTURE.md` only when the current system map changed; and
-update `docs/BACKLOG.md` only for unresolved work and the current priority. Put
+file an issue for unresolved work under the matching epic rather than editing
+`docs/BACKLOG.md`, which now only indexes those epics. Put
 decisions in `docs/ROADMAP.md` and research in its relevant research note.
 There is no parallel checkpoint file. Do not leave project knowledge only in a
 chat transcript or ignored harness runtime state.
@@ -194,8 +197,8 @@ afterward compare them with Planner and observed outcomes. A role prompt's soft
 turn guidance is not a runtime limit. Apply an explicit ceiling during dogfood
 and treat overruns as evidence for role-specific defaults.
 
-Write durable decisions to `docs/ROADMAP.md`, unresolved implementation to
-`docs/BACKLOG.md`, provider/economic evidence to the relevant research note, and
+Write durable decisions to `docs/ROADMAP.md`, unresolved implementation to a
+GitHub issue under the matching epic, provider/economic evidence to the relevant research note, and
 aggregate benchmark conclusions to `docs/model-calibration.md`. Raw runs remain
 gitignored. After finding pipeline waste or failure, fix and verify it before
 expanding the benchmark matrix; do not run a broad suite until the targeted fix
@@ -273,7 +276,7 @@ node .codex/ldo/scripts/ldo-run.mjs --runtime codex "<the user request>"
 LDO saves every plan locally. In `review-plan=auto` (default), it pauses for discussion only when Planner rates the task `complex` or `elevated`; use `--review-plan always` or `never` to override. When paused, show the plan and wait for explicit approval; then run `node .codex/ldo/scripts/ldo-run.mjs --runtime codex --continue-plan latest`. If a pipeline later crashes, run `node .codex/ldo/scripts/ldo-run.mjs --runtime codex --resume-run latest` to continue from its first incomplete phase. If the user changes scope, create a new plan-only artifact instead. Use `--research` when current external facts are required and `--no-record` for fast, disposable iterations. Do not add `--isolate` in a normal `workspace-write` Codex session: Git worktree creation writes shared `.git/refs`, which that sandbox may forbid. Use `--isolate` only when the host explicitly permits Git metadata writes (for example, an externally sandboxed bypass session). Run independent tasks sequentially in the normal Codex path.
 Planner runs once on Sol; do not add a preliminary classifier or second refinement pass. Trivial Reviewers use a compact verification prompt. These policies are Codex-only.
 
-After every completed pipeline, always print a concise operator report in normal prose; raw pipeline JSON is not the report. Include the task outcome and verdict, changed files, tests, unresolved issues, token totals and per-stage usage, `runCheckpoint` path, and Recorder's `backlog.destination`, `backlog.file`, and `backlog.count`. The Recorder must update `docs/BACKLOG.md` when unresolved items exist. Never silently finish without the operator report or without confirming the terminal checkpoint and backlog outcome. A deliberate `--no-record` run or a trivial run may report that backlog recording was skipped.
+After every completed pipeline, always print a concise operator report in normal prose; raw pipeline JSON is not the report. Include the task outcome and verdict, changed files, tests, unresolved issues, token totals and per-stage usage, `runCheckpoint` path, and Recorder's `backlog.destination`, `backlog.file`, and `backlog.count`. When unresolved items exist in a developed project, the Recorder writes them to that project's own backlog destination; on this repository that destination is a GitHub issue under the matching epic, not `docs/BACKLOG.md`. Never silently finish without the operator report or without confirming the terminal checkpoint and backlog outcome. A deliberate `--no-record` run or a trivial run may report that backlog recording was skipped.
 
 If the prompt begins with `You are LDO's` or says `You are an LDO subagent`, you are already a pipeline worker: do not invoke LDO again. Perform only the assigned role and return the requested JSON.
 
