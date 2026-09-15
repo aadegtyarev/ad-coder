@@ -6,6 +6,16 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.17.1] - 2026-09-16
+
+### Fixed
+- A repeat series no longer loses every completed run when one run aborts. The
+  first live use of `--repeat 5` hit a stage limit on its last run and took four
+  finished measurements down with it -- the same failure the scorers had, one bad
+  run erasing the sample it belongs to. Each run is now caught and the series
+  continues; the summary reports `scored` beside `repeat` and names what aborted,
+  since a stage limit and a provider refusal are different problems.
+
 ## [0.17.0] - 2026-09-16
 
 ### Added
