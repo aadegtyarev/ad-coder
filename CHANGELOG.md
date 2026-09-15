@@ -6,7 +6,7 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
-## [0.8.2] - 2026-09-15
+## [0.8.4] - 2026-09-15
 
 ### Fixed
 
@@ -57,6 +57,40 @@ All notable changes to ad-coder are recorded here. The format follows
   they emit by default; it now states that a complete object -- alone or inside
   one ```json fence -- is read, and that a cut-off object cannot be.
 
+## [0.8.3] - 2026-09-15
+
+### Added
+
+- `config show` now reports the context window each role will ACTUALLY use, per
+  role, with the source of that number and the budget derived from it
+  (`contextWindow.<role>`, `contextBudgetMaxTokens.<role>`). The effective
+  window was the one routing decision the command did not project: the number
+  existed -- every role derives its budget from `model.contextWindow` -- but
+  nothing surfaced it, so a config declaring `1000000` ran at `200000` with no
+  way to see it. A window the resolver settled on its own now names what it was
+  settled from: a catalog value clamped to the shared operating ceiling reads
+  `catalog-clamped from 1000000`, not a bare `200000`.
+- `ResolvedModelConfig` carries `contextWindowSource`
+  (`declared` | `catalog` | `catalog-clamped` | `built-in-default`) and, when
+  the clamp discarded something, `catalogContextWindow`. Provenance only -- a
+  name and two integers.
+- The provenance survives being validated twice, which is what every real
+  `config show` does: the CLI validates the registry at its entry points and
+  the config resolver validates again. Provenance was derived from whether a
+  `contextWindow` was present, and after one pass it always is -- the pass
+  itself wrote it -- so the second pass concluded an operator had declared
+  every catalog window and dropped the clamped-from number. The projection was
+  correct only when called as a library and wrong for the operators it was
+  built for. Validation now carries an already-settled provenance through
+  rather than re-deriving it, and refuses a source string it does not
+  recognise.
+- Two registry entries sharing one provider-native id but settling on
+  different windows are now reported with the number and no source label,
+  which is what the collision rule always promised. The comparison looked only
+  at the source label, so two hand-declared entries -- both `declared`, both
+  without a catalog number -- were judged identical and whichever was
+  registered first answered for the other: a confident, specific, arbitrary
+  attribution. The resolved window is now part of the comparison.
 ## [0.8.1] - 2026-09-15
 
 ### Changed

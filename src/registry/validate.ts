@@ -18,6 +18,41 @@ const API_KINDS: readonly ApiKind[] = [
 export const DEFAULT_CONTEXT_WINDOW = 200_000;
 
 /**
+ * The provenance an EARLIER validation pass already settled, or `undefined` for
+ * a genuinely hand-authored entry.
+ *
+ * Read through a narrow local type rather than by widening `ModelConfig`:
+ * these two fields are RESULTS, not things an operator writes, and they belong
+ * on `ResolvedModelConfig` where they already are. But a resolved config is a
+ * structural supertype of an authored one, so a resolved entry can legally be
+ * handed back in -- which is exactly what the CLI does -- and the validator has
+ * to recognise its own output when it sees it.
+ *
+ * The source is checked against the allowed set instead of being trusted: this
+ * reads a field off an object the caller supplied, and an unrecognised string
+ * would otherwise flow straight into the projection as a label.
+ */
+function settledWindowProvenance(declared: ModelConfig): {
+  source?: ResolvedModelConfig["contextWindowSource"];
+  catalog?: number;
+} {
+  const carried = declared as Partial<ResolvedModelConfig>;
+  const source = carried.contextWindowSource;
+  const catalog = carried.catalogContextWindow;
+  return {
+    ...(source !== undefined && CONTEXT_WINDOW_SOURCES.has(source) ? { source } : {}),
+    ...(typeof catalog === "number" && Number.isFinite(catalog) ? { catalog } : {}),
+  };
+}
+
+const CONTEXT_WINDOW_SOURCES = new Set<ResolvedModelConfig["contextWindowSource"]>([
+  "declared",
+  "catalog",
+  "catalog-clamped",
+  "built-in-default",
+]);
+
+/**
  * Header names a declared config may NOT set, lower-cased.
  *
  * Two distinct reasons, both fail-closed:
@@ -342,6 +377,12 @@ function fromCatalog(
   providerId: string,
   bad: Bad,
   seenModelNames: Set<string>,
+  /**
+   * Provenance an earlier pass already settled, passed in SEPARATELY because
+   * `declared` here is the output of `parseModelOverrides`, which keeps only
+   * operator-authored fields and drops these two results.
+   */
+  carried: { source?: ResolvedModelConfig["contextWindowSource"]; catalog?: number } = {},
 ): ResolvedModelConfig {
   if (seenModelNames.has(declared.name)) {
     bad(
@@ -377,6 +418,31 @@ function fromCatalog(
     // explicit `contextWindow` still wins verbatim -- including a larger one --
     // because that is the operator stating a limit they actually want.
     contextWindow: declared.contextWindow ?? Math.min(entry.contextWindow, DEFAULT_CONTEXT_WINDOW),
+    // IDEMPOTENT ON PURPOSE. A provenance already settled by an earlier pass is
+    // carried through instead of re-derived, because re-deriving reads
+    // `declared.contextWindow !== undefined` -- and after one pass that field
+    // is ALWAYS defined, since the pass itself filled it in. Validating an
+    // already-validated registry therefore relabelled every catalog window as
+    // "declared" and dropped `catalogContextWindow`, so the clamp this record
+    // exists to expose went invisible again. That is not hypothetical: the CLI
+    // validates at its entry points and `resolveConfig` validates again, so
+    // EVERY real `config show` took the second pass and saw the wrong answer
+    // while direct library calls saw the right one.
+    contextWindowSource:
+      carried.source ??
+      (declared.contextWindow !== undefined
+        ? "declared"
+        : entry.contextWindow > DEFAULT_CONTEXT_WINDOW
+          ? "catalog-clamped"
+          : "catalog"),
+    // Recorded only when the clamp actually discarded something, so the
+    // projection can show the operator the window they did NOT get. Carried
+    // through on re-validation for the same reason as the source above.
+    ...(carried.catalog !== undefined
+      ? { catalogContextWindow: carried.catalog }
+      : declared.contextWindow === undefined && entry.contextWindow > DEFAULT_CONTEXT_WINDOW
+        ? { catalogContextWindow: entry.contextWindow }
+        : {}),
     maxTokens: declared.maxTokens ?? entry.maxTokens,
     cost: declared.cost ?? {
       input: entry.cost.input,
@@ -482,6 +548,7 @@ function parseModel(
       providerId,
       bad,
       seenModelNames,
+      settledWindowProvenance(record as unknown as ModelConfig),
     );
   }
 
@@ -501,6 +568,12 @@ function parseModel(
   return {
     ...parseModelOverrides(record, modelName, modelId, bad),
     contextWindow: (record.contextWindow as number | undefined) ?? DEFAULT_CONTEXT_WINDOW,
+    // Carried through when already settled, for the reason spelled out in
+    // `fromCatalog`: after one pass `contextWindow` is always defined, so
+    // re-deriving would relabel a built-in default as an operator's own choice.
+    contextWindowSource:
+      settledWindowProvenance(record as unknown as ModelConfig).source ??
+      (record.contextWindow !== undefined ? "declared" : "built-in-default"),
     maxTokens: record.maxTokens as number,
     cost,
   };
