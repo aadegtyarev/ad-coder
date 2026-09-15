@@ -320,7 +320,30 @@ export function buildSubmitPlanTool(
       securitySurface: Type.String(),
       summary: Type.String(),
       contractRequirements: Type.Optional(Type.Array(Type.String())),
-      surfaceAnalysis: Type.Any(),
+      // Spelled out STRUCTURALLY rather than as `Type.Any()`. An any-schema
+      // serialises to a bare `{}`, and a provider that validates tool schemas
+      // rejects the whole request for it -- DeepSeek answers "one of `type`,
+      // `anyOf`, `$ref` field is required" with a 400, so the planner never
+      // ran and the pipeline paused on an empty turn with zero tokens spent.
+      // The shape here mirrors `SurfaceAnalysis`; the enum leaves stay
+      // `Type.String()` on purpose, exactly as `complexity` and
+      // `securitySurface` do, so `parsePlan` below remains the one
+      // authoritative gate on which values are actually allowed.
+      surfaceAnalysis: Type.Object({
+        projectType: Type.String(),
+        surfaces: Type.Array(
+          Type.Object({ id: Type.String(), name: Type.String(), rationale: Type.String() }),
+        ),
+        coverage: Type.Array(
+          Type.Object({
+            surfaceId: Type.String(),
+            status: Type.String(),
+            contractIds: Type.Array(Type.String()),
+            evidence: Type.Array(Type.String()),
+            rationale: Type.String(),
+          }),
+        ),
+      }),
     }),
     async execute(_toolCallId, params) {
       try {

@@ -25,6 +25,7 @@ import {
 } from "../src/orchestration/follow-up";
 import { runPipeline } from "../src/orchestration/pipeline";
 import {
+  buildSubmitPlanTool,
   formatPlannerInstruction,
   parsePlan,
   SUBMIT_PLAN_TOOL_NAME,
@@ -347,19 +348,34 @@ test("parseVerdict rejects a bad status, non-array issues, a missing what, and a
   }
 });
 
-test("submit_follow_up advertises discriminated variants and rejects all-fields calls safely", () => {
+test("submit_follow_up advertises one typed object and rejects all-fields calls safely", () => {
   const tool = buildSubmitFollowUpTool({ followUps: [] }, { producer: "coder", runId: "run-1" });
   const schema = tool.parameters as unknown as {
-    anyOf: Array<{ properties: Record<string, unknown>; additionalProperties?: boolean }>;
+    type?: string;
+    anyOf?: unknown;
+    required: string[];
+    properties: Record<string, { type?: string }>;
+    additionalProperties?: boolean;
   };
-  expect(schema.anyOf.map((variant) => Object.keys(variant.properties).sort())).toEqual([
-    ["contract", "evidence", "kind", "title"],
-    ["evidence", "kind", "title"],
-    ["document", "evidence", "kind", "title"],
-    ["evidence", "kind", "priority", "title"],
+  // A top-level `anyOf` -- what a Type.Union of the four kinds produces -- is
+  // rejected outright by providers that validate tool schemas ("schema must be
+  // a JSON Schema of 'type: \"object\"'"), and this tool rides along on EVERY
+  // workflow turn, so the whole run dies. One object, per-kind fields optional.
+  expect(schema.type).toBe("object");
+  expect(schema.anyOf).toBeUndefined();
+  expect(schema.required.sort()).toEqual(["evidence", "kind", "title"]);
+  expect(Object.keys(schema.properties).sort()).toEqual([
+    "contract",
+    "document",
+    "evidence",
+    "kind",
+    "priority",
+    "title",
   ]);
-  expect(schema.anyOf.every((variant) => variant.additionalProperties === false)).toBe(true);
+  expect(schema.additionalProperties).toBe(false);
 
+  // The looser schema does NOT loosen the gate: a kind carrying another kind's
+  // field is still refused, by the validator rather than by the schema.
   const allFields = {
     kind: "note",
     title: "Auxiliary note",
@@ -378,6 +394,19 @@ test("submit_follow_up advertises discriminated variants and rejects all-fields 
   expect((diagnostic as ProjectOperationsError).code).toBe("invalid_follow_up");
   expect((diagnostic as ProjectOperationsError).detail).toBe("follow-up has an unknown field");
   expect((diagnostic as Error).message).not.toContain("Auxiliary note");
+
+  // And an unknown kind is still refused even though `kind` is now a bare string.
+  let unknownKind: unknown;
+  try {
+    tool.prepareArguments?.({
+      kind: "invented",
+      title: "t",
+      evidence: [{ summary: "s" }],
+    });
+  } catch (error) {
+    unknownKind = error;
+  }
+  expect((unknownKind as ProjectOperationsError).detail).toBe("kind is unsupported");
 });
 
 test("Coder and Reviewer primary results survive rejected all-fields follow-up metadata", async () => {
@@ -1947,6 +1976,36 @@ test("a prepared research cursor reopens and completes exactly once without a ra
   expect(reopened.checkpoint.completedEffects).toEqual([intent!.effectId]);
   expect(reopened.checkpoint.pendingStep?.state.researchProvenance).toHaveLength(1);
   expect(JSON.stringify(reopened.checkpoint)).not.toContain("research-questions");
+});
+
+test("every node of the submit_plan schema declares a type, so a validating provider accepts it", () => {
+  // A node serialised as a bare `{}` -- what `Type.Any()` produces -- makes
+  // providers that validate tool schemas reject the ENTIRE request: DeepSeek
+  // answers 400 "one of `type`, `anyOf`, `$ref` field is required", so the
+  // planner never runs and the stage fails having spent nothing. Walk the
+  // serialised schema and assert no such node survives anywhere in it.
+  const schema = buildSubmitPlanTool({}, "run").parameters as Record<string, unknown>;
+  const untyped: string[] = [];
+  const walk = (node: unknown, pointer: string): void => {
+    if (node === null || typeof node !== "object" || Array.isArray(node)) return;
+    const record = node as Record<string, unknown>;
+    if (record.type === undefined && record.anyOf === undefined && record.$ref === undefined)
+      untyped.push(pointer);
+    for (const key of ["properties", "items", "patternProperties"]) {
+      const child = record[key];
+      if (child === undefined) continue;
+      if (key === "items") walk(child, `${pointer}/items`);
+      else
+        for (const [name, value] of Object.entries(child as Record<string, unknown>))
+          walk(value, `${pointer}/${key}/${name}`);
+    }
+  };
+  walk(schema, "");
+  expect(untyped).toEqual([]);
+  // The enum leaves stay plain strings on purpose: parsePlan is the gate.
+  const properties = schema.properties as Record<string, Record<string, unknown>>;
+  expect(properties.complexity?.type).toBe("string");
+  expect(properties.surfaceAnalysis?.type).toBe("object");
 });
 
 test("a malformed submit_plan throws OrchestrationError malformed_plan", async () => {

@@ -6,6 +6,28 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-09-15
+
+### Fixed
+
+- Two mandatory tool schemas no longer make a provider reject the whole
+  request. `submit_plan` declared `surfaceAnalysis` as `Type.Any()`, which
+  serialises to a bare `{}`, and `submit_follow_up` was a `Type.Union` of its
+  four kinds, which serialises to a top-level `anyOf` rather than an object.
+  Providers that validate tool schemas refuse both: DeepSeek answers
+  400 "one of `type`, `anyOf`, `$ref` field is required" for the first and
+  "schema must be a JSON Schema of `type: \"object\"`" for the second. Because
+  `submit_follow_up` rides along on every workflow turn, a run against such a
+  provider paused at the plan stage on an empty turn, having spent zero tokens
+  and reporting only "inspect the provider failure" -- pointing the operator at
+  the provider for a defect in this repository's own schemas. `surfaceAnalysis`
+  is now spelled out structurally and the follow-up schema is one object with
+  the per-kind fields optional. Neither change loosens a gate: the enum leaves
+  stay plain strings exactly as `complexity` and `securitySurface` already did,
+  and `parsePlan` and `validateFollowUpCandidate` remain the authoritative
+  validators -- an unknown kind, or one kind carrying another kind's field, is
+  still refused.
+
 ## [0.6.1] - 2026-09-15
 
 ### Fixed
