@@ -484,11 +484,12 @@ test("provider override wins when both provider keys are present", () => {
 });
 
 test("falls back to codex OAuth when no env-var key is present", () => {
+  const warnings: string[] = [];
   const config = resolvePipelineConfig({
     task: "x",
     targetDir: "/tmp/target",
     env: fakeEnv({}),
-    warn: silent,
+    warn: (message) => warnings.push(message),
   });
   expect(config.roles.planner?.model.id).toBe("gpt-5.6-sol");
   expect(config.roles.security?.model.id).toBe("gpt-5.6-sol");
@@ -508,6 +509,21 @@ test("falls back to codex OAuth when no env-var key is present", () => {
   ]);
   expect(config.compaction?.summarizerModel?.id).toBe("gpt-5.6-luna");
   expect(config.routing?.registry.getModel("codex-gpt-5.5")).toBeDefined();
+  // The OAuth default must live in the profile, not in a second decision at the
+  // selection site: when it did, the banner resolved the orchestrator's cell to
+  // the mid tier while the run dispatched Sol, so the operator checked a
+  // routing the run never took.
+  expect(
+    config.routing?.profile.entries
+      .filter((entry) => entry.role === "orchestrator")
+      .map((entry) => [entry.complexity, entry.model, entry.thinkingLevel]),
+  ).toEqual([
+    ["trivial", "codex-sol", "low"],
+    ["medium", "codex-sol", "low"],
+    ["complex", "codex-sol", "low"],
+  ]);
+  const banner = warnings.find((line) => line.includes("complexity"));
+  expect(banner).toContain(`${config.roles.orchestrator?.model.name}: orchestrator`);
 });
 
 test("explicit profile and spawn override keep precedence over provider defaults", () => {
@@ -543,7 +559,9 @@ test("a profile cacheRetention reaches the role instead of being discarded", () 
     cheap: "codex-luna",
   });
   profile.entries = profile.entries.map((entry) =>
-    entry.role === "coder" ? { ...entry, cacheRetention: "long" as const } : entry,
+    entry.role === "coder" || entry.role === "orchestrator"
+      ? { ...entry, cacheRetention: "long" as const }
+      : entry,
   );
   const config = resolvePipelineConfig({
     task: "x",
@@ -557,10 +575,9 @@ test("a profile cacheRetention reaches the role instead of being discarded", () 
   // A role the profile says nothing about keeps the default, so the wiring is
   // "honor what was stated", not "overwrite everything".
   expect(config.roles.reviewer.role.cacheRetention).toBe("short");
-  // The orchestrator has no cell of its own -- it selects through the coder's,
-  // so the declared value has to reach it too. Asserted separately because the
-  // orchestrator is built by a different code path than the routed roles, and
-  // that path is exactly where the value was dropped a second time.
+  // The orchestrator routes from its OWN cell, and is built by a different code
+  // path than the routed roles -- the path where the value was dropped a second
+  // time -- so its declaration is asserted separately.
   expect(config.roles.orchestrator?.role.cacheRetention).toBe("long");
 });
 
@@ -1091,10 +1108,64 @@ test("the startup banner reports the live role layout, not three collapsed tiers
   expect([...listed].sort()).toEqual([
     "auditor",
     "coder",
+    "orchestrator",
     "planner",
     "recorder",
     "researcher",
     "reviewer",
     "security",
   ]);
+});
+
+test("a profile written before the orchestrator cell existed still routes, audibly", () => {
+  // Hand-written inventories predate the orchestrator role. Adding the role to
+  // the profile vocabulary must not invalidate configuration an operator
+  // already committed, so a missing cell keeps the coder route the
+  // orchestrator used to borrow -- and says so, once, rather than silently.
+  const full = buildDefaultProfile({ strong: "large", mid: "small", cheap: "small" });
+  const legacy = { entries: full.entries.filter((entry) => entry.role !== "orchestrator") };
+  const warnings: string[] = [];
+  const config = resolvePipelineConfig({
+    task: "x",
+    targetDir: "/tmp/target",
+    registryConfig: mixedRegistry(),
+    profile: legacy,
+    coderModel: "large",
+    summarizerModel: "large",
+    env: fakeEnv({ LOCAL_KEY: "k" }),
+    warn: (message) => warnings.push(message),
+  });
+
+  expect(config.roles.orchestrator?.model.name).toBe("large");
+  const notices = warnings.filter((line) => line.includes("no orchestrator cell"));
+  expect(notices).toHaveLength(1);
+  expect(notices[0]).toContain("coder");
+  // The banner reports the route the run takes, so the fallback is visible
+  // there too rather than leaving the role listed as unrouted.
+  const banner = warnings.find((line) => line.includes("complexity"));
+  expect(banner).toContain("orchestrator");
+  expect(banner).not.toContain("unrouted");
+});
+
+test("a profile missing a non-orchestrator cell still fails instead of falling back", () => {
+  // The fallback is a compatibility shim for ONE role, not a general
+  // permission for incomplete profiles: any other missing cell is still a
+  // configuration error the operator has to see.
+  const full = buildDefaultProfile({ strong: "large", mid: "small", cheap: "small" });
+  const broken = {
+    entries: full.entries.filter(
+      (entry) => !(entry.role === "reviewer" && entry.complexity === "medium"),
+    ),
+  };
+  expect(() =>
+    resolvePipelineConfig({
+      task: "x",
+      targetDir: "/tmp/target",
+      registryConfig: mixedRegistry(),
+      profile: broken,
+      summarizerModel: "large",
+      env: fakeEnv({ LOCAL_KEY: "k" }),
+      warn: silent,
+    }),
+  ).toThrow(/reviewer:medium/);
 });

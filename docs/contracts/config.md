@@ -73,6 +73,13 @@ Rules the operator declared for ad-coder. A violation is always blocking.
   `USD/credit`. Both retain only provider/model scope, timestamp, units, source,
   confidence, and an optional predecessor record -- never account identity or a
   raw provider response. `profile record` validates before atomically appending.
+- 2026-09-15: Every routing role, including the one that drives the conversation
+  and picks the pipeline, owns a profile cell it can be routed and measured by;
+  no role silently borrows another's model. Adding a role to the vocabulary is a
+  compatible change, so a profile authored before that role existed keeps
+  running: the resolver falls back to the route the role previously took and
+  says so once on stderr, while a missing cell for any already-declared role
+  stays a blocking configuration error.
 
 ## Sources
 

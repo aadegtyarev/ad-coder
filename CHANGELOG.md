@@ -6,6 +6,27 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-09-15
+
+### Added
+- `orchestrator` is a routing role: it has its own `(role, complexity)` cell in
+  every profile, so an operator can name its model per complexity and a
+  calibration run can attribute its cost separately from the work it delegates.
+  A default profile now emits 24 cells (8 roles x 3 complexities) and routes the
+  orchestrator to the review tier -- it reads results and picks the next move
+  rather than producing the work.
+
+### Changed
+- The orchestrator no longer falls back to the coder's profile cell when
+  `--orchestrator-model` is absent. Borrowing that cell meant a profile could not
+  route the orchestrator at all, and every measurement of it was really a
+  measurement of the coder. An explicit `--orchestrator-model` now also reaches
+  the override layer like every other role flag. A profile authored before the
+  cell existed keeps working: a missing orchestrator cell falls back to the
+  coder route it used to take and prints one stderr notice, so committed
+  inventories are not invalidated by the new role. The fallback covers that one
+  role only -- a missing cell for any other role still fails as before.
+
 ## [0.10.7] - 2026-09-15
 
 ### Fixed

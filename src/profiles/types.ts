@@ -6,7 +6,11 @@ import type { Complexity } from "../orchestration/types";
  * The routing roles a profile can target.
  *
  * Pipeline workers and independently delegated specialists share this routing
- * vocabulary. `recorder` is included as
+ * vocabulary. `orchestrator` is one of them: it drives the conversation and
+ * decides which pipeline to run, which is a routing decision like any other, so
+ * it must be nameable per complexity and measurable on its own. Before it had a
+ * cell it silently borrowed the coder's model -- a profile could not route it,
+ * and a calibration run could not attribute its cost. `recorder` is included as
  * a forward-looking routing target the ledger/recorder follow-on will consume
  * runPipeline does NOT read it today, but the project routes the recorder per
  * tier, so the profile layer must be able to name a model for it now.
@@ -16,6 +20,7 @@ import type { Complexity } from "../orchestration/types";
  * diverge silently; that risk is accepted for this additive, unwired layer.
  */
 export type ProfileRole =
+  | "orchestrator"
   | "planner"
   | "researcher"
   | "coder"

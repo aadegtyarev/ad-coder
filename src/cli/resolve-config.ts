@@ -26,6 +26,7 @@ import type {
 } from "../orchestration/types";
 import { SUBMIT_VERDICT_TOOL_NAME } from "../orchestration/verdict";
 import { buildDefaultProfile } from "../profiles/default-profile";
+import { ProfileError } from "../profiles/errors";
 import { resolveProfile } from "../profiles/resolve";
 import type { Profile, ProfileRole, ResolvedSelection } from "../profiles/types";
 import { PROFILE_ROLES, parseProfile } from "../profiles/validate";
@@ -518,11 +519,19 @@ function resolveConfig(
       options.profile ??
       (useCodexOAuthDefaults
         ? {
-            entries: defaultProfile.entries.map((entry) =>
-              entry.role === "coder"
-                ? { ...entry, model: "codex-sol", thinkingLevel: "medium" as ThinkingLevel }
-                : entry,
-            ),
+            // The Codex OAuth defaults live IN the profile, for the coder and
+            // the orchestrator alike. Expressing the orchestrator default as a
+            // second special case at the selection site is what let the banner
+            // and the run disagree: the banner resolved the cell (mid tier,
+            // Terra) while the build hardcoded Sol, so the operator checked a
+            // routing the run did not take.
+            entries: defaultProfile.entries.map((entry) => {
+              if (entry.role === "coder")
+                return { ...entry, model: "codex-sol", thinkingLevel: "medium" as ThinkingLevel };
+              if (entry.role === "orchestrator")
+                return { ...entry, model: "codex-sol", thinkingLevel: "low" as ThinkingLevel };
+              return entry;
+            }),
           }
         : defaultProfile),
   );
@@ -540,6 +549,7 @@ function resolveConfig(
         ).model;
 
   const explicitModels: Partial<Record<ProfileRole, string>> = {
+    ...(options.orchestratorModel !== undefined && { orchestrator: options.orchestratorModel }),
     ...(options.plannerModel !== undefined && { planner: options.plannerModel }),
     ...(options.researcherModel !== undefined && { researcher: options.researcherModel }),
     ...(options.securityModel !== undefined && { security: options.securityModel }),
@@ -552,18 +562,51 @@ function resolveConfig(
     overrides[role as ProfileRole] = { model };
   }
 
+  // Every role resolves through here, so the banner reports exactly the route
+  // the run will take.
+  //
+  // `orchestrator` gained a profile cell of its own so a profile can name its
+  // model per complexity and a calibration run can attribute its cost apart
+  // from the work it delegates; before that it silently read the coder's cell,
+  // which made every measurement of the orchestrator a measurement of the
+  // coder. Profiles authored before the cell existed have no orchestrator
+  // entry, and a hand-written inventory is operator configuration we do not get
+  // to invalidate -- so a MISSING orchestrator cell falls back to the coder
+  // route it used to take, once and audibly. Only that one gap is absorbed:
+  // every other profile error, and every other role, still raises.
+  let orchestratorFallbackWarned = false;
+  const resolveRole = (role: ProfileRole): ResolvedSelection => {
+    try {
+      return resolveProfile(profile, registry, role, defaultComplexity, overrides[role]);
+    } catch (error) {
+      if (
+        role !== "orchestrator" ||
+        !(error instanceof ProfileError) ||
+        error.code !== "missing_mapping"
+      ) {
+        throw error;
+      }
+      if (!orchestratorFallbackWarned) {
+        orchestratorFallbackWarned = true;
+        warn(
+          "ad-coder: profile declares no orchestrator cell; routing it through the coder cell as before\n",
+        );
+      }
+      return resolveProfile(profile, registry, "coder", defaultComplexity, overrides.coder);
+    }
+  };
+
   // What the run will ACTUALLY do, not the three tiers the default profile is
   // built from: under an inventory those tiers all collapse onto one default
   // model, so the old banner printed `strong "x" mid "x" cheap "x"` for a
-  // profile routing seven roles across several models -- true of nothing.
+  // profile routing every role across several models -- true of nothing.
   // Roles are grouped by the model they resolve to at the default complexity,
   // which is the routing decision an operator checks before letting a run go.
   const layout = new Map<string, ProfileRole[]>();
   for (const role of PROFILE_ROLES) {
     let modelName: string;
     try {
-      modelName = resolveProfile(profile, registry, role, defaultComplexity, overrides[role]).model
-        .name;
+      modelName = resolveRole(role).model.name;
     } catch {
       // A role the profile does not map at this complexity is reported as
       // unrouted rather than crashing the banner: the run may never reach it,
@@ -586,7 +629,7 @@ function resolveConfig(
   const buildRole = (name: ProfileRole, tools: string[]): RoleSpec => {
     // The role's live model is whatever the default profile routes it to at
     // defaultComplexity; the budget is validated against that same model.
-    const selection = resolveProfile(profile, registry, name, defaultComplexity, overrides[name]);
+    const selection = resolveRole(name);
     const model = selection.model;
     const budget = deriveContextBudget(
       model.contextWindow,
@@ -614,12 +657,12 @@ function resolveConfig(
     return { role, model };
   };
 
+  // One source for the orchestrator's route, shared with the banner. The Codex
+  // OAuth default is carried by the profile above rather than re-decided here.
   const orchestratorSelection: ResolvedSelection =
     options.orchestratorModel !== undefined
       ? { model: registry.getModel(options.orchestratorModel) }
-      : useCodexOAuthDefaults
-        ? { model: registry.getModel("codex-sol"), thinkingLevel: "low" }
-        : resolveProfile(profile, registry, "coder", defaultComplexity, overrides.coder);
+      : resolveRole("orchestrator");
   const visionModel =
     options.visionModel !== undefined ? registry.getModel(options.visionModel) : undefined;
   if (visionModel !== undefined && !visionModel.input.includes("image")) {
