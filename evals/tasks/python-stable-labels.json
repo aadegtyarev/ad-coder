@@ -3,6 +3,7 @@
   "role": "coder",
   "complexity": "trivial",
   "mode": "role",
+  "purpose": "smoke",
   "fixture": "python-stable-labels",
   "scorer": "python-stable-labels.ts",
   "prompt": "Make normalize_labels return normalized unique labels in first-seen order for any iterable. Preserve case-insensitive Unicode normalization, ignore blank values, do not mutate caller-owned inputs, and add focused tests.",

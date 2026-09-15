@@ -6,6 +6,17 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.15.1] - 2026-09-16
+
+### Changed
+- A corpus task declares its `purpose`: `calibration` for one whose result may
+  move a routing cell, `smoke` for one kept because it proves the harness still
+  dispatches, materializes and scores. The three trivial coder tasks are now
+  `smoke`: the cheapest model on the provider scored nine of nine at quality 1.00
+  across them, which says only that it is not broken, and unlabelled such a score
+  can justify routing a tier the tasks cannot discriminate within. The corpus
+  smoke reports the two counts separately.
+
 ## [0.15.0] - 2026-09-16
 
 ### Added
