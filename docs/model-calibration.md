@@ -64,6 +64,18 @@ wasting a live calibration run. Measurements retain the orchestrator and Planner
 votes plus correctness and agreement, so live Planner feedback can calibrate
 project-local triage without silently changing the user baseline.
 
+A check must score something the task asked for. `planner-contract-carry-v1`
+failed 20 runs out of 20 across five models and four families -- and the ranking
+inverted, the most expensive model scoring worst -- which is the shape of a
+broken task, not a hard one. Two of its checks scored unstated requirements: one
+demanded that only the applicable contract rules be carried while the prompt
+asked merely for "the short rule text", and the other expected an
+`evidenceRating` of `asserted` on a task that adds a feature, while the rating's
+definitions are written around a defect that exists. Both are now stated in the
+prompt. The lesson generalises: when every model fails a task the same way, read
+the task before reading the models, and treat an inverted cost ranking as the
+signal that the measurement has stopped being about capability.
+
 Two scorer design notes follow from an independent review of the role tasks.
 
 `planner-contract-carry-v1` verifies a carried rule against the fixture's own

@@ -6,6 +6,16 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.13.4] - 2026-09-16
+
+### Fixed
+- `planner-contract-carry-v1` scored two requirements its prompt never stated,
+  and so failed every model put to it: 20 runs out of 20 across five models and
+  four families, with the ranking inverted -- the most expensive model scored
+  worst. The prompt now asks for what the checks measure: carry only the rules
+  the change must obey, and rate evidence `asserted` when the task describes work
+  to be done rather than a defect the code shows.
+
 ## [0.13.3] - 2026-09-16
 
 ### Fixed
