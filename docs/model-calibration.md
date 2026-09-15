@@ -108,6 +108,23 @@ sweep cannot quietly total them together.
 Labelling is the cheap half. The other half is not quoting a smoke task's score
 when a routing decision is being argued.
 
+**A failure is data, not an exception.** One shape of bug appeared three times in
+one day, in three unrelated places, and each time it destroyed measurements
+rather than recording them: a scorer threw on an answer it could not read, so the
+run left the sample -- and the runs it lost were the bad ones, which flattered
+the model; the runner could not say whether a zero came from a wrong answer or a
+broken tool, so both were the same number; a repeat series lost four finished
+measurements when its fifth run hit a stage limit, failing exactly where repeats
+matter most.
+
+The common cause is treating something unexpected as a reason to stop rather than
+as something to write down. So, wherever this pipeline meets the unexpected, the
+question is not how to abort but what to record. A scorer that cannot read an
+answer fails every check. A run that never reached a scored answer is named in
+`harnessOutcome`. A repeat series reports what aborted and continues. The next
+instance of this will be somewhere nobody is looking, and the rule is what
+catches it.
+
 Every measurement carries a `harnessOutcome` beside its `quality`, because the
 two answer different questions. A `quality: 0` from a model that answered badly
 and a `quality: 0` from a tool that refused, a stage that ran out of time, or an
