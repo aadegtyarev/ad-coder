@@ -112,6 +112,7 @@ describe("model calibration", () => {
     expect(result.models).toEqual([
       {
         role: "planner",
+        provider: "test",
         model: "model-planner",
         modelTurns: 1,
         inputTokens: 100,
@@ -120,6 +121,7 @@ describe("model calibration", () => {
       },
       {
         role: "reviewer",
+        provider: "test",
         model: "model-a",
         modelTurns: 2,
         inputTokens: 200,
@@ -194,4 +196,44 @@ describe("model calibration", () => {
       }),
     ).toThrow("unknown or duplicate checks");
   });
+});
+
+test("a measurement names the provider that served the model, not just the model", () => {
+  // The same model name behind two providers is not the same thing to run
+  // against: quantization, context ceiling and supported thinking levels all
+  // differ, and `docs/provider-catalogs.md` records `deepseek-v4-pro` accepting
+  // `low` on opencode-go while openrouter marks it unsupported. These
+  // measurements are meant to be published, so a reader who carries a score to
+  // another host has to be able to see that it was measured somewhere else.
+  const reviewerTask = { ...task, role: "reviewer" };
+  const result = scoreCalibrationRun({
+    task: reviewerTask,
+    checks: reviewerTask.checks.map(({ id }) => ({ id, passed: true })),
+    ledger: [row(0.2, "reviewer", "shared-name")],
+    inventory: "inv",
+    thinkingLevel: "low",
+    durationMs: 10,
+  });
+  expect(result.provider).toBe("test");
+  expect(result.models[0]?.provider).toBe("test");
+});
+
+test("the same model name on two providers stays two rows", () => {
+  // Aggregation keys on (role, provider, model). Keyed on the name alone, a
+  // sweep that compared one model across two hosts would silently sum them into
+  // a single row -- the exact comparison the provider field exists to make
+  // possible.
+  const reviewerTask = { ...task, role: "reviewer" };
+  const here = row(0.2, "reviewer", "shared-name");
+  const there = { ...row(0.3, "reviewer", "shared-name"), provider: "elsewhere" };
+  const result = scoreCalibrationRun({
+    task: reviewerTask,
+    checks: reviewerTask.checks.map(({ id }) => ({ id, passed: true })),
+    ledger: [here, there],
+    inventory: "inv",
+    thinkingLevel: "low",
+    durationMs: 10,
+  });
+  expect(result.models).toHaveLength(2);
+  expect(result.models.map((share) => share.provider).sort()).toEqual(["elsewhere", "test"]);
 });

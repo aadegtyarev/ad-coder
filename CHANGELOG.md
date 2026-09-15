@@ -6,6 +6,19 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-09-16
+
+### Added
+- A calibration measurement now names the **provider** that served each model,
+  not only the model. The same name behind two providers can be a different
+  quantization, context ceiling and set of supported thinking levels --
+  `docs/provider-catalogs.md` already records `deepseek-v4-pro` accepting `low`
+  on opencode-go and marked unsupported on openrouter. Measurements are meant to
+  be published, and one without a provider invites a reader to carry a score to a
+  host where it does not hold. Per-model shares aggregate on
+  `(role, provider, model)`, so comparing one model across two hosts no longer
+  sums them into a single row.
+
 ## [0.13.4] - 2026-09-16
 
 ### Fixed
