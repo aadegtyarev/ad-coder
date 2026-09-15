@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { CalibrationTask } from "../../src/evaluation/calibration";
-import { scoreCalibrationRun } from "../../src/evaluation/calibration";
+import { measuredRolesOf, scoreCalibrationRun } from "../../src/evaluation/calibration";
 import type { LedgerRecord } from "../../src/ledger/types";
 import type { ConsoleTurn, OrchestratorReport } from "./report";
 import { buildOrchestratorReport, extractJsonArtifact } from "./report";
@@ -61,6 +61,13 @@ function loadTasks(): { file: string; task: Task }[] {
       if (task.mode !== "manual-workflow")
         throw new Error(`prompts require manual-workflow mode: ${task.id}`);
     }
+    // A pipeline task's `role` is the synthetic dispatch label "pipeline", which
+    // no ledger row ever carries -- so without `measuredRoles` its measurement
+    // would silently report no model at all. Demanded here, at load, rather than
+    // discovered as a null in a scored result hours later.
+    if (task.mode === "automatic-pipeline" && task.measuredRoles === undefined)
+      throw new Error(`automatic-pipeline task must declare measuredRoles: ${task.id}`);
+    measuredRolesOf(task);
   }
   return loaded;
 }

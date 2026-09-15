@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { compareCalibrationRuns, scoreCalibrationRun } from "../src/evaluation/calibration";
+import {
+  compareCalibrationRuns,
+  measuredRolesOf,
+  scoreCalibrationRun,
+} from "../src/evaluation/calibration";
 import type { LedgerRecord } from "../src/ledger/types";
 
 const task = {
@@ -135,6 +139,47 @@ describe("model calibration", () => {
       durationMs: 100,
     });
     expect(result.model).toBeNull();
+  });
+
+  test("attributes a pipeline task whose role no ledger row carries", () => {
+    // A pipeline task's `role` is the dispatch label "pipeline" -- the ledger
+    // only ever carries the workers that took the turns. Before `measuredRoles`
+    // this reported `model: null` for every automatic-pipeline run, silently,
+    // which is the one mode multi-role attribution exists for.
+    const pipelineTask = {
+      ...task,
+      id: "pipeline-repair-v1",
+      role: "pipeline",
+      mode: "automatic-pipeline" as const,
+      measuredRoles: ["coder"],
+    };
+    const result = scoreCalibrationRun({
+      task: pipelineTask,
+      checks: pipelineTask.checks.map(({ id }) => ({ id, passed: true })),
+      ledger: [
+        row(0.4, "planner", "model-planner"),
+        row(0.1, "coder", "model-coder"),
+        row(0.1, "coder", "model-coder"),
+        row(0.05, "reviewer", "model-reviewer"),
+      ],
+      inventory: "codex",
+      thinkingLevel: "low",
+      durationMs: 100,
+    });
+    expect(result.model).toBe("model-coder");
+    expect(result.models.map((share) => share.role)).toEqual(["planner", "coder", "reviewer"]);
+  });
+
+  test("measuredRolesOf falls back to the task role and rejects an empty list", () => {
+    expect(measuredRolesOf(task)).toEqual(["reviewer"]);
+    expect(measuredRolesOf({ ...task, measuredRoles: ["coder", "reviewer"] })).toEqual([
+      "coder",
+      "reviewer",
+    ]);
+    expect(() => measuredRolesOf({ ...task, measuredRoles: [] })).toThrow("invalid measuredRoles");
+    expect(() => measuredRolesOf({ ...task, measuredRoles: [" "] })).toThrow(
+      "invalid measuredRoles",
+    );
   });
 
   test("rejects unknown checks", () => {

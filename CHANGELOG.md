@@ -28,8 +28,12 @@ All notable changes to ad-coder are recorded here. The format follows
   first so a failing mirror cannot also cost the caller the numbers it reads back.
 - A calibration measurement attributes cost per `(role, model)` pair instead of
   crediting the whole run to whoever took the first turn. `model` names the model
-  that ran the task's declared role; the new `models[]` lists every pair,
-  costliest first.
+  that ran the roles the task measures; the new `models[]` lists every pair,
+  costliest first. A task whose dispatch `role` is not itself a ledger role --
+  every `automatic-pipeline` task dispatches as `pipeline`, while its rows carry
+  `coder`/`reviewer` -- declares `measuredRoles`, and the corpus runner refuses to
+  load one that does not. Without it those runs reported `model: null` silently,
+  which is the one mode multi-role attribution exists for.
 - The orchestrator complexity votes are read from the run instead of being passed
   in: `calibration:score` no longer takes the two complexity positionals, and the
   orchestrator scorer derives them from an observed report. It additionally

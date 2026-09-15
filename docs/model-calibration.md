@@ -64,6 +64,13 @@ delegated role from another. Cost is attributed per `(role, model)` pair from
 ledger-record position, so a multi-role run reports every model's share rather
 than crediting whoever took the first turn.
 
+A task's `role` is its dispatch label, not necessarily a ledger role: a pipeline
+task dispatches as `pipeline`, while its rows are stamped with the workers that
+took the turns. Such a task declares `measuredRoles` — the ledger roles whose
+model the measurement names — and the corpus runner refuses to load an
+`automatic-pipeline` task without it. A single-role task omits the field and
+falls back to its `role`, which its rows do carry.
+
 Run each corpus task at least once as its declared mode: a standalone `run_role`,
 manual `run_step`/`choose_transition`, or complete `run_pipeline`. Repeat samples
 before changing defaults. The Orchestrator receives this same rule: inventory
