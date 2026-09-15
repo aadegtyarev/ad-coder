@@ -14,15 +14,15 @@ const task = {
   ],
 };
 
-function row(cost: number): LedgerRecord {
+function row(cost: number, role = "reviewer", model = "model-a"): LedgerRecord {
   return {
     ts: 1,
     runId: "run",
     lane: "main",
-    role: "reviewer",
-    step: "review",
+    role,
+    step: role === "reviewer" ? "review" : `role:${role}`,
     provider: "test",
-    model: "model-a",
+    model,
     stopReason: "stop",
     usage: {
       input: 100,
@@ -58,6 +58,7 @@ describe("model calibration", () => {
       inputTokens: 200,
       costUsd: 0.5,
       costEfficiency: 1.5,
+      model: "model-a",
       orchestratorComplexity: null,
       plannerComplexity: null,
       complexityCorrect: null,
@@ -89,6 +90,51 @@ describe("model calibration", () => {
     const cheap = scoreCalibrationRun({ ...common, ledger: [row(0.1)], durationMs: 2000 });
     const costly = scoreCalibrationRun({ ...common, ledger: [row(0.2)], durationMs: 100 });
     expect(compareCalibrationRuns([costly, cheap])[0]).toBe(cheap);
+  });
+
+  test("attributes every (role, model) pair and names the declared role's model", () => {
+    // A multi-role run: the FIRST turn is a delegated planner on a different
+    // model, which is exactly the row the old `ledger[0].model` reported as the
+    // model under test.
+    const result = scoreCalibrationRun({
+      task,
+      checks: task.checks.map(({ id }) => ({ id, passed: true })),
+      ledger: [row(0.4, "planner", "model-planner"), row(0.1), row(0.1)],
+      inventory: "codex",
+      thinkingLevel: "low",
+      durationMs: 100,
+    });
+    expect(result.model).toBe("model-a");
+    expect(result.models).toEqual([
+      {
+        role: "planner",
+        model: "model-planner",
+        modelTurns: 1,
+        inputTokens: 100,
+        outputTokens: 10,
+        costUsd: 0.4,
+      },
+      {
+        role: "reviewer",
+        model: "model-a",
+        modelTurns: 2,
+        inputTokens: 200,
+        outputTokens: 20,
+        costUsd: 0.2,
+      },
+    ]);
+  });
+
+  test("names no model when the declared role never ran", () => {
+    const result = scoreCalibrationRun({
+      task,
+      checks: task.checks.map(({ id }) => ({ id, passed: true })),
+      ledger: [row(0.4, "planner", "model-planner")],
+      inventory: "codex",
+      thinkingLevel: "low",
+      durationMs: 100,
+    });
+    expect(result.model).toBeNull();
   });
 
   test("rejects unknown checks", () => {

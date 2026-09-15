@@ -17,7 +17,7 @@ import {
   driveWorkflow,
   silentNoopWarning,
 } from "../src/cli/drive";
-import { MemoryLedgerSink } from "../src/ledger/ledger";
+import { FileLedgerSink, MemoryLedgerSink } from "../src/ledger/ledger";
 import { SUBMIT_FOLLOW_UP_TOOL_NAME } from "../src/orchestration/follow-up";
 import { runPipeline } from "../src/orchestration/pipeline";
 import { createWorkflowSession } from "../src/orchestration/session";
@@ -494,4 +494,47 @@ test("per-step cost is attributed by position and reconciles with the total", as
   expect(perStep.every((c) => c > 0)).toBe(true); // THE regression: no step is $0
   const sum = perStep.reduce((a, b) => a + b, 0);
   expect(sum).toBeCloseTo(total, 8); // per-step attribution partitions the total exactly
+});
+
+test("a driven run stays readable and still leaves its ledger file on disk", async () => {
+  // Regression, same one as the orchestrated session: the drive loop needs a
+  // READABLE sink (it attributes per-step cost by record position), and
+  // installing one replaced the durable file sink outright -- so `ad-coder
+  // drive` ran a whole multi-role pipeline and left nothing under
+  // `.ad-coder/ledger` while `ad-coder role` did. This composes the sink
+  // exactly as `driveCommand` does and drives a real pipeline through it.
+  const fx = fixture();
+  const coder = fx.role("coder", "You code.");
+  const reviewer = reviewerRole(fx);
+  const approve: Verdict = { status: "approved", issues: [], summary: "ok" };
+  fx.faux.setResponses([fauxAssistantMessage("coded"), ...reviewerTurn(approve)]);
+
+  const runId = "drive-evidence";
+  const ledgerPath = path.join(fx.targetDir, ".ad-coder", "ledger", `${runId}.jsonl`);
+  const ledgerSink = new MemoryLedgerSink(new FileLedgerSink(ledgerPath));
+  const session = createWorkflowSession(config(fx, { coder, reviewer }, ledgerSink));
+  try {
+    await driveWorkflow({
+      session,
+      ledgerSink,
+      auto: true,
+      input: Readable.from(""),
+      output: new Capture(),
+      error: new Capture(),
+    });
+  } finally {
+    ledgerSink.close();
+  }
+
+  const rows = fs
+    .readFileSync(ledgerPath, "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as { role: string; step: string });
+  // Both halves of the mirror agree: the drive loop read back exactly what the
+  // audit trail kept, rather than one of the two going empty.
+  expect(rows).toHaveLength(ledgerSink.records().length);
+  expect(rows.length).toBeGreaterThan(0);
+  expect(rows.map(({ role }) => role)).toContain("coder");
+  expect(rows.map(({ role }) => role)).toContain("reviewer");
 });

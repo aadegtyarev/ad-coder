@@ -17,16 +17,37 @@ export interface LedgerSink {
   close?(): void;
 }
 
-/** In-memory sink for tests and for callers that want the records without a file. */
+/**
+ * In-memory sink for tests and for callers that want the records without a
+ * file, optionally MIRRORING every record to a second sink.
+ *
+ * WHY THE MIRROR. A front that needs to read its own cost back (the drive loop
+ * sums per-step cost by record position; `show_cost` sums the whole session)
+ * must hold a readable sink, and installing one replaced the default file sink
+ * outright -- so `drive` and `console` ran whole multi-role sessions and left
+ * NOTHING under `.ad-coder/ledger`, while `role` did. The audit trail is not a
+ * property of which front started the turn, so the readable sink carries the
+ * durable one instead of displacing it.
+ */
 export class MemoryLedgerSink implements LedgerSink {
   private readonly written: LedgerRecord[] = [];
 
+  constructor(private readonly mirror?: LedgerSink) {}
+
   write(record: LedgerRecord): void {
     this.written.push(record);
+    // The in-memory copy is taken FIRST and unconditionally: a mirror that
+    // throws (a full disk, a refused path) must not also cost the caller the
+    // numbers it is about to read back.
+    this.mirror?.write(record);
   }
 
   records(): readonly LedgerRecord[] {
     return this.written;
+  }
+
+  close(): void {
+    this.mirror?.close?.();
   }
 }
 

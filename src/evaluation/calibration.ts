@@ -17,10 +17,31 @@ export interface CalibrationCheckResult {
   detail?: string;
 }
 
+/** One (role, model) pair the run actually used, with the work it did. */
+export interface CalibrationModelShare {
+  role: string;
+  model: string;
+  modelTurns: number;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+}
+
 export interface CalibrationMeasurement {
   taskId: string;
   inventory: string;
-  model: string;
+  /**
+   * The model that ran the task's DECLARED role, or `null` when no ledger row
+   * carries that role.
+   *
+   * It used to be `ledger[0].model` -- whoever happened to take the first turn
+   * -- which labelled an eight-turn pipeline with its planner's model and made
+   * every cross-model comparison of a multi-role run meaningless. `models`
+   * carries the full breakdown; this field only names the role under test.
+   */
+  model: string | null;
+  /** Every (role, model) pair the run used, ordered by cost, highest first. */
+  models: CalibrationModelShare[];
   thinkingLevel: string;
   role: string;
   complexity: CalibrationTask["complexity"];
@@ -86,10 +107,35 @@ export function scoreCalibrationRun(input: {
     { input: 0, cacheRead: 0, cacheWrite: 0, output: 0, reasoning: 0, cost: 0, toolTurns: 0 },
   );
   const accepted = quality === 1 && (input.escapedDefects ?? 0) === 0;
+  const shares = new Map<string, CalibrationModelShare>();
+  for (const row of input.ledger) {
+    const key = `${row.role}\u0000${row.model}`;
+    const share = shares.get(key) ?? {
+      role: row.role,
+      model: row.model,
+      modelTurns: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      costUsd: 0,
+    };
+    share.modelTurns += 1;
+    share.inputTokens += row.usage.input;
+    share.outputTokens += row.usage.output;
+    share.costUsd += row.usage.cost.total;
+    shares.set(key, share);
+  }
+  const models = [...shares.values()].sort((left, right) => right.costUsd - left.costUsd);
+  // The declared role is what the task claims to measure. A delegated role's
+  // rows carry a `role:<name>` step, so the plain role name is the one under
+  // test; ties inside it go to whichever model did the most turns.
+  const declared = models
+    .filter((share) => share.role === input.task.role)
+    .sort((left, right) => right.modelTurns - left.modelTurns)[0];
   return {
     taskId: input.task.id,
     inventory: input.inventory,
-    model: input.ledger[0]?.model ?? "unknown",
+    model: declared?.model ?? null,
+    models,
     thinkingLevel: input.thinkingLevel,
     role: input.task.role,
     complexity: input.task.complexity,

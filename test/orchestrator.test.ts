@@ -1438,3 +1438,78 @@ test("approved reports bind the exact publish tree and reject a stale worktree",
   await expect(control.publish(run.id)).rejects.toThrow("stale_binding");
   expect(published).toBe(false);
 });
+
+test("an orchestrated session names its ledger file and delegated rows land in it", async () => {
+  // Regression. `startOrchestrator` installs a READABLE MemoryLedgerSink so
+  // `show_cost` and the per-step cost arithmetic can read the session back, and
+  // that sink REPLACED the durable file sink a headless `ad-coder role` gets. A
+  // whole conversational session -- every delegated `run_role` turn included --
+  // therefore left nothing under `.ad-coder/ledger`. Nothing else on the wire
+  // can stand in for it either: `ConversationToolCall` carries tool NAMES only,
+  // so after the fact only a ledger row stepped `role:<name>` proves which role
+  // was actually delegated.
+  const targetDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-evidence-")));
+  const credentials: CredentialStore = {
+    read: async () => ({ type: "oauth", access: "a", refresh: "r", expires: 0 }),
+    list: async () => [],
+    modify: async (_providerId, fn) => fn(undefined),
+    delete: async () => {},
+  };
+  /** One row shaped exactly as the real per-turn Ledger emits it. */
+  const row = (role: string, step: string) => ({
+    ts: 1_757_000_000_000,
+    runId: "evidence-run",
+    lane: "main",
+    role,
+    step,
+    provider: "faux",
+    model: "faux-1",
+    stopReason: "stop",
+    usage: {
+      input: 10,
+      output: 5,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 15,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.25 },
+    },
+  });
+  let outerTools: Tool[] = [];
+  const session = await startOrchestrator({
+    targetDir,
+    runId: "evidence-run",
+    env: () => undefined,
+    warn: () => {},
+    credentials,
+    enabledWorkflows: [],
+    startConversation: async (config) => {
+      outerTools = config.tools ?? [];
+      config.ledgerSink?.write(row("orchestrator", "turn:1"));
+      return fakeConversation("outer");
+    },
+    // Stands in for the delegated worker, which writes through the sink it is
+    // handed; `run_role` supplies the `role:<name>` step around it.
+    startDelegatedConversation: async (config) => {
+      config.ledgerSink?.write(row(config.role.name, "role:planner"));
+      return fakeConversation("planner");
+    },
+  });
+
+  const expected = path.join(targetDir, ".ad-coder", "ledger", "evidence-run.jsonl");
+  // The conversation itself reports `undefined` because it was handed a sink;
+  // a front that cannot name the file cannot point an operator at the evidence.
+  expect(session.ledgerPath).toBe(expected);
+
+  const runRole = outerTools.find(({ name }) => name === RUN_ROLE_TOOL_NAME) as Tool;
+  await callTool(runRole, { role: "planner", task: "make a plan" });
+  await session.close();
+
+  const rows = fs
+    .readFileSync(expected, "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as { role: string; step: string });
+  expect(rows.map(({ step }) => step)).toEqual(["turn:1", "role:planner"]);
+  // What the bench asserts on: the delegation is provable from disk alone.
+  expect(rows.some(({ role, step }) => role === "planner" && step === "role:planner")).toBe(true);
+});

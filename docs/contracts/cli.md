@@ -37,3 +37,11 @@ Rules for ad-coder's command-line front. A violation is always blocking.
   lives in shared headless code (a control registry, a structural control
   interface) that each front renders. A capability available only on one front, or
   a front holding its own copy of state another front mutates, is a violation.
+- 2026-09-15: A front that runs model turns leaves the same durable audit trail
+  regardless of which front it is: it writes the run's ledger under
+  `.ad-coder/ledger/<runId>.jsonl` and names that path, with the run id, on
+  stderr before the first turn. A front needing to read its own numbers back
+  (per-step cost, session spend) holds a readable sink that MIRRORS to that
+  file; replacing the durable sink with the readable one is a violation. Ledger
+  rows stay identifiers and numbers only — never prompts, payloads, or tool
+  arguments.
