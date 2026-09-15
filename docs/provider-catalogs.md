@@ -39,6 +39,13 @@ That is the whole declaration. No `cost`, no `maxTokens`, no per-model
 `baseUrl`, no `api` override — and `name` is optional too, defaulting to the
 model id.
 
+One exception, for this provider specifically: opencode-go rejects every request
+that arrives without an `x-opencode-session` header, and neither the catalog nor
+pi-ai's own opencode provider supplies one. Add
+`"headers": {"x-opencode-session": "{{session}}"}` to the provider until
+[#120](https://github.com/aadegtyarev/ad-coder/issues/120) makes it carry its own
+required header; without it the account answers HTTP 400 `MissingSessionID`.
+
 Note what the catalog settled here that a hand-written list would have had to
 get right: `minimax-m3` speaks `anthropic-messages` while `glm-5.3-flash`
 speaks `openai-completions`, and they sit behind different path prefixes of the

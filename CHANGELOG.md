@@ -6,6 +6,16 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.10.6] - 2026-09-15
+
+### Fixed
+- The opencode-go examples in `README.md` and `docs/provider-catalogs.md` were
+  copy-pasteable into an HTTP 400 `MissingSessionID`: the account rejects every
+  request without an `x-opencode-session` header, and neither the shipped catalog
+  nor pi-ai's own opencode provider supplies one. Both examples now name the
+  header to declare by hand and link the issue that will make the provider carry
+  it (#120).
+
 ## [0.10.5] - 2026-09-15
 
 ### Added
