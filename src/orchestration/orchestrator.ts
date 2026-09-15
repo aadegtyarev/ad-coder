@@ -1028,6 +1028,11 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
       tools: delegatedTools,
       ledgerSink: sink,
       sessionLimitController: controller,
+      // The delegated `run_role` turn reaches a provider the same way any other
+      // turn does, so an operator block applies to it too.
+      ...(resolved.costAnomalyDetector !== undefined && {
+        costAnomalyDetector: resolved.costAnomalyDetector,
+      }),
       ...(config.activityChannel !== undefined && { activityChannel: config.activityChannel }),
       ...(config.activityConsumer !== undefined && { activityConsumer: config.activityConsumer }),
       ...(config.toolActivity !== undefined && { toolActivity: config.toolActivity }),
@@ -1085,6 +1090,9 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
     tools,
     ledgerSink: sink,
     sessionLimitController: controller,
+    ...(seed.costAnomalyDetector !== undefined && {
+      costAnomalyDetector: seed.costAnomalyDetector,
+    }),
     ...(core !== undefined && {
       subscribeBackgroundRuns: core.backgroundRuns.subscribe.bind(core.backgroundRuns),
     }),

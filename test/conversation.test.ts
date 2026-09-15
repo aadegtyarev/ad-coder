@@ -15,6 +15,11 @@ import { ContextBudgetError } from "../src/context/budget";
 import type { Summarizer } from "../src/context/compactor";
 import { SUMMARIZATION_PROMPT } from "../src/context/compactor";
 import { startConversation } from "../src/conversation/conversation";
+import {
+  CostAnomalyBlockedError,
+  CostAnomalyDetector,
+  MemoryCostAnomalyStore,
+} from "../src/economics/cost-anomaly";
 import { MemoryLedgerSink } from "../src/ledger/ledger";
 import type { ToolActivityRecord } from "../src/observability/tool-activity";
 import { ProjectStore } from "../src/project-store/project-store";
@@ -480,4 +485,51 @@ test("disabled conversation halts an oversized later turn without summarizing an
     await conversation.close();
     await conversation.close();
   }
+});
+
+test("an operator block refuses a conversation turn, so the console cannot bypass it", async () => {
+  const { faux, models, model, role } = harnessFixture([]);
+  faux.setResponses([
+    fauxAssistantMessage("this turn must never reach the provider"),
+    fauxAssistantMessage("released"),
+  ]);
+  const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-console-block-"));
+  const detector = new CostAnomalyDetector({}, new MemoryCostAnomalyStore());
+  const observation = { provider: "faux", model: "faux-1", totalTokens: 1000 };
+  for (let index = 0; index < 5; index += 1) detector.observe({ ...observation, costUsd: 0.002 });
+  detector.observe({ ...observation, costUsd: 0.008 });
+  detector.observe({ ...observation, costUsd: 0.008 });
+  expect(detector.blocked()).toHaveLength(1);
+
+  const blockedConversation = await startConversation({
+    role,
+    targetDir,
+    models,
+    model,
+    costAnomalyDetector: detector,
+  });
+  // The typed refusal, not the harness's generic fault: the refusal carries the
+  // price evidence and the release command, and the operator has to be able to
+  // tell a blocked scope from a crash.
+  await expect(blockedConversation.step("hello")).rejects.toBeInstanceOf(CostAnomalyBlockedError);
+  await blockedConversation.close();
+
+  // A SECOND conversation, not another turn on the first: a throw at the Models
+  // boundary makes pi-agent-core seal that harness permanently (`fault()` latches
+  // `faultError` and seals every lane), so the refused conversation stays dead by
+  // design and the operator resumes by starting a new one. Asserted here because
+  // it proves the gate is the BLOCK rather than a conversation that refuses
+  // everything -- the same fixture runs once the scope is released.
+  detector.release("faux", "faux-1");
+  const releasedConversation = await startConversation({
+    role,
+    targetDir,
+    models,
+    model,
+    costAnomalyDetector: detector,
+  });
+  const released = await releasedConversation.step("hello");
+  expect(released.status).toBe("completed");
+  await releasedConversation.close();
+  fs.rmSync(targetDir, { recursive: true, force: true });
 });

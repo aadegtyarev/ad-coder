@@ -29,6 +29,7 @@ import {
   resolveCompactionPolicy,
 } from "../context/compactor";
 import { assertContextFitsBudget, assertTurnFitsBudget } from "../context/preflight";
+import type { CostAnomalyDetector } from "../economics/cost-anomaly";
 import type { LedgerSink } from "../ledger/ledger";
 import { FileLedgerSink, Ledger } from "../ledger/ledger";
 import {
@@ -116,6 +117,12 @@ export interface RunRoleParams {
   tools?: Tool[];
   /** Shared model-call controller for a larger session. */
   sessionLimitController?: SessionLimitController;
+  /**
+   * Shared per-(provider, model) price-step detector. Wrapping here rather than
+   * at a front is what makes a blocked scope unbypassable: every generation
+   * path goes through this one `Models` boundary.
+   */
+  costAnomalyDetector?: CostAnomalyDetector;
   /** Per-role-stage controller; zero-valued limits preserve prior behavior. */
   stageLimitController?: StageLimitController;
   /** Zero disables each legacy read-observation limit. */
@@ -547,7 +554,16 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
 
   const controller = params.sessionLimitController;
   const sessionModels = controller?.wrap(params.models) ?? params.models;
-  const models = params.stageLimitController?.wrap(sessionModels) ?? sessionModels;
+  const limitedModels = params.stageLimitController?.wrap(sessionModels) ?? sessionModels;
+  // OUTERMOST, so a blocked scope refuses before the session or stage
+  // controllers reserve anything. Each proxy delegates inward, so the wrapper
+  // applied LAST is the one entered FIRST: wrapping the detector inside the
+  // session controller instead would let a refused start still consume one of
+  // the session's counted turns, charging the operator a turn for a request
+  // that was never sent.
+  const models =
+    params.costAnomalyDetector?.wrap(limitedModels, params.model.provider, params.model.id) ??
+    limitedModels;
   const explicitPolicy =
     params.compaction ??
     (params.summarizer === undefined ? undefined : { mode: "auto", summarizer: params.summarizer });
@@ -784,6 +800,7 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
       })
       .catch((error) => {
         if (isInterrupted()) throw new RunInterruptedError(runId);
+        params.costAnomalyDetector?.assertNoBoundaryFailure();
         params.stageLimitController?.assertNoBoundaryFailure();
         controller?.assertNoBoundaryFailure();
         const providerLimit = providerLimitFrom(error);
@@ -791,6 +808,7 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
         throw error;
       });
     if (isInterrupted()) throw new RunInterruptedError(runId);
+    params.costAnomalyDetector?.assertNoBoundaryFailure();
     controller?.assertNoBoundaryFailure();
     if (usageFailure !== undefined) throw usageFailure;
     if (providerLimitObservation !== undefined) throw providerLimitObservation;

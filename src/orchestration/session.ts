@@ -373,6 +373,9 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     ...(config.sessionLimitController !== undefined && {
       sessionLimitController: config.sessionLimitController,
     }),
+    ...(config.costAnomalyDetector !== undefined && {
+      costAnomalyDetector: config.costAnomalyDetector,
+    }),
     ...(config.stageLimits !== undefined && { stageLimits: config.stageLimits }),
     ...(config.projectStoreConfig !== undefined && {
       projectStoreConfig: config.projectStoreConfig,

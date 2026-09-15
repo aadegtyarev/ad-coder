@@ -4,6 +4,7 @@ import { assertCredentialPathOutsideProject, FileCredentialStore } from "../auth
 import { type ContextBudgetPercents, deriveContextBudget } from "../context/budget";
 import type { CompactionMode } from "../context/compactor";
 import { assertSummarizerWindow } from "../context/compactor";
+import { CostAnomalyDetector, FileCostAnomalyStore } from "../economics/cost-anomaly";
 import { resolveModelInventory } from "../inventory/resolve";
 import type { ModelInventoryConfig } from "../inventory/types";
 import { MemoryLedgerSink } from "../ledger/ledger";
@@ -824,6 +825,12 @@ function resolveConfig(
     targetDir: options.targetDir,
     models: registry.models,
     task: options.task,
+    // Constructed here, for every run resolved through the CLI, because the
+    // contract makes detection default-on: a detector nobody builds protects
+    // nobody. Its state is per-project and on disk, so a block raised by an
+    // unattended run is still standing -- and still liftable by `cost release`
+    // -- when the next invocation starts.
+    costAnomalyDetector: new CostAnomalyDetector({}, new FileCostAnomalyStore(options.targetDir)),
     maxRounds,
     pluginTools,
     ...(pluginToolsForModel !== undefined && { pluginToolsForModel }),

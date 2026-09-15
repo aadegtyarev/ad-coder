@@ -14,6 +14,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { ContextBudgetError } from "../src/context/budget";
 import { ContextCompactor, type Summarizer } from "../src/context/compactor";
+import { CostAnomalyBlockedError, CostAnomalyDetector } from "../src/economics/cost-anomaly";
 import { LEDGER_BASE_DIR } from "../src/ledger/ledger";
 import type { ToolActivityRecord } from "../src/observability/tool-activity";
 import { StageLimitController, StageLimitError } from "../src/orchestration/stage-limits";
@@ -576,6 +577,57 @@ test("runRole rethrows a shared controller rejection after a tool follow-up", as
   ).rejects.toBeInstanceOf(SessionLimitError);
   expect(faux.state.callCount).toBe(1);
   expect(controller.snapshot().admittedTurns).toBe(1);
+});
+
+test("a blocked price scope refuses the run at the Models boundary, before a turn is spent", async () => {
+  // The block must bite at the ONE seam every generation path goes through.
+  // Enforcing it in a front would leave the core startable around it, which
+  // docs/contracts/cost-anomaly.md forbids -- a front renders the decision, it
+  // does not make it.
+  const { faux, models, model, role } = harnessFixture();
+  faux.setResponses([fauxAssistantMessage("must not dispatch")]);
+  const detector = new CostAnomalyDetector({ minBaselineSamples: 3 });
+  const scope = { provider: model.provider, model: model.id };
+  for (let index = 0; index < 3; index += 1)
+    detector.observe({ ...scope, costUsd: 0.002, totalTokens: 1000 });
+  detector.observe({ ...scope, costUsd: 0.01, totalTokens: 1000 });
+  detector.observe({ ...scope, costUsd: 0.01, totalTokens: 1000 });
+
+  const sessionLimitController = new SessionLimitController({ maxTurns: 5 });
+  await expect(
+    runRole({
+      role,
+      targetDir,
+      models,
+      model,
+      prompt: "spend money",
+      costAnomalyDetector: detector,
+      sessionLimitController,
+    }),
+  ).rejects.toBeInstanceOf(CostAnomalyBlockedError);
+  // Nothing was sent, so nothing was charged...
+  expect(faux.state.callCount).toBe(0);
+  // ...and a refused start did not consume one of the session's counted turns.
+  expect(sessionLimitController.snapshot().admittedTurns).toBe(0);
+});
+
+test("an unblocked scope runs, and the run's own settled cost feeds the baseline", async () => {
+  const { faux, models, model, role } = harnessFixture();
+  faux.setResponses([fauxAssistantMessage("done")]);
+  const detector = new CostAnomalyDetector({ minBaselineSamples: 3 });
+
+  const result = await runRole({
+    role,
+    targetDir,
+    models,
+    model,
+    prompt: "work",
+    costAnomalyDetector: detector,
+  });
+  expect(result.result.status).toBe("completed");
+  // The detector is fed from the real settled response rather than from a
+  // separate accounting path that could diverge from what was billed.
+  expect(detector.status(model.provider, model.id).state).not.toBe("blocked");
 });
 
 test("runRole preserves a typed stage rejection across the harness boundary", async () => {
