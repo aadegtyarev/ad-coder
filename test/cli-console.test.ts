@@ -1550,8 +1550,12 @@ test("shutdown stays finite when a control never settles", async () => {
     closes: number;
     backgroundRuns: BackgroundRunManager;
   };
+  const launching = deferred();
   session.backgroundRuns = {
-    startDetached: () => new Promise<never>(() => undefined),
+    startDetached: () => {
+      launching.resolve();
+      return new Promise<never>(() => undefined);
+    },
   } as unknown as BackgroundRunManager;
   const input = rawInput();
   const error = new Capture();
@@ -1564,6 +1568,10 @@ test("shutdown stays finite when a control never settles", async () => {
     controlDrainMs: 20,
   });
   input.write("/start this never launches\r");
+  // Shut down only once the launch is genuinely in flight. A control still
+  // queued when shutdown begins is dropped rather than drained, which would
+  // make this assert nothing.
+  await launching.promise;
   // Ctrl-C, not /exit: the stuck control must not block the harshest exit path.
   input.write("\u0003");
   input.end();
