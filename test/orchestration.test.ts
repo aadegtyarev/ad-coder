@@ -2104,6 +2104,30 @@ test("an UNFENCED draft followed by a second plan is rejected too, not silently 
   expect(parsePlanText(`${one}\n\n${final.slice(0, 40)}`, "run-id")?.summary).toBe("one");
 });
 
+test("scanning the whole planner response stays linear, not quadratic, in its objects", () => {
+  // Walking the whole text made the candidate dedup load-bearing, and deduping
+  // by scanning the array compares each new candidate against every one already
+  // held. That is invisible at the handful of candidates a real plan produces
+  // and quadratic on a response padded with brace-asides -- measured at ~2s for
+  // 20k objects and ~59s for 1MB, spent inside a single planner turn with no
+  // ceiling upstream. A model is not prevented from emitting that, so the cost
+  // is pinned here rather than left to the next person to rediscover.
+  const timeFor = (objects: number): number => {
+    const text = Array.from({ length: objects }, (_, index) => `{"a":${index}}`).join(" ");
+    const started = performance.now();
+    expect(() => parsePlanText(text, "run-id")).toThrow(OrchestrationError);
+    return performance.now() - started;
+  };
+
+  // Ratio, not wall-clock: the absolute number moves with the machine, the
+  // growth rate is the property under test. Quadratic would be ~16x for 4x the
+  // input; linear work plus noise stays far below the 8x allowed here.
+  timeFor(2000); // warm up, so JIT compilation is not charged to the first sample
+  const small = Math.max(timeFor(5000), 1);
+  const large = timeFor(20000);
+  expect(large / small).toBeLessThan(8);
+});
+
 test("a nested fragment never becomes the reported plan rejection", () => {
   // Observed on a real run: a model emitted its tool call as pseudo-XML, the
   // balanced-brace slice lifted out one `coverage` entry, and the operator was

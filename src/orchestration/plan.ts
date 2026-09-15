@@ -329,10 +329,18 @@ function sliceBalancedObject(text: string, from = 0): string | undefined {
  */
 function planTextCandidates(value: string): string[] {
   const candidates: string[] = [];
+  // Membership by Set, not by scanning the array. Deduping with `includes`
+  // costs a full string comparison against every candidate already collected,
+  // which was invisible while only a handful were ever extracted and became
+  // quadratic the moment the scan started walking the whole text: a response
+  // padded with brace-asides took 2s at 20k objects and ~59s at 1MB, stalling
+  // the plan stage on output no model is prevented from producing.
+  const seen = new Set<string>();
   const add = (candidate: string | undefined): void => {
     const trimmed = candidate?.trim();
-    if (trimmed !== undefined && trimmed !== "" && !candidates.includes(trimmed))
-      candidates.push(trimmed);
+    if (trimmed === undefined || trimmed === "" || seen.has(trimmed)) return;
+    seen.add(trimmed);
+    candidates.push(trimmed);
   };
   if (value.startsWith("{") && value.endsWith("}")) add(value);
   for (const match of value.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)) add(match[1]);
@@ -432,10 +440,16 @@ export function parsePlanText(
       });
     }
   }
-  const distinct = plans.filter(
-    (plan, index) =>
-      plans.findIndex((other) => JSON.stringify(other) === JSON.stringify(plan)) === index,
-  );
+  // Same reason as the candidate dedup above: a pairwise `findIndex` re-encodes
+  // every plan against every other one. Encode each once, and let a Set answer
+  // whether it was already seen.
+  const distinctKeys = new Set<string>();
+  const distinct = plans.filter((plan) => {
+    const key = JSON.stringify(plan);
+    if (distinctKeys.has(key)) return false;
+    distinctKeys.add(key);
+    return true;
+  });
   if (distinct.length > 1)
     throw new OrchestrationError(
       "malformed_plan",
