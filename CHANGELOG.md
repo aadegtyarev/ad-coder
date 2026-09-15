@@ -6,6 +6,16 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.15.2] - 2026-09-16
+
+### Fixed
+- The refactoring task's `extracts-shared-parser` check counted a `parse*`
+  declaration and two call sites, which a model satisfies while leaving the
+  duplication exactly where it was -- declare a wrapper, call it once, keep both
+  original bodies. The task exists to test that ONE parser now serves both entry
+  points, so the check asks for that: one parser declared, every entry point
+  calling it, and no entry point still trimming the value itself.
+
 ## [0.15.1] - 2026-09-16
 
 ### Changed
