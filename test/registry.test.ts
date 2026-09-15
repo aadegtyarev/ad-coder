@@ -671,7 +671,10 @@ test("a catalog supplies cost, ceilings, api and base URL the config never state
   // these are the provider's real numbers, so an assertion that would pass on
   // invented ones would not test anything.
   expect(model.cost).toEqual({ input: 0.075, output: 0.25, cacheRead: 0.015, cacheWrite: 0 });
-  expect(model.contextWindow).toBe(1_000_000);
+  // The window is the ONE catalog value not inherited verbatim: the catalog
+  // publishes 1_000_000 here, and an inherited window is clamped to
+  // DEFAULT_CONTEXT_WINDOW so every routed model shares one ceiling.
+  expect(model.contextWindow).toBe(200_000);
   expect(model.maxTokens).toBe(131_072);
   expect(model.baseUrl).toBe("https://opencode.ai/zen/go/v1");
   expect(model.api).toBe("openai-completions");
@@ -753,6 +756,60 @@ test("declared values override catalog values rather than the reverse", () => {
   expect(model.maxTokens).toBe(4096);
   expect(model.contextWindow).toBe(32_000);
   expect(model.cost.input).toBe(1);
+});
+
+test("an inherited catalog window is clamped to the default operating ceiling", () => {
+  const registry = resolveRegistry(
+    {
+      providers: [
+        {
+          id: "opencode-go",
+          api: "openai-completions",
+          catalog: "opencode-go",
+          credential: { kind: "env-var", envVar: "OPENCODE_API_KEY" },
+          models: [
+            // The catalog publishes 1_000_000 for this one -- above the ceiling.
+            { modelId: "glm-5.3-flash", name: "flash" },
+          ],
+        },
+        {
+          id: "openrouter",
+          api: "openai-completions",
+          catalog: "openrouter",
+          credential: { kind: "env-var", envVar: "OPENROUTER_API_KEY" },
+          // 131_072 in the catalog: BELOW the ceiling, so it proves the rule is
+          // a clamp and not an unconditional overwrite.
+          models: [{ modelId: "aion-labs/aion-2.0", name: "small" }],
+        },
+      ],
+    },
+    { env: () => "k" },
+  );
+  expect(registry.getModel("flash").contextWindow).toBe(200_000);
+  // Under the ceiling the provider's real limit must survive: raising it to
+  // 200_000 would claim capacity this endpoint does not have.
+  expect(registry.getModel("small").contextWindow).toBe(131_072);
+});
+
+test("an explicit window larger than the ceiling is still honored verbatim", () => {
+  // The clamp is a DEFAULT, not a cap. An operator who states a window is
+  // stating the limit they want; silently shrinking it would make the declared
+  // config a lie.
+  const registry = resolveRegistry(
+    {
+      providers: [
+        {
+          id: "opencode-go",
+          api: "openai-completions",
+          catalog: "opencode-go",
+          credential: { kind: "env-var", envVar: "OPENCODE_API_KEY" },
+          models: [{ modelId: "glm-5.3-flash", name: "flash", contextWindow: 900_000 }],
+        },
+      ],
+    },
+    { env: () => "k" },
+  );
+  expect(registry.getModel("flash").contextWindow).toBe(900_000);
 });
 
 test("an omitted models list admits the whole catalog under catalog ids", () => {

@@ -6,6 +6,23 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-09-15
+
+### Changed
+
+- Every model ad-coder routes to now shares one 200000-token operating ceiling.
+  A catalog-backed model previously inherited the provider's published window
+  verbatim, which for several shipped models is 1000000 or more, so a run's real
+  context ceiling depended on which model a routing cell happened to select, and
+  a summarizer with a smaller window failed `assertSummarizerWindow` against the
+  largest reachable model. The INHERITED window is now clamped to the same
+  `DEFAULT_CONTEXT_WINDOW` a hand-declared model already received. An explicit
+  `contextWindow` still wins verbatim, including one above the ceiling: the
+  clamp is a default, not a cap. A window below the ceiling is left alone, since
+  raising it would claim capacity the endpoint does not have. Shipped presets
+  are aligned to the same number, except `deepseek-chat`, whose real window is
+  64000 and which keeps it for that reason.
+
 ## [0.6.0] - 2026-09-15
 
 ### Added
