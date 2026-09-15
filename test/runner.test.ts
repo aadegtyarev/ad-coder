@@ -23,7 +23,9 @@ import { defineRole } from "../src/role";
 import {
   ConfiguredToolsUnavailableError,
   ProviderLimitError,
+  ProviderRejectionError,
   providerLimitFrom,
+  providerRejectionStatusFrom,
   RunnerError,
   resolveTargetDir,
 } from "../src/runner/errors";
@@ -291,6 +293,47 @@ test("provider limit classification uses only structured codes and validated del
     providerLimitFrom({ status: 429, retryAfterMs: 86_400_001 })?.retryAfterMs,
   ).toBeUndefined();
   expect(providerLimitFrom({ status: 401, code: "authentication_error" })).toBeUndefined();
+});
+
+test("provider rejection is attributed from a status and never carries a body", () => {
+  // Structured status: the shape pi-agent-core's OperationError exposes.
+  expect(providerRejectionStatusFrom({ status: 400 })).toBe(400);
+  expect(providerRejectionStatusFrom({ statusCode: 422 })).toBe(422);
+  // The one message shape pi-ai composes: "<status>: <body>" and the prefixed
+  // "<prefix> (<status>): <body>" variant.
+  expect(
+    providerRejectionStatusFrom({
+      message: '400: {"error":{"message":"one of `type`, `anyOf` field is required"}}',
+    }),
+  ).toBe(400);
+  expect(providerRejectionStatusFrom({ message: "OpenAI API error (404): no such model" })).toBe(
+    404,
+  );
+  // Credential and capacity statuses stay OUT: 401/403 are what EmptyTurnError
+  // already names, 429 is providerLimitFrom's, and 5xx is not about the request.
+  expect(providerRejectionStatusFrom({ status: 401 })).toBeUndefined();
+  expect(providerRejectionStatusFrom({ status: 403 })).toBeUndefined();
+  expect(providerRejectionStatusFrom({ status: 429 })).toBeUndefined();
+  expect(providerRejectionStatusFrom({ status: 503 })).toBeUndefined();
+  expect(providerRejectionStatusFrom({ message: "assistant stopped with error" })).toBeUndefined();
+  expect(providerRejectionStatusFrom(undefined)).toBeUndefined();
+
+  const rejected = new ProviderRejectionError("run-1", 400);
+  expect(rejected.code).toBe("provider_rejected");
+  expect(rejected.status).toBe(400);
+  expect(rejected.message).toContain("HTTP 400");
+  // The message must point at the request, not at credentials.
+  expect(rejected.message).not.toContain("authentication");
+  // Only identifiers and the number survive: the provider body that produced
+  // the status is read for it and dropped, never stored on the error.
+  const carried = providerRejectionStatusFrom({
+    status: 400,
+    message: '400: {"error":{"message":"never-publish-me"}}',
+  });
+  expect(carried).toBe(400);
+  expect(JSON.stringify({ ...new ProviderRejectionError("run-1", carried ?? 0) })).not.toContain(
+    "never-publish-me",
+  );
 });
 
 test("runRole rejects missing authentication before provider generation", async () => {

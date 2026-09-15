@@ -514,7 +514,9 @@ export {
   ConfiguredToolsUnavailableError,
   EmptyTurnError,
   ProviderLimitError,
+  ProviderRejectionError,
   providerLimitFrom,
+  providerRejectionStatusFrom,
   RunnerError,
   resolveTargetDir,
 } from "./runner/errors";

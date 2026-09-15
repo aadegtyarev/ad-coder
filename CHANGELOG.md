@@ -6,6 +6,32 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-15
+
+### Fixed
+
+- A provider that REFUSED a request is no longer reported as a missing
+  credential. A settled failure with empty assistant text and zero usage has two
+  very different causes and the transcript cannot tell them apart, so the runner
+  called every one of them `empty_turn` and told the operator to "verify
+  authentication and retry". A provider 400 over a malformed tool schema --
+  rejected before the model ever ran, at zero cost -- therefore pointed at the
+  one party that was not at fault, and the durable checkpoint recorded only
+  "inspect the provider failure", naming neither the status nor the request.
+  `runRole` and the conversation loop now read the settled failure's HTTP status
+  and raise the new `ProviderRejectionError` for a client-error status,
+  `RunCoordinator` pauses with `provider_rejected` and the status in its action,
+  and the console offers the request -- model id, tool schemas, parameters --
+  instead of an authentication command. 401 and 403 stay `empty_turn`, which is
+  what those statuses actually mean; 429 is still `provider_limit`.
+
+### Added
+
+- `ProviderRejectionError` and `providerRejectionStatusFrom` are exported.
+  The error carries the run id and the numeric status ONLY: the response body
+  that produced the status is read for the number and dropped, because an
+  uncontrolled provider body must never cross an error boundary.
+
 ## [0.6.1] - 2026-09-15
 
 ### Fixed

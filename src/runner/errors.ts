@@ -22,6 +22,38 @@ export class EmptyTurnError extends Error {
   }
 }
 
+/**
+ * A provider REFUSED the request before running the model, naming an HTTP
+ * status.
+ *
+ * WHY A SEPARATE TYPE FROM `EmptyTurnError`. Both settle with empty assistant
+ * text and zero usage, so the runner cannot tell them apart from the transcript
+ * alone -- and collapsing them told the operator to "verify authentication"
+ * when a 400 over a malformed tool schema had nothing to do with credentials.
+ * The errors contract requires provider rejection and missing credentials to
+ * stay distinguishable, so the settled status is what separates them: a status
+ * present means the provider answered and refused, and an answer is not a
+ * credential problem.
+ *
+ * CARRIES A NUMBER, NEVER A BODY. Only the numeric status crosses this
+ * boundary. The provider's response body is uncontrolled text the contract
+ * forbids propagating into an error, so it is read for the status and dropped.
+ */
+export class ProviderRejectionError extends Error {
+  override readonly name = "ProviderRejectionError";
+  readonly code = "provider_rejected" as const;
+
+  constructor(
+    readonly runId: string,
+    readonly status: number,
+  ) {
+    super(
+      `the provider rejected the request with HTTP ${status} before running the model; ` +
+        "inspect the request this role sends -- model id, tool schemas, parameters -- and retry",
+    );
+  }
+}
+
 /** A role referenced tools that were not registered in the selected plugin set. */
 export class ConfiguredToolsUnavailableError extends Error {
   override readonly name = "ConfiguredToolsUnavailableError";
@@ -124,6 +156,43 @@ export function providerLimitFrom(
     retryAfterMs = resetAtMs - nowMs;
   }
   return new ProviderLimitError(retryAfterMs);
+}
+
+/**
+ * The client-error statuses a REJECTION can legitimately carry.
+ *
+ * 401/403 are deliberately EXCLUDED: those are the credential failures
+ * `EmptyTurnError` already names, and re-labelling them "inspect the request"
+ * would trade one wrong instruction for another. 5xx is excluded too -- a
+ * server fault is not a statement about the request -- and 429 never reaches
+ * here because `providerLimitFrom` converts it first.
+ */
+const PROVIDER_REJECTION_STATUSES = new Set([400, 404, 405, 409, 413, 415, 422]);
+
+/**
+ * Recover the HTTP status a settled provider failure was refused with, or
+ * `undefined` when the failure names no status this runner will attribute.
+ *
+ * TWO SOURCES, IN ORDER OF TRUST. A structured `status`/`statusCode` field is
+ * read directly. Failing that, the message is matched against the ONE shape
+ * pi-ai composes for a status-bearing provider error (`formatProviderError`:
+ * `"<status>: <body>"`, or `"<prefix> (<status>): <body>"`). Nothing else in
+ * the message is read, and the body is never returned -- this function's whole
+ * output is a number from a fixed allow-list.
+ */
+export function providerRejectionStatusFrom(error: unknown): number | undefined {
+  if (error === null || typeof error !== "object") return undefined;
+  const value = error as Record<string, unknown>;
+  const structured = value.status ?? value.statusCode;
+  if (typeof structured === "number" && PROVIDER_REJECTION_STATUSES.has(structured)) {
+    return structured;
+  }
+  const message = value.message;
+  if (typeof message !== "string") return undefined;
+  const match = /^(?:[^():]{0,64} )?\(?(\d{3})\)?: /.exec(message);
+  if (match === null) return undefined;
+  const parsed = Number(match[1]);
+  return PROVIDER_REJECTION_STATUSES.has(parsed) ? parsed : undefined;
 }
 
 /**
