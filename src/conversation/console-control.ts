@@ -1,3 +1,4 @@
+import type { CostAnomalyBlock } from "../economics/cost-anomaly";
 import {
   type BackgroundRunManager,
   DEFAULT_BACKGROUND_RUN_LIMITS,
@@ -42,7 +43,7 @@ export interface ConsoleCommandDefinition {
   readonly args: readonly ConsoleCommandArgument[];
   readonly example: string;
   /** Set when the command needs an optional capability the host may not enable. */
-  readonly requires?: "background_runs";
+  readonly requires?: "background_runs" | "cost_anomaly";
   /**
    * Present exactly on the commands a front executes itself rather than through
    * `executeConsoleControl`; it names the front-side effect. A front selects on
@@ -84,7 +85,28 @@ export type ConsoleControlResult =
     }
   | { type: "background_status"; run: unknown }
   | { type: "background_result"; result: unknown }
-  | { type: "background_cancel"; run: unknown };
+  | { type: "background_cancel"; run: unknown }
+  | {
+      type: "cost_status";
+      blocked: readonly { provider: string; model: string; block: Readonly<CostAnomalyBlock> }[];
+    }
+  | {
+      type: "cost_release";
+      provider: string;
+      model: string;
+      released: Readonly<CostAnomalyBlock>;
+    };
+
+/**
+ * The cost-anomaly surface a console control needs. Declared structurally so
+ * the console reaches the SAME headless decision the `cost` CLI command reaches
+ * -- one detector, two renderings -- without the control layer depending on the
+ * economics module's construction (`docs/contracts/cli.md`).
+ */
+export interface CostAnomalyControl {
+  blocked(): Array<{ provider: string; model: string; block: Readonly<CostAnomalyBlock> }>;
+  release(provider: string, model: string): Readonly<CostAnomalyBlock> | undefined;
+}
 
 export class ConsoleControlError extends Error {
   readonly code: ConsoleControlCode;
@@ -212,6 +234,27 @@ export const CONSOLE_COMMANDS: readonly ConsoleCommandDefinition[] = [
     requires: "background_runs",
   },
   {
+    name: "/cost",
+    description:
+      "Show models blocked for billing above their declared price, or accept a model's new price.",
+    args: [
+      {
+        name: "[release]",
+        required: false,
+        description: "Accept the new price for one scope; omit to list what is blocked.",
+        label: "the release action",
+      },
+      {
+        name: "[provider/model]",
+        required: false,
+        description: "Scope to release, spelled exactly as the refusal names it.",
+        label: "a provider/model scope",
+      },
+    ],
+    example: "/cost release openrouter/@preset/deepseekflash",
+    requires: "cost_anomaly",
+  },
+  {
     name: "/interrupt",
     description: "Interrupt only the current orchestrator turn; the session stays open.",
     args: [],
@@ -228,6 +271,8 @@ export const CONSOLE_COMMANDS: readonly ConsoleCommandDefinition[] = [
 
 const BACKGROUND_RUNS_ACTION =
   "restart the console with --workflows pipeline to enable background runs";
+const COST_ANOMALY_ACTION =
+  "restart the console in a project directory so its cost-anomaly state can be read";
 
 export function findConsoleCommand(name: string): ConsoleCommandDefinition | undefined {
   return CONSOLE_COMMANDS.find((command) => command.name === name);
@@ -273,6 +318,22 @@ function integer(command: ConsoleCommandDefinition, value: string | undefined): 
   return parsed;
 }
 
+function costAnomalyFor(
+  command: ConsoleCommandDefinition,
+  value: CostAnomalyControl | undefined,
+): CostAnomalyControl {
+  if (value === undefined)
+    fail({
+      code: "not_available",
+      command: command.name,
+      message: `${command.name} needs cost-anomaly state, which this console session did not enable`,
+      action: COST_ANOMALY_ACTION,
+      // Retrying the same command in this session cannot succeed.
+      retryable: false,
+    });
+  return value;
+}
+
 function managerFor(
   command: ConsoleCommandDefinition,
   value: BackgroundRunManager | undefined,
@@ -289,9 +350,19 @@ function managerFor(
   return value;
 }
 
-function helpEntries(backgroundRuns: BackgroundRunManager | undefined): ConsoleCommandHelpEntry[] {
+function helpEntries(controls: {
+  backgroundRuns?: BackgroundRunManager;
+  costAnomaly?: CostAnomalyControl;
+}): ConsoleCommandHelpEntry[] {
   return CONSOLE_COMMANDS.map((command) => {
-    const available = command.requires !== "background_runs" || backgroundRuns !== undefined;
+    const available =
+      command.requires === "background_runs"
+        ? controls.backgroundRuns !== undefined
+        : command.requires === "cost_anomaly"
+          ? controls.costAnomaly !== undefined
+          : true;
+    const unavailableAction =
+      command.requires === "cost_anomaly" ? COST_ANOMALY_ACTION : BACKGROUND_RUNS_ACTION;
     return {
       name: command.name,
       usage: consoleCommandUsage(command),
@@ -299,7 +370,7 @@ function helpEntries(backgroundRuns: BackgroundRunManager | undefined): ConsoleC
       args: command.args,
       example: command.example,
       available,
-      ...(available ? {} : { unavailableAction: BACKGROUND_RUNS_ACTION }),
+      ...(available ? {} : { unavailableAction }),
     };
   });
 }
@@ -309,6 +380,8 @@ export function executeConsoleControl(
   input: string,
   controls: {
     backgroundRuns?: BackgroundRunManager;
+    /** The same detector the `cost` CLI command drives; the console only renders it. */
+    costAnomaly?: CostAnomalyControl;
     interrupt: () => Promise<boolean>;
     /** Must match a validated manager page limit; protects untrusted adapters too. */
     maxPageSize?: number;
@@ -352,8 +425,37 @@ export function executeConsoleControl(
         requireArgs();
         return Promise.resolve({
           type: "console_help",
-          commands: helpEntries(controls.backgroundRuns),
+          commands: helpEntries(controls),
         });
+      case "/cost": {
+        requireArgs();
+        const detector = costAnomalyFor(command, controls.costAnomaly);
+        if (args.length === 0)
+          return Promise.resolve({ type: "cost_status", blocked: detector.blocked() });
+        if (args[0] !== "release") invalidArguments(command, "takes release as its only action");
+        const scope = args[1];
+        if (scope === undefined) invalidArguments(command, "requires a provider/model scope");
+        const separator = scope.indexOf("/");
+        // A model name may itself contain slashes (`@preset/name`), so the FIRST
+        // separator splits provider from model -- the same spelling `cost release`
+        // parses, so a scope pastes between the two fronts unchanged.
+        if (separator <= 0 || separator === scope.length - 1)
+          invalidArguments(command, "requires a scope spelled <provider>/<model>");
+        const provider = scope.slice(0, separator);
+        const model = scope.slice(separator + 1);
+        const released = detector.release(provider, model);
+        // A scope that was not blocked is reported, not treated as success: a
+        // typo would otherwise read as released while the real block stood.
+        if (released === undefined)
+          fail({
+            code: "not_found",
+            command: command.name,
+            message: `${command.name} found no price block recorded for ${scope}`,
+            action: "use /cost to list the scopes this project has blocked",
+            retryable: false,
+          });
+        return Promise.resolve({ type: "cost_release", provider, model, released });
+      }
       case "/interrupt":
         requireArgs();
         return controls.interrupt().then((active) => ({

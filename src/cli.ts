@@ -1069,7 +1069,11 @@ function costCommand(positionals: string[], flags: Record<string, string | undef
   const action = positionals[1];
   if (action !== "status" && action !== "release") fail("the cost command takes status or release");
 
-  const targetDir = resolveTargetDir(flags["--target-dir"]);
+  // Same default as `console`: cost state is per-project, and an operator
+  // standing in the project is already naming it. Requiring the flag here while
+  // the console defaulted it made the refusal's own advice unfollowable
+  // (`docs/contracts/cli.md`).
+  const targetDir = resolveTargetDir(flags["--target-dir"] ?? process.cwd());
   const detector = new CostAnomalyDetector({}, new FileCostAnomalyStore(targetDir));
 
   if (action === "status") {
@@ -2225,6 +2229,8 @@ async function consoleCommand(
     backgroundHostLauncher: createBackgroundHostLauncher(backgroundTargetDir, backgroundOwnerId),
     ...(Object.keys(configuredLimits).length === 0 ? {} : { backgroundRuns: configuredLimits }),
   });
+  const costAnomaly = (session as { costAnomalyDetector?: CostAnomalyDetector })
+    .costAnomalyDetector;
   const result = await runConsole({
     session,
     input: process.stdin,
@@ -2239,6 +2245,10 @@ async function consoleCommand(
       toolActivity: configOptions.toolActivity,
     }),
     ...(authenticationCommand !== undefined && { authenticationCommand }),
+    // The session's OWN detector, not a second one over the same file: a
+    // `/cost release` has to lift the block that refuses this session's turns,
+    // and a front-built copy would only release its own in-memory duplicate.
+    ...(costAnomaly === undefined ? {} : { costAnomaly }),
   });
   if (result.reason !== "eof" && result.reason !== "exit") process.exitCode = 1;
 }
@@ -2773,7 +2783,11 @@ const COMMANDS: readonly CommandDefinition[] = [
       { name: "[provider/model]", description: "Scope to release." },
     ],
     options: [
-      { name: "--target-dir", value: "<dir>", description: "Project whose state is read." },
+      {
+        name: "--target-dir",
+        value: "<dir>",
+        description: "Project whose state is read; defaults to the current directory.",
+      },
       { name: "--json", description: "Accepted for machine-mode parity; output is always JSON." },
     ],
     run: ({ positionals, flags }) => {

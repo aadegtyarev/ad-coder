@@ -4,6 +4,7 @@ import type { ResolvePipelineConfigOptions } from "../cli/resolve-config";
 import { resolveOrchestratorSeed, resolvePipelineConfig } from "../cli/resolve-config";
 import type { ConversationSession } from "../conversation/conversation";
 import { startConversation as startConversationImpl } from "../conversation/conversation";
+import type { CostAnomalyDetector } from "../economics/cost-anomaly";
 import type { MemoryLedgerSink } from "../ledger/ledger";
 import { MemoryLedgerSink as MemoryLedgerSinkImpl } from "../ledger/ledger";
 import type { ToolActivityConsumer, ToolActivitySnapshot } from "../observability/tool-activity";
@@ -1151,6 +1152,13 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
           await closeActivityChannel();
         }
       },
+      // Exposed for the same reason `backgroundRuns` is: a front renders and
+      // releases state the session OWNS. Handing a front its own detector would
+      // give it a second in-memory copy of the same file, so releasing a block
+      // there would leave the block this session refuses on still standing.
+      ...(seed.costAnomalyDetector !== undefined && {
+        costAnomalyDetector: seed.costAnomalyDetector,
+      }),
     };
   return {
     ...conversation,
@@ -1169,5 +1177,11 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
     },
     subscribeBackgroundRuns: core.backgroundRuns.subscribe.bind(core.backgroundRuns),
     backgroundRuns: core.backgroundRuns,
-  } as ConversationSession & { backgroundRuns: BackgroundRunManager };
+    ...(seed.costAnomalyDetector !== undefined && {
+      costAnomalyDetector: seed.costAnomalyDetector,
+    }),
+  } as ConversationSession & {
+    backgroundRuns: BackgroundRunManager;
+    costAnomalyDetector?: CostAnomalyDetector;
+  };
 }

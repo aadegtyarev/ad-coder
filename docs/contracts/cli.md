@@ -31,3 +31,9 @@ Rules for ad-coder's command-line front. A violation is always blocking.
   launcher and owner scope needed to start one, and the background run options
   are declared once for every command that builds a manager. Console controls
   render in the order they were typed even when one of them awaits a launch.
+- 2026-09-15: Every front — machine JSON, console, and any later TUI — offers the
+  SAME capabilities and differs only in rendering. A decision an operator can make
+  through one front is reachable through all of them, because the decision itself
+  lives in shared headless code (a control registry, a structural control
+  interface) that each front renders. A capability available only on one front, or
+  a front holding its own copy of state another front mutates, is a violation.

@@ -5,6 +5,7 @@ import { runConsole } from "../src/cli/console";
 import {
   CONSOLE_COMMANDS,
   ConsoleControlError,
+  type CostAnomalyControl,
   consoleCommandNames,
   consoleCommandUsage,
   executeConsoleControl,
@@ -16,6 +17,7 @@ import {
   startConversation,
   TurnInterruptedError,
 } from "../src/conversation/conversation";
+import { CostAnomalyBlockedError } from "../src/economics/cost-anomaly";
 import { MemoryLedgerSink } from "../src/ledger/ledger";
 import {
   BackgroundRunManager,
@@ -1722,4 +1724,197 @@ test("a refused admission reports the limit rather than an opaque rejection", as
   expect(record.code).toBe("resource_limit");
   expect(record.action).toContain("/cancel");
   expect(record.retryable).toBe(true);
+});
+
+/**
+ * A console-visible cost detector: the two methods a front needs, backed by the
+ * real block shape so the rendering under test is the rendering an operator sees.
+ */
+function fakeCostAnomaly(
+  block: {
+    chargedUsd: number;
+    expectedUsd: number;
+    ratio: number;
+    confirmingObservations: number;
+  } = { chargedUsd: 0.00072597, expectedUsd: 0.00042445, ratio: 1.6185, confirmingObservations: 2 },
+): CostAnomalyControl & { released: string[] } {
+  const scopes = new Map([
+    [
+      "openrouter/@preset/deepseekflash",
+      { provider: "openrouter", model: "@preset/deepseekflash" },
+    ],
+  ]);
+  return {
+    released: [],
+    blocked() {
+      return [...scopes.values()].map((scope) => ({
+        ...scope,
+        block: { at: 0, acceptedRatio: 1, ...block },
+      }));
+    },
+    release(provider, model) {
+      const key = `${provider}/${model}`;
+      if (!scopes.has(key)) return undefined;
+      scopes.delete(key);
+      this.released.push(key);
+      return { at: 0, acceptedRatio: 1, ...block };
+    },
+  };
+}
+
+test("a price-blocked turn names both amounts and the console command that accepts the price", async () => {
+  const detector = fakeCostAnomaly();
+  const session = fakeSession({
+    stepError: new CostAnomalyBlockedError("openrouter", "@preset/deepseekflash", {
+      at: 0,
+      chargedUsd: 0.00072597,
+      expectedUsd: 0.00042445,
+      ratio: 1.6185,
+      acceptedRatio: 1,
+      confirmingObservations: 2,
+    }),
+  });
+  const error = new Capture();
+  const result = await runConsole({
+    session,
+    input: Readable.from("first\nsecond\n"),
+    output: new Capture(),
+    error,
+    mode: "json",
+    costAnomaly: detector,
+  });
+
+  // The block is an operator decision, not a dead session: input keeps flowing
+  // and EOF is the reason, so `/cost release` is reachable from the next line.
+  expect(result).toEqual({ reason: "eof", completedTurns: 0 });
+  expect(session.inputs).toEqual(["first", "second"]);
+  const records = error
+    .text()
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as Record<string, unknown>)
+    .filter((record) => record.type === "console_error");
+  expect(records).toHaveLength(2);
+  const record = records[0] as {
+    code: string;
+    message: string;
+    action: string;
+    retryable: boolean;
+  };
+  expect(record.code).toBe("cost_anomaly_blocked");
+  expect(record.message).toContain("openrouter/@preset/deepseekflash");
+  expect(record.message).toContain("$0.000726");
+  expect(record.message).toContain("$0.000424");
+  expect(record.message).toContain("+62%");
+  expect(record.action).toContain("/cost release openrouter/@preset/deepseekflash");
+  // Retrying the same prompt on a blocked model can only fail again.
+  expect(record.retryable).toBe(false);
+});
+
+test("/cost lists blocked scopes and /cost release accepts one price without leaving the console", async () => {
+  const detector = fakeCostAnomaly();
+  const session = fakeSession();
+  const output = new Capture();
+  await runConsole({
+    session,
+    input: Readable.from("/cost\n/cost release openrouter/@preset/deepseekflash\n/exit\n"),
+    output,
+    error: new Capture(),
+    mode: "json",
+    costAnomaly: detector,
+  });
+
+  // Neither control dispatched a model turn.
+  expect(session.inputs).toEqual([]);
+  const records = output
+    .text()
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  expect(records[0]).toEqual({
+    type: "cost_status",
+    blocked: [
+      {
+        provider: "openrouter",
+        model: "@preset/deepseekflash",
+        block: {
+          at: 0,
+          acceptedRatio: 1,
+          chargedUsd: 0.00072597,
+          expectedUsd: 0.00042445,
+          ratio: 1.6185,
+          confirmingObservations: 2,
+        },
+      },
+    ],
+  });
+  expect(records[1]).toMatchObject({
+    type: "cost_release",
+    provider: "openrouter",
+    model: "@preset/deepseekflash",
+  });
+  expect(detector.released).toEqual(["openrouter/@preset/deepseekflash"]);
+});
+
+test("a formatted /cost renders the amounts, the overcharge, and the release command", async () => {
+  const output = new Capture();
+  await runConsole({
+    session: fakeSession(),
+    input: Readable.from("/cost\n/exit\n"),
+    output,
+    error: new Capture(),
+    mode: "formatted",
+    costAnomaly: fakeCostAnomaly(),
+  });
+
+  const text = output.text();
+  expect(text).toContain("openrouter/@preset/deepseekflash is blocked");
+  expect(text).toContain("declared $0.000424");
+  expect(text).toContain("billed $0.000726");
+  expect(text).toContain("+62%");
+  expect(text).toContain("confirmed by 2 responses");
+  expect(text).toContain("/cost release openrouter/@preset/deepseekflash");
+});
+
+test("/cost release reports an unblocked scope instead of reading as success", async () => {
+  const error = new Capture();
+  await runConsole({
+    session: fakeSession(),
+    input: Readable.from("/cost release openrouter/other\n/exit\n"),
+    output: new Capture(),
+    error,
+    mode: "json",
+    costAnomaly: fakeCostAnomaly(),
+  });
+
+  const record = JSON.parse(error.text().trim()) as {
+    code: string;
+    message: string;
+    action: string;
+  };
+  expect(record.code).toBe("not_found");
+  expect(record.message).toContain("openrouter/other");
+  expect(record.action).toContain("/cost");
+});
+
+test("/cost is unavailable with the action that enables it when the session carries no detector", async () => {
+  const output = new Capture();
+  const error = new Capture();
+  await runConsole({
+    session: fakeSession(),
+    input: Readable.from("/help\n/cost\n/exit\n"),
+    output,
+    error,
+    mode: "json",
+  });
+
+  const help = JSON.parse(output.text().trim().split("\n")[0] as string) as {
+    commands: Array<{ name: string; available: boolean; unavailableAction?: string }>;
+  };
+  const cost = help.commands.find((command) => command.name === "/cost");
+  expect(cost?.available).toBe(false);
+  expect(cost?.unavailableAction).toContain("project directory");
+  const record = JSON.parse(error.text().trim()) as { code: string; retryable: boolean };
+  expect(record.code).toBe("not_available");
+  expect(record.retryable).toBe(false);
 });
