@@ -50,6 +50,13 @@ export interface ConsoleCommandDefinition {
    * one source of dispatch (`docs/contracts/cli.md`).
    */
   readonly frontAction?: "exit";
+  /**
+   * Set when the command's single argument is the whole remainder of the line
+   * rather than a whitespace-split token. Declared here, like `frontAction`, so
+   * parsing selects on a registry property instead of matching a command name
+   * literally (`docs/contracts/cli.md`).
+   */
+  readonly argMode?: "verbatim";
 }
 
 export interface ConsoleCommandHelpEntry {
@@ -134,6 +141,7 @@ export const CONSOLE_COMMANDS: readonly ConsoleCommandDefinition[] = [
     ],
     example: "/start add a regression test for the retry path",
     requires: "background_runs",
+    argMode: "verbatim",
   },
   {
     name: "/events",
@@ -310,10 +318,6 @@ export function executeConsoleControl(
   const trimmed = input.trim();
   const parts = trimmed.split(/\s+/);
   const name = parts[0] as string;
-  // `/start` takes a task, which is a sentence rather than a token, so its
-  // whole remainder is ONE argument; every other command is whitespace-split.
-  const rest = trimmed.slice(name.length).trim();
-  const args = name === "/start" ? (rest === "" ? [] : [rest]) : parts.slice(1);
   const maxPageSize = controls.maxPageSize ?? DEFAULT_CONSOLE_CONTROL_PAGE_SIZE;
   if (!Number.isSafeInteger(maxPageSize) || maxPageSize <= 0)
     throw new RangeError("maxPageSize must be a positive safe integer");
@@ -325,6 +329,10 @@ export function executeConsoleControl(
       action: "use /help to list every console command",
       retryable: true,
     });
+  // A verbatim command takes a sentence, not a token, so its whole remainder is
+  // ONE argument; every other command is whitespace-split.
+  const rest = trimmed.slice(name.length).trim();
+  const args = command.argMode === "verbatim" ? (rest === "" ? [] : [rest]) : parts.slice(1);
   // Arity is checked against the registry, so a missing argument names the
   // argument the operator omitted rather than a bare count.
   const requireArgs = (): void => {

@@ -45,6 +45,14 @@ export interface RunConsoleParams {
    * sequences are parsed deterministically; raise this for slow remote TTYs.
    */
   escapeSequenceTimeoutMs?: number;
+  /**
+   * Time shutdown gives an in-flight console control to finish. A control calls
+   * out to a manager that can stall -- a host launcher that never spawns, a
+   * provider that ignores cancellation -- and shutdown must stay finite anyway,
+   * so the wait is bounded rather than unconditional. Zero abandons in-flight
+   * controls immediately.
+   */
+  controlDrainMs?: number;
   toolActivity?: Partial<ToolActivityConfig>;
   /** Process-local cooperative shutdown probe supplied by the CLI front. */
   interrupted?: () => boolean;
@@ -70,6 +78,15 @@ const INPUT_FAILED_FAILURE = {
   code: "input_failed",
   message: "console input failed",
   action: "restart the console; the input stream is no longer readable",
+  retryable: false,
+} as const;
+const CONTROL_DRAIN_TIMEOUT_FAILURE = {
+  code: "deadline_exceeded",
+  message: "a console control was still running when the console shut down",
+  // Shutdown is finite by contract, so the control is abandoned rather than
+  // waited on. Whatever it asked the manager to do may or may not have landed,
+  // and only the durable record can answer that.
+  action: "check for runs the abandoned control may have started with: ad-coder background list",
   retryable: false,
 } as const;
 const CLOSE_FAILED_FAILURE = {
@@ -111,6 +128,7 @@ function renderFailure(
   return `ad-coder: ${message}; ${action}\n`;
 }
 export const DEFAULT_CONSOLE_ESCAPE_SEQUENCE_TIMEOUT_MS = 1_000;
+export const DEFAULT_CONSOLE_CONTROL_DRAIN_MS = 2_000;
 
 interface TtyReadableStream extends NodeJS.ReadableStream {
   isTTY?: boolean;
@@ -442,6 +460,7 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
   const controlPageSize = params.controlPageSize ?? DEFAULT_CONSOLE_CONTROL_PAGE_SIZE;
   const escapeSequenceTimeoutMs =
     params.escapeSequenceTimeoutMs ?? DEFAULT_CONSOLE_ESCAPE_SEQUENCE_TIMEOUT_MS;
+  const controlDrainMs = params.controlDrainMs ?? DEFAULT_CONSOLE_CONTROL_DRAIN_MS;
   if (!Number.isInteger(maxInputBytes) || maxInputBytes <= 0) {
     throw new RangeError("maxInputBytes must be a positive integer");
   }
@@ -451,6 +470,8 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
     throw new RangeError("controlPageSize must be a positive safe integer");
   if (!Number.isSafeInteger(escapeSequenceTimeoutMs) || escapeSequenceTimeoutMs < 1)
     throw new RangeError("escapeSequenceTimeoutMs must be a positive safe integer");
+  if (!Number.isSafeInteger(controlDrainMs) || controlDrainMs < 0)
+    throw new RangeError("controlDrainMs must be a non-negative safe integer");
 
   let reason: ConsoleExitReason = "eof";
   let completedTurns = 0;
@@ -655,6 +676,29 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
       stopped = true;
     }
   };
+  /**
+   * Wait for in-flight controls, but never longer than `controlDrainMs`. A
+   * control awaits a manager that can stall indefinitely -- a host launcher that
+   * never spawns, a provider that ignores cancellation -- and shutdown must stay
+   * finite regardless, or `/exit` and Ctrl-C leave the session unclosed and the
+   * terminal in raw mode (docs/contracts/ui-responsiveness.md). Zero abandons an
+   * in-flight control immediately.
+   */
+  const drainControls = async (): Promise<void> => {
+    // Zero still resolves for an already-settled lane: a settled promise wins the
+    // race in a microtask, ahead of any timer. So zero abandons work in flight
+    // without penalising a console that simply had none.
+    const drained = await Promise.race([
+      controlQueue.then(() => true),
+      new Promise<false>((resolve) => {
+        const timer = setTimeout(() => resolve(false), controlDrainMs);
+        void controlQueue.then(() => clearTimeout(timer));
+      }),
+    ]);
+    // Abandoning work silently would read as a clean shutdown; say so instead.
+    if (!drained) params.error.write(renderFailure(CONTROL_DRAIN_TIMEOUT_FAILURE, mode));
+  };
+
   const queueLine = (): void => {
     const line = Buffer.from(lineBytes).toString("utf8");
     lineBytes = [];
@@ -779,7 +823,7 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
       if (stopped) break;
     }
     if (!stopped && lineBytes.length > 0) queueLine();
-    await controlQueue;
+    await drainControls();
     await lineQueue;
   } catch {
     params.error.write(renderFailure(INPUT_FAILED_FAILURE, mode));

@@ -30,6 +30,11 @@ All notable changes to ad-coder are recorded here. The format follows
 - Console controls now render in the order they were typed. `/start` is the
   first control that awaits a host launcher, and an unserialized control lane
   rendered a later `/list` before the `/start` whose run it was meant to list.
+  Shutdown waits for in-flight controls only up to `controlDrainMs`, so a host
+  launcher that never spawns -- or a provider that ignores a `/interrupt`
+  cancellation -- cannot hold `/exit` or Ctrl-C open, leave the session unclosed
+  or strand the terminal in raw mode. An abandoned control is reported as
+  `deadline_exceeded` rather than passing for a clean exit.
 - `launch_failed` and `resource_limit` from the background run manager now
   surface as typed, retryable console failures naming the next action, instead
   of collapsing into an opaque `invalid_request`.
@@ -39,6 +44,10 @@ All notable changes to ad-coder are recorded here. The format follows
   options (`--owner-id`, `--background-max-active`, `--same-target-policy`)
   rather than repeating them, which is exactly the drift the single command
   registry exists to prevent.
+- A console command whose argument is a whole sentence declares `argMode:
+  "verbatim"` in the registry, so parsing selects on a declared property the way
+  dispatch already selects on `frontAction`, instead of matching `/start` by
+  name.
 
 ## [0.10.3] - 2026-09-15
 

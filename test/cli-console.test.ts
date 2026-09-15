@@ -1542,6 +1542,47 @@ test("/start admits a detached run and passes the whole line as one task", async
   expect(record).toEqual({ type: "background_start", run: { runId, lifecycle: "requested" } });
 });
 
+test("shutdown stays finite when a control never settles", async () => {
+  // docs/contracts/ui-responsiveness.md: shutdown is finite and terminal modes
+  // are restored on EVERY exit path. A host launcher that never spawns must not
+  // be able to hold the console open.
+  const session = fakeSession() as unknown as ConversationSession & {
+    closes: number;
+    backgroundRuns: BackgroundRunManager;
+  };
+  session.backgroundRuns = {
+    startDetached: () => new Promise<never>(() => undefined),
+  } as unknown as BackgroundRunManager;
+  const input = rawInput();
+  const error = new Capture();
+  const running = runConsole({
+    session,
+    input,
+    output: new Capture(),
+    error,
+    mode: "json",
+    controlDrainMs: 20,
+  });
+  input.write("/start this never launches\r");
+  // Ctrl-C, not /exit: the stuck control must not block the harshest exit path.
+  input.write("\u0003");
+  input.end();
+
+  const result = await Promise.race([
+    running,
+    new Promise<"hung">((resolve) => setTimeout(() => resolve("hung"), 2_000)),
+  ]);
+  expect(result).not.toBe("hung");
+  expect(result).toMatchObject({ reason: "exit" });
+  // The abandoned control is reported, not swallowed into a clean exit.
+  const record = JSON.parse(error.text().trim()) as { code: string; retryable: boolean };
+  expect(record.code).toBe("deadline_exceeded");
+  expect(record.retryable).toBe(false);
+  // The session still closes and the terminal still leaves raw mode.
+  expect(session.closes).toBe(1);
+  expect(input.isRaw).toBe(false);
+});
+
 test("controls render in the order they were typed even when one of them awaits", async () => {
   const runId = "123e4567-e89b-12d3-a456-426614174000";
   const started: { runId: string; lifecycle: "requested" }[] = [];

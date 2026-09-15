@@ -2172,9 +2172,12 @@ async function consoleCommand(
   const maxInputBytes = parseMaxInputBytesFlag(flags["--max-input-bytes"]);
   const heartbeatMs =
     parseNonNegativeIntegerFlag("--heartbeat-ms", flags["--heartbeat-ms"]) ?? DEFAULT_HEARTBEAT_MS;
+  // Parsed once: the console's own page default and the manager it builds must
+  // read the same limits, not two independent parses of the same flags.
+  const configuredLimits = backgroundLimits(flags);
   const controlPageSize =
     parsePositiveIntegerFlag("--console-page-size", flags["--console-page-size"]) ??
-    backgroundLimits(flags).maxPageSize;
+    configuredLimits.maxPageSize;
   const escapeSequenceTimeoutMs = parsePositiveIntegerFlag(
     "--escape-sequence-timeout-ms",
     flags["--escape-sequence-timeout-ms"],
@@ -2220,9 +2223,7 @@ async function consoleCommand(
     selectedSkills,
     backgroundOwnerId,
     backgroundHostLauncher: createBackgroundHostLauncher(backgroundTargetDir, backgroundOwnerId),
-    ...(Object.keys(backgroundLimits(flags)).length === 0
-      ? {}
-      : { backgroundRuns: backgroundLimits(flags) }),
+    ...(Object.keys(configuredLimits).length === 0 ? {} : { backgroundRuns: configuredLimits }),
   });
   const result = await runConsole({
     session,
