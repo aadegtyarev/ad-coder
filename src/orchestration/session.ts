@@ -356,10 +356,10 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
         if (spec !== undefined) reachable.push(spec.model);
     } else {
       for (const entry of routing.profile.entries) {
-        if (entry.role !== "recorder") reachable.push(routing.registry.getModel(entry.model));
+        if (entry.role !== "summarizer") reachable.push(routing.registry.getModel(entry.model));
       }
       for (const [role, override] of Object.entries(routing.overrides ?? {})) {
-        if (role !== "recorder" && override !== undefined) {
+        if (role !== "summarizer" && override !== undefined) {
           reachable.push(routing.registry.getModel(override.model));
         }
       }

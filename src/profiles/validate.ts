@@ -18,7 +18,7 @@ export const PROFILE_ROLES: readonly ProfileRole[] = [
   "reviewer",
   "auditor",
   "security",
-  "recorder",
+  "summarizer",
 ];
 
 const COMPLEXITIES: readonly Complexity[] = ["trivial", "medium", "complex"];

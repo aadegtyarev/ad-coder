@@ -6,6 +6,35 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-09-16
+
+### Changed
+- The `recorder` profile role is gone. It was reserved while a recorder role was
+  planned; nothing ever dispatched one, no prompt defined one, and `ROLE_NAMES`
+  never listed one -- but the cell was quietly read for something real: it chose
+  the compaction summarizer model. It is now named `summarizer`, which is what
+  it does. A profile still naming `recorder` is rejected as `unknown_role`, like
+  any other unknown role. **Breaking:** rename the role in any saved profile or
+  inventory.
+- `--summarizer-model` now overrides the `summarizer` profile cell the way every
+  other `--<role>-model` flag overrides its own, instead of being resolved
+  beside that path. Two consequences: the startup banner reports the model
+  compaction will actually use rather than the cell the flag replaced, and an
+  unregistered name raises `ProfileError('unknown_model')` like every other
+  role rather than a bare `RegistryError`.
+
+### Added
+- `config show` reports `summarizerModel` and where it came from. Compaction
+  rewrites the entire history, so which model performs it is a routing decision
+  worth checking before a run; until now the only way to learn it was to read
+  the profile and reimplement the override precedence by hand.
+
+### Fixed
+- CLI tests no longer read the developer's own saved profile. They spawn the
+  real binary, which inherited `XDG_CONFIG_HOME`, so a profile the CLI rejects
+  failed a test about something else entirely -- on one machine and not in CI.
+  Each run now gets an empty config home unless the test chooses its own.
+
 ## [0.12.3] - 2026-09-16
 
 ### Added

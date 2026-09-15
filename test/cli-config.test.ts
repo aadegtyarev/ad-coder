@@ -12,6 +12,7 @@ import {
 } from "../src/economics/cost-anomaly";
 import type { ModelInventoryConfig } from "../src/inventory/types";
 import { buildDefaultProfile } from "../src/profiles/default-profile";
+import { ProfileError } from "../src/profiles/errors";
 import { resolveProfile } from "../src/profiles/resolve";
 import { writeProjectCalibrationSnapshot } from "../src/project-calibration";
 import { RegistryError } from "../src/registry/errors";
@@ -450,16 +451,59 @@ test("cache-aware fails loudly instead of degrading", () => {
   ).toThrow('"cache-aware" is not supported');
 });
 
-test("an unknown summarizer model uses the registry's names-only error", () => {
-  expect(() =>
+test("an unknown summarizer model raises the same names-only error as any other role", () => {
+  // `--summarizer-model` overrides the `summarizer` profile cell the way every
+  // other `--<role>-model` flag overrides its own, so it fails the way they do:
+  // `ProfileError('unknown_model')` naming the model, never a `RegistryError`
+  // escaping the profile layer. It used to resolve beside that path and so
+  // reported a different error class for the same mistake.
+  let thrown: unknown;
+  try {
     resolvePipelineConfig({
       task: "x",
       targetDir: "/tmp/target",
       env: fakeEnv({ DEEPSEEK_API_KEY: "k" }),
       summarizerModel: "missing",
       warn: silent,
-    }),
-  ).toThrow(RegistryError);
+    });
+  } catch (error) {
+    thrown = error;
+  }
+  expect(thrown).toBeInstanceOf(ProfileError);
+  expect(thrown).not.toBeInstanceOf(RegistryError);
+  expect((thrown as ProfileError).code).toBe("unknown_model");
+  expect((thrown as ProfileError).detail).toBe("missing");
+});
+
+test("the summarizer reads its profile cell, and the flag overrides it visibly", () => {
+  // Compaction rewrites the entire history, so which model does it is a routing
+  // decision -- it belongs in the profile and in the banner, not resolved out of
+  // band where the banner and the run could disagree.
+  const fromProfile = resolvePipelineConfig({
+    task: "x",
+    targetDir: "/tmp/target",
+    provider: "deepseek",
+    env: fakeEnv({ DEEPSEEK_API_KEY: "k" }),
+    warn: silent,
+  });
+  expect(fromProfile.effectiveConfig?.summarizerModel?.source).toBe("profile");
+
+  const warnings: string[] = [];
+  const overridden = resolvePipelineConfig({
+    task: "x",
+    targetDir: "/tmp/target",
+    provider: "deepseek",
+    env: fakeEnv({ DEEPSEEK_API_KEY: "k" }),
+    summarizerModel: "deepseek-chat",
+    warn: (message) => warnings.push(message),
+  });
+  expect(overridden.compaction?.summarizerModel?.id).toBe("deepseek-chat");
+  expect(overridden.effectiveConfig?.summarizerModel?.source).toBe("cli");
+  // The banner reports the routing the run will take, so the override has to
+  // show up there too rather than only in the compaction config.
+  const banner = warnings.find((line) => line.includes("complexity"));
+  expect(banner).toContain("summarizer");
+  expect(banner).toContain("deepseek-chat");
 });
 
 test("selects openrouter when only OPENROUTER_API_KEY is present", () => {
@@ -1110,10 +1154,10 @@ test("the startup banner reports the live role layout, not three collapsed tiers
     "coder",
     "orchestrator",
     "planner",
-    "recorder",
     "researcher",
     "reviewer",
     "security",
+    "summarizer",
   ]);
 });
 

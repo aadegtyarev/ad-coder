@@ -537,17 +537,6 @@ function resolveConfig(
   );
   const defaultComplexity = options.defaultComplexity ?? DEFAULT_COMPLEXITY;
   const maxRounds = options.maxRounds ?? DEFAULT_MAX_ROUNDS;
-  const summarizerModel =
-    options.summarizerModel !== undefined
-      ? registry.getModel(options.summarizerModel)
-      : resolveProfile(
-          profile,
-          registry,
-          "recorder",
-          defaultComplexity,
-          options.overrides?.recorder,
-        ).model;
-
   const explicitModels: Partial<Record<ProfileRole, string>> = {
     ...(options.orchestratorModel !== undefined && { orchestrator: options.orchestratorModel }),
     ...(options.plannerModel !== undefined && { planner: options.plannerModel }),
@@ -556,6 +545,13 @@ function resolveConfig(
     ...(options.coderModel !== undefined && { coder: options.coderModel }),
     ...(options.reviewerModel !== undefined && { reviewer: options.reviewerModel }),
     ...(options.auditorModel !== undefined && { auditor: options.auditorModel }),
+    // `--summarizer-model` is the summarizer's per-run override, spelled
+    // differently for history but doing what every other `--<role>-model` flag
+    // does. Routing it through `overrides` rather than resolving it separately
+    // is what keeps the banner honest: the banner prints whatever `resolveRole`
+    // returns, so a summarizer resolved beside that path printed the profile
+    // cell while the run used the flag.
+    ...(options.summarizerModel !== undefined && { summarizer: options.summarizerModel }),
   };
   const overrides = { ...options.overrides };
   for (const [role, model] of Object.entries(explicitModels)) {
@@ -595,6 +591,8 @@ function resolveConfig(
       return resolveProfile(profile, registry, "coder", defaultComplexity, overrides.coder);
     }
   };
+
+  const summarizerModel = resolveRole("summarizer").model;
 
   // What the run will ACTUALLY do, not the three tiers the default profile is
   // built from: under an inventory those tiers all collapse onto one default
@@ -765,11 +763,11 @@ function resolveConfig(
     if (!orchestratorOnly) {
       reachable.push(
         ...profile.entries
-          .filter((entry) => entry.role !== "recorder")
+          .filter((entry) => entry.role !== "summarizer")
           .map((entry) => registry.getModel(entry.model)),
       );
       for (const [role, override] of Object.entries(overrides)) {
-        if (role !== "recorder" && override !== undefined)
+        if (role !== "summarizer" && override !== undefined)
           reachable.push(registry.getModel(override.model));
       }
     }
@@ -996,6 +994,14 @@ function resolveConfig(
       compactionMode: {
         value: compactionMode,
         source: options.compactionMode !== undefined ? "cli" : "built-in-default",
+      },
+      // Compaction rewrites the whole history, so which model does it is a
+      // routing decision an operator should be able to check without starting a
+      // run -- and before this line the only way to learn it was to read the
+      // profile and reimplement the override precedence by hand.
+      summarizerModel: {
+        value: summarizerModel.name,
+        source: options.summarizerModel !== undefined ? "cli" : "profile",
       },
       pipelineContextMode: {
         value: pipelineContextMode,

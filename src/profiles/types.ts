@@ -10,10 +10,13 @@ import type { Complexity } from "../orchestration/types";
  * decides which pipeline to run, which is a routing decision like any other, so
  * it must be nameable per complexity and measurable on its own. Before it had a
  * cell it silently borrowed the coder's model -- a profile could not route it,
- * and a calibration run could not attribute its cost. `recorder` is included as
- * a forward-looking routing target the ledger/recorder follow-on will consume
- * runPipeline does NOT read it today, but the project routes the recorder per
- * tier, so the profile layer must be able to name a model for it now.
+ * and a calibration run could not attribute its cost.
+ *
+ * `summarizer` is the compaction model: the cell `resolveConfig` reads when no
+ * `--summarizer-model` is given. It was called `recorder` while a recorder role
+ * was still planned, and the name outlived the plan -- nothing ever dispatched
+ * a recorder, `ROLE_NAMES` never listed one, and the cell was always read for
+ * compaction and nothing else. The name now says what the cell does.
  *
  * NO compile-time link binds this union to `PipelineConfig.roles` keys they are
  * kept in sync BY HAND. A future rename of a role key in orchestration would
@@ -27,7 +30,7 @@ export type ProfileRole =
   | "reviewer"
   | "auditor"
   | "security"
-  | "recorder";
+  | "summarizer";
 
 /**
  * One `(role, complexity)` routing cell: which registry model NAME to use, plus

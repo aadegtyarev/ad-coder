@@ -80,6 +80,15 @@ Rules the operator declared for ad-coder. A violation is always blocking.
   running: the resolver falls back to the route the role previously took and
   says so once on stderr, while a missing cell for any already-declared role
   stays a blocking configuration error.
+- 2026-09-16: The compaction summarizer is a routing role like any other:
+  `summarizer` owns a profile cell at every complexity, so a profile names the
+  model compaction will use and a calibration run attributes its cost to it.
+  `--summarizer-model` overrides that cell for one run. The cell was called
+  `recorder` while a recorder role was still planned; that role never existed --
+  nothing dispatched it, no prompt defined it -- and the cell was only ever read
+  for compaction, so the name is retired rather than kept as an alias. A profile
+  still naming `recorder` is a blocking `unknown_role`, like any other unknown
+  role.
 
 ## Sources
 
