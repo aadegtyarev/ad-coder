@@ -16,6 +16,18 @@ Only unresolved work belongs here. Current behavior is in
   must provide argument validation and command-specific no-argument help with an
   example from one source.
 
+- [next] **Cost-anomaly detector and scope block** (`src/ledger/`,
+  `src/economics/`, `src/cli.ts`): implement
+  `docs/contracts/cost-anomaly.md`. Derive per-token rate per
+  `(provider, model)` from settled provider-reported usage, keep a durable
+  baseline, confirm a threshold crossing over more than one observation, warn
+  and refuse to START new runs in that scope until an explicit durable operator
+  release re-baselines it. In-flight stages are never killed. Default on;
+  threshold, minimum baseline samples, confirmation count, window, and scope
+  granularity configurable. Per-stage `maxCostUsd` does not cover this: each run
+  stays under its own ceiling while every run costs several times yesterday's
+  rate.
+
 - [next] **Durable shared CreditWallet reservations**: `profile estimate` v1 now
   supplies transparent empirical ranges and reads the latest provider-scoped
   balance. Add SessionManager-owned, restart-safe reservations, active-run usage
