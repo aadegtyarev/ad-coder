@@ -22,7 +22,7 @@ import {
   type BackgroundRunNotice,
 } from "../src/orchestration/background-runs";
 import { defineRole, type Role } from "../src/role";
-import { EmptyTurnError } from "../src/runner/errors";
+import { EmptyTurnError, ProviderRejectionError } from "../src/runner/errors";
 import { SessionLimitError } from "../src/session-limits";
 
 class Capture extends Writable {
@@ -168,6 +168,22 @@ test("empty provider turns show an actionable authentication command", async () 
   expect(error.text()).toContain(
     "run: ad-coder auth login --provider openrouter --target-dir '/tmp/project'",
   );
+});
+
+test("a provider rejection points at the request, never at authentication", async () => {
+  const error = new Capture();
+  await runConsole({
+    session: fakeSession({ stepError: new ProviderRejectionError("run", 400) }),
+    input: Readable.from("hello\n"),
+    output: new Capture(),
+    error,
+    authenticationCommand: "ad-coder auth login --provider openrouter --target-dir '/tmp/project'",
+  });
+  expect(error.text()).toContain("provider rejected the request with HTTP 400");
+  expect(error.text()).toContain("inspect the request this role sends");
+  // An authentication command is configured and must still NOT be offered: the
+  // provider answered, so credentials are not the thing to check.
+  expect(error.text()).not.toContain("auth login");
 });
 
 test("JSON mode emits narrowed parseable sanitized records without prompts", async () => {

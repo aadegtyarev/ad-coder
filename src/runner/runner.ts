@@ -53,7 +53,9 @@ import {
   assertUniqueToolNames,
   ConfiguredToolsUnavailableError,
   EmptyTurnError,
+  ProviderRejectionError,
   providerLimitFrom,
+  providerRejectionStatusFrom,
   RunInterruptedError,
   RunnerError,
   resolveTargetDir,
@@ -851,6 +853,13 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
         break;
       }
       if (text.trim() === "" && usage.freshInput + usage.cachedInput + usage.output === 0) {
+        // A settled failure with no text and no usage has two very different
+        // causes, and the transcript cannot tell them apart. When the provider
+        // named a client-error status it ANSWERED and refused the request, so
+        // say that instead of sending the operator to check credentials; only
+        // an unattributed failure keeps the authentication wording.
+        const rejection = providerRejectionStatusFrom(result.error);
+        if (rejection !== undefined) throw new ProviderRejectionError(runId, rejection);
         throw new EmptyTurnError(runId);
       }
     }

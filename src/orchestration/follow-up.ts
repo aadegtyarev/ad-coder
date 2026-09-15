@@ -22,45 +22,33 @@ const evidenceSchema = Type.Object(
   { additionalProperties: false },
 );
 
-const followUpParameters = Type.Union([
-  Type.Object(
-    {
-      kind: Type.Literal("contract"),
-      title: Type.String(),
-      evidence: Type.Array(evidenceSchema),
-      contract: Type.Optional(Type.String()),
-    },
-    { additionalProperties: false },
-  ),
-  Type.Object(
-    {
-      kind: Type.Literal("note"),
-      title: Type.String(),
-      evidence: Type.Array(evidenceSchema),
-    },
-    { additionalProperties: false },
-  ),
-  Type.Object(
-    {
-      kind: Type.Literal("design-doc-drift"),
-      title: Type.String(),
-      evidence: Type.Array(evidenceSchema),
-      document: Type.String(),
-    },
-    { additionalProperties: false },
-  ),
-  Type.Object(
-    {
-      kind: Type.Literal("backlog"),
-      title: Type.String(),
-      evidence: Type.Array(evidenceSchema),
-      priority: Type.Optional(
-        Type.Union([Type.Literal("low"), Type.Literal("medium"), Type.Literal("high")]),
-      ),
-    },
-    { additionalProperties: false },
-  ),
-]);
+// ONE object, not a `Type.Union` of four. A union serialises to a top-level
+// `anyOf`, and providers that validate tool schemas require the function's
+// parameters to BE an object: DeepSeek answers 400 "schema must be a JSON
+// Schema of 'type: \"object\"', got 'type: null'" and rejects the whole
+// request, so every turn carrying this tool -- which is every workflow turn --
+// dies before the model runs.
+//
+// Flattening costs nothing in strictness. `kind` stays a plain string and the
+// per-kind fields become optional, exactly as `submit_plan` leaves its enum
+// leaves loose; `validateFollowUpCandidate` still rejects an unknown kind, and
+// its `exact()` check still refuses a field that does not belong to the kind
+// that was declared (a `note` carrying `document`, say). The schema advertises
+// the shape; the validator decides.
+const followUpParameters = Type.Object(
+  {
+    kind: Type.String(),
+    title: Type.String(),
+    evidence: Type.Array(evidenceSchema),
+    /** Only for kind "contract". */
+    contract: Type.Optional(Type.String()),
+    /** Required for kind "design-doc-drift". */
+    document: Type.Optional(Type.String()),
+    /** Only for kind "backlog": "low" | "medium" | "high". */
+    priority: Type.Optional(Type.String()),
+  },
+  { additionalProperties: false },
+);
 
 export function buildSubmitFollowUpTool(
   capture: FollowUpCapture,
