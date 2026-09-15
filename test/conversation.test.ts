@@ -495,10 +495,11 @@ test("an operator block refuses a conversation turn, so the console cannot bypas
   ]);
   const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-console-block-"));
   const detector = new CostAnomalyDetector({}, new MemoryCostAnomalyStore());
-  const observation = { provider: "faux", model: "faux-1", totalTokens: 1000 };
-  for (let index = 0; index < 5; index += 1) detector.observe({ ...observation, costUsd: 0.002 });
-  detector.observe({ ...observation, costUsd: 0.008 });
-  detector.observe({ ...observation, costUsd: 0.008 });
+  const observation = { provider: "faux", model: "faux-1", expectedUsd: 0.002 };
+  for (let index = 0; index < 5; index += 1)
+    detector.observe({ ...observation, chargedUsd: 0.002 });
+  detector.observe({ ...observation, chargedUsd: 0.008 });
+  detector.observe({ ...observation, chargedUsd: 0.008 });
   expect(detector.blocked()).toHaveLength(1);
 
   const blockedConversation = await startConversation({
