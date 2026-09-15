@@ -314,8 +314,18 @@ function sliceBalancedObject(text: string, from = 0): string | undefined {
  * A model that is told to call `submit_plan` and answers in text does it in a
  * handful of observed shapes: the bare object, a ```json fence, and the object
  * preceded by prose or by a run-together tool name (`submit_planarguments: {`).
- * All three carry a complete plan, so all three are extracted and tried; only
- * text with no `{` at all means the planner genuinely submitted nothing.
+ * All of them carry a complete plan, so all of them are extracted and tried;
+ * only text with no `{` at all means the planner genuinely submitted nothing.
+ *
+ * EVERY top-level object is collected, not just the first. The ambiguity
+ * rejection in `parsePlanText` can only fire on candidates it was given, so
+ * stopping at the first balanced object made that rejection depend on the
+ * shape of the response rather than on its content: a draft and its correction
+ * both fenced were caught, but a BARE draft followed by a second plan yielded
+ * exactly one candidate -- the draft -- and was returned silently. That is the
+ * governance bypass the rejection exists to close, so the scan walks the whole
+ * text. It stays linear: the cursor only ever moves forward, past each object
+ * it has already consumed.
  */
 function planTextCandidates(value: string): string[] {
   const candidates: string[] = [];
@@ -326,7 +336,16 @@ function planTextCandidates(value: string): string[] {
   };
   if (value.startsWith("{") && value.endsWith("}")) add(value);
   for (const match of value.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)) add(match[1]);
-  add(sliceBalancedObject(value));
+  for (let cursor = 0; ; ) {
+    const start = value.indexOf("{", cursor);
+    if (start === -1) break;
+    const sliced = sliceBalancedObject(value, start);
+    // An object that never closes ends the scan: nothing after it is reachable,
+    // and an empty candidate list is what tells the caller it was truncated.
+    if (sliced === undefined) break;
+    add(sliced);
+    cursor = start + sliced.length;
+  }
   return candidates;
 }
 

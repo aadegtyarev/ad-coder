@@ -34,11 +34,16 @@ All notable changes to ad-coder are recorded here. The format follows
   message are fixed structure plus the validator's own wording; planner text
   never crosses the error boundary.
 
-  Recovery does not get to guess. Every candidate is parsed, not just the first
-  that validates: a planner that drafts a plan and then corrects itself emits
-  two, and the real submission is the last -- so returning the first accepted a
+  Recovery does not get to guess. Every top-level object in the response is
+  collected, and every candidate is parsed rather than just the first that
+  validates: a planner that drafts a plan and then corrects itself emits two,
+  and the real submission is the last -- so returning the first accepted a
   draft whose `securitySurface: "none"` overrode the correction's `"elevated"`
-  and skipped the mandatory security phase with no error and no retry. Two
+  and skipped the mandatory security phase with no error and no retry. Scanning
+  only as far as the first balanced object made that protection depend on the
+  shape of the response instead of its content: two fenced plans were caught,
+  but a bare draft followed by a correction produced a single candidate and was
+  returned silently -- the same bypass, still open for the commonest shape. Two
   DIFFERENT valid plans are now a rejection telling the planner to submit
   exactly one, which the retry budget can still fix; the same plan reaching the
   parser twice (a bare object and its own fenced copy) is one submission and
@@ -51,6 +56,7 @@ All notable changes to ad-coder are recorded here. The format follows
   demanded "no Markdown or prose", asking models to suppress the fenced form
   they emit by default; it now states that a complete object -- alone or inside
   one ```json fence -- is read, and that a cut-off object cannot be.
+
 ## [0.8.1] - 2026-09-15
 
 ### Changed

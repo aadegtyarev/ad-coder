@@ -2058,6 +2058,52 @@ test("two different plans in one planner response are rejected, not silently res
   expect(parsePlanText(`\`\`\`json\n${single}\n\`\`\``, "run-id")?.complexity).toBe("medium");
 });
 
+test("an UNFENCED draft followed by a second plan is rejected too, not silently accepted", () => {
+  // The rejection above only fired when both plans happened to be fenced. A
+  // planner that writes its draft as a bare object -- the single most common
+  // text-fallback shape -- produced exactly ONE candidate, because the scan
+  // stopped at the first balanced object. So the draft was returned, and a
+  // draft saying securitySurface "none" where the correction said "elevated"
+  // skipped the mandatory security phase: the very bypass this check exists to
+  // close, still open for the shape most likely to hit it.
+  const draft = JSON.stringify(
+    governedPlan({ complexity: "trivial", securitySurface: "none", summary: "draft" }),
+  );
+  const final = JSON.stringify(
+    governedPlan({ complexity: "complex", securitySurface: "elevated", summary: "final" }),
+  );
+
+  for (const [label, text] of [
+    ["bare, prose between", `Draft:\n${draft}\n\nOn reflection:\n${final}`],
+    ["bare, adjacent", `${draft}\n\n${final}`],
+    ["bare then fenced", `Draft:\n${draft}\n\nFinal:\n\`\`\`json\n${final}\n\`\`\``],
+  ] as const) {
+    let caught: unknown;
+    try {
+      parsePlanText(text, "run-id");
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught, label).toBeInstanceOf(OrchestrationError);
+    expect((caught as OrchestrationError).code, label).toBe("malformed_plan");
+    expect((caught as OrchestrationError).message, label).toContain("more than one distinct plan");
+  }
+
+  // Scanning the whole text must not turn ONE plan into two. A single bare
+  // object surrounded by prose stays a single submission -- the nested objects
+  // inside it (surfaceAnalysis, its coverage entries) are consumed with it, not
+  // collected as rival candidates.
+  const one = JSON.stringify(
+    governedPlan({ complexity: "medium", securitySurface: "low", summary: "one" }),
+  );
+  expect(parsePlanText(`Here it is.\n\n${one}\n\nDone.`, "run-id")?.summary).toBe("one");
+  expect(parsePlanText(`${one}\n\n\`\`\`json\n${one}\n\`\`\``, "run-id")?.summary).toBe("one");
+
+  // A complete plan followed by a cut-off object still resolves: the complete
+  // one was a real submission, and the unterminated tail is not a rival plan.
+  expect(parsePlanText(`${one}\n\n${final.slice(0, 40)}`, "run-id")?.summary).toBe("one");
+});
+
 test("a nested fragment never becomes the reported plan rejection", () => {
   // Observed on a real run: a model emitted its tool call as pseudo-XML, the
   // balanced-brace slice lifted out one `coverage` entry, and the operator was
