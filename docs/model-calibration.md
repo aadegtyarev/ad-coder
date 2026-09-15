@@ -64,6 +64,16 @@ wasting a live calibration run. Measurements retain the orchestrator and Planner
 votes plus correctness and agreement, so live Planner feedback can calibrate
 project-local triage without silently changing the user baseline.
 
+Every measurement carries a `harnessOutcome` beside its `quality`, because the
+two answer different questions. A `quality: 0` from a model that answered badly
+and a `quality: 0` from a tool that refused, a stage that ran out of time, or an
+answer no scorer could read are three different facts, and one number cannot tell
+them apart. The last two are evidence about the harness rather than the model, so
+a sweep that cannot separate them reports the model as worse than it is -- or,
+while unreadable answers were being dropped from the sample entirely, better.
+`clean` means the run reached a scored answer with nothing to report; the other
+values name what intervened. Sweep summaries should be read stratified by it.
+
 A check must score something the task asked for. `planner-contract-carry-v1`
 failed 20 runs out of 20 across five models and four families -- and the ranking
 inverted, the most expensive model scoring worst -- which is the shape of a

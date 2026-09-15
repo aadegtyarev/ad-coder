@@ -237,3 +237,43 @@ test("the same model name on two providers stays two rows", () => {
   expect(result.models).toHaveLength(2);
   expect(result.models.map((share) => share.provider).sort()).toEqual(["elsewhere", "test"]);
 });
+
+test("a run reports what happened to it, not only how good the answer was", () => {
+  // A `quality: 0` from a wrong answer and a `quality: 0` from a tool that
+  // refused are different facts, and one number cannot separate them. The second
+  // is evidence about the harness; treated as the first, it is recorded as the
+  // model being worse than it is.
+  const clean = scoreCalibrationRun({
+    task,
+    checks: task.checks.map(({ id }) => ({ id, passed: true })),
+    ledger: [row(0.2)],
+    inventory: "inv",
+    thinkingLevel: "low",
+    durationMs: 10,
+  });
+  expect(clean.harnessOutcome).toBe("clean");
+
+  const errored = scoreCalibrationRun({
+    task,
+    checks: task.checks.map(({ id }) => ({ id, passed: false })),
+    ledger: [{ ...row(0.2), stopReason: "error" }],
+    inventory: "inv",
+    thinkingLevel: "low",
+    durationMs: 10,
+  });
+  expect(errored.harnessOutcome).toBe("provider_error");
+
+  // The scorer knows an unreadable answer; the ledger cannot, so the runner
+  // states it and the stated value wins over anything derived.
+  const unreadable = scoreCalibrationRun({
+    task,
+    checks: task.checks.map(({ id }) => ({ id, passed: false })),
+    ledger: [row(0.2)],
+    inventory: "inv",
+    thinkingLevel: "low",
+    durationMs: 10,
+    harnessOutcome: "unreadable_answer",
+  });
+  expect(unreadable.harnessOutcome).toBe("unreadable_answer");
+  expect(unreadable.quality).toBe(0);
+});

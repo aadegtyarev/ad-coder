@@ -6,6 +6,17 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-09-16
+
+### Added
+- A calibration measurement now records `harnessOutcome` beside `quality`:
+  `clean`, `unreadable_answer`, `tool_error`, `stage_limit` or `provider_error`.
+  A zero from a bad answer and a zero from a refused tool or an exhausted stage
+  are different facts, and the quality number cannot separate them -- the last
+  two are evidence about the harness, not the model. The value is derived from
+  the ledger's own stop reasons where it can be, and stated by the runner for
+  the one case the ledger cannot see: an answer no scorer could read.
+
 ## [0.14.1] - 2026-09-16
 
 ### Fixed
