@@ -278,12 +278,15 @@ workflows — one substrate, swappable drivers.
   type, affected surfaces, and one contract-coverage decision per surface by
   CALLING a `submit_plan` tool built per planner turn (via the `runRole` tools
   seam), mirroring `submit_verdict`. `parsePlan` is the authoritative strict
-  validator (schema permissive at the leaves). An absent call is a hard
-  `missing_plan`; malformed or incomplete coverage is `malformed_plan`; and a
-  `research_required` decision enters a durable Research phase before coding.
-  Both mandatory planner/reviewer handoffs now prefer the provider-native strict
-  JSON-schema tool-call mode when available, while retaining portable fallback
-  and authoritative parser validation.
+  validator (schema permissive at the leaves). Malformed or incomplete coverage
+  is `malformed_plan`; `missing_plan` is raised only when no attempt produced
+  plan-shaped content at all, since a rejected submission is not an absent one;
+  and a `research_required` decision enters a durable Research phase before
+  coding. Both mandatory planner/reviewer handoffs now prefer the
+  provider-native strict JSON-schema tool-call mode when available, while
+  retaining portable fallback and authoritative parser validation. The planner
+  fallback reads a bare, fenced or prose-embedded object and shares the retry
+  budget between a rejected submission and a missing one.
   Inputs are bounded, IDs must be unique, and contract IDs resolve through a
   deterministic exported canonical index. Optional surface-analysis governance
   limits are production-configured with zero-disabled semantics and effective

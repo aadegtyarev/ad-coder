@@ -28,6 +28,7 @@ import {
   buildSubmitPlanTool,
   formatPlannerInstruction,
   parsePlan,
+  parsePlanText,
   SUBMIT_PLAN_TOOL_NAME,
 } from "../src/orchestration/plan";
 import {
@@ -1359,8 +1360,11 @@ test("planner instruction exposes canonical IDs accepted by validation", () => {
   const instruction = formatPlannerInstruction();
   expect(instruction).toContain("Canonical contract IDs accepted by this pipeline:");
   expect(instruction).toContain(
-    "If the provider returns text instead, emit exactly one JSON object",
+    "If the provider returns text instead, emit one complete JSON object",
   );
+  // The fenced form is what models emit by default; the instruction must not
+  // forbid a shape the parser accepts.
+  expect(instruction).toContain("```json fence");
   expect(instruction).toContain("errors:typed-actionable");
   expect(instruction).toContain("quality:clean-check");
 });
@@ -1978,6 +1982,277 @@ test("a prepared research cursor reopens and completes exactly once without a ra
   expect(JSON.stringify(reopened.checkpoint)).not.toContain("research-questions");
 });
 
+/**
+ * The text fallback accepts every shape a planner actually produces, and
+ * separates "said nothing" from "said something unusable".
+ *
+ * Each case below was observed on a real run that the old bare-object gate
+ * mis-reported: a fenced object, a `submit_plan arguments:` prefix, and an
+ * object cut off mid-field all returned `undefined`, which the caller read as
+ * silence and reported as `missing_plan`.
+ */
+test("parsePlanText recovers fenced and prefixed plans and names a truncated one", () => {
+  const plan = governedPlan({ complexity: "medium", securitySurface: "none", summary: "s" });
+  const json = JSON.stringify(plan);
+
+  for (const [label, text] of [
+    ["bare", json],
+    ["fenced", `\`\`\`json\n${json}\n\`\`\``],
+    ["prefixed", `submit_plan arguments: ${json}`],
+    ["prose-wrapped", `Here is the plan.\n\n${json}\n\nLet me know.`],
+    ["brace inside a string value", JSON.stringify({ ...plan, summary: "a { brace" })],
+  ] as const) {
+    const parsed = parsePlanText(text, "run-id");
+    expect(parsed, label).toBeDefined();
+    expect(parsed!.complexity, label).toBe("medium");
+  }
+
+  // Silence -- no plan-shaped content at all -- stays `undefined` so the caller
+  // can still retry it as a missing handoff.
+  expect(parsePlanText("I could not analyse this repository.", "run-id")).toBeUndefined();
+  expect(parsePlanText("", "run-id")).toBeUndefined();
+
+  // A cut-off object IS a submission, and reporting it as silence hid the real
+  // cause (an output ceiling) behind "planner did not submit".
+  let caught: unknown;
+  try {
+    parsePlanText(json.slice(0, json.length - 20), "run-id");
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught).toBeInstanceOf(OrchestrationError);
+  expect((caught as OrchestrationError).code).toBe("malformed_plan");
+  expect((caught as OrchestrationError).message).toContain("truncated");
+});
+
+test("two different plans in one planner response are rejected, not silently resolved", () => {
+  // A planner that drafts and then corrects itself puts the REAL submission
+  // last. Taking the first candidate accepted the draft -- and a draft saying
+  // securitySurface "none" where the correction said "elevated" skipped the
+  // mandatory security phase with no error and no retry. Guessing which one was
+  // meant is not this parser's job; ambiguity is a rejection the planner can fix.
+  const draft = JSON.stringify(
+    governedPlan({ complexity: "trivial", securitySurface: "none", summary: "draft" }),
+  );
+  const final = JSON.stringify(
+    governedPlan({ complexity: "complex", securitySurface: "elevated", summary: "final" }),
+  );
+  let caught: unknown;
+  try {
+    parsePlanText(
+      `Let me draft this:\n\`\`\`json\n${draft}\n\`\`\`\n\nFinal answer:\n\`\`\`json\n${final}\n\`\`\``,
+      "run-id",
+    );
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught).toBeInstanceOf(OrchestrationError);
+  expect((caught as OrchestrationError).code).toBe("malformed_plan");
+  expect((caught as OrchestrationError).message).toContain("more than one distinct plan");
+
+  // The SAME plan reaching the parser twice -- the bare object and its own
+  // fenced copy -- is one submission, not two, and must still resolve.
+  const single = JSON.stringify(
+    governedPlan({ complexity: "medium", securitySurface: "none", summary: "one" }),
+  );
+  expect(parsePlanText(`\`\`\`json\n${single}\n\`\`\``, "run-id")?.complexity).toBe("medium");
+});
+
+test("an UNFENCED draft followed by a second plan is rejected too, not silently accepted", () => {
+  // The rejection above only fired when both plans happened to be fenced. A
+  // planner that writes its draft as a bare object -- the single most common
+  // text-fallback shape -- produced exactly ONE candidate, because the scan
+  // stopped at the first balanced object. So the draft was returned, and a
+  // draft saying securitySurface "none" where the correction said "elevated"
+  // skipped the mandatory security phase: the very bypass this check exists to
+  // close, still open for the shape most likely to hit it.
+  const draft = JSON.stringify(
+    governedPlan({ complexity: "trivial", securitySurface: "none", summary: "draft" }),
+  );
+  const final = JSON.stringify(
+    governedPlan({ complexity: "complex", securitySurface: "elevated", summary: "final" }),
+  );
+
+  for (const [label, text] of [
+    ["bare, prose between", `Draft:\n${draft}\n\nOn reflection:\n${final}`],
+    ["bare, adjacent", `${draft}\n\n${final}`],
+    ["bare then fenced", `Draft:\n${draft}\n\nFinal:\n\`\`\`json\n${final}\n\`\`\``],
+  ] as const) {
+    let caught: unknown;
+    try {
+      parsePlanText(text, "run-id");
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught, label).toBeInstanceOf(OrchestrationError);
+    expect((caught as OrchestrationError).code, label).toBe("malformed_plan");
+    expect((caught as OrchestrationError).message, label).toContain("more than one distinct plan");
+  }
+
+  // Scanning the whole text must not turn ONE plan into two. A single bare
+  // object surrounded by prose stays a single submission -- the nested objects
+  // inside it (surfaceAnalysis, its coverage entries) are consumed with it, not
+  // collected as rival candidates.
+  const one = JSON.stringify(
+    governedPlan({ complexity: "medium", securitySurface: "low", summary: "one" }),
+  );
+  expect(parsePlanText(`Here it is.\n\n${one}\n\nDone.`, "run-id")?.summary).toBe("one");
+  expect(parsePlanText(`${one}\n\n\`\`\`json\n${one}\n\`\`\``, "run-id")?.summary).toBe("one");
+
+  // A complete plan followed by a cut-off object still resolves: the complete
+  // one was a real submission, and the unterminated tail is not a rival plan.
+  expect(parsePlanText(`${one}\n\n${final.slice(0, 40)}`, "run-id")?.summary).toBe("one");
+});
+
+test("scanning the whole planner response stays linear, not quadratic, in its objects", () => {
+  // Walking the whole text made the candidate dedup load-bearing, and deduping
+  // by scanning the array compares each new candidate against every one already
+  // held. That is invisible at the handful of candidates a real plan produces
+  // and quadratic on a response padded with brace-asides -- measured at ~2s for
+  // 20k objects and ~59s for 1MB, spent inside a single planner turn with no
+  // ceiling upstream. A model is not prevented from emitting that, so the cost
+  // is pinned here rather than left to the next person to rediscover.
+  const timeFor = (objects: number): number => {
+    const text = Array.from({ length: objects }, (_, index) => `{"a":${index}}`).join(" ");
+    const started = performance.now();
+    expect(() => parsePlanText(text, "run-id")).toThrow(OrchestrationError);
+    return performance.now() - started;
+  };
+
+  // Ratio, not wall-clock: the absolute number moves with the machine, the
+  // growth rate is the property under test. Quadratic would be ~16x for 4x the
+  // input; linear work plus noise stays far below the 8x allowed here.
+  timeFor(2000); // warm up, so JIT compilation is not charged to the first sample
+  const small = Math.max(timeFor(5000), 1);
+  const large = timeFor(20000);
+  expect(large / small).toBeLessThan(8);
+});
+
+test("a nested fragment never becomes the reported plan rejection", () => {
+  // Observed on a real run: a model emitted its tool call as pseudo-XML, the
+  // balanced-brace slice lifted out one `coverage` entry, and the operator was
+  // told "plan.complexity must be one of ..." -- a field the planner never got
+  // wrong. Prefer the candidate that actually carries `complexity`.
+  const fragment = JSON.stringify({
+    surfaceId: "core",
+    status: "covered",
+    contractIds: [],
+    evidence: [],
+    rationale: "r",
+  });
+  const real = JSON.stringify(
+    governedPlan({ complexity: "medium", securitySurface: "sideways", summary: "s" }),
+  );
+  let caught: unknown;
+  try {
+    parsePlanText(`\`\`\`json\n${fragment}\n\`\`\`\n\n\`\`\`json\n${real}\n\`\`\``, "run-id");
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught).toBeInstanceOf(OrchestrationError);
+  expect((caught as OrchestrationError).message).toContain("securitySurface");
+  expect((caught as OrchestrationError).message).not.toContain("complexity");
+});
+
+test("a fenced planner JSON fallback is accepted and validated before code", async () => {
+  const fx = fixture();
+  fx.faux.setResponses([
+    fauxAssistantMessage(
+      `\`\`\`json\n${JSON.stringify(
+        governedPlan({ complexity: "medium", securitySurface: "none", summary: "fenced" }),
+      )}\n\`\`\``,
+    ),
+    fauxAssistantMessage("coded"),
+    ...reviewerTurn({ status: "approved", issues: [], summary: "ok" }),
+  ]);
+  await expect(
+    runPipeline({
+      targetDir: fx.targetDir,
+      models: fx.models,
+      task: "fenced handoff",
+      maxRounds: 1,
+      roles: {
+        planner: plannerRole(fx),
+        coder: fx.role("coder", "You code."),
+        reviewer: reviewerRole(fx),
+      },
+    }),
+  ).resolves.toMatchObject({ approved: true, complexity: "medium" });
+});
+
+/**
+ * A rejected submission gets the same retry budget as a missing one.
+ *
+ * The loop used to break on the first rejection, so a planner that called
+ * submit_plan with one bad field got zero retries while a planner that ignored
+ * the tool entirely got a second attempt -- the near-miss punished harder than
+ * the total miss.
+ */
+test("planner gets a corrective retry after a rejected submission, and is told why", async () => {
+  const fx = fixture();
+  const plannerPrompts: string[] = [];
+  const record =
+    (step: FauxResponseStep): FauxResponseFactory =>
+    (...args) => {
+      plannerPrompts.push(lastUserText(args[0]));
+      return typeof step === "function" ? step(...args) : step;
+    };
+  fx.faux.setResponses([
+    // securitySurface "extreme" passes the permissive schema but fails parsePlan.
+    ...plannerTurn({ complexity: "medium", securitySurface: "extreme", summary: "s" }).map(record),
+    ...plannerTurn({ complexity: "medium", securitySurface: "none", summary: "ok" }).map(record),
+    fauxAssistantMessage("coded"),
+    ...reviewerTurn({ status: "approved", issues: [], summary: "ok" }),
+  ]);
+
+  const result = await runPipeline({
+    targetDir: fx.targetDir,
+    models: fx.models,
+    task: "rejected then corrected",
+    maxRounds: 1,
+    roles: {
+      planner: plannerRole(fx),
+      coder: fx.role("coder", "You code."),
+      reviewer: reviewerRole(fx),
+    },
+  });
+  expect(result.approved).toBe(true);
+  expect(result.stageMetrics.filter(({ stage }) => stage === "plan")).toHaveLength(2);
+  // The retry states what was rejected instead of claiming no call was made.
+  const retryPrompt = plannerPrompts.at(-1) ?? "";
+  expect(retryPrompt).toContain("submit_plan submission was rejected");
+  expect(retryPrompt).not.toContain("did not call submit_plan");
+});
+
+test("a planner emitting only text is told no call was made, not that one was rejected", async () => {
+  const fx = fixture();
+  const plannerPrompts: string[] = [];
+  const record =
+    (step: FauxResponseStep): FauxResponseFactory =>
+    (...args) => {
+      plannerPrompts.push(lastUserText(args[0]));
+      return typeof step === "function" ? step(...args) : step;
+    };
+  fx.faux.setResponses([
+    record(fauxAssistantMessage("no tool call here")),
+    ...plannerTurn({ complexity: "medium", securitySurface: "none", summary: "ok" }).map(record),
+    fauxAssistantMessage("coded"),
+    ...reviewerTurn({ status: "approved", issues: [], summary: "ok" }),
+  ]);
+  await runPipeline({
+    targetDir: fx.targetDir,
+    models: fx.models,
+    task: "silent then corrected",
+    maxRounds: 1,
+    roles: {
+      planner: plannerRole(fx),
+      coder: fx.role("coder", "You code."),
+      reviewer: reviewerRole(fx),
+    },
+  });
+  expect(plannerPrompts.at(-1) ?? "").toContain("did not call submit_plan");
+});
+
 test("every node of the submit_plan schema declares a type, so a validating provider accepts it", () => {
   // A node serialised as a bare `{}` -- what `Type.Any()` produces -- makes
   // providers that validate tool schemas reject the ENTIRE request: DeepSeek
@@ -2138,7 +2413,10 @@ test("a malformed submit_plan throws OrchestrationError malformed_plan", async (
   const coder = fx.role("coder", "You code.");
   const reviewer = reviewerRole(fx);
   // securitySurface "extreme" passes the permissive schema but fails parsePlan.
+  // Both attempts are spent on a rejected submission: the budget is exhausted,
+  // so the pipeline reports the rejection itself, not a missing handoff.
   fx.faux.setResponses([
+    ...plannerTurn({ complexity: "medium", securitySurface: "extreme", summary: "s" }),
     ...plannerTurn({ complexity: "medium", securitySurface: "extreme", summary: "s" }),
   ]);
 
