@@ -8,6 +8,10 @@
     "tasks/complex-reservation.json",
     "tasks/orchestrator-tool-use.json",
     "tasks/python-stable-labels.json",
-    "tasks/rust-unicode-prefix.json"
+    "tasks/rust-unicode-prefix.json",
+    "tasks/planner-contract-carry.json",
+    "tasks/security-plan-threats.json",
+    "tasks/auditor-contract-status.json",
+    "tasks/researcher-absence-claim.json"
   ]
 }

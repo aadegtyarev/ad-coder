@@ -1,0 +1,26 @@
+[
+  {
+    "surface": "src/queue.ts:parseJob",
+    "status": "conforms",
+    "contract": "docs/contracts/errors.md",
+    "evidence": "line 13"
+  },
+  {
+    "surface": "src/queue.ts:enqueue",
+    "status": "violates",
+    "contract": "docs/contracts/persistence.md",
+    "evidence": "no fsync"
+  },
+  {
+    "surface": "src/queue.ts:readJob",
+    "status": "violates",
+    "contract": "docs/contracts/errors.md",
+    "evidence": "bare catch replaces cause"
+  },
+  {
+    "surface": "src/metrics.ts:increment",
+    "status": "contract_missing",
+    "contract": null,
+    "evidence": "no rule governs counters"
+  }
+]

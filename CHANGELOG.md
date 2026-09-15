@@ -6,6 +6,34 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.12.3] - 2026-09-16
+
+### Added
+- Calibration corpus coverage for the four roles that had none: planner,
+  security, auditor and researcher. Each task ships a fixture or prompt with a
+  planted false positive -- a validated id that only looks like path traversal,
+  an authorization door that is genuinely closed, an invented HTTP header -- so
+  a model that pattern-matches instead of reading scores worse than one that
+  reads.
+- Every corpus task must now declare where its shape came from: a link, a
+  licence, and what was taken. Required of all tasks rather than only new ones,
+  because a grandfather list rots and an absent field soon reads the same as an
+  oversight. `docs/model-calibration.md` records the licence of each source the
+  corpus draws on and the rule it follows: adapt forms, never copy content.
+- `corpus.ts smoke` now exercises artifact- and report-scored tasks too, against
+  checked-in pass/fail sample answers, and `bun test` runs it. Those scorers
+  were previously unexercised until a live calibration run hours later, so a
+  scorer stuck at `true` -- the failure that silently reports every model as
+  perfect -- had no way to be caught early.
+
+### Fixed
+- A standalone role no longer receives two contradictory instructions. Role
+  prompts are written for the pipeline, where a `submit_*` tool owns the result;
+  the Planner's prompt forbids the plan in assistant text for exactly that
+  reason. Standalone strips those tools, so the role was told both to withhold
+  the result and to return it, and obeyed whichever it weighed higher. The
+  override now names the rule it displaces.
+
 ## [0.12.2] - 2026-09-15
 
 ### Fixed

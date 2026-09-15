@@ -312,6 +312,29 @@ function runTask(
   }
 }
 
+/**
+ * Runs a non-target scorer against its two checked-in sample artifacts.
+ *
+ * The samples are hand-written stand-ins for a model answer, not recorded runs:
+ * they exist to prove the scorer can still say both yes and no. `.pass.json`
+ * must score every check, `.fail.json` must miss at least one.
+ */
+function checkSamples(task: Task): void {
+  const scorer = task.scorer;
+  if (scorer === undefined) throw new Error(`task has no scorer: ${task.id}`);
+  for (const kind of ["pass", "fail"] as const) {
+    const sample = path.join(root, "samples", `${task.id}.${kind}.json`);
+    if (!fs.existsSync(sample))
+      throw new Error(`${task.scorerInput} task needs a ${kind} sample: ${task.id}`);
+    const checks = runScorer(scorer, sample);
+    assertScorerMatchesTask(task, checks);
+    const allPassed = checks.every((check) => check.passed);
+    if (kind === "pass" && !allPassed)
+      throw new Error(`pass sample does not score every check: ${task.id}`);
+    if (kind === "fail" && allPassed) throw new Error(`fail sample scores every check: ${task.id}`);
+  }
+}
+
 const argv = process.argv.slice(2);
 const action = argv[0] ?? "list";
 const tasks = loadTasks();
@@ -335,18 +358,41 @@ else if (action === "validate")
   console.log(JSON.stringify({ version: 1, count: tasks.length, valid: true }));
 else if (action === "smoke") {
   let scored = 0;
+  let sampled = 0;
+  let unscored = 0;
   for (const { task } of tasks) {
-    if (!task.fixture || !task.scorer || task.scorerInput !== "target") continue;
-    const target = freshTarget(task.id);
-    materialize(task.fixture, target);
-    try {
-      assertScorerMatchesTask(task, runScorer(task.scorer, target));
-    } finally {
-      fs.rmSync(target, { recursive: true, force: true });
+    if (!task.scorer) {
+      unscored++;
+      continue;
     }
-    scored++;
+    if ((task.scorerInput ?? "target") === "target") {
+      // A target scorer reads a materialized fixture; without one there is
+      // nothing for it to read, so this is a broken task rather than a task
+      // smoke may quietly skip.
+      if (!task.fixture) throw new Error(`target-scored task has no fixture: ${task.id}`);
+      const target = freshTarget(task.id);
+      materialize(task.fixture, target);
+      try {
+        assertScorerMatchesTask(task, runScorer(task.scorer, target));
+      } finally {
+        fs.rmSync(target, { recursive: true, force: true });
+      }
+      scored++;
+      continue;
+    }
+    // An artifact/report scorer has no fixture to run against, so until now it
+    // was skipped entirely: a scorer that threw on every input, or that passed
+    // every input, reached a live run before anyone noticed. Each such task
+    // therefore ships two checked-in sample artifacts -- one a model answer that
+    // should score everything, one that should not -- and smoke runs both.
+    // Requiring the FAILING sample is the half that matters: a scorer stuck at
+    // `true` is the failure mode that silently reports every model as perfect.
+    checkSamples(task);
+    sampled++;
   }
-  console.log(JSON.stringify({ version: 1, count: tasks.length, scored, valid: true }));
+  console.log(
+    JSON.stringify({ version: 1, count: tasks.length, scored, sampled, unscored, valid: true }),
+  );
 } else if (action === "run") {
   const id = argv[1];
   if (!id) throw new Error("usage: corpus.ts run <task-id> [options] [-- <ad-coder flags>]");

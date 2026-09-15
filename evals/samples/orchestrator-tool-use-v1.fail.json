@@ -1,0 +1,11 @@
+{
+  "taskId": "orchestrator-tool-use-v1",
+  "mode": "automatic-pipeline",
+  "predictedComplexity": "complex",
+  "predictedBeforeDelegation": false,
+  "plannerComplexity": "complex",
+  "plannerDelegated": false,
+  "approved": false,
+  "tools": ["run_pipeline"],
+  "roles": ["orchestrator", "coder"]
+}

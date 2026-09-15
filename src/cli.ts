@@ -308,6 +308,22 @@ async function extractFinalText(session: Session, context: Context): Promise<str
  * carries request detail); only the extracted assistant text and the numeric
  * cost cross the boundary.
  */
+/**
+ * The pipeline role prompt, amended for a run with no submission tools.
+ *
+ * A role prompt is written for the PIPELINE, where a structured `submit_*` tool
+ * is the canonical handoff -- the Planner's ends by forbidding the plan in
+ * assistant text at all, because `submit_plan` owns it. Standalone strips those
+ * tools, so the base rule would leave the role with no legal way to answer: it
+ * must not speak the result and cannot submit it. The earlier wording only
+ * added "return the result as assistant text", which does not resolve a direct
+ * contradiction -- the model obeys whichever of the two it weighs higher. The
+ * override now names the rule it displaces.
+ */
+export function standaloneSystemPrompt(rolePrompt: string): string {
+  return `${rolePrompt}\n\nThis is a standalone role invocation. The structured submission tools this prompt refers to are NOT available here, and any instruction above to submit through one -- or to withhold the result from assistant text because a submission tool owns it -- does not apply to this run. Return the complete result as assistant text instead, carrying the same shape and detail the submission would have. When the task asks for a specific output format, that format governs.`;
+}
+
 export async function runRoleStandalone(params: {
   role: Role;
   model: Model<Api>;
@@ -2012,7 +2028,7 @@ async function roleCommand(
   const standaloneRole = defineRole(
     {
       ...spec.role,
-      systemPrompt: `${spec.role.systemPrompt}\n\nThis is a standalone role invocation. Return the complete result as assistant text; structured pipeline submission tools are unavailable.`,
+      systemPrompt: standaloneSystemPrompt(spec.role.systemPrompt),
       activeToolNames: (spec.role.activeToolNames ?? []).filter(
         (tool) => !tool.startsWith("submit_"),
       ),

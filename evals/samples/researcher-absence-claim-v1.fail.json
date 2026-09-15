@@ -1,0 +1,24 @@
+{
+  "claims": [
+    {
+      "question": "Q1",
+      "answer": "422 Unprocessable Content",
+      "confidence": "high",
+      "sources": ["https://www.rfc-editor.org/rfc/rfc9110"]
+    },
+    {
+      "question": "Q2",
+      "answer": "yes",
+      "confidence": "high",
+      "sources": ["https://www.rfc-editor.org/rfc/rfc9110"]
+    },
+    {
+      "question": "Q3",
+      "answer": "It specifies how many retries a client may make.",
+      "confidence": "medium",
+      "sources": ["https://www.rfc-editor.org/rfc/rfc9110"]
+    }
+  ],
+  "gaps": [],
+  "observedOn": "2026-09-16"
+}

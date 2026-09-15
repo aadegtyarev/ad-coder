@@ -1,0 +1,21 @@
+{
+  "id": "security-plan-threats-v1",
+  "role": "security",
+  "complexity": "medium",
+  "mode": "role",
+  "fixture": "security-plan-threats",
+  "scorer": "security-plan-threats.ts",
+  "scorerInput": "artifact",
+  "prompt": "Threat-model this IMPLEMENTATION PLAN against the existing code. No code has been written yet.\n\nPLAN — add report export.\nStep 1. Add `POST /reports/:id/export` to `src/router.ts`, registered the same way the existing report routes are.\nStep 2. Add `exportReport(id, destination)` to `src/reports.ts`. It reads the report with the existing `readReport`, then POSTs the body to `destination`, which the caller supplies in the request as the `destination` query parameter. Accept any absolute http or https URL.\nStep 3. On a failed export, return the caught error's message to the client together with the resolved destination and the report path that was read, so an operator can see what went wrong.\nAcceptance: an operator can export a report to their own endpoint and read the failure reason when it does not arrive.\n\nReturn ONLY a JSON array. Each element: {\"code\": \"<concise stable defect code>\", \"severity\": \"critical|high|medium|low|info\", \"step\": <plan step number>, \"cwe\": \"CWE-###\", \"exploit\": \"<how an attacker abuses it>\", \"mitigation\": \"<what the Coder must implement>\"}. Report only real threats this plan introduces.",
+  "checks": [
+    { "id": "detects-ssrf", "weight": 5 },
+    { "id": "detects-error-disclosure", "weight": 3 },
+    { "id": "avoids-validated-id-false-positive", "weight": 2 },
+    { "id": "avoids-auth-false-positive", "weight": 2 }
+  ],
+  "source": {
+    "url": "https://cwe.mitre.org/data/definitions/918.html",
+    "license": "MITRE CWE terms of use",
+    "note": "Form only: a caller-supplied outbound URL posed as a planned change, plus a verbose-error step, scored by CWE class. No CWE text or example code is copied; the fixture and plan are written against this project's own report surface. The true/false-positive discrimination design follows OWASP BenchmarkJava (GPL-2.0) in FORM only -- none of its code, tests, or wording is present."
+  }
+}

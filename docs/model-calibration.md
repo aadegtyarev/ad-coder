@@ -41,12 +41,26 @@ and a non-blocking one still does not count. When adding a scorer, budget for
 this: the check must recognise the defect a model describes, not the label it
 happened to choose.
 
-The version-one corpus manifest now contains six task shapes: trivial bounded
-normalization, medium behavior-preserving refactoring, hidden-defect review,
-medium pipeline repair, complex concurrent-state repair, and manual
-orchestrator tool use. `bun run calibration:corpus -- smoke` materializes and
-executes every target-based scorer; artifact/report scorers declare their input
-kind explicitly. Measurements retain the orchestrator and Planner complexity
+The version-one corpus manifest now contains twelve tasks, and every role the
+CLI can dispatch is represented: trivial bounded normalization in three
+languages, medium behavior-preserving refactoring, hidden-defect review, medium
+pipeline repair, complex concurrent-state repair, manual orchestrator tool use,
+plan-carries-the-contract, threat-modelling a plan, contract-conformance
+auditing, and a research question whose third part asks about something that
+does not exist. The four role tasks each plant a tempting wrong answer -- an id
+that is validated before it reaches the filesystem, an authorization door that
+is genuinely closed, an HTTP header nobody ever standardized -- so a model that
+pattern-matches scores strictly worse than one that reads.
+
+`bun run calibration:corpus -- smoke` exercises every scorer in the manifest.
+Target-based scorers run against a materialized fixture. Artifact- and
+report-based scorers have no fixture to read, so each such task ships two
+checked-in sample answers under `evals/samples/`: `<task-id>.pass.json`, which
+must score every check, and `<task-id>.fail.json`, which must miss at least one.
+The failing sample is the half that matters -- a scorer stuck at `true` reports
+every model as perfect, and without a negative case nothing notices. `bun test`
+runs this smoke, so a scorer that stops discriminating fails CI rather than
+wasting a live calibration run. Measurements retain the orchestrator and Planner complexity
 votes plus correctness and agreement, so live Planner feedback can calibrate
 project-local triage without silently changing the user baseline.
 
