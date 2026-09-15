@@ -40,6 +40,69 @@ All notable changes to ad-coder are recorded here. The format follows
   without a catalog number -- were judged identical and whichever was
   registered first answered for the other: a confident, specific, arbitrary
   attribution. The resolved window is now part of the comparison.
+## [0.7.0] - 2026-09-15
+
+### Fixed
+
+- A provider that REFUSED a request is no longer reported as a missing
+  credential. A settled failure with empty assistant text and zero usage has two
+  very different causes and the transcript cannot tell them apart, so the runner
+  called every one of them `empty_turn` and told the operator to "verify
+  authentication and retry". A provider 400 over a malformed tool schema --
+  rejected before the model ever ran, at zero cost -- therefore pointed at the
+  one party that was not at fault, and the durable checkpoint recorded only
+  "inspect the provider failure", naming neither the status nor the request.
+  `runRole` and the conversation loop now read the settled failure's HTTP status
+  and raise the new `ProviderRejectionError` for a client-error status,
+  `RunCoordinator` pauses with `provider_rejected` and the status in its action,
+  and the console offers the request -- model id, tool schemas, parameters --
+  instead of an authentication command. 401 and 403 stay `empty_turn`, which is
+  what those statuses actually mean; 429 is still `provider_limit`.
+- The status is read from BOTH shapes pi-ai composes, not just one. Adapters
+  that route through `formatProviderError` produce `"<status>: <body>"`, but
+  `anthropic-messages` never calls it -- it assigns the provider SDK's own
+  `APIError.message`, which is `"<status> <body>"` with a space and no colon.
+  Matching only the first shape would have left every Anthropic-native model,
+  and every OpenRouter model that overrides to `anthropic-messages`, still
+  being told to verify authentication over a request the provider had refused
+  on its merits -- the exact misattribution above, unfixed for one of the three
+  request APIs this registry resolves. The second shape is anchored at the
+  start and bounded to three digits followed by a space, so it reads a leading
+  status and not a number appearing in prose.
+
+### Added
+
+- `ProviderRejectionError` and `providerRejectionStatusFrom` are exported.
+  The error carries the run id and the numeric status ONLY: the response body
+  that produced the status is read for the number and dropped, because an
+  uncontrolled provider body must never cross an error boundary.
+## [0.6.4] - 2026-09-15
+
+### Added
+
+- `docs/contracts/cost-anomaly.md`: an enforceable rule for what happens when a
+  model suddenly starts costing more than it did. The failure it names is a step
+  change in the unit price actually charged -- a provider repricing, a preset
+  rerouting to a costlier backend, a cache that stopped being hit -- observed
+  only after an unattended session has already paid it many times. Per-stage
+  `maxCostUsd` does not catch it: every run stays under its own ceiling while
+  every run costs several times yesterday's rate.
+
+  Detection is on provider-reported cost per token for one `(provider, model)`
+  scope, against a durable baseline of that same scope, confirmed by more than
+  one settled observation, because providers report incomplete usage and a
+  single anomalous reading is an artifact until it repeats. A first observation
+  establishes a baseline and can never itself be a spike; too thin a baseline
+  reports insufficient evidence rather than a verdict.
+
+  On a confirmed spike new runs in the affected scope are REFUSED with a typed
+  error naming the scope, the baseline, the observed rate, the ratio and the
+  release action; work already in flight is not killed, since the money for the
+  running stage is already committed and aborting it saves nothing. Release is
+  an explicit, durable, per-scope operator act that re-baselines the scope, so a
+  permanent reprice is accepted once rather than re-alarming forever. Enabled by
+  default and configurable throughout. Implementation is tracked in
+  `docs/BACKLOG.md`; no behavior ships in this release.
 ## [0.6.3] - 2026-09-15
 
 ### Fixed
