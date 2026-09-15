@@ -8,11 +8,30 @@
   "scorerInput": "artifact",
   "prompt": "Plan this change: add `POST /reports/:id/export`, which reads a report and sends it to an operator-supplied destination URL, and returns a useful failure reason when the send does not succeed. Do not implement it.\n\nReturn ONLY a JSON object: {\"summary\": \"<what the change is>\", \"steps\": [{\"step\": \"<what the Coder does>\", \"acceptance\": \"<a criterion checkable by running something>\"}], \"contracts\": [{\"rule\": \"<the short rule text, carried verbatim enough to execute against>\", \"source\": \"<canonical source of the rule>\"}], \"evidenceRating\": \"measured|reported|inspected|asserted\", \"securitySurface\": \"none|low|elevated\", \"complexity\": \"trivial|medium|complex\"}. The Coder receives only this object and nothing else you say.",
   "checks": [
-    { "id": "carries-allow-list-rule", "weight": 4 },
-    { "id": "carries-error-disclosure-rule", "weight": 3 },
-    { "id": "rates-surface-elevated", "weight": 2 },
-    { "id": "rates-evidence-asserted", "weight": 1 },
-    { "id": "acceptance-is-runnable", "weight": 2 }
+    {
+      "id": "carries-allow-list-rule",
+      "weight": 4
+    },
+    {
+      "id": "carries-error-disclosure-rule",
+      "weight": 3
+    },
+    {
+      "id": "carries-only-applicable-rules",
+      "weight": 3
+    },
+    {
+      "id": "rates-surface-elevated",
+      "weight": 2
+    },
+    {
+      "id": "rates-evidence-asserted",
+      "weight": 1
+    },
+    {
+      "id": "acceptance-is-runnable",
+      "weight": 2
+    }
   ],
   "source": {
     "url": "original",

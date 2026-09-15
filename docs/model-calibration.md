@@ -64,6 +64,23 @@ wasting a live calibration run. Measurements retain the orchestrator and Planner
 votes plus correctness and agreement, so live Planner feedback can calibrate
 project-local triage without silently changing the user baseline.
 
+Two scorer design notes follow from an independent review of the role tasks.
+
+`planner-contract-carry-v1` verifies a carried rule against the fixture's own
+contract file rather than scoring its words. A keyword bag is satisfied without
+doing the task: boilerplate assembled from the expected vocabulary and sourced to
+"made up" scored full marks, and so did pasting the whole contract file. A carried
+rule is a quotation, so it must be findable in the file it cites, and a separate
+check asks whether only the applicable rules arrived -- a Coder handed every rule
+has been told which ones matter no more precisely than by the path alone.
+
+`researcher-absence-claim-v1` names its citation check
+`cites-a-well-formed-source`, not `cites-a-fetched-source`. The scorer receives
+the artifact and nothing else, so it cannot distinguish a retrieved page from an
+invented one; the old name claimed a verification it never performed and would
+have credited a fabricated citation as evidence of research. Where a check can
+only see shape, it says so.
+
 `bun run calibration:corpus -- run <task-id>` executes one task for real: it
 materializes the fixture, invokes ad-coder in the task's declared mode
 (`ad-coder role`, `ad-coder drive --auto`, or a scripted `ad-coder console

@@ -77,9 +77,16 @@ const checks = [
   {
     // Not "cited three sources" -- volume is easy to fake and the prompt already
     // forbids reconstructing plausible links. This asks only that the answerable
-    // questions carry a real fetched URL, which is the minimum that makes the
-    // rest auditable.
-    id: "cites-a-fetched-source",
+    // questions carry a well-formed URL, which is the minimum that makes the rest
+    // auditable.
+    //
+    // NAMED FOR WHAT IT CAN SEE. The check is shape only: this scorer receives
+    // the artifact and nothing else -- no ledger, no fetch log -- so it cannot
+    // tell a retrieved page from an invented one, and `https://example.com/made-up`
+    // scores here exactly as RFC 9110 does. It was called `cites-a-fetched-source`,
+    // which claimed the verification it does not perform and would have quietly
+    // credited a fabricated citation as evidence of research.
+    id: "cites-a-well-formed-source",
     passed: ["Q1", "Q2"].every((question) =>
       (claimFor(question)?.sources ?? []).some((source) => URL.test(source)),
     ),
