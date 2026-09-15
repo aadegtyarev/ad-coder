@@ -33,6 +33,44 @@ All notable changes to ad-coder are recorded here. The format follows
   permanent reprice is accepted once rather than re-alarming forever. Enabled by
   default and configurable throughout. Implementation is tracked in
   `docs/BACKLOG.md`; no behavior ships in this release.
+## [0.6.3] - 2026-09-15
+
+### Fixed
+
+- Two mandatory tool schemas no longer make a provider reject the whole
+  request. `submit_plan` declared `surfaceAnalysis` as `Type.Any()`, which
+  serialises to a bare `{}`, and `submit_follow_up` was a `Type.Union` of its
+  four kinds, which serialises to a top-level `anyOf` rather than an object.
+  Providers that validate tool schemas refuse both: DeepSeek answers
+  400 "one of `type`, `anyOf`, `$ref` field is required" for the first and
+  "schema must be a JSON Schema of `type: \"object\"`" for the second. Because
+  `submit_follow_up` rides along on every workflow turn, a run against such a
+  provider paused at the plan stage on an empty turn, having spent zero tokens
+  and reporting only "inspect the provider failure" -- pointing the operator at
+  the provider for a defect in this repository's own schemas. `surfaceAnalysis`
+  is now spelled out structurally and the follow-up schema is one object with
+  the per-kind fields optional. Neither change loosens a gate: the enum leaves
+  stay plain strings exactly as `complexity` and `securitySurface` already did,
+  and `parsePlan` and `validateFollowUpCandidate` remain the authoritative
+  validators -- an unknown kind, or one kind carrying another kind's field, is
+  still refused.
+- An incomplete `submit_plan` or `submit_verdict` is now named instead of being
+  reported as a submission that never happened. The harness validates tool
+  arguments against the declared schema *before* `execute` runs, and a nested
+  field that is not optional is listed in that schema's `required`. So a
+  submission missing one leaf -- a coverage entry without `contractIds`, an
+  issue without `what` -- was refused by the harness before the parser saw it:
+  nothing was captured, the retry prompt told the role it had not called the
+  tool when it had, and the run ended as `missing_plan` / `missing_verdict`.
+  That is an invalid input reported as an absent one, which
+  `docs/contracts/errors.md` forbids, and on the reviewer's side it also
+  suppressed `parseVerdict`'s corrective message naming the exact contract IDs
+  to resubmit -- the role's only route to a correct second attempt. Every
+  nested field in both schemas is now optional, so each node still declares the
+  `type` a validating provider demands while `parsePlan` and `parseVerdict`
+  remain the single content gate. `submit_verdict` carried this defect before
+  the schema work in this release; `submit_plan` acquired it with the fix
+  above.
 
 ## [0.6.1] - 2026-09-15
 
