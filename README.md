@@ -448,6 +448,24 @@ Inspect `<target-dir>/.ad-coder/` plus `control status`, `control report`,
 and `control list` for durable-run diagnostics. Never publish credential files
 or environment-variable values.
 
+When a run refuses to start with a cost-anomaly block, the model's price per
+token rose sharply against its own recent baseline and new runs on that
+`provider/model` scope are held until you accept the new price:
+
+```sh
+ad-coder cost status --target-dir <dir>
+ad-coder cost release <provider>/<model> --target-dir <dir>
+```
+
+`cost status` reports every blocked scope with the observed and baseline rates
+and the ratio between them, so you can tell a provider price change from a run
+that simply used more expensive settings. Block state lives under the project's
+own `.ad-coder/`, so `--target-dir` is required and must name the project whose
+run was refused. The block is per scope: other models keep running, and `cost
+release` names a scope exactly as the refusal spelled it. Releasing a scope that
+carries no block is reported as an error rather than silently succeeding, so a
+mistyped scope cannot read as released while the real block stays up.
+
 ## Development checks
 
 ```sh
