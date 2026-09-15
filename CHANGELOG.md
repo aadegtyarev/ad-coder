@@ -6,6 +6,40 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.10.4] - 2026-09-15
+
+### Added
+- `/start <task>` starts a background pipeline run straight from the console.
+  The rest of the line is taken verbatim as the task, the run is detached so it
+  outlives the turn that asked for it, and no model turn is consumed -- the
+  operator keeps the dialogue while the run proceeds. The command is declared in
+  the console registry, so `/help` renders it and the "enable it with
+  `--workflows pipeline`" guidance applies without a second declaration.
+
+### Fixed
+- The console now builds a background host launcher and a stable owner id of its
+  own. Without them `start_pipeline` and `/start` could admit a run but never
+  start one: only `ad-coder background start` wired a launcher, so every
+  console-initiated run failed `launch_failed`.
+- The default background owner id no longer embeds the target directory. The
+  manager requires a bounded opaque token, which a path breaks on its first
+  slash, so every `ad-coder background` command run without `--owner-id` failed
+  `invalid_request` before it could reach a record. The directory is hashed
+  instead, which also keeps a filesystem path out of durable state, and one
+  user + one target still resolve to the same scope across processes.
+- Console controls now render in the order they were typed. `/start` is the
+  first control that awaits a host launcher, and an unserialized control lane
+  rendered a later `/list` before the `/start` whose run it was meant to list.
+- `launch_failed` and `resource_limit` from the background run manager now
+  surface as typed, retryable console failures naming the next action, instead
+  of collapsing into an opaque `invalid_request`.
+
+### Changed
+- `background` and `console` share one declaration of the background run
+  options (`--owner-id`, `--background-max-active`, `--same-target-policy`)
+  rather than repeating them, which is exactly the drift the single command
+  registry exists to prevent.
+
 ## [0.10.3] - 2026-09-15
 
 ### Fixed

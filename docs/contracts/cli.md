@@ -24,5 +24,10 @@ Rules for ad-coder's command-line front. A violation is always blocking.
   text, and timeout is a visible non-success rather than an empty completion.
 - 2026-09-14: In a TTY, `Escape` interrupts only the active orchestrator turn;
   the conversation session and detached background runs remain alive.
-  Console-local background list/events/status/result/cancel commands execute
-  through the headless manager and never dispatch a model turn.
+  Console-local background start/list/events/status/result/cancel commands
+  execute through the headless manager and never dispatch a model turn.
+- 2026-09-15: A command that starts background work is available wherever the
+  session can host it: a console that admits background runs also carries the
+  launcher and owner scope needed to start one, and the background run options
+  are declared once for every command that builds a manager. Console controls
+  render in the order they were typed even when one of them awaits a launch.

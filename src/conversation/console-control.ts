@@ -10,6 +10,8 @@ export type ConsoleControlCode =
   | "not_found"
   | "not_terminal"
   | "invalid_request"
+  | "launch_failed"
+  | "resource_limit"
   | "interrupted";
 
 /**
@@ -65,6 +67,7 @@ export type ConsoleControlResult =
   | { type: "console_help"; commands: readonly ConsoleCommandHelpEntry[] }
   | { type: "console_control"; command: "interrupt"; status: "interrupted" | "idle" }
   | { type: "background_list"; runs: ReturnType<BackgroundRunManager["list"]> }
+  | { type: "background_start"; run: { runId: string; lifecycle: "requested" } }
   | {
       type: "background_events";
       runId: string;
@@ -115,6 +118,21 @@ export const CONSOLE_COMMANDS: readonly ConsoleCommandDefinition[] = [
     description: "List background pipeline runs in this owner scope.",
     args: [],
     example: "/list",
+    requires: "background_runs",
+  },
+  {
+    name: "/start",
+    description: "Start a background pipeline run on a task, without dispatching a model turn.",
+    args: [
+      {
+        name: "<task>",
+        required: true,
+        // The whole remainder is one argument: a task is a sentence, not a token.
+        description: "Task for the run; the rest of the line is taken verbatim.",
+        label: "a task description",
+      },
+    ],
+    example: "/start add a regression test for the retry path",
     requires: "background_runs",
   },
   {
@@ -289,9 +307,13 @@ export function executeConsoleControl(
   },
 ): Promise<ConsoleControlResult> | undefined {
   if (!input.startsWith("/")) return undefined;
-  const parts = input.trim().split(/\s+/);
+  const trimmed = input.trim();
+  const parts = trimmed.split(/\s+/);
   const name = parts[0] as string;
-  const args = parts.slice(1);
+  // `/start` takes a task, which is a sentence rather than a token, so its
+  // whole remainder is ONE argument; every other command is whitespace-split.
+  const rest = trimmed.slice(name.length).trim();
+  const args = name === "/start" ? (rest === "" ? [] : [rest]) : parts.slice(1);
   const maxPageSize = controls.maxPageSize ?? DEFAULT_CONSOLE_CONTROL_PAGE_SIZE;
   if (!Number.isSafeInteger(maxPageSize) || maxPageSize <= 0)
     throw new RangeError("maxPageSize must be a positive safe integer");
@@ -331,6 +353,16 @@ export function executeConsoleControl(
           command: "interrupt",
           status: active ? "interrupted" : "idle",
         }));
+      case "/start": {
+        requireArgs();
+        const manager = managerFor(command, controls.backgroundRuns);
+        // Detached, not in-process: a console run must outlive the turn that
+        // asked for it, and the operator keeps the dialogue while it runs.
+        return manager.startDetached(args[0] as string).then(
+          (run) => ({ type: "background_start", run }) as const,
+          (error: unknown) => managerFailure(command, error),
+        );
+      }
       case "/list": {
         requireArgs();
         return Promise.resolve({
@@ -382,40 +414,72 @@ export function executeConsoleControl(
         });
     }
   } catch (error) {
-    if (error instanceof ConsoleControlError) throw error;
-    // Manager errors intentionally collapse to safe public codes.
-    const message = error instanceof Error ? error.message : "";
-    if (message === "not_found")
-      fail(
-        {
-          code: "not_found",
-          command: command.name,
-          message: `${command.name} found no background run with that identifier`,
-          action: "use /list to see the background runs in this owner scope",
-          retryable: false,
-        },
-        error,
-      );
-    if (message === "not_terminal")
-      fail(
-        {
-          code: "not_terminal",
-          command: command.name,
-          message: `${command.name} needs a run that has already terminated`,
-          action: "use /status to watch the run, then retry once it reports a terminal lifecycle",
-          retryable: true,
-        },
-        error,
-      );
+    managerFailure(command, error);
+  }
+}
+
+/**
+ * Collapse a manager error to a safe public console failure. Shared by the
+ * synchronous dispatch and by `/start`, whose launch failure only surfaces once
+ * the host's detached launcher has been awaited.
+ */
+function managerFailure(command: ConsoleCommandDefinition, error: unknown): never {
+  if (error instanceof ConsoleControlError) throw error;
+  // Manager errors intentionally collapse to safe public codes.
+  const message = error instanceof Error ? error.message : "";
+  if (message === "not_found")
     fail(
       {
-        code: "invalid_request",
+        code: "not_found",
         command: command.name,
-        message: `${command.name} was rejected by the background run manager`,
-        action: "use /list to confirm the run identifier and owner scope",
+        message: `${command.name} found no background run with that identifier`,
+        action: "use /list to see the background runs in this owner scope",
         retryable: false,
       },
       error,
     );
-  }
+  if (message === "not_terminal")
+    fail(
+      {
+        code: "not_terminal",
+        command: command.name,
+        message: `${command.name} needs a run that has already terminated`,
+        action: "use /status to watch the run, then retry once it reports a terminal lifecycle",
+        retryable: true,
+      },
+      error,
+    );
+  if (message === "launch_failed")
+    fail(
+      {
+        code: "launch_failed",
+        command: command.name,
+        message: `${command.name} could not launch a detached pipeline worker`,
+        // The record is already failed, so a retry is a fresh run, not a resume.
+        action: "use /list to see the failed record, then retry the task",
+        retryable: true,
+      },
+      error,
+    );
+  if (message === "resource_limit")
+    fail(
+      {
+        code: "resource_limit",
+        command: command.name,
+        message: `${command.name} was refused: a background run limit is already reached`,
+        action: "use /list to see active runs, then wait or /cancel one before retrying",
+        retryable: true,
+      },
+      error,
+    );
+  fail(
+    {
+      code: "invalid_request",
+      command: command.name,
+      message: `${command.name} was rejected by the background run manager`,
+      action: "use /list to confirm the run identifier and owner scope",
+      retryable: false,
+    },
+    error,
+  );
 }
