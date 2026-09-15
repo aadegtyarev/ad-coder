@@ -173,3 +173,45 @@ test("a response with no body passes through untouched", async () => {
   expect(response.status).toBe(204);
   expect(capture.chargedUsd).toBeUndefined();
 });
+
+test("a body too large to scan is released, not left buffering behind the caller", async () => {
+  // A body well past the scan ceiling, fed in chunks so the source is still
+  // producing when the scan gives up. `pulled` counts what the source was
+  // asked for: if the abandoned branch kept buffering, it would be asked for
+  // every remaining chunk even though nobody reads them.
+  const CHUNKS = 400;
+  const CHUNK = new Uint8Array(16_384);
+  let pulled = 0;
+  let cancelled = false;
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (pulled >= CHUNKS) {
+        controller.close();
+        return;
+      }
+      pulled += 1;
+      controller.enqueue(CHUNK);
+    },
+    cancel() {
+      cancelled = true;
+    },
+  });
+
+  const capture: ChargeCapture = {};
+  const instrumented = instrumentChargedCost(
+    { fetch: stubFetch(async () => new Response(stream)) },
+    capture,
+  );
+  const response = await (instrumented.fetch as typeof fetch)("https://example.test");
+
+  // The caller abandons the response too -- a timed-out or errored generation.
+  // Nothing reads either branch from here on.
+  await response.body?.cancel();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  // Both branches are gone, so the shared source is released rather than
+  // drained into a buffer nobody will read. Without the scan branch being
+  // CANCELLED, it stays a live reader and the source keeps being pulled.
+  expect(cancelled).toBe(true);
+  expect(pulled).toBeLessThan(CHUNKS);
+});

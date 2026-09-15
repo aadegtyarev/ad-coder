@@ -59,6 +59,14 @@ agreed to pay.
   never lowers that ceiling afterwards -- a later cheaper response does not
   quietly re-arm the detector at the lower number. A release is per-scope;
   releasing one model never releases another.
+- **Saved state that this release cannot read is discarded, never half-read.**
+  Durability must not become a fault on upgrade: a state file whose shape
+  predates a change in what the detector measures is dropped exactly like a
+  corrupt one. Discarding costs only recent history, because the reference is
+  the declared price rather than something learned from traffic, so there is
+  nothing to rebuild. Reading such a file as though it were current is the
+  worse outcome -- a stale block would fault at the Models boundary every
+  generation passes through, and a fault is not a refusal.
 - **Nothing but an operator release moves the reference.** Observations never
   raise it. A reference that drifted toward what is being billed would absorb a
   reprice arriving in small steps, one acceptable-looking step at a time, which

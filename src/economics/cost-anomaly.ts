@@ -123,7 +123,20 @@ export interface CostAnomalyBlock {
 }
 
 export interface CostAnomalyStateSnapshot {
-  version: 1;
+  /**
+   * 2 since the reference became the declared price (0.10.0).
+   *
+   * Version 1 held a LEARNED baseline: scopes carried `baseline` rates and
+   * blocks carried `baselineRateUsdPerToken`. Both are gone, and the numbers
+   * themselves are meaningless now -- they were dollars-per-token measured
+   * against other dollars-per-token, which is the comparison this release
+   * exists to abolish. Reading such a file as if it were current is worse
+   * than discarding it: a v1 scope has no `observed` array and a v1 block no
+   * `chargedUsd`, so the detector would fault on the first observation and,
+   * for an already-blocked scope, at the Models boundary every generation
+   * passes through. Bumping the tag makes the existing guard discard them.
+   */
+  version: 2;
   scopes: Record<string, CostAnomalyScopeState>;
 }
 
@@ -189,10 +202,13 @@ export class FileCostAnomalyStore implements CostAnomalyStore {
     }
     try {
       const parsed = JSON.parse(raw) as CostAnomalyStateSnapshot;
-      // A file from a future or hand-edited shape is discarded rather than
-      // half-trusted: a `scopes` that is not an object would otherwise reach
-      // the detector as entries it cannot read.
-      if (parsed?.version !== 1) return undefined;
+      // A file from an older, future, or hand-edited shape is discarded
+      // rather than half-trusted: a `scopes` that is not an object -- or a
+      // version-1 scope whose learned baseline this release no longer
+      // understands -- would otherwise reach the detector as entries it
+      // cannot read. Discarding costs only recent history; the reference is
+      // the declared price and is not learned, so nothing needs rebuilding.
+      if (parsed?.version !== 2) return undefined;
       if (typeof parsed.scopes !== "object" || parsed.scopes === null) return undefined;
       return parsed;
     } catch {
@@ -477,7 +493,7 @@ export class CostAnomalyDetector {
   }
 
   snapshot(): CostAnomalyStateSnapshot {
-    return { version: 1, scopes: Object.fromEntries(structuredClone([...this.scopes])) };
+    return { version: 2, scopes: Object.fromEntries(structuredClone([...this.scopes])) };
   }
 
   /**

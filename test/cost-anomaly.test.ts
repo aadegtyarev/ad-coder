@@ -233,15 +233,75 @@ test("an unreadable or corrupt state file costs history, never a false all-clear
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, "{not json");
     expect(new FileCostAnomalyStore(dir).load()).toBeUndefined();
-    fs.writeFileSync(file, JSON.stringify({ version: 2, scopes: {} }));
+    fs.writeFileSync(file, JSON.stringify({ version: 3, scopes: {} }));
     expect(new FileCostAnomalyStore(dir).load()).toBeUndefined();
-    fs.writeFileSync(file, JSON.stringify({ version: 1, scopes: null }));
+    fs.writeFileSync(file, JSON.stringify({ version: 2, scopes: null }));
     expect(new FileCostAnomalyStore(dir).load()).toBeUndefined();
 
     // A detector over the bad file starts clean rather than throwing.
     expect(() =>
       new CostAnomalyDetector({}, new FileCostAnomalyStore(dir)).admit("openrouter", "x"),
     ).not.toThrow();
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a state file from the learned-baseline release is discarded, never half-read", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cost-anomaly-"));
+  try {
+    // Byte-for-byte the shape 0.9.0 wrote: a learned `baseline` of
+    // dollars-per-token rates, and a block describing one rate against
+    // another. Neither field exists in this release.
+    const file = path.join(dir, COST_ANOMALY_STATE_PATH);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        version: 1,
+        scopes: {
+          "openrouter/cheap": {
+            provider: "openrouter",
+            model: "cheap",
+            baseline: [1.5e-7, 1.6e-7],
+            pending: [],
+          },
+          "openrouter/blocked": {
+            provider: "openrouter",
+            model: "blocked",
+            baseline: [5.1e-8],
+            pending: [],
+            block: {
+              at: 1789467427510,
+              baselineRateUsdPerToken: 5.1e-8,
+              observedRateUsdPerToken: 1.8e-7,
+              ratio: 3.55,
+              confirmingObservations: 2,
+            },
+          },
+        },
+      }),
+    );
+
+    // An operator upgrading mid-project must not meet a fault where the old
+    // shape used to be. Observing a scope whose `observed` array does not
+    // exist, and admitting one whose block has no `chargedUsd`, are the two
+    // paths that reach the old fields -- the second at the Models boundary
+    // every generation passes through, where a fault is not even a refusal.
+    const detector = new CostAnomalyDetector({}, new FileCostAnomalyStore(dir));
+    expect(() =>
+      detector.observe({
+        provider: "openrouter",
+        model: "cheap",
+        chargedUsd: 0.001,
+        expectedUsd: 0.001,
+      }),
+    ).not.toThrow();
+    expect(() => detector.admit("openrouter", "blocked")).not.toThrow();
+
+    // The stale block is gone rather than silently re-applied: it was decided
+    // by a comparison this release no longer makes.
+    expect(detector.blocked()).toEqual([]);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

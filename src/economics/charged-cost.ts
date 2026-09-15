@@ -59,7 +59,7 @@ export function chargedUsdFromUsage(usage: unknown): number | undefined {
   return charged;
 }
 
-/** Guard against retaining a large non-SSE body while looking for its usage block. */
+/** Stop scanning a body this large; the usage block of a real response is nowhere near it. */
 const MAX_SCANNED_BODY_BYTES = 1_000_000;
 
 /**
@@ -109,6 +109,13 @@ async function scanForCharge(stream: ReadableStream<Uint8Array>, capture: Charge
   } catch {
     // Unreadable body: no measurement, and nothing else disturbed.
   } finally {
+    // CANCEL, never merely unlock. A tee branch that is abandoned while the
+    // source still has bytes to give keeps buffering every one of them, so
+    // giving up on a huge body by releasing the lock would retain exactly the
+    // body the size guard exists to avoid retaining. Cancelling one branch
+    // does not disturb the other: the shared source is only cancelled once
+    // BOTH branches are, so the caller still receives every byte.
+    await reader.cancel().catch(() => undefined);
     reader.releaseLock();
   }
 }

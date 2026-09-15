@@ -33,6 +33,23 @@ All notable changes to ad-coder are recorded here. The format follows
   1.0000 and 1.0171 times its configured price -- correct billing, blocked. The
   ratio of charged to expected has composition in both halves, so it cancels.
 
+- A response too large to scan no longer keeps its own body alive. The billed
+  amount is read off a teed branch of the response, and a teed branch that is
+  abandoned while the source still has bytes keeps buffering every one of them,
+  so giving up on an oversized body by releasing the reader retained exactly
+  the body the size guard existed to avoid retaining. The branch is now
+  cancelled; the caller still receives every byte, because a teed source is
+  only released once both branches let go.
+- Upgrading past a 0.9.0 project no longer faults on its own saved state. The
+  persisted scope shape changed with the reference, but the schema tag stayed
+  1, so a file written by the previous release was read as though it were
+  current: the first observation faulted on a missing field, and a scope that
+  release had already blocked faulted at the Models boundary every generation
+  passes through -- not a refusal, which is typed and actionable, but a crash.
+  The tag is now 2 and a version-1 file is discarded like any other shape this
+  release cannot read. Nothing needs rebuilding: the reference is declared, not
+  learned, so the only loss is recent history.
+
 ### Changed
 - The reference is the DECLARED price, not a learned baseline, and no traffic
   can move it. A learned baseline cannot tell a discount ending from a price
