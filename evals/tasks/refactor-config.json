@@ -24,5 +24,10 @@
       "weight": 1
     }
   ],
-  "scorerInput": "target"
+  "scorerInput": "target",
+  "source": {
+    "url": "original",
+    "license": "n/a",
+    "note": "Duplicated env parsing behind two public functions. Shape invented here; the behavior-preservation framing comes from this project's decomposition contract."
+  }
 }

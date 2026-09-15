@@ -1,0 +1,8 @@
+{
+  "summary": "add export route",
+  "steps": [{ "step": "add route", "acceptance": "SSRF is prevented" }],
+  "contracts": [{ "rule": "see docs/contracts/errors.md", "source": "docs/contracts/errors.md" }],
+  "evidenceRating": "inspected",
+  "securitySurface": "low",
+  "complexity": "medium"
+}

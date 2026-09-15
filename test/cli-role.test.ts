@@ -9,7 +9,7 @@ import {
   fauxProvider,
   fauxToolCall,
 } from "@earendil-works/pi-ai";
-import { runRoleStandalone } from "../src/cli";
+import { runRoleStandalone, standaloneSystemPrompt } from "../src/cli";
 import { MemoryLedgerSink } from "../src/ledger/ledger";
 import { StageLimitError } from "../src/orchestration/stage-limits";
 import { ProjectStore } from "../src/project-store/project-store";
@@ -350,4 +350,20 @@ test("standalone roles persist usage and emit semantic tool activity by default"
   expect(result.observations.input).toBeGreaterThanOrEqual(0);
   expect(activity).toContain("Read:requested");
   expect(activity).toContain("Read:completed");
+});
+
+test("standalone prompt overrides a role rule that reserves the result for a submit tool", () => {
+  // The Planner ends its prompt this way, and it is not decoration: without an
+  // override that names the rule, a standalone Planner is told both to withhold
+  // the plan from assistant text and to return it there. It then obeys whichever
+  // instruction it weighs higher, which is not a thing a bench can score.
+  const planner =
+    "Do not emit the plan or a JSON copy in assistant text: `submit_plan` is the sole canonical handoff.";
+  const amended = standaloneSystemPrompt(planner);
+  expect(amended.startsWith(`${planner}\n\n`)).toBe(true);
+  expect(amended).toContain("does not apply to this run");
+  expect(amended).toContain("withhold the result from assistant text");
+  // A task that asks for a specific shape must still win, or every
+  // artifact-scored role task would be fighting this paragraph instead.
+  expect(amended).toContain("that format governs");
 });

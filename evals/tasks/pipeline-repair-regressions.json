@@ -25,5 +25,10 @@
   ],
   "fixture": "reviewer-hidden-regression",
   "scorer": "pipeline-repair-regressions.ts",
-  "scorerInput": "target"
+  "scorerInput": "target",
+  "source": {
+    "url": "original",
+    "license": "n/a",
+    "note": "Repair-to-contract over the review fixture, scored on the repaired target. Shape invented here."
+  }
 }

@@ -41,12 +41,26 @@ and a non-blocking one still does not count. When adding a scorer, budget for
 this: the check must recognise the defect a model describes, not the label it
 happened to choose.
 
-The version-one corpus manifest now contains six task shapes: trivial bounded
-normalization, medium behavior-preserving refactoring, hidden-defect review,
-medium pipeline repair, complex concurrent-state repair, and manual
-orchestrator tool use. `bun run calibration:corpus -- smoke` materializes and
-executes every target-based scorer; artifact/report scorers declare their input
-kind explicitly. Measurements retain the orchestrator and Planner complexity
+The version-one corpus manifest now contains twelve tasks, and every role the
+CLI can dispatch is represented: trivial bounded normalization in three
+languages, medium behavior-preserving refactoring, hidden-defect review, medium
+pipeline repair, complex concurrent-state repair, manual orchestrator tool use,
+plan-carries-the-contract, threat-modelling a plan, contract-conformance
+auditing, and a research question whose third part asks about something that
+does not exist. The four role tasks each plant a tempting wrong answer -- an id
+that is validated before it reaches the filesystem, an authorization door that
+is genuinely closed, an HTTP header nobody ever standardized -- so a model that
+pattern-matches scores strictly worse than one that reads.
+
+`bun run calibration:corpus -- smoke` exercises every scorer in the manifest.
+Target-based scorers run against a materialized fixture. Artifact- and
+report-based scorers have no fixture to read, so each such task ships two
+checked-in sample answers under `evals/samples/`: `<task-id>.pass.json`, which
+must score every check, and `<task-id>.fail.json`, which must miss at least one.
+The failing sample is the half that matters -- a scorer stuck at `true` reports
+every model as perfect, and without a negative case nothing notices. `bun test`
+runs this smoke, so a scorer that stops discriminating fails CI rather than
+wasting a live calibration run. Measurements retain the orchestrator and Planner complexity
 votes plus correctness and agreement, so live Planner feedback can calibrate
 project-local triage without silently changing the user baseline.
 
@@ -70,6 +84,40 @@ took the turns. Such a task declares `measuredRoles` — the ledger roles whose
 model the measurement names — and the corpus runner refuses to load an
 `automatic-pipeline` task without it. A single-role task omits the field and
 falls back to its `role`, which its rows do carry.
+
+## Where a task's shape comes from
+
+A bench task is only as honest as the problem it poses. Inventing eight problems
+from taste produces a corpus that measures how well a model matches the taste of
+whoever wrote it, and it drifts the moment a new task is added by someone else.
+So every task records where its SHAPE came from, in a `source` field carrying a
+URL and the source's licence.
+
+`source` is provenance, not attribution of code. The corpus adapts the FORM of a
+published benchmark problem — the defect class, the acceptance question, the way
+the failure is made observable — and writes its own fixture and prompt against
+this project's languages and contracts. It does not copy content. That
+distinction is what makes the field safe to require: a task whose shape follows a
+GPL-2.0 benchmark carries the link and the licence name, and still ships no line
+of that benchmark's source.
+
+Surveyed as shape sources, with the licence that governs reuse:
+
+| Source | Licence | What it is good for |
+| --- | --- | --- |
+| [QuixBugs](https://github.com/jkoppel/QuixBugs) | MIT | Single-line defects with a known correct fix — trivial Coder cells. |
+| [NIST SARD / Juliet 1.3](https://samate.nist.gov/SARD/) | Public domain (US Gov) | Seeded vulnerabilities by CWE — Security role, per-class. |
+| [CWE](https://cwe.mitre.org/) | MITRE terms of use | The vocabulary a Security finding must name, not a task source. |
+| [SWE-bench](https://github.com/princeton-nlp/SWE-bench) | MIT (harness) | Issue-to-patch shape for pipeline tasks; instances come from their own repos' licences. |
+| [openai/simple-evals](https://github.com/openai/simple-evals) | MIT | Factual-lookup grading shape — Researcher confidence grading. |
+| [OWASP BenchmarkJava](https://github.com/OWASP-Benchmark/BenchmarkJava) | **GPL-2.0** | True/false-positive discrimination design. **Form only — no code, no test text.** |
+| [CodeReviewer](https://github.com/microsoft/CodeBERT) | MIT (repo); dataset under separate Zenodo terms | Review-comment framing; the dataset itself is not vendored. |
+
+The decision that follows from the table: **adapt forms, never copy content.** A
+GPL-2.0 source can inform how a discrimination task is posed without any of its
+text entering this repository, and that is the only use made of it. Where a
+task's shape is original to this project, `source` says so explicitly rather than
+being omitted — an absent field would be indistinguishable from an oversight.
 
 Run each corpus task at least once as its declared mode: a standalone `run_role`,
 manual `run_step`/`choose_transition`, or complete `run_pipeline`. Repeat samples

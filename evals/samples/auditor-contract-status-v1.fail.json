@@ -1,0 +1,6 @@
+[
+  { "surface": "src/queue.ts:parseJob", "status": "violates", "contract": "x", "evidence": "y" },
+  { "surface": "src/queue.ts:enqueue", "status": "violates", "contract": "x", "evidence": "y" },
+  { "surface": "src/queue.ts:readJob", "status": "violates", "contract": "x", "evidence": "y" },
+  { "surface": "src/metrics.ts:increment", "status": "violates", "contract": "x", "evidence": "y" }
+]

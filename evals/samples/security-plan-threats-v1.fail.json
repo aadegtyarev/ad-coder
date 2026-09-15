@@ -1,0 +1,18 @@
+[
+  {
+    "code": "PATH_TRAVERSAL_IN_REPORT_ID",
+    "severity": "high",
+    "step": 2,
+    "cwe": "CWE-22",
+    "exploit": "id with ..",
+    "mitigation": "validate"
+  },
+  {
+    "code": "MISSING_AUTH_ON_EXPORT",
+    "severity": "high",
+    "step": 1,
+    "cwe": "CWE-306",
+    "exploit": "anyone calls export",
+    "mitigation": "add auth"
+  }
+]

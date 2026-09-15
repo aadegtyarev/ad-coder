@@ -1,0 +1,8 @@
+[
+  { "code": "PATH_TRAVERSAL_DECODED_ID", "blocking": true, "evidence": "src/result-store.ts:5" },
+  {
+    "code": "METADATA_WRITE_ORDER_REVERSED",
+    "blocking": true,
+    "evidence": "src/result-store.ts:10"
+  }
+]

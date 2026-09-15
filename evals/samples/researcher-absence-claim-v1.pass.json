@@ -1,0 +1,24 @@
+{
+  "claims": [
+    {
+      "question": "Q1",
+      "answer": "422 Unprocessable Content",
+      "confidence": "high",
+      "sources": ["https://www.rfc-editor.org/rfc/rfc9110"]
+    },
+    {
+      "question": "Q2",
+      "answer": "Retry-After may be sent",
+      "confidence": "medium",
+      "sources": ["https://www.rfc-editor.org/rfc/rfc9110"]
+    },
+    {
+      "question": "Q3",
+      "answer": "No such header is defined in RFC 9110; it is not registered.",
+      "confidence": "high",
+      "sources": ["https://www.iana.org/assignments/http-fields/"]
+    }
+  ],
+  "gaps": [],
+  "observedOn": "2026-09-16"
+}

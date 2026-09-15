@@ -33,5 +33,10 @@
       "weight": 2
     }
   ],
-  "scorerInput": "target"
+  "scorerInput": "target",
+  "source": {
+    "url": "original",
+    "license": "n/a",
+    "note": "Linearizability of a capacity reservation under concurrency. Shape invented here."
+  }
 }

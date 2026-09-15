@@ -1,0 +1,1 @@
+[{ "code": "ID_SLASH_ALLOWED", "blocking": true, "evidence": "src/result-store.ts:3" }]
