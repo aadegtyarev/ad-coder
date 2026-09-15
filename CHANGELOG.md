@@ -23,6 +23,42 @@ All notable changes to ad-coder are recorded here. The format follows
   durable evidence record in `docs/calibration-evidence.jsonl` rather than
   figures that lived only in a scratch ledger. Documentation only; no
   behavior change.
+## [0.7.0] - 2026-09-15
+
+### Fixed
+
+- A provider that REFUSED a request is no longer reported as a missing
+  credential. A settled failure with empty assistant text and zero usage has two
+  very different causes and the transcript cannot tell them apart, so the runner
+  called every one of them `empty_turn` and told the operator to "verify
+  authentication and retry". A provider 400 over a malformed tool schema --
+  rejected before the model ever ran, at zero cost -- therefore pointed at the
+  one party that was not at fault, and the durable checkpoint recorded only
+  "inspect the provider failure", naming neither the status nor the request.
+  `runRole` and the conversation loop now read the settled failure's HTTP status
+  and raise the new `ProviderRejectionError` for a client-error status,
+  `RunCoordinator` pauses with `provider_rejected` and the status in its action,
+  and the console offers the request -- model id, tool schemas, parameters --
+  instead of an authentication command. 401 and 403 stay `empty_turn`, which is
+  what those statuses actually mean; 429 is still `provider_limit`.
+- The status is read from BOTH shapes pi-ai composes, not just one. Adapters
+  that route through `formatProviderError` produce `"<status>: <body>"`, but
+  `anthropic-messages` never calls it -- it assigns the provider SDK's own
+  `APIError.message`, which is `"<status> <body>"` with a space and no colon.
+  Matching only the first shape would have left every Anthropic-native model,
+  and every OpenRouter model that overrides to `anthropic-messages`, still
+  being told to verify authentication over a request the provider had refused
+  on its merits -- the exact misattribution above, unfixed for one of the three
+  request APIs this registry resolves. The second shape is anchored at the
+  start and bounded to three digits followed by a space, so it reads a leading
+  status and not a number appearing in prose.
+
+### Added
+
+- `ProviderRejectionError` and `providerRejectionStatusFrom` are exported.
+  The error carries the run id and the numeric status ONLY: the response body
+  that produced the status is read for the number and dropped, because an
+  uncontrolled provider body must never cross an error boundary.
 ## [0.6.4] - 2026-09-15
 
 ### Added

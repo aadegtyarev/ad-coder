@@ -45,6 +45,8 @@ import {
   assertRunId,
   assertUniqueToolNames,
   EmptyTurnError,
+  ProviderRejectionError,
+  providerRejectionStatusFrom,
   resolveTargetDir,
 } from "../runner/errors";
 import type { Tool } from "../runner/tool";
@@ -396,6 +398,11 @@ export async function startConversation(config: ConversationConfig): Promise<Con
       }
       const assistantText = await extractFinalText(session, context);
       if (result.status !== "completed" && assistantText.trim() === "") {
+        // Same attribution rule as runRole: a named client-error status means
+        // the provider answered and refused, which is not an authentication
+        // failure. See ProviderRejectionError for why only the number crosses.
+        const rejection = providerRejectionStatusFrom(result.error);
+        if (rejection !== undefined) throw new ProviderRejectionError(runId, rejection);
         throw new EmptyTurnError(runId);
       }
       cumulativeDropped += ledger.droppedRecords;
