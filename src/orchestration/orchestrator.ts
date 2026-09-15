@@ -6,6 +6,8 @@ import type { ConversationSession } from "../conversation/conversation";
 import { startConversation as startConversationImpl } from "../conversation/conversation";
 import type { MemoryLedgerSink } from "../ledger/ledger";
 import { MemoryLedgerSink as MemoryLedgerSinkImpl } from "../ledger/ledger";
+import type { ToolActivityConsumer, ToolActivitySnapshot } from "../observability/tool-activity";
+import { ToolActivityChannel } from "../observability/tool-activity";
 import { ProjectOperationsError } from "../project-operations/errors";
 import { RunCoordinator } from "../project-operations/run-coordinator";
 import { resolvePrompt } from "../prompts/prompts";
@@ -950,7 +952,29 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
   const sink = new MemoryLedgerSinkImpl();
   const ownerId = config.backgroundOwnerId ?? crypto.randomUUID();
   const controller = new SessionLimitController(config.sessionLimits);
-  const buildConfig = (task: string): PipelineConfig => resolvePipelineConfig({ ...config, task });
+  // ONE activity channel for the whole orchestrated session. A conversation
+  // that is handed no channel builds a private one, so without this every
+  // delegated `run_role` worker and every pipeline stage published into a
+  // channel nobody could subscribe to: `subscribeToolActivity` on the returned
+  // session only ever saw the orchestrator's own tool calls. Owning it here
+  // makes nested work observable through that one subscription while keeping
+  // the channel's existing bounds -- `subscriberPendingCapacity` still caps
+  // each subscriber's queue and over-capacity events are counted as drops, so
+  // a busy pipeline cannot flood a consumer.
+  const ownsActivityChannel = config.activityChannel === undefined;
+  const activityChannel = config.activityChannel ?? new ToolActivityChannel(config.toolActivity);
+  // Subscribe a configured consumer ONCE, against the shared channel. Handing
+  // it to each conversation instead would attach the same consumer several
+  // times to the same channel, so every event would be rendered once per
+  // attached conversation.
+  const offConfiguredConsumer =
+    config.activityConsumer === undefined
+      ? undefined
+      : activityChannel.subscribe(config.activityConsumer);
+  const sharedConfig: OrchestratorConfig = { ...config, activityChannel };
+  delete sharedConfig.activityConsumer;
+  const buildConfig = (task: string): PipelineConfig =>
+    resolvePipelineConfig({ ...sharedConfig, task });
   const selectedSkills = resolveSkills(config.selectedSkills ?? [], {
     projectDir: config.targetDir,
   });
@@ -964,7 +988,7 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
   // conversation model + window budget; the real per-run task arrives through
   // the tools. Its independent role selection still shares the registry and
   // credential boundary with the pipeline.
-  const seed = resolveOrchestratorSeed({ ...config, task: "orchestrate" });
+  const seed = resolveOrchestratorSeed({ ...sharedConfig, task: "orchestrate" });
   const enabledModules = resolveWorkflowModules(
     config.workflowModules ?? [],
     config.enabledWorkflows ?? [],
@@ -986,7 +1010,7 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
   const delegatedRoleTool = buildRunRoleTool(async (name, task) => {
     // Resolve worker roles lazily: disabling the pipeline does not construct its
     // graph, yet every role remains independently callable by the Orchestrator.
-    const resolved = resolvePipelineConfig({ ...config, task });
+    const resolved = resolvePipelineConfig({ ...sharedConfig, task });
     const base =
       name === "planner"
         ? resolved.roles.planner
@@ -1033,8 +1057,7 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
       ...(resolved.costAnomalyDetector !== undefined && {
         costAnomalyDetector: resolved.costAnomalyDetector,
       }),
-      ...(config.activityChannel !== undefined && { activityChannel: config.activityChannel }),
-      ...(config.activityConsumer !== undefined && { activityConsumer: config.activityConsumer }),
+      activityChannel,
       ...(config.toolActivity !== undefined && { toolActivity: config.toolActivity }),
       ...(resolved.compaction !== undefined && { compaction: resolved.compaction }),
       ...(resolved.projectStoreConfig !== undefined && {
@@ -1096,20 +1119,52 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
     ...(core !== undefined && {
       subscribeBackgroundRuns: core.backgroundRuns.subscribe.bind(core.backgroundRuns),
     }),
-    ...(config.activityChannel !== undefined && { activityChannel: config.activityChannel }),
-    ...(config.activityConsumer !== undefined && { activityConsumer: config.activityConsumer }),
+    activityChannel,
     ...(config.toolActivity !== undefined && { toolActivity: config.toolActivity }),
     ...(seed.compaction !== undefined && { compaction: seed.compaction }),
   });
-  if (core === undefined) return conversation;
+  // Neither conversation closes a channel it did not create, so whoever built
+  // this one closes it -- and only if it was built here, never a caller's.
+  const closeActivityChannel = async (): Promise<void> => {
+    if (ownsActivityChannel) await activityChannel.close();
+    else offConfiguredConsumer?.();
+  };
+  // Subscribe against the SHARED channel rather than whatever the conversation
+  // seam happens to expose, so a caller sees delegated and pipeline activity
+  // even when an embedding host supplies its own conversation implementation.
+  const sharedActivity = {
+    subscribeToolActivity: (
+      consumer: ToolActivityConsumer,
+      options?: { replay?: boolean },
+    ): (() => void) => activityChannel.subscribe(consumer, options),
+    toolActivitySnapshot: (): ToolActivitySnapshot => activityChannel.snapshot(),
+  };
+  if (core === undefined)
+    return {
+      ...conversation,
+      ...sharedActivity,
+      step: conversation.step.bind(conversation),
+      close: async () => {
+        try {
+          await conversation.close();
+        } finally {
+          await closeActivityChannel();
+        }
+      },
+    };
   return {
     ...conversation,
+    ...sharedActivity,
     step: conversation.step.bind(conversation),
     close: async () => {
       try {
         await core.backgroundRuns.close();
       } finally {
-        await conversation.close();
+        try {
+          await conversation.close();
+        } finally {
+          await closeActivityChannel();
+        }
       }
     },
     subscribeBackgroundRuns: core.backgroundRuns.subscribe.bind(core.backgroundRuns),

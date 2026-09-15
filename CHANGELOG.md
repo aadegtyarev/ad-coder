@@ -6,6 +6,20 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.10.3] - 2026-09-15
+
+### Fixed
+- The orchestrated session now owns ONE tool-activity channel and shares it with
+  every delegated `run_role` worker and every pipeline stage. A conversation that
+  is handed no channel builds a private one, so nested work published where
+  nobody could subscribe: a console watching the session saw only the
+  orchestrator's own tool calls and went silent for as long as a delegated role
+  ran. `subscribeToolActivity` on the returned session now reads that shared
+  channel. Existing bounds are unchanged -- per-subscriber pending capacity
+  still caps each consumer's queue and over-capacity events are counted as
+  drops -- and a channel supplied by the caller is neither closed nor
+  double-subscribed by the session.
+
 ## [0.10.2] - 2026-09-15
 
 ### Changed
