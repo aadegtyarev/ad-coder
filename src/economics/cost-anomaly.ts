@@ -1,78 +1,124 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AssistantMessage, Models } from "@earendil-works/pi-ai";
+import { type ChargeCapture, instrumentChargedCost } from "./charged-cost";
 
 /**
- * Detection of a STEP CHANGE in what a model charges, and the block that keeps
- * an unattended session from paying it over and over.
+ * Detection of a PROVIDER CHARGING MORE THAN THE PRICE IT DECLARED, and the
+ * block that keeps an unattended session from paying it over and over.
  *
  * The failure this exists for is not a large run and not a slow drift in a
  * monthly bill: per-stage `maxCostUsd` already bounds the first, and nothing
- * mechanical can decide the second. It is a provider repricing a model, a
- * preset rerouting to a costlier backend, or a cache that stopped being hit --
- * each individual run stays comfortably under its own ceiling while every one
- * of them costs several times what the same work cost yesterday.
+ * mechanical can decide the second. It is a provider repricing a model, or a
+ * preset rerouting to a costlier backend, while every individual run stays
+ * comfortably under its own ceiling.
  *
- * So the observable here is the RATE, not the total. A run that is simply
- * bigger than the last one is not an anomaly; the same work at a higher rate
- * is. See `docs/contracts/cost-anomaly.md`.
+ * THE REFERENCE IS THE DECLARED PRICE, NOT A LEARNED ONE. Two independent
+ * reasons, either of which alone would settle it:
+ *
+ * A learned baseline cannot tell a discount ending from a price rising. A
+ * cheap backend that bills half the declared price teaches the baseline that
+ * half is normal; when that backend goes away and the next one bills the
+ * ordinary price, the baseline sees a doubling and blocks a session that is
+ * paying exactly what the operator agreed to. The detector would fire hardest
+ * on the most ordinary event there is.
+ *
+ * And a learned baseline cannot be denominated in anything stable. Dollars per
+ * token is not a property of a price: within one price list, output tokens
+ * cost multiples of input tokens and input costs multiples of a cache read, so
+ * the same price yields rates a hundredfold apart depending only on how much
+ * of the turn was cached. Every such swing reads as a spike.
+ *
+ * Both dissolve when the observable is the RATIO of what the provider actually
+ * billed to what the operator's own price list predicts for that exact token
+ * mix. Composition cancels -- it is in both halves -- so the ratio moves only
+ * when the price does. A discount is a ratio below one and never blocks; a
+ * discount ending returns it to one and never blocks; only billing ABOVE the
+ * declared price moves it up. See `docs/contracts/cost-anomaly.md`.
+ *
+ * WHAT THIS CANNOT DO. The billed amount has to come from the provider, and
+ * not every provider reports one -- OpenRouter does when asked, OpenCode Zen
+ * returns token counts and nothing else. A scope whose provider reports no
+ * charge has no evidence, so it reports exactly that and never blocks. It is
+ * not the detector's place to manufacture a verdict out of the very price list
+ * it is supposed to be checking.
  */
 
-/** Cost per token for one settled response: the observable the whole module is built on. */
-export interface CostRateObservation {
+/**
+ * One settled response: what the provider billed, and what our own price list
+ * says that response should have cost.
+ */
+export interface CostAnomalyObservation {
   provider: string;
   model: string;
-  /** Provider-reported dollars for this one response. */
-  costUsd: number;
-  /** Provider-reported tokens for this one response. */
-  totalTokens: number;
+  /** Dollars the PROVIDER reported billing for this one response. */
+  chargedUsd: number;
+  /** Dollars the operator's declared price list predicts for the same tokens. */
+  expectedUsd: number;
 }
 
 export interface CostAnomalyConfig {
   /** Default ON. Disabling is an explicit operator choice, never a side effect. */
   enabled: boolean;
-  /** Observed rate over baseline rate that counts as a spike. */
+  /** Billed-over-declared ratio that counts as overcharging. */
   thresholdRatio: number;
-  /** Below this many settled observations a scope reports insufficient evidence, never a verdict. */
-  minBaselineSamples: number;
-  /** How many consecutive over-threshold observations confirm a spike. Never 1. */
+  /** How many consecutive over-threshold observations confirm it. Never 1. */
   confirmingObservations: number;
-  /** How many recent settled observations the baseline is computed from. */
-  baselineWindow: number;
 }
 
 export const DEFAULT_COST_ANOMALY_CONFIG: Readonly<CostAnomalyConfig> = Object.freeze({
   enabled: true,
-  thresholdRatio: 2,
-  minBaselineSamples: 5,
+  // Tight on purpose, and affordable only because the reference is a declared
+  // number rather than a learned one. A correctly billed response sits at 1.00
+  // whatever its token mix, so the whole 25% is headroom for rounding and for
+  // a provider's own minor fees -- not, as under a learned baseline, for the
+  // hundredfold swing that composition alone produces.
+  thresholdRatio: 1.25,
   confirmingObservations: 2,
-  baselineWindow: 20,
 });
 
 /**
- * One scope's durable state: rates and counts, no identifiers beyond the
+ * One scope's durable state: ratios and counts, no identifiers beyond the
  * provider and model NAMES that define the scope.
  *
- * `baseline` holds only rates judged normal when they arrived. An
- * over-threshold rate is held in `pending` instead, and that separation is
- * load-bearing: folding a spike into the baseline it is measured against would
- * raise the baseline toward the spike and silence the detector exactly when it
- * is needed -- the alarm would teach itself to stop ringing.
+ * `accepted` is the ceiling this scope is currently judged against: 1 until an
+ * operator accepts a higher price, then whatever they accepted. It is the only
+ * thing here that a run can change, and only through an explicit release --
+ * observations never move it. That asymmetry is the whole guarantee: a
+ * baseline that learned from traffic would absorb a slow reprice one
+ * acceptable-looking step at a time, which is precisely the failure this
+ * detector exists to catch.
+ *
+ * `pending` holds consecutive over-threshold ratios, discarded the moment a
+ * normal one arrives, so unrelated one-off readings cannot accumulate across
+ * hours into a false confirmation.
  */
 export interface CostAnomalyScopeState {
   provider: string;
   model: string;
-  baseline: number[];
+  /** Ratios of billed to declared for recent responses, most recent last. */
+  observed: number[];
   pending: number[];
+  /** Dollars billed across the `pending` responses, so a block can report real amounts. */
+  pendingChargedUsd?: number;
+  /** Dollars the declared price list predicted for those same responses. */
+  pendingExpectedUsd?: number;
+  /** Billed-over-declared ratio the operator has accepted; absent means 1. */
+  accepted?: number;
   block?: CostAnomalyBlock;
 }
 
 /** What was observed when a scope was blocked. Numbers and names only; safe to persist and to show. */
 export interface CostAnomalyBlock {
   at: number;
-  baselineRateUsdPerToken: number;
-  observedRateUsdPerToken: number;
+  /** Dollars the provider billed across the confirming responses. */
+  chargedUsd: number;
+  /** Dollars the declared price list predicted for those same responses. */
+  expectedUsd: number;
+  /** Billed over declared. Above 1 means the provider charged more than declared. */
   ratio: number;
+  /** What the scope was judged against: 1, or a previously accepted higher ratio. */
+  acceptedRatio: number;
   confirmingObservations: number;
 }
 
@@ -99,6 +145,14 @@ export class MemoryCostAnomalyStore implements CostAnomalyStore {
   }
 }
 
+/**
+ * How many recent ratios a scope retains. Not a baseline -- nothing is
+ * computed from them -- only enough recent history for a front to show that
+ * the scope is being measured at all, bounded so the state file cannot grow
+ * without limit.
+ */
+const OBSERVED_HISTORY = 20;
+
 /** Where a project's cost-anomaly state lives, and nowhere else. */
 export const COST_ANOMALY_STATE_PATH = ".ad-coder/cost-anomaly.json";
 
@@ -115,7 +169,7 @@ export const COST_ANOMALY_STATE_PATH = ".ad-coder/cost-anomaly.json";
  * an empty state file reads as "no blocks" and silently unblocks every scope.
  *
  * Reads are TOLERANT and writes are not: a corrupt or unreadable file yields
- * `undefined`, which costs a baseline and re-learns it, while a failed write
+ * `undefined`, which costs only recent history, while a failed write
  * throws, because silently not persisting a block is how an unattended session
  * pays the spike again tomorrow.
  */
@@ -172,9 +226,9 @@ export class CostAnomalyBlockedError extends Error {
     readonly block: Readonly<CostAnomalyBlock>,
   ) {
     super(
-      `${provider}/${model} is charging ${block.ratio.toFixed(2)}x its recent rate ` +
-        `(${formatRate(block.observedRateUsdPerToken)} against a baseline of ` +
-        `${formatRate(block.baselineRateUsdPerToken)} per token, confirmed by ` +
+      `${provider}/${model} billed ${block.ratio.toFixed(2)}x its declared price ` +
+        `(${formatUsd(block.chargedUsd)} charged against ${formatUsd(block.expectedUsd)} ` +
+        `expected from the configured price list, confirmed by ` +
         `${block.confirmingObservations} settled responses); new runs on this model are blocked ` +
         "until released -- accept the new price with `ad-coder cost release " +
         `${provider}/${model}\`, or route this role to another model`,
@@ -182,41 +236,34 @@ export class CostAnomalyBlockedError extends Error {
   }
 }
 
-/** Dollars per token are small enough that toFixed(2) reads as "0.00" for every model. */
-function formatRate(rate: number): string {
-  return `$${rate.toPrecision(3)}`;
+/** A single response costs fractions of a cent, so toFixed(2) reads as "$0.00" for all of them. */
+function formatUsd(amount: number): string {
+  return `$${amount.toPrecision(3)}`;
 }
 
 /** What a scope currently reports, for a front to render. Never a decision a front makes itself. */
 export type CostAnomalyStatus =
   | { state: "disabled" }
-  | { state: "insufficient_evidence"; samples: number; required: number }
-  | { state: "normal"; baselineRateUsdPerToken: number; samples: number }
-  | { state: "watching"; baselineRateUsdPerToken: number; pending: number; required: number }
+  /**
+   * The provider reports no billed amount, so there is nothing to check. NOT a
+   * transient state that more traffic resolves: it is a property of the
+   * provider, and it stays until that provider starts reporting charges.
+   */
+  | { state: "no_charge_data"; acceptedRatio: number }
+  | { state: "normal"; ratio: number; samples: number; acceptedRatio: number }
+  | { state: "watching"; ratio: number; pending: number; required: number; acceptedRatio: number }
   | { state: "blocked"; block: Readonly<CostAnomalyBlock> };
 
 function assertConfig(config: CostAnomalyConfig): void {
   if (!Number.isFinite(config.thresholdRatio) || config.thresholdRatio <= 1)
     throw new TypeError("thresholdRatio must be greater than 1");
-  if (!Number.isInteger(config.minBaselineSamples) || config.minBaselineSamples < 1)
-    throw new TypeError("minBaselineSamples must be a positive integer");
   // A single reading never blocks: providers report incomplete usage, and one
   // anomalous number is an artifact until it repeats.
   if (!Number.isInteger(config.confirmingObservations) || config.confirmingObservations < 2)
     throw new TypeError("confirmingObservations must be at least 2");
-  if (!Number.isInteger(config.baselineWindow) || config.baselineWindow < 1)
-    throw new TypeError("baselineWindow must be a positive integer");
-  if (config.baselineWindow < config.minBaselineSamples)
-    throw new TypeError("baselineWindow must be at least minBaselineSamples");
 }
 
-/**
- * MEDIAN, not mean. The baseline must describe what the model normally charges,
- * and a mean is dragged toward any single outlier that reached the window --
- * including the leading edge of the very repricing being detected, which would
- * shrink the measured ratio and could push a genuine spike back under the
- * threshold.
- */
+/** Median, not mean, so one extreme reading among the confirming ones cannot set the reported ratio. */
 function median(values: readonly number[]): number {
   const sorted = [...values].sort((left, right) => left - right);
   const middle = Math.floor(sorted.length / 2);
@@ -295,25 +342,26 @@ export class CostAnomalyDetector {
   }
 
   /**
-   * Fold one settled response into its scope, and block if this confirms a spike.
+   * Fold one settled response into its scope, and block if this confirms that
+   * the provider is billing above the price the operator declared.
    *
    * Returns the block when THIS observation confirmed one, so a caller can warn
    * the operator at the moment it happened rather than polling.
    */
-  observe(observation: CostRateObservation): CostAnomalyBlock | undefined {
+  observe(observation: CostAnomalyObservation): CostAnomalyBlock | undefined {
     if (!this.config.enabled) return undefined;
-    const { provider, model, costUsd, totalTokens } = observation;
-    // Only numbers the provider actually returned, and only ones a rate can be
-    // computed from. A zero-token or zero-cost response says nothing about
-    // price -- a cached-only turn legitimately costs nothing -- and dividing by
-    // it would manufacture an infinity or a zero that outranks every real rate.
-    if (!Number.isFinite(costUsd) || costUsd <= 0) return undefined;
-    if (!Number.isInteger(totalTokens) || totalTokens <= 0) return undefined;
+    const { provider, model, chargedUsd, expectedUsd } = observation;
+    // Both halves must be real money. A provider that reported no charge is
+    // the `no_charge_data` case and must reach no verdict at all; a zero
+    // expectation cannot be divided by, and would turn any charge into an
+    // infinite ratio -- which is exactly the shape a free-tier model has.
+    if (!Number.isFinite(chargedUsd) || chargedUsd <= 0) return undefined;
+    if (!Number.isFinite(expectedUsd) || expectedUsd <= 0) return undefined;
 
     const key = costAnomalyScopeKey(provider, model);
-    const state = this.scopes.get(key) ?? { provider, model, baseline: [], pending: [] };
+    const state = this.scopes.get(key) ?? { provider, model, observed: [], pending: [] };
     this.scopes.set(key, state);
-    const rate = costUsd / totalTokens;
+    const ratio = chargedUsd / expectedUsd;
 
     // A blocked scope keeps observing -- an in-flight stage still settles --
     // but nothing it reports can deepen or lift its own block. Only an
@@ -323,42 +371,40 @@ export class CostAnomalyDetector {
       return undefined;
     }
 
-    // A first observation establishes a baseline and can never itself be a
-    // spike: there is nothing to compare it against.
-    if (state.baseline.length < this.config.minBaselineSamples) {
-      state.baseline.push(rate);
-      this.trim(state);
-      this.persist();
-      return undefined;
-    }
-
-    const baselineRate = median(state.baseline);
-    const ratio = baselineRate > 0 ? rate / baselineRate : 0;
-    if (ratio < this.config.thresholdRatio) {
-      // Normal again. A run of over-threshold readings that did not reach the
-      // confirming count was an artifact, so it is discarded rather than left
-      // to accumulate across unrelated hours into a false confirmation.
+    // NO WARM-UP. There is no baseline to accumulate, so the very first
+    // response is already checkable against the declared price, and a
+    // repricing that is in effect before this project's first run is caught on
+    // that first run instead of being silently learned as normal.
+    const acceptedRatio = state.accepted ?? 1;
+    if (ratio < acceptedRatio * this.config.thresholdRatio) {
       state.pending.length = 0;
-      state.baseline.push(rate);
+      delete state.pendingChargedUsd;
+      delete state.pendingExpectedUsd;
+      state.observed.push(ratio);
       this.trim(state);
       this.persist();
       return undefined;
     }
 
-    state.pending.push(rate);
+    state.pending.push(ratio);
+    state.pendingChargedUsd = (state.pendingChargedUsd ?? 0) + chargedUsd;
+    state.pendingExpectedUsd = (state.pendingExpectedUsd ?? 0) + expectedUsd;
     if (state.pending.length < this.config.confirmingObservations) {
       this.persist();
       return undefined;
     }
 
+    // The sums over the confirming responses, not one of them: this is what
+    // the operator was actually billed while the alarm was being confirmed,
+    // and two amounts they can check against their provider invoice.
+    const confirming = state.pending.length;
     const block: CostAnomalyBlock = {
       at: this.now(),
-      baselineRateUsdPerToken: baselineRate,
-      // The confirming rates, not just the last one: the median of what was
-      // actually charged while the alarm was being confirmed.
-      observedRateUsdPerToken: median(state.pending),
-      ratio: median(state.pending) / baselineRate,
-      confirmingObservations: state.pending.length,
+      chargedUsd: state.pendingChargedUsd ?? 0,
+      expectedUsd: state.pendingExpectedUsd ?? 0,
+      ratio: median(state.pending),
+      acceptedRatio,
+      confirmingObservations: confirming,
     };
     state.block = block;
     this.persist();
@@ -368,11 +414,17 @@ export class CostAnomalyDetector {
   /**
    * The operator accepting the new price for ONE scope.
    *
-   * Re-baselines to the rates that tripped it, because a permanent reprice is a
-   * fact to accept once, not an alarm to dismiss on every subsequent run --
-   * without this, the next response would re-trip against the old baseline
-   * immediately. Per-scope on purpose: releasing one model never releases
-   * another that happens to have spiked at the same time.
+   * Records the confirmed ratio as this scope's accepted ceiling, because a
+   * permanent reprice is a fact to accept once, not an alarm to dismiss on
+   * every subsequent run -- without this, the next response would re-trip
+   * against the declared price immediately. Per-scope on purpose: releasing one
+   * model never releases another that happens to have been caught at the same
+   * time.
+   *
+   * Note what accepting does NOT do: it never lowers the ceiling. Accepting a
+   * 1.4x price means 1.4x is now tolerated for this model; a later response at
+   * 1.0x is simply normal, and does not quietly re-arm the detector at the
+   * lower number.
    */
   release(provider: string, model: string): Readonly<CostAnomalyBlock> | undefined {
     const key = costAnomalyScopeKey(provider, model);
@@ -380,8 +432,12 @@ export class CostAnomalyDetector {
     if (state?.block === undefined) return undefined;
     const released = state.block;
     delete state.block;
-    state.baseline = [...state.pending];
+    state.accepted = Math.max(state.accepted ?? 1, released.ratio);
+    state.observed = [...state.pending];
     state.pending = [];
+    delete state.pendingChargedUsd;
+    delete state.pendingExpectedUsd;
+    this.trim(state);
     this.persist();
     return released;
   }
@@ -390,23 +446,23 @@ export class CostAnomalyDetector {
     if (!this.config.enabled) return { state: "disabled" };
     const state = this.scopes.get(costAnomalyScopeKey(provider, model));
     if (state?.block !== undefined) return { state: "blocked", block: state.block };
-    const samples = state?.baseline.length ?? 0;
-    if (samples < this.config.minBaselineSamples)
-      return {
-        state: "insufficient_evidence",
-        samples,
-        required: this.config.minBaselineSamples,
-      };
-    const baselineRateUsdPerToken = median((state as CostAnomalyScopeState).baseline);
-    const pending = state?.pending.length ?? 0;
-    if (pending > 0)
+    const acceptedRatio = state?.accepted ?? 1;
+    const pending = state?.pending ?? [];
+    if (pending.length > 0)
       return {
         state: "watching",
-        baselineRateUsdPerToken,
-        pending,
+        ratio: median(pending),
+        pending: pending.length,
         required: this.config.confirmingObservations,
+        acceptedRatio,
       };
-    return { state: "normal", baselineRateUsdPerToken, samples };
+    const observed = state?.observed ?? [];
+    // Distinguishes "this provider never reports what it billed" from "it
+    // does, and it matches". Both are quiet, but only one of them is measured,
+    // and an operator deciding whether to trust the detector needs to know
+    // which one they are looking at.
+    if (observed.length === 0) return { state: "no_charge_data", acceptedRatio };
+    return { state: "normal", ratio: median(observed), samples: observed.length, acceptedRatio };
   }
 
   /** Every blocked scope, for a front that lists what is waiting on the operator. */
@@ -428,20 +484,47 @@ export class CostAnomalyDetector {
    * Wrap the same `Models` admission boundary the session limits use, so a
    * blocked scope refuses at the one seam every generation path goes through
    * and no front can start a run around it.
+   *
+   * This wrapper also OWNS THE MEASUREMENT, because the two halves of a
+   * comparison come from different places and only this seam sees both. The
+   * billed amount exists only on the wire, so the request has to ask for it and
+   * the response has to be read on its way past -- that is what
+   * `instrumentChargedCost` splices into the per-call options. The expectation
+   * comes from `usage.cost.total`, which is NOT a provider fact: pi-ai computes
+   * it by multiplying the settled token counts by the prices in the operator's
+   * own registry config. That is worthless as a charge and exactly right as an
+   * expectation, and mistaking the first for the second is what made the
+   * previous version compare the config against itself.
    */
   wrap(models: Models, provider: string, model: string): Models {
     const detector = this;
     const promiseMethods = new Set(["complete", "completeSimple", "fetchDeferred"]);
     const streamMethods = new Set(["stream", "streamSimple", "streamDeferred"]);
-    const settle = (message: AssistantMessage | undefined): void => {
+    const settle = (message: AssistantMessage | undefined, capture: ChargeCapture): void => {
       const usage = message?.usage;
       if (usage === undefined) return;
+      // No reported charge is NO OBSERVATION, never a passing one: a provider
+      // that reports nothing must leave the scope unmeasured rather than
+      // contribute a ratio of 1 that reads as a checked, correct price.
+      if (capture.chargedUsd === undefined) return;
       detector.observe({
         provider,
         model,
-        costUsd: usage.cost.total,
-        totalTokens: usage.input + usage.output + usage.cacheRead + usage.cacheWrite,
+        chargedUsd: capture.chargedUsd,
+        expectedUsd: usage.cost.total,
       });
+    };
+    // The options argument sits at a different position per method, so it is
+    // located by shape rather than by index -- and a call that passes none
+    // still gets instrumented, since that is the common case.
+    const instrument = (args: unknown[], capture: ChargeCapture): unknown[] => {
+      const next = [...args];
+      const last = next.length - 1;
+      const target =
+        last >= 1 && (typeof next[last] === "object" || next[last] === undefined) ? last : -1;
+      if (target === -1) return next;
+      next[target] = instrumentChargedCost(next[target], capture);
+      return next;
     };
     return new Proxy(models, {
       get(target, property, receiver) {
@@ -454,9 +537,14 @@ export class CostAnomalyDetector {
             } catch (error) {
               return Promise.reject(error);
             }
-            const operation = Reflect.apply(value, target, args) as Promise<AssistantMessage>;
+            const capture: ChargeCapture = {};
+            const operation = Reflect.apply(
+              value,
+              target,
+              instrument(args, capture),
+            ) as Promise<AssistantMessage>;
             return operation.then((message) => {
-              settle(message);
+              settle(message, capture);
               return message;
             });
           };
@@ -464,10 +552,14 @@ export class CostAnomalyDetector {
         if (streamMethods.has(property)) {
           return (...args: unknown[]) => {
             detector.admit(provider, model);
-            const stream = Reflect.apply(value, target, args) as {
+            const capture: ChargeCapture = {};
+            const stream = Reflect.apply(value, target, instrument(args, capture)) as {
               result(): Promise<AssistantMessage>;
             };
-            void stream.result().then(settle, () => undefined);
+            void stream.result().then(
+              (message) => settle(message, capture),
+              () => undefined,
+            );
             return stream;
           };
         }
@@ -477,8 +569,8 @@ export class CostAnomalyDetector {
   }
 
   private trim(state: CostAnomalyScopeState): void {
-    const overflow = state.baseline.length - this.config.baselineWindow;
-    if (overflow > 0) state.baseline.splice(0, overflow);
+    const overflow = state.observed.length - OBSERVED_HISTORY;
+    if (overflow > 0) state.observed.splice(0, overflow);
   }
 
   private persist(): void {

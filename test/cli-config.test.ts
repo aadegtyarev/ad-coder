@@ -68,15 +68,15 @@ test("a resolved pipeline carries a live cost-anomaly detector, so default-on is
 
     // And it is backed by this project's own durable state: a block it raises
     // is still standing for the `cost release` that lifts it.
-    const spike = (rate: number) => ({
+    const billed = (ratio: number) => ({
       provider: "local",
       model: "small",
-      costUsd: rate * 1000,
-      totalTokens: 1000,
+      chargedUsd: ratio * 0.002,
+      expectedUsd: 0.002,
     });
-    for (let index = 0; index < 5; index += 1) detector?.observe(spike(0.000002));
-    detector?.observe(spike(0.000008));
-    detector?.observe(spike(0.000008));
+    for (let index = 0; index < 5; index += 1) detector?.observe(billed(1));
+    detector?.observe(billed(4));
+    detector?.observe(billed(4));
     expect(fs.existsSync(path.join(dir, COST_ANOMALY_STATE_PATH))).toBe(true);
     expect(new CostAnomalyDetector({}, new FileCostAnomalyStore(dir)).blocked()).toHaveLength(1);
   } finally {

@@ -6,6 +6,59 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-09-15
+
+### Fixed
+- Cost-anomaly detection compared the configuration against itself and could
+  never have worked. `usage.cost` is not a provider fact: pi-ai computes it by
+  multiplying the settled token counts by the prices in the operator's own
+  registry config. The detector read that as "provider-reported cost", so both
+  sides of every comparison came from the same price table and a genuine
+  provider reprice was mathematically invisible to it -- while the contract
+  promised detection on the price actually charged.
+- The detector now asks the provider for what it billed and compares that to
+  what the configured price list predicts for the same response. OpenRouter
+  reports the amount, on the streaming path runs actually use, when the request
+  carries `usage: {include: true}`; under a caller's own upstream key it
+  reports `is_byok`, zeroes that field and carries the real amount separately.
+  Both are read, and never summed -- on a normal response they are the same
+  charge printed twice, so adding them would report a 2x overcharge on correct
+  billing.
+- False blocks are gone, and they were not a tuning problem. The old observable
+  was dollars per token, which varies by orders of magnitude at a completely
+  constant price: within one price list an output token costs multiples of an
+  input token and an input token multiples of a cache read. Measured on this
+  project's own dogfood runs, one model's legitimate baseline spread was 8.3x
+  against a 2.0x block threshold, and the run it blocked was billed at 1.0000,
+  1.0000 and 1.0171 times its configured price -- correct billing, blocked. The
+  ratio of charged to expected has composition in both halves, so it cancels.
+
+### Changed
+- The reference is the DECLARED price, not a learned baseline, and no traffic
+  can move it. A learned baseline cannot tell a discount ending from a price
+  rising: a backend billing under the declared price teaches the baseline that
+  the discount is normal, so the ordinary price returning reads as a spike and
+  blocks a session paying exactly what was agreed. It also absorbs a reprice
+  that arrives in small steps, one acceptable-looking step at a time. Only an
+  explicit `cost release` moves the reference, by recording the confirmed ratio
+  as that scope's accepted ceiling.
+- There is no warm-up and no `insufficient_evidence` state. With nothing to
+  accumulate, the first settled response is already checkable, so a reprice
+  already in effect before a project's first run is caught rather than silently
+  learned as normal. `minBaselineSamples` and `baselineWindow` are gone with
+  it; the default threshold is now 1.25, affordable because a correctly billed
+  response sits at 1.00 whatever its token mix.
+- A scope whose provider reports no billed amount now reports `no_charge_data`
+  and never blocks, instead of manufacturing a verdict out of the very price
+  list it is meant to be checking. Measured: OpenCode Zen returns token counts
+  and no amount at all, and ignores `usage: {include: true}`. Asking for the
+  amount is limited to providers known to report one, so an unknown field
+  cannot turn every request to a strict provider into a 400.
+- A block now names the dollars charged and the dollars expected across the
+  confirming responses, rather than two per-token rates, so the operator can
+  check them against a provider invoice directly.
+
+
 ## [0.9.0] - 2026-09-15
 
 ### Added

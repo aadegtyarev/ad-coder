@@ -586,12 +586,11 @@ test("a blocked price scope refuses the run at the Models boundary, before a tur
   // does not make it.
   const { faux, models, model, role } = harnessFixture();
   faux.setResponses([fauxAssistantMessage("must not dispatch")]);
-  const detector = new CostAnomalyDetector({ minBaselineSamples: 3 });
-  const scope = { provider: model.provider, model: model.id };
-  for (let index = 0; index < 3; index += 1)
-    detector.observe({ ...scope, costUsd: 0.002, totalTokens: 1000 });
-  detector.observe({ ...scope, costUsd: 0.01, totalTokens: 1000 });
-  detector.observe({ ...scope, costUsd: 0.01, totalTokens: 1000 });
+  const detector = new CostAnomalyDetector();
+  const scope = { provider: model.provider, model: model.id, expectedUsd: 0.002 };
+  for (let index = 0; index < 3; index += 1) detector.observe({ ...scope, chargedUsd: 0.002 });
+  detector.observe({ ...scope, chargedUsd: 0.01 });
+  detector.observe({ ...scope, chargedUsd: 0.01 });
 
   const sessionLimitController = new SessionLimitController({ maxTurns: 5 });
   await expect(
@@ -611,10 +610,10 @@ test("a blocked price scope refuses the run at the Models boundary, before a tur
   expect(sessionLimitController.snapshot().admittedTurns).toBe(0);
 });
 
-test("an unblocked scope runs, and the run's own settled cost feeds the baseline", async () => {
+test("a provider that reports no charge runs, and leaves its scope unmeasured", async () => {
   const { faux, models, model, role } = harnessFixture();
   faux.setResponses([fauxAssistantMessage("done")]);
-  const detector = new CostAnomalyDetector({ minBaselineSamples: 3 });
+  const detector = new CostAnomalyDetector();
 
   const result = await runRole({
     role,
@@ -625,9 +624,14 @@ test("an unblocked scope runs, and the run's own settled cost feeds the baseline
     costAnomalyDetector: detector,
   });
   expect(result.result.status).toBe("completed");
-  // The detector is fed from the real settled response rather than from a
-  // separate accounting path that could diverge from what was billed.
-  expect(detector.status(model.provider, model.id).state).not.toBe("blocked");
+  // The faux provider reports no billed amount, which is the same position
+  // OpenCode Zen is in. The run proceeds -- an unmeasurable price is never a
+  // reason to refuse work -- and the scope says so rather than reporting a
+  // "normal" it never checked.
+  expect(detector.status(model.provider, model.id)).toEqual({
+    state: "no_charge_data",
+    acceptedRatio: 1,
+  });
 });
 
 test("runRole preserves a typed stage rejection across the harness boundary", async () => {
