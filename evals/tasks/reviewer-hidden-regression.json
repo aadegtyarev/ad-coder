@@ -23,7 +23,7 @@
     },
     {
       "id": "bounded-blocking-findings",
-      "weight": 2
+      "weight": 7
     }
   ],
   "fixture": "reviewer-hidden-regression",

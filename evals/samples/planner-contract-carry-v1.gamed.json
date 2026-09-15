@@ -1,0 +1,20 @@
+{
+  "summary": "add export route",
+  "steps": [
+    { "step": "add route", "acceptance": "returns 400 for a destination not on the allow list" },
+    { "step": "send body", "acceptance": "test asserts the POST body equals the report" }
+  ],
+  "contracts": [
+    {
+      "rule": "Outbound requests must target only allow list hosts approved by operations.",
+      "source": "docs/contracts/errors.md"
+    },
+    {
+      "rule": "Errors must never include the path or credential values in any response.",
+      "source": "docs/contracts/errors.md"
+    }
+  ],
+  "evidenceRating": "asserted",
+  "securitySurface": "elevated",
+  "complexity": "medium"
+}

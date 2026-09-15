@@ -64,6 +64,21 @@ wasting a live calibration run. Measurements retain the orchestrator and Planner
 votes plus correctness and agreement, so live Planner feedback can calibrate
 project-local triage without silently changing the user baseline.
 
+An artifact-scored task may also ship `.gamed.json` beside its pass and fail
+samples. The other two prove the scorer can tell a good answer from a bad one;
+this one proves it resists the SPECIFIC evasion the task was built to catch --
+the plan that pastes a whole contract file, the review that lists its
+suspicions. It must score at most two thirds of the task's weight. Not zero: a
+plausible evasion answers the rest of the task properly, and demanding it score
+nothing would only select for implausible samples.
+
+Every scorer comment explaining why a check works the way it does is a claim
+that a defence holds. Until this sample existed those claims were prose, and
+three of them proved wrong the first time they were executed -- including a
+precision check written an hour earlier, whose weight let six findings instead
+of two cost an evasion only fourteen percent of the score. The sample is how a
+claimed defence becomes a run.
+
 A task declares what it is FOR, in `purpose`. A `calibration` task may move a
 routing cell. A `smoke` task is kept because it proves the harness still
 dispatches a role, materializes a fixture and scores a diff end to end, and its
