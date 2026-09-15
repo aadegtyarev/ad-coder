@@ -6,6 +6,15 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.17.2] - 2026-09-16
+
+### Changed
+- `docs/model-calibration.md` records the rule the day's three identical bugs
+  earned: a failure is data, not an exception. Each of them destroyed
+  measurements instead of recording them, and each was somewhere nobody was
+  looking -- so wherever this pipeline meets the unexpected, the question is what
+  to record rather than whether to stop.
+
 ## [0.17.1] - 2026-09-16
 
 ### Fixed
