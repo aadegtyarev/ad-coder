@@ -15,14 +15,14 @@ const ALL_COMPLEXITIES: readonly Complexity[] = ["trivial", "medium", "complex"]
  *
  * Takes NAMES only (no hardcoded provider ids), so the same builder works over
  * any registry. It emits exactly one entry for every `(role x complexity)` pair
- * (7 roles x 3 complexities = 21) because the profile is keyed on
+ * (8 roles x 3 complexities = 24) because the profile is keyed on
  * `(role, complexity)` and `resolveProfile` throws `missing_mapping` on any gap
  * even the complexity-invariant roles get an entry at every complexity.
  *
  * Routing: `planner`, `researcher`, and `security` -> `strong` at every
  * complexity (up-front decisions are where the strong model earns its cost);
- * `reviewer` and `auditor` -> `mid`; `recorder` -> `cheap`; `coder` scales
- * with the task
+ * `reviewer`, `auditor`, and `orchestrator` -> `mid`; `recorder` -> `cheap`;
+ * `coder` scales with the task
  * (`trivial -> cheap`, `medium -> mid`, `complex -> strong`), since a weak coder
  * on a hard task just buys extra review rounds.
  *
@@ -43,6 +43,11 @@ export function buildDefaultProfile(models: DefaultProfileModels): Profile {
         return mid;
       case "recorder":
         return cheap;
+      // The orchestrator reads results and picks the next move rather than
+      // producing the work, so it tracks the reviewer tier rather than the
+      // coder it used to borrow from.
+      case "orchestrator":
+        return mid;
       case "coder":
         return coderModel(complexity, models);
     }
@@ -50,6 +55,7 @@ export function buildDefaultProfile(models: DefaultProfileModels): Profile {
 
   const entries: ProfileEntry[] = [];
   const roles: readonly ProfileRole[] = [
+    "orchestrator",
     "planner",
     "researcher",
     "coder",

@@ -11,6 +11,7 @@ import type { Profile, ProfileEntry, ProfileRole } from "./types";
  * missing whichever role was added last.
  */
 export const PROFILE_ROLES: readonly ProfileRole[] = [
+  "orchestrator",
   "planner",
   "researcher",
   "coder",

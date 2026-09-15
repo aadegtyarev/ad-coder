@@ -441,9 +441,9 @@ test("a declared cacheRetention survives into the orchestrator's own conversatio
     mid: "codex-terra",
     cheap: "codex-luna",
   });
-  // The orchestrator has no cell of its own: it selects through the coder's.
+  // Declared on the orchestrator's OWN cell, which is what it routes from.
   profile.entries = profile.entries.map((entry) =>
-    entry.role === "coder" ? { ...entry, cacheRetention: "long" as const } : entry,
+    entry.role === "orchestrator" ? { ...entry, cacheRetention: "long" as const } : entry,
   );
   let captured: Role | undefined;
   const session = await startOrchestrator({

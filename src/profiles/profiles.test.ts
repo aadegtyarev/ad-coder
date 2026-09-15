@@ -245,10 +245,10 @@ test("resolveProfile throws missing_mapping for a (role, complexity) with no ent
 
 test("buildDefaultProfile routes each role and coder scales with complexity", () => {
   const profile = buildDefaultProfile({ strong: "S", mid: "M", cheap: "C" });
-  // 7 roles x 3 complexities.
-  expect(profile.entries).toHaveLength(21);
+  // 8 roles x 3 complexities.
+  expect(profile.entries).toHaveLength(24);
   // parseProfile must accept the builder output unchanged (self-consistent, no dupes).
-  expect(parseProfile(profile).entries).toHaveLength(21);
+  expect(parseProfile(profile).entries).toHaveLength(24);
 
   const registry = stubRegistry(["S", "M", "C"]);
   expect(resolveProfile(profile, registry, "coder", "complex").model.id).toBe("S");
@@ -260,4 +260,8 @@ test("buildDefaultProfile routes each role and coder scales with complexity", ()
   expect(resolveProfile(profile, registry, "reviewer", "medium").model.id).toBe("M");
   expect(resolveProfile(profile, registry, "auditor", "complex").model.id).toBe("M");
   expect(resolveProfile(profile, registry, "recorder", "complex").model.id).toBe("C");
+  // The orchestrator has its OWN cell rather than borrowing the coder's, so it
+  // stays on the review tier while the coder scales with complexity.
+  expect(resolveProfile(profile, registry, "orchestrator", "trivial").model.id).toBe("M");
+  expect(resolveProfile(profile, registry, "orchestrator", "complex").model.id).toBe("M");
 });
