@@ -42,6 +42,33 @@ All notable changes to ad-coder are recorded here. The format follows
   The error carries the run id and the numeric status ONLY: the response body
   that produced the status is read for the number and dropped, because an
   uncontrolled provider body must never cross an error boundary.
+## [0.6.4] - 2026-09-15
+
+### Added
+
+- `docs/contracts/cost-anomaly.md`: an enforceable rule for what happens when a
+  model suddenly starts costing more than it did. The failure it names is a step
+  change in the unit price actually charged -- a provider repricing, a preset
+  rerouting to a costlier backend, a cache that stopped being hit -- observed
+  only after an unattended session has already paid it many times. Per-stage
+  `maxCostUsd` does not catch it: every run stays under its own ceiling while
+  every run costs several times yesterday's rate.
+
+  Detection is on provider-reported cost per token for one `(provider, model)`
+  scope, against a durable baseline of that same scope, confirmed by more than
+  one settled observation, because providers report incomplete usage and a
+  single anomalous reading is an artifact until it repeats. A first observation
+  establishes a baseline and can never itself be a spike; too thin a baseline
+  reports insufficient evidence rather than a verdict.
+
+  On a confirmed spike new runs in the affected scope are REFUSED with a typed
+  error naming the scope, the baseline, the observed rate, the ratio and the
+  release action; work already in flight is not killed, since the money for the
+  running stage is already committed and aborting it saves nothing. Release is
+  an explicit, durable, per-scope operator act that re-baselines the scope, so a
+  permanent reprice is accepted once rather than re-alarming forever. Enabled by
+  default and configurable throughout. Implementation is tracked in
+  `docs/BACKLOG.md`; no behavior ships in this release.
 ## [0.6.3] - 2026-09-15
 
 ### Fixed
