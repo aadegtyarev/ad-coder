@@ -154,5 +154,20 @@ describe("orchestrator run report", () => {
       { code: "a" },
       { code: "b" },
     ]);
+    // An answer spanning several lines still resolves: the line skip below only
+    // applies to a bracket that closes NOWHERE, not to one closing further down.
+    expect(JSON.parse(extractJsonArtifact('note\n[\n  {"code":"a"}\n]\n'))).toEqual([
+      { code: "a" },
+    ]);
+  });
+
+  test("an unclosed bracket does not make the scan quadratic", () => {
+    // Every bracket after an unclosed one is also unclosed, and each rescanned
+    // to the end: `"[ x"` repeated took 38 seconds at 288KB, which would stall a
+    // sweep on one malformed answer. The scan now resumes at the next line.
+    const hostile = "[ x".repeat(96_000);
+    const started = Date.now();
+    expect(() => extractJsonArtifact(hostile)).toThrow(/unterminated/);
+    expect(Date.now() - started).toBeLessThan(2_000);
   });
 });

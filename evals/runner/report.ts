@@ -171,6 +171,14 @@ export function extractJsonArtifact(stdout: string): string {
     const span = balancedSpan(stdout, index);
     if (span === null) {
       unterminated = true;
+      // An unclosed bracket means every bracket after it inside the same run of
+      // text is also unclosed, and each would rescan to the end: `"[ x"` repeated
+      // took 38 seconds at 288KB. Nothing readable can follow on this line, so
+      // the scan resumes at the next one -- which keeps a real answer on a later
+      // line reachable while making the cost linear in practice.
+      const nextLine = stdout.indexOf("\n", index);
+      if (nextLine < 0) break;
+      index = nextLine;
       continue;
     }
     try {

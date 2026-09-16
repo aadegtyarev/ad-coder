@@ -175,15 +175,26 @@ test("making a file executable is a change; changing it back is not", () => {
   }
 });
 
-test("a symlink planted in the target is out of scope", () => {
+test("a symlink planted in the target is out of scope, whatever it points at", () => {
   const target = materialize("trivial-normalize");
+  const payload = fs.mkdtempSync(path.join(os.tmpdir(), "payload-"));
   try {
     const before = snapshot(target);
     fs.symlinkSync("/etc/passwd", path.join(target, "leaked.txt"));
+    // A symlink to a DIRECTORY is the case that got away: reading it throws
+    // `EISDIR`, and skipping unreadable paths dropped it from both snapshots, so
+    // no allow-list could catch it. An unreadable path is now recorded by its
+    // error code rather than omitted -- present, and unequal to any readable
+    // version of itself.
+    fs.symlinkSync(payload, path.join(target, "vendor"));
+    fs.symlinkSync("/nonexistent-xyz", path.join(target, "dangling"));
     expect(outOfScope(before, snapshot(target), ["src/**", "package.json"])).toEqual([
+      "dangling",
       "leaked.txt",
+      "vendor",
     ]);
   } finally {
     fs.rmSync(target, { recursive: true, force: true });
+    fs.rmSync(payload, { recursive: true, force: true });
   }
 });

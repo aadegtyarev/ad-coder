@@ -55,11 +55,18 @@ export function snapshot(target: string): Snapshot {
     let contents: Buffer;
     try {
       contents = fs.readFileSync(path.join(target, file));
-    } catch {
-      // Listed but unreadable -- a dangling symlink, a file removed between the
-      // listing and the read. Recorded as absent rather than thrown, because a
-      // scope violation is a fact about the run and must not be able to destroy
-      // the measurement it belongs to.
+    } catch (error) {
+      // Listed but unreadable. Recorded rather than skipped, because dropping
+      // the path makes it invisible to the comparison entirely -- and a model
+      // that plants an unreadable path has still changed the tree. A symlink to
+      // a DIRECTORY reached this branch with `EISDIR` and vanished from both
+      // snapshots, so no allow-list could have caught it.
+      //
+      // The digest is the error's code, so the path is present and compares
+      // unequal to any readable version of itself: appearing, disappearing and
+      // changing kind are all changes.
+      const code = (error as NodeJS.ErrnoException).code ?? "EUNREADABLE";
+      files.set(file, `!${code}`);
       continue;
     }
     // The executable bit travels with the digest. `chmod +x` on a source file
