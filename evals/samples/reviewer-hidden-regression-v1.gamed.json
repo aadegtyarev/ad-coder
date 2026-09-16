@@ -8,9 +8,21 @@
   {
     "code": "POSSIBLE_RACE_ON_CONCURRENT_SAVE",
     "blocking": true,
-    "evidence": "src/result-store.ts"
+    "evidence": "src/result-store.ts:41 writes without holding a lock"
   },
-  { "code": "MISSING_INPUT_LENGTH_LIMIT", "blocking": true, "evidence": "src/result-store.ts" },
-  { "code": "NO_STRUCTURED_LOGGING", "blocking": true, "evidence": "src/result-store.ts" },
-  { "code": "UNBOUNDED_DIRECTORY_GROWTH", "blocking": true, "evidence": "src/result-store.ts" }
+  {
+    "code": "MISSING_INPUT_LENGTH_LIMIT",
+    "blocking": true,
+    "evidence": "src/result-store.ts:58 accepts an id of any length"
+  },
+  {
+    "code": "NO_STRUCTURED_LOGGING",
+    "blocking": true,
+    "evidence": "src/result-store.ts:73 swallows the failure without a log line"
+  },
+  {
+    "code": "UNBOUNDED_DIRECTORY_GROWTH",
+    "blocking": true,
+    "evidence": "src/result-store.ts:96 never prunes old result directories"
+  }
 ]

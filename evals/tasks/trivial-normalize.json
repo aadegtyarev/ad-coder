@@ -6,7 +6,7 @@
   "purpose": "smoke",
   "fixture": "trivial-normalize",
   "scorer": "trivial-normalize.ts",
-  "prompt": "Fix normalizeTag so surrounding whitespace never reaches persisted tag keys. Preserve lowercase normalization and add a focused regression test.",
+  "prompt": "Fix normalizeTag so surrounding whitespace never reaches persisted tag keys. Preserve lowercase normalization and add a focused regression test. Confine the change to `src/` and a test file: do not edit, reformat, or add anything else in the repository.",
   "checks": [
     {
       "id": "trims-whitespace",
@@ -19,9 +19,14 @@
     {
       "id": "has-regression-test",
       "weight": 2
+    },
+    {
+      "id": "stays-in-scope",
+      "weight": 2
     }
   ],
   "scorerInput": "target",
+  "writes": ["src/**", "test/**", "tests/**", "package.json"],
   "source": {
     "url": "original",
     "license": "n/a",

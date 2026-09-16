@@ -6,6 +6,48 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-09-16
+
+### Added
+- Every target-scored task now measures what the model touched that nobody asked
+  about. A task declares `writes`, an allow-list of path globs, and a
+  `stays-in-scope` check; the runner snapshots the target before and after the
+  run and fails the check when anything outside the list was added, rewritten or
+  deleted, naming the offending paths as `strayPaths` in the measurement. Until
+  now a model that fixed the named function and also pulled in a logging
+  framework, reformatted a neighbouring module and left a scratch file behind
+  scored a clean 1.00 in every task in the corpus.
+- A task may forbid a tool. It declares `forbids` beside a
+  `honours-prohibitions` check, and the runner reads the tool names every ledger
+  row already carries, so one mechanism covers every role and every mode rather
+  than needing a task per prohibition. `security-plan-threats-v1` forbids `bash`:
+  its role prompt says not to run the project's test suite, and until now no
+  prompt prohibition anywhere but one orchestrator task was verified at all.
+
+- Three tasks now check their claims against the fixture rather than reading back
+  what the model asserted. An auditor citing a contract file that does not exist
+  or a function `src/` never exports, a reviewer citing a line past the end of a
+  seventeen-line file, and a security answer filed against a plan step nobody
+  wrote all scored full marks before; each is now the heaviest check in its task,
+  and each task carries a `.gamed.json` sample proving it.
+
+### Fixed
+- The calibration artifact extractor read from the first bracket in the output,
+  so a bracket in the prose before the answer was returned as the answer. A live
+  planner explaining an id format as `[a-z0-9-]` had that character class scored
+  as its entire plan: no scorer could read it, and a run that passed every check
+  was recorded as `unreadable_answer` at quality 0.12. The answer is now the last
+  top-level span that parses, since requiring a span to parse rules out a
+  character class but not valid JSON quoted in the prose above the answer.
+- Three boundary defects in the new reality checks, each of which punished an
+  imprecise answer rather than an invented one, or missed the likeliest
+  fabrication. A file's line count was one too high for any file ending in a
+  newline, so a citation one line past the end passed. A bare `errors.md` was
+  rejected although that file exists. A step written `"step 3"` parsed as NaN.
+- The scope snapshot did not see `chmod +x`. Content changed and then restored is
+  still deliberately not a change: `reviewer.md` instructs the Reviewer to revert
+  a diff, run the test, and restore the tree exactly as it found it.
+
 ## [0.20.2] - 2026-09-16
 
 ### Changed

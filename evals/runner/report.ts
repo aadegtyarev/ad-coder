@@ -114,23 +114,15 @@ export function buildOrchestratorReport(input: {
   };
 }
 
-/**
- * The JSON an artifact-scored role was asked to emit.
- *
- * `ad-coder role` appends a `cost:` line to the assistant text and models wrap
- * JSON in fences, so the payload is located by BRACKET BALANCE from the first
- * bracket rather than by trusting the surrounding prose to be absent.
- */
-export function extractJsonArtifact(stdout: string): string {
-  const start = stdout.search(/[[{]/);
-  if (start < 0) throw new Error("role produced no JSON artifact");
-  const open = stdout[start] as "[" | "{";
+/** The balanced bracket span starting at `start`, or null if it never closes. */
+function balancedSpan(text: string, start: number): string | null {
+  const open = text[start] as "[" | "{";
   const close = open === "[" ? "]" : "}";
   let depth = 0;
   let inString = false;
   let escaped = false;
-  for (let index = start; index < stdout.length; index += 1) {
-    const char = stdout[index];
+  for (let index = start; index < text.length; index += 1) {
+    const char = text[index];
     if (inString) {
       if (escaped) escaped = false;
       else if (char === "\\") escaped = true;
@@ -141,8 +133,74 @@ export function extractJsonArtifact(stdout: string): string {
     else if (char === open) depth += 1;
     else if (char === close) {
       depth -= 1;
-      if (depth === 0) return stdout.slice(start, index + 1);
+      if (depth === 0) return text.slice(start, index + 1);
     }
   }
-  throw new Error("role produced an unterminated JSON artifact");
+  return null;
+}
+
+/**
+ * The JSON an artifact-scored role was asked to emit.
+ *
+ * `ad-coder role` appends a `cost:` line to the assistant text and models wrap
+ * JSON in fences, so the payload is located by bracket balance rather than by
+ * trusting the surrounding prose to be absent.
+ *
+ * WHY THE LAST PARSEABLE SPAN. Taking the FIRST bracket assumed no prose before
+ * the answer contains one, and prose about code routinely does: a planner
+ * explained an id format as `[a-z0-9-]` above its plan, the extractor returned
+ * that character class as the whole answer, and a run that passed every check
+ * was recorded as `unreadable_answer` at quality 0.12 -- a model failure the
+ * harness invented. Requiring the span to PARSE fixes that case and not the
+ * next one, because prose can contain valid JSON too ("we considered {"a":1}
+ * first"). The answer is what the role finished with, so the last top-level
+ * span that parses is the answer -- which is also the convention every scorer
+ * already uses when it reads from the final `]`.
+ *
+ * Spans nested inside an accepted one are skipped rather than considered, so an
+ * array's own last element cannot be mistaken for the answer.
+ */
+export function extractJsonArtifact(stdout: string): string {
+  let sawBracket = false;
+  let unterminated = false;
+  let answer: string | undefined;
+  for (let index = 0; index < stdout.length; index += 1) {
+    const char = stdout[index];
+    if (char !== "[" && char !== "{") continue;
+    sawBracket = true;
+    const span = balancedSpan(stdout, index);
+    if (span === null) {
+      unterminated = true;
+      continue;
+    }
+    try {
+      JSON.parse(span);
+    } catch {
+      // A balanced span that is not JSON -- an object literal quoted in the
+      // explanation, a character class. Not a candidate, and its interior may
+      // still hold one, so the scan does not skip it.
+      continue;
+    }
+    // An unclosed bracket EARLIER in the output encloses this one, so what
+    // parsed is a fragment of a truncated answer -- the first element of a
+    // cut-off array, say. Reporting it would score a fraction of an answer as
+    // the whole of one, which reads as a model that answered briefly rather
+    // than as an answer that did not fit.
+    if (unterminated) break;
+    answer = span;
+    // Skip its interior: a nested span is part of this answer, never a rival to
+    // it. `index` is advanced to the span's last character, and the loop's own
+    // increment moves past it.
+    index += span.length - 1;
+  }
+  if (answer !== undefined) return answer;
+  if (!sawBracket) throw new Error("role produced no JSON artifact");
+  // Truncation is reported distinctly from unreadability because it is a
+  // context-budget fact rather than a formatting one, and they call for
+  // different responses.
+  throw new Error(
+    unterminated
+      ? "role produced an unterminated JSON artifact"
+      : "role produced no readable JSON artifact",
+  );
 }

@@ -2,6 +2,8 @@ import * as fs from "node:fs";
 
 interface Threat {
   code?: string;
+  /** The plan step the threat is filed against; see PLAN_STEPS. */
+  step?: number | string;
   severity?: string;
   cwe?: string;
   exploit?: string;
@@ -60,6 +62,22 @@ function readAnswer(path: string): Threat[] {
 const threats = readAnswer(file);
 
 /**
+ * How many steps the plan in the task prompt actually has.
+ *
+ * The plan is three numbered steps. A threat filed against step 4 is filed
+ * against something nobody wrote, which is the cheapest possible instance of the
+ * failure this check exists for: the scorer reads the JSON the model asserted,
+ * so an answer describing a call path it never traced scores exactly as well as
+ * one that read the fixture. A step number is the one part of that claim which
+ * is checkable without guessing at prose.
+ *
+ * Stated here rather than parsed from the prompt because the scorer is handed
+ * only the answer; changing the plan means changing this number, which is why
+ * the task's prompt and this constant are named in each other's comments.
+ */
+const PLAN_STEPS = 3;
+
+/**
  * The Security prompt rates severity and this scorer honours it: `info` is
  * explicitly the hardening tier, so a threat filed there is a suggestion, not a
  * claim that the plan is unsafe. It counts neither for a real finding nor
@@ -113,6 +131,26 @@ const checks = [
     id: "avoids-validated-id-false-positive",
     passed:
       threats.length > 0 && !matches(["cwe-22"], ["path", "traversal"], ["directory", "traversal"]),
+  },
+  {
+    // EVERY THREAT IS FILED AGAINST A STEP THAT EXISTS. See PLAN_STEPS. A
+    // threat may legitimately omit the field -- an answer that does not claim a
+    // location has not claimed a false one -- but a number outside the plan is
+    // a claim about work nobody proposed.
+    id: "cites-only-real-plan-steps",
+    passed:
+      asserted.length > 0 &&
+      asserted.every((threat) => {
+        const step = (threat as { step?: unknown }).step;
+        if (step === undefined || step === null) return true;
+        // A number written as `3`, `"3"` or `"step 3"` names the same step; the
+        // last is less precise, not invented, and this check exists to catch a
+        // threat filed against work nobody proposed. `Number.parseInt` alone
+        // read `"step 3"` as NaN and failed it.
+        const digits = /\d+/.exec(String(step));
+        const value = typeof step === "number" ? step : Number(digits?.[0] ?? Number.NaN);
+        return Number.isInteger(value) && value >= 1 && value <= PLAN_STEPS;
+      }),
   },
   {
     // The second non-defect: the new route is specified as "registered the same

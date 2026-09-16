@@ -1,0 +1,38 @@
+[
+  {
+    "surface": "src/queue.ts:parseJob",
+    "status": "conforms",
+    "contract": "docs/contracts/errors.md",
+    "evidence": "line 11 rejects with Error(\"invalid id\"), matching the fixed wording"
+  },
+  {
+    "surface": "src/queue.ts:enqueue",
+    "status": "violates",
+    "contract": "docs/contracts/persistence.md",
+    "evidence": "line 19 closes the handle without fsync, so the write is not durable"
+  },
+  {
+    "surface": "src/queue.ts:readJob",
+    "status": "violates",
+    "contract": "docs/contracts/errors.md",
+    "evidence": "line 34 replaces the caught error instead of attaching it as cause"
+  },
+  {
+    "surface": "src/metrics.ts:increment",
+    "status": "contract_missing",
+    "contract": null,
+    "evidence": "no rule in docs/contracts governs counter names or reset semantics"
+  },
+  {
+    "surface": "src/queue.ts:drainQueue",
+    "status": "violates",
+    "contract": "docs/contracts/concurrency.md",
+    "evidence": "line 62 drains without holding the queue lock, so two drains interleave"
+  },
+  {
+    "surface": "src/retry.ts:scheduleRetry",
+    "status": "violates",
+    "contract": "docs/contracts/retry.md",
+    "evidence": "line 28 retries without backoff, contradicting the stated ceiling"
+  }
+]

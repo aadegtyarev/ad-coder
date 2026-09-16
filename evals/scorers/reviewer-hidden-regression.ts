@@ -1,4 +1,5 @@
 import * as fs from "node:fs";
+import * as path from "node:path";
 
 interface Finding {
   code: string;
@@ -92,6 +93,68 @@ function readAnswer(path: string): Finding[] {
 
 const findings = readAnswer(file);
 
+/**
+ * How long each of the fixture's source files is once the seeded change is
+ * applied -- which is the state the reviewer is looking at.
+ *
+ * Read relative to THIS FILE, for the reason the planner scorer states: a live
+ * run scores `<target>/artifact.json` with the fixture beside it, the corpus
+ * smoke scores a flat sample with no fixture anywhere near, and scorers and
+ * fixtures are fixed sibling directories.
+ *
+ * The length is the checked-in file's plus the patch's net line delta, rather
+ * than the checked-in file's alone: `calibration-materialize` applies
+ * `change.patch` before the role ever runs, so a line that exists for the
+ * reviewer may not exist in the file this scorer can open.
+ */
+/**
+ * How many lines a file has.
+ *
+ * `split("\n").length` counts one too many for a file ending in a newline,
+ * which every file here does -- and an off-by-one is exactly the fabrication
+ * this is meant to catch, since a model citing one line past the end is far more
+ * likely than one citing line 214. Reproduced: the fixture is 17 lines and 21
+ * after the patch, and the naive count admitted a citation of line 22.
+ */
+function countLines(text: string): number {
+  const lines = text.split("\n").length;
+  return text.endsWith("\n") ? lines - 1 : lines;
+}
+
+const FIXTURE_LINES = (() => {
+  const root = path.resolve(import.meta.dir, "../fixtures/reviewer-hidden-regression");
+  const patch = fs.readFileSync(path.join(root, "change.patch"), "utf8").split("\n");
+  const delta = patch.reduce((sum, line) => {
+    if (line.startsWith("+++") || line.startsWith("---")) return sum;
+    if (line.startsWith("+")) return sum + 1;
+    if (line.startsWith("-")) return sum - 1;
+    return sum;
+  }, 0);
+  const lines = new Map<string, number>();
+  const walk = (dir: string, prefix: string): void => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name.startsWith(".")) continue;
+      const rel = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
+      if (entry.isDirectory()) walk(path.join(dir, entry.name), rel);
+      else lines.set(rel, countLines(fs.readFileSync(path.join(dir, entry.name), "utf8")));
+    }
+  };
+  walk(root, "");
+  // The patch touches exactly one file; its net delta belongs to that file.
+  const patched = /^\+\+\+ b\/(.+)$/m.exec(patch.join("\n"))?.[1];
+  if (patched !== undefined && lines.has(patched))
+    lines.set(patched, (lines.get(patched) as number) + delta);
+  return lines;
+})();
+
+/** Every `path:line` the evidence cites, however it is embedded in the text. */
+function citations(evidence: string): { file: string; line: number }[] {
+  return [...evidence.matchAll(/([\w./-]+\.[a-z]{1,4}):(\d+)/g)].map((match) => ({
+    file: (match[1] as string).replace(/^\.?\//, ""),
+    line: Number.parseInt(match[2] as string, 10),
+  }));
+}
+
 const blockingFindings = findings.filter(isBlocking);
 const blocking = blockingFindings.map((finding) => tokens(finding.code));
 
@@ -168,6 +231,24 @@ const checks = [
         const echo = [...tokens(finding.code)].join(" ");
         return [...tokens(evidence)].join(" ") !== echo;
       }),
+  },
+  {
+    // A CITED LINE EXISTS. The scorer reads the JSON the model asserted, so a
+    // review citing `src/result-store.ts:214` in a seventeen-line file scored
+    // exactly as well as one that read the file -- and a line number is the one
+    // part of a claim that is checkable without guessing at prose. Only
+    // `path:line` citations are checked: naming a command and its output is
+    // equally valid evidence and is deliberately left alone, since the point is
+    // to catch a fabricated location, not to demand one.
+    id: "cited-lines-exist",
+    passed:
+      blockingFindings.length > 0 &&
+      blockingFindings.every((finding) =>
+        citations(flatten(finding.evidence)).every(({ file, line }) => {
+          const length = FIXTURE_LINES.get(file);
+          return length !== undefined && line >= 1 && line <= length;
+        }),
+      ),
   },
   {
     // Precision, not volume. See BLOCKING_FINDING_CAP. A lower bound too: a

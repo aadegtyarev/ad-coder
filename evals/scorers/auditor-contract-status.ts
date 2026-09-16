@@ -1,4 +1,5 @@
 import * as fs from "node:fs";
+import * as path from "node:path";
 
 interface SurfaceVerdict {
   surface?: string;
@@ -58,6 +59,35 @@ function readAnswer(path: string): SurfaceVerdict[] {
 
 const verdicts = readAnswer(file);
 
+/**
+ * What the fixture actually contains: its contract files, and the exported
+ * function names its source declares.
+ *
+ * Found relative to THIS FILE rather than to the scored artifact, for the reason
+ * the planner scorer states: a live run scores `<target>/artifact.json` with the
+ * materialized fixture beside it, while the corpus smoke scores a flat sample
+ * under `evals/samples/` with no fixture anywhere near. Scorers and fixtures are
+ * fixed sibling directories, so this path holds for both.
+ */
+const FIXTURE = (() => {
+  const root = path.resolve(import.meta.dir, "../fixtures/auditor-contract-status");
+  const contracts = fs
+    .readdirSync(path.join(root, "docs/contracts"))
+    .map((name) => `docs/contracts/${name}`);
+  const exported = new Set<string>();
+  for (const name of fs.readdirSync(path.join(root, "src"))) {
+    const source = fs.readFileSync(path.join(root, "src", name), "utf8");
+    for (const match of source.matchAll(/export function ([A-Za-z0-9_]+)/g))
+      exported.add((match[1] as string).toLowerCase());
+  }
+  return { contracts, exported };
+})();
+
+/** The file part of a cited contract, however the model spelled the reference. */
+function citedFile(contract: string): string {
+  return (contract.split(/[\s#:]/)[0] ?? "").replace(/^\.?\//, "").toLowerCase();
+}
+
 const checks = [
   {
     // `readJob` catches everything and throws a fresh `Error("queue read
@@ -88,6 +118,41 @@ const checks = [
     // calling a governed surface `contract_missing`.
     id: "confirms-conforming-surface",
     passed: statusOf(verdicts, "parseJob") === "conforms",
+  },
+  {
+    // EVERY CLAIM RESOLVES IN THE FIXTURE. Until this existed the scorer read
+    // the JSON the model asserted and checked its shape and vocabulary, so an
+    // audit of confident, well-formed, wholly invented surfaces -- a contract
+    // file that is not in the repository, a function nobody exported -- scored
+    // exactly as well as one that did the work. Over-claiming is the failure
+    // this project has already caught itself doing, and it propagates: a
+    // fabricated citation becomes the next role's justification.
+    //
+    // Two things are checkable without guessing at prose. A cited contract must
+    // be a file that exists, and an audited surface must name a function the
+    // source actually exports. A `contract` of null is not a citation and is the
+    // honest answer for an ungoverned surface, so it is exempt rather than
+    // wrong.
+    id: "cites-only-real-material",
+    passed:
+      verdicts.length > 0 &&
+      verdicts.every((verdict) => {
+        const surface = (verdict.surface ?? "").toLowerCase().split(/[^a-z0-9]+/);
+        if (!surface.some((word) => FIXTURE.exported.has(word))) return false;
+        const contract = verdict.contract;
+        if (contract === null || contract === undefined || contract.trim() === "") return true;
+        // Matched in BOTH directions: `docs/contracts/errors.md` and a bare
+        // `errors.md` both name a file that exists, and the second is less
+        // precise rather than invented. This check exists to catch a citation of
+        // material that is not there, so an imprecise reference to real material
+        // must not fail it -- the prompt's format request is an
+        // instruction-following matter, not a fabrication.
+        const cited = citedFile(contract);
+        return FIXTURE.contracts.some((raw) => {
+          const known = raw.toLowerCase();
+          return cited.endsWith(known) || known.endsWith(`/${cited}`);
+        });
+      }),
   },
 ];
 process.stdout.write(`${JSON.stringify(checks, null, 2)}\n`);

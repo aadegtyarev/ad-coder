@@ -6,7 +6,7 @@
   "purpose": "smoke",
   "fixture": "refactor-config",
   "scorer": "refactor-config.ts",
-  "prompt": "Remove the duplicated APP_HOST parsing while preserving both public functions and exact behavior. Extract one reusable pure parser so both entry points read their value through it, and add regression tests for missing, blank, padded, and normal values.",
+  "prompt": "Remove the duplicated APP_HOST parsing while preserving both public functions and exact behavior. Extract one reusable pure parser so both entry points read their value through it, and add regression tests for missing, blank, padded, and normal values. Confine the change to `src/` and a test file: do not edit, reformat, or add anything else in the repository.",
   "checks": [
     {
       "id": "preserves-host-api",
@@ -23,9 +23,14 @@
     {
       "id": "has-regression-tests",
       "weight": 1
+    },
+    {
+      "id": "stays-in-scope",
+      "weight": 2
     }
   ],
   "scorerInput": "target",
+  "writes": ["src/**", "test/**", "tests/**", "package.json"],
   "source": {
     "url": "original",
     "license": "n/a",
