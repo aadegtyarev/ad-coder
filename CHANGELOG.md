@@ -6,6 +6,16 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.24.2] - 2026-09-16
+
+### Changed
+- `docs/CHECKPOINT.md` records the second half of the bench rebuild: the three
+  things a model could do freely while scoring 1.00, the alternative-valid sample
+  that was the missing mirror of the cheating one, the two tasks that argued
+  against their own scorers, why the summarizer's cell was empty and what filling
+  it required, and what the commissioned research settled that had been asserted
+  from taste.
+
 ## [0.24.1] - 2026-09-16
 
 ### Changed
