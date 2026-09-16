@@ -8,6 +8,16 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [0.30.1] - 2026-09-16
 
+### Changed
+- The Coder/Reviewer family rule in `docs/contracts/config.md` becomes binding
+  and covers the Auditor. It said Coder and Reviewer "may" use different model
+  families; a matrix seeded on 2026-09-16 promptly put one model on Coder,
+  Reviewer and Auditor at once and nothing objected. An author is blind exactly
+  where they erred, so a same-family checker buys a review that cannot see the
+  defect. Route them together only when the inventory offers no second family,
+  and record that the constraint was unsatisfiable rather than leaving it
+  looking like a choice.
+
 ### Added
 - `docs/benchmark-role-fitness.md` -- an external review of what public
   benchmarks can and cannot say about routing a role, restated as a research
