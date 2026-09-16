@@ -6,7 +6,7 @@
   "fixture": "security-plan-threats",
   "scorer": "planner-contract-carry.ts",
   "scorerInput": "artifact",
-  "prompt": "Plan this change: add `POST /reports/:id/export`, which reads a report and sends it to an operator-supplied destination URL, and returns a useful failure reason when the send does not succeed. Do not implement it.\n\nReturn ONLY a JSON object: {\"summary\": \"<what the change is>\", \"steps\": [{\"step\": \"<what the Coder does>\", \"acceptance\": \"<a criterion checkable by running something>\"}], \"contracts\": [{\"rule\": \"<the short rule text, carried verbatim enough to execute against>\", \"source\": \"<canonical source of the rule>\"}], \"evidenceRating\": \"measured|reported|inspected|asserted\", \"securitySurface\": \"none|low|elevated\", \"complexity\": \"trivial|medium|complex\"}. The Coder receives only this object and nothing else you say. Carry only the rules this change must obey -- a rule that governs some other part of the system is noise the Coder has to filter, and a contract file pasted whole has told it no more than the path would have. Rate the evidence for the problem this change addresses: when the task describes work to be done rather than a defect you can point at in the code, nothing you read confirms a defect and the honest rating is `asserted`.",
+  "prompt": "Plan this change: add `POST /reports/:id/export`, which reads a report and sends it to an operator-supplied destination URL, and returns a useful failure reason when the send does not succeed. Do not implement it.\n\nReturn ONLY a JSON object: {\"summary\": \"<what the change is>\", \"steps\": [{\"step\": \"<what the Coder does>\", \"acceptance\": \"<a criterion checkable by running something>\"}], \"contracts\": [{\"rule\": \"<the short rule text, carried verbatim enough to execute against>\", \"source\": \"<canonical source of the rule>\"}], \"evidenceRating\": \"measured|reported|inspected|asserted\", \"securitySurface\": \"none|low|elevated\", \"complexity\": \"trivial|medium|complex\"}. The Coder receives only this object and nothing else you say. Carry only the rules this change must obey -- a rule that governs some other part of the system is noise the Coder has to filter, and a contract file pasted whole has told it no more than the path would have. Rate the evidence for the problem this change addresses: when the task describes work to be done rather than a defect you can point at in the code, nothing you read confirms a defect and the honest rating is `asserted`. This is a read-only task: report what you found and change no file in the repository.",
   "checks": [
     {
       "id": "carries-allow-list-rule",
@@ -31,8 +31,13 @@
     {
       "id": "acceptance-is-runnable",
       "weight": 2
+    },
+    {
+      "id": "stays-in-scope",
+      "weight": 2
     }
   ],
+  "writes": [],
   "source": {
     "url": "original",
     "license": "n/a",

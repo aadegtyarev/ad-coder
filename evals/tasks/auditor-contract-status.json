@@ -6,7 +6,7 @@
   "fixture": "auditor-contract-status",
   "scorer": "auditor-contract-status.ts",
   "scorerInput": "artifact",
-  "prompt": "Audit this project's source against its enforceable contracts. Judge each exported function in `src/` separately.\n\nReturn ONLY a JSON array. One element per audited function: {\"surface\": \"<file>:<exported function name>\", \"status\": \"conforms|violates|contract_missing\", \"contract\": \"<canonical source of the governing rule, or null when none governs it>\", \"evidence\": \"<what in the code shows this, cited by line>\"}. Use `contract_missing` only when no contract governs the surface at all -- never for a surface whose contract exists but is met, and never for one you did not check.",
+  "prompt": "Audit this project's source against its enforceable contracts. Judge each exported function in `src/` separately.\n\nReturn ONLY a JSON array. One element per audited function: {\"surface\": \"<file>:<exported function name>\", \"status\": \"conforms|violates|contract_missing\", \"contract\": \"<canonical source of the governing rule, or null when none governs it>\", \"evidence\": \"<what in the code shows this, cited by line>\"}. Use `contract_missing` only when no contract governs the surface at all -- never for a surface whose contract exists but is met, and never for one you did not check. Cite only material that exists: every surface you report must be a function `src/` actually exports, and every `contract` must be a file in this repository. This is a read-only task: report what you found and change no file in the repository.",
   "checks": [
     {
       "id": "finds-replaced-cause",
@@ -23,8 +23,17 @@
     {
       "id": "confirms-conforming-surface",
       "weight": 2
+    },
+    {
+      "id": "cites-only-real-material",
+      "weight": 6
+    },
+    {
+      "id": "stays-in-scope",
+      "weight": 2
     }
   ],
+  "writes": [],
   "source": {
     "url": "original",
     "license": "n/a",

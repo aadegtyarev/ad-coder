@@ -207,6 +207,81 @@ prompt. The lesson generalises: when every model fails a task the same way, read
 the task before reading the models, and treat an inverted cost ranking as the
 signal that the measurement has stopped being about capability.
 
+**Every target-scored task also scores what the model touched that nobody asked
+about.** The task declares `writes`, an allow-list of path globs, and a
+`stays-in-scope` check; the runner snapshots the target before the run and after
+it and fails the check when anything outside the list was added, rewritten or
+deleted. The offending paths are reported in the measurement as `strayPaths`,
+because the target directory is deleted before anyone reads the score.
+
+Until this existed, a model that fixed the named function and also pulled in a
+logging framework, reformatted a neighbouring module and left a scratch file
+behind scored a clean 1.00 in every task here. Scope creep is among the most
+expensive things an agent does to a real codebase -- it inflates review and mixes
+unrelated risk into one change -- and `reviewer.md` treats it as blocking, so a
+bench that could not see it was selecting for it. The prompt states the
+constraint too: a requirement scored but never stated is the
+`planner-contract-carry-v1` mistake.
+
+Three things it deliberately does not charge to the model. The `.ad-coder/`
+directory, which the harness itself writes into every target. Anything the
+fixture's own `.gitignore` covers, which is how `target/` for Cargo and
+`__pycache__` for Python stay free for a task that asks the model to run its
+tests. And a fixture's seeded defect, when it ships as an uncommitted change so
+the role under test can read it as a `git diff` -- which is why the comparison is
+against a snapshot taken after materialization rather than against the baseline
+commit.
+
+**A task may also forbid a tool, and the ledger says whether it was used.** The
+task declares `forbids` beside a `honours-prohibitions` check, and the runner
+reads the tool names every ledger row already carries. `security-plan-threats-v1`
+forbids `bash`: its role prompt says not to run the project's test suite, and a
+threat model is a reading task.
+
+A prohibition is usually in a prompt because obeying it is *inconvenient* --
+running the tests would be reassuring, re-reading would feel thorough. So
+ignoring one is a distinct trait from being wrong: invisible in the answer's
+quality, and exactly what makes an agent unusable in a real workflow, because the
+constraint you were relying on silently stops holding. It also costs money a
+routing decision is trying to optimise.
+
+The limit is worth stating plainly. The ledger records tool NAMES and counts,
+never call arguments, so "did not run the test suite" is only answerable as "did
+not call `bash`". A task may therefore prohibit a tool, never an intention -- and
+must say so in its prompt, in those words, because scoring a rule the model was
+given only in its role prompt punishes it for a context it was never shown.
+
+**A prose bracket is not an answer.** The artifact extractor took the first `[`
+or `{` in the output and read from there, which assumes no prose before the
+answer contains one -- and prose about code routinely does. A live planner
+explained an id format as `[a-z0-9-]` above its plan; the extractor returned that
+character class as the whole answer, no scorer could read it, and a run that
+passed every check was recorded as `unreadable_answer` at quality 0.12. That is a
+model failure the harness invented, which is the one error this pipeline must not
+make. Each bracket is now tried in turn and the first span that both closes and
+parses is the answer; a span that parses *inside* an earlier unclosed one is
+treated as truncation rather than as a brief answer.
+
+**A claim is checked against the fixture wherever a claim is checkable.** The
+artifact-scored tasks read the JSON the model asserted, so a confident,
+well-formed, wholly invented answer scored exactly as well as one that did the
+work: an auditor could cite a contract file that is not in the repository, a
+reviewer a line number past the end of a seventeen-line file, a security answer a
+step of a plan that has three. Each of those is the one part of the claim that is
+mechanically checkable, and each is now checked -- `cites-only-real-material`,
+`cited-lines-exist`, `cites-only-real-plan-steps`, joining
+`planner-contract-carry-v1`'s verification of a carried rule against the real
+contract text.
+
+Over-claiming matters more here than its size suggests, because it propagates: a
+fabricated citation becomes the next role's justification, and a bench that
+cannot see it will route a confident fabricator into every cell. What is *not*
+checked is stated too -- a reviewer naming a command and its output is giving
+equally good evidence, so only `path:line` citations are verified; the point is
+to catch an invented location, not to demand one. The researcher's fetched URLs
+remain unverifiable for the reason #141 records: the ledger carries tool names
+without arguments, by design.
+
 Two scorer design notes follow from an independent review of the role tasks.
 
 `planner-contract-carry-v1` verifies a carried rule against the fixture's own

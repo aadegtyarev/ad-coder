@@ -1,0 +1,34 @@
+[
+  {
+    "code": "SSRF_OUTBOUND_DESTINATION",
+    "severity": "critical",
+    "step": 2,
+    "cwe": "CWE-918",
+    "exploit": "The caller supplies any absolute URL as `destination`, so the server POSTs the report body to an internal address such as the metadata endpoint.",
+    "mitigation": "Resolve the destination and require it to be on the allow-listed hosts the contract names."
+  },
+  {
+    "code": "ERROR_DETAIL_DISCLOSURE",
+    "severity": "high",
+    "step": 3,
+    "cwe": "CWE-209",
+    "exploit": "The failure response carries the caught message, the resolved destination and the on-disk report path, so a caller learns the storage layout.",
+    "mitigation": "Return a stable failure code and log the detail server-side."
+  },
+  {
+    "code": "UNBOUNDED_EXPORT_RETRY",
+    "severity": "medium",
+    "step": 4,
+    "cwe": "CWE-770",
+    "exploit": "The retry loop in step 4 re-POSTs without a ceiling, so one export amplifies into unbounded outbound traffic.",
+    "mitigation": "Cap the attempts and back off between them."
+  },
+  {
+    "code": "EXPORT_QUEUE_RACE",
+    "severity": "medium",
+    "step": 5,
+    "cwe": "CWE-362",
+    "exploit": "Two concurrent exports of the same report interleave in the queue described by step 5 and one overwrites the other's status.",
+    "mitigation": "Serialize per report id."
+  }
+]

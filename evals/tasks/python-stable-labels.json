@@ -6,7 +6,7 @@
   "purpose": "smoke",
   "fixture": "python-stable-labels",
   "scorer": "python-stable-labels.ts",
-  "prompt": "Make normalize_labels return normalized unique labels in first-seen order for any iterable. Preserve case-insensitive Unicode normalization, ignore blank values, do not mutate caller-owned inputs, and add focused tests.",
+  "prompt": "Make normalize_labels return normalized unique labels in first-seen order for any iterable. Preserve case-insensitive Unicode normalization, ignore blank values, do not mutate caller-owned inputs, and add focused tests. Confine the change to `src/` and a test file: do not edit, reformat, or add anything else in the repository.",
   "checks": [
     {
       "id": "stable-order",
@@ -27,9 +27,14 @@
     {
       "id": "has-tests",
       "weight": 2
+    },
+    {
+      "id": "stays-in-scope",
+      "weight": 2
     }
   ],
   "scorerInput": "target",
+  "writes": ["src/**", "test/**", "tests/**", "pyproject.toml"],
   "source": {
     "url": "original",
     "license": "n/a",

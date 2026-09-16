@@ -4,7 +4,7 @@
   "complexity": "medium",
   "mode": "automatic-pipeline",
   "measuredRoles": ["coder"],
-  "prompt": "Repair the regressions in the current implementation according to docs/contracts/errors.md. Encoded IDs must never escape baseDir, malformed encoding must fail with the same stable invalid-id boundary, and metadata failure must preserve the original thrown error object and must not leave an unreported primary write. Add independently runnable regression tests that fail against HEAD, including malformed decoding and root baseDir behavior, and keep the API as small as possible. Use docs/contracts/errors.md as canonical contract evidence for every affected surface.",
+  "prompt": "Repair the regressions in the current implementation according to docs/contracts/errors.md. Encoded IDs must never escape baseDir, malformed encoding must fail with the same stable invalid-id boundary, and metadata failure must preserve the original thrown error object and must not leave an unreported primary write. Add independently runnable regression tests that fail against HEAD, including malformed decoding and root baseDir behavior, and keep the API as small as possible. Use docs/contracts/errors.md as canonical contract evidence for every affected surface. Confine the change to `src/` and a test file: the contracts under `docs/` are canonical evidence to read, not material to edit, and nothing else in the repository may change.",
   "checks": [
     {
       "id": "rejects-encoded-traversal",
@@ -21,11 +21,16 @@
     {
       "id": "has-regression-tests",
       "weight": 1
+    },
+    {
+      "id": "stays-in-scope",
+      "weight": 2
     }
   ],
   "fixture": "reviewer-hidden-regression",
   "scorer": "pipeline-repair-regressions.ts",
   "scorerInput": "target",
+  "writes": ["src/**", "test/**", "tests/**", "package.json"],
   "source": {
     "url": "original",
     "license": "n/a",
