@@ -1,0 +1,16 @@
+[
+  {
+    "code": "MISSING_AUTHORIZATION_ON_DELETE",
+    "severity": "critical",
+    "cwe": "CWE-862",
+    "exploit": "The route calls deleteReport directly without requireSession, so any caller can delete any report by id; every sibling route in src/router.ts calls requireSession first.",
+    "mitigation": "Call requireSession(request) before deleteReport."
+  },
+  {
+    "code": "DELETE_NOT_OWNER_SCOPED",
+    "severity": "high",
+    "cwe": "CWE-639",
+    "exploit": "listReports filters by an owner prefix, so reports belong to owners, but deleteReport takes a bare id and readReport knows nothing about owners -- a caller who passes the session check still deletes another owner's report.",
+    "mitigation": "Pass the session owner into deleteReport and unlink only a report that owner owns."
+  }
+]

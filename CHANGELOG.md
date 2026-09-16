@@ -6,6 +6,22 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.26.1] - 2026-09-16
+
+### Added
+- `security-trivial-v1`: one route registered without the `requireSession` call
+  every sibling makes, reusing the existing threat-modelling fixture. All three
+  models score 1.00 twice at $0.0011 for the cheapest, so it ships as `smoke` --
+  the trivial tier's answer rather than a failure to discriminate.
+
+### Fixed
+- Its first scorer demanded exactly one threat, and all three models scored
+  0.57-0.79 against it. The artifacts showed an owner-scoping gap the fixture
+  genuinely contains -- `listReports` filters by owner prefix, `deleteReport`
+  takes a bare id -- which two models found unprompted. The restraint
+  requirement was right and its ceiling was set from what the author imagined
+  rather than from the fixture; the gap is now a bonus check and the cap is two.
+
 ## [0.26.0] - 2026-09-16
 
 ### Added

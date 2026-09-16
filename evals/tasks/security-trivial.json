@@ -1,0 +1,39 @@
+{
+  "id": "security-trivial-v1",
+  "role": "security",
+  "complexity": "trivial",
+  "mode": "role",
+  "purpose": "smoke",
+  "fixture": "security-plan-threats",
+  "scorer": "security-trivial.ts",
+  "scorerInput": "artifact",
+  "prompt": "Threat-model ONE addition to `src/router.ts`, against the code already in this repository:\n\n  \"DELETE /reports/:id\": (request: Request) => deleteReport(request.query.id ?? \"\"),\n\n`deleteReport` is a new function in `src/reports.ts` that resolves the id through the existing `readReport` validation and then unlinks the file. Nothing else changes.\n\nReturn ONLY a JSON array. Each element: {\"code\": \"<concise stable defect code>\", \"severity\": \"critical|high|medium|low|info\", \"cwe\": \"CWE-###\", \"exploit\": \"<how an attacker abuses it>\", \"mitigation\": \"<what the Coder must implement>\"}. Report only real threats this one route introduces, and follow the path the id takes through the existing code before deciding what is real. It is three lines: a threat model that lists more than it can show is as unusable as one that lists nothing. This is a read-only task: report what you found and change no file in the repository.",
+  "checks": [
+    {
+      "id": "detects-missing-authorization",
+      "weight": 6
+    },
+    {
+      "id": "avoids-validated-id-false-positive",
+      "weight": 3
+    },
+    {
+      "id": "notices-the-ownership-gap",
+      "weight": 3
+    },
+    {
+      "id": "bounded-threats",
+      "weight": 3
+    },
+    {
+      "id": "stays-in-scope",
+      "weight": 2
+    }
+  ],
+  "writes": [],
+  "source": {
+    "url": "https://cwe.mitre.org/data/definitions/862.html",
+    "license": "CWE is free to use with attribution (MITRE)",
+    "note": "CWE-862 Missing Authorization, posed as the smallest threat-modelling job available: one route, three lines, and the defect is the ABSENCE of a call every sibling route makes. No call graph to trace and no plan to reason about, which is what makes it trivial -- but it keeps the medium task's tempting non-defect, since the id is validated before it reaches the filesystem and claiming traversal is inventing work. Written for #174. Reuses the `security-plan-threats` fixture: the trivial tier is cheap precisely because the fixtures already exist. Calibrated before committing and SATURATED: glm-5.3-flash, deepseek-v4.1-flash and minimax-m3 all score 1.00 twice, the cheapest at $0.0011 a run -- the trivial tier's answer, so the task is `smoke`. Its first version scored all three at 0.57-0.79 because it demanded exactly one threat, and the artifacts showed why that was wrong: the fixture's `listReports` filters by an owner prefix while `deleteReport` takes a bare id, so an owner-scoping gap is genuinely there, and two models found it unprompted -- one tracing it through the code and proposing an adversarial test. The check now scores that as a bonus and caps threats at the two the fixture actually contains."
+  }
+}

@@ -466,6 +466,22 @@ It wins on review and auditing, loses on threat modelling. That is an argument
 for routing per role rather than swapping a model globally, and it is the first
 measurement this project has that distinguishes the two.
 
+`security-trivial-v1` completes the trivial tier's first pair, and its defect is
+worth more than its result. The task poses one route registered without the
+`requireSession` call every sibling makes, and the first version of the scorer
+demanded exactly one threat. All three models scored 0.57-0.79, and the artifacts
+said why: the fixture's `listReports` filters by an owner prefix while
+`deleteReport` takes a bare id, so an owner-scoping gap is genuinely present.
+Two models found it unprompted; one traced it through the code and proposed an
+adversarial test for the Coder.
+
+The restraint requirement was right and its ceiling was wrong -- set from what
+the author imagined the fixture contained rather than from what it contains. The
+check now scores the ownership gap as a BONUS, since a threat model that stops at
+the missing door has done the job it was asked for, and caps threats at two. All
+three models then score 1.00 twice, at $0.0011 for the cheapest, so the task is
+`smoke`.
+
 **The recurring defect in this corpus is a check that scores the author's
 vocabulary.** It has now been found five times, in five different tasks, by
 five different means, and it always looks the same from outside: several models
