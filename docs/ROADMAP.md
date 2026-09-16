@@ -417,9 +417,9 @@ workflows — one substrate, swappable drivers.
   versioned, realistic evaluation repositories under `evals/fixtures/`, role and
   complexity tasks under `evals/tasks/`, headless execution under `evals/runner/`,
   and deterministic plus independent-review scoring under `evals/scorers/`.
-  Raw provider outputs and run state stay gitignored under `.ad-coder/evals/`;
-  durable aggregate findings and recommended routing live in
-  `docs/model-calibration.md`. Cover Planner localization, Researcher evidence,
+  Raw provider outputs and run state stay gitignored under `.ad-coder/evals/`.
+  The corpus exercises the harness on adversarial shapes; it does not rank
+  models and does not seed a routing cell (see AGENTS.md, "Model routing"). Cover Planner localization, Researcher evidence,
   Security seeded vulnerabilities, Coder changes at all three complexities,
   Reviewer/Auditor hidden regressions, Orchestrator mode/complexity/escalation,
   and Summarizer fact retention. Score quality gates first, then total cost to

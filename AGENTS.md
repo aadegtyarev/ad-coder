@@ -122,119 +122,88 @@ decisions in `docs/ROADMAP.md` and research in its relevant research note.
 There is no parallel checkpoint file. Do not leave project knowledge only in a
 chat transcript or ignored harness runtime state.
 
-## Native dogfood and calibration program
+## Model routing: seed from published evidence, correct with real work
 
 Run ad-coder itself with the `openrouter-presets` inventory profile by default.
 Use another inventory profile only when the operator explicitly requests it.
 
-### Finish this program end to end
+**The routing matrix is seeded from public benchmark numbers, not measured
+locally.** Published agentic results rest on thousands of tasks; a local sweep
+of two dozen rests on one run per cell, where the run-to-run spread of a single
+model exceeds every difference between models. The 2026-09-16 round spent a day
+and $1.49 to learn that, and the conclusion is in the git history rather than in
+a document, because the document would invite rebuilding it.
 
-The active dogfood/calibration program is one continuous project objective, not a
-series of optional chat tasks. Keep moving autonomously through research,
-ad-coder repairs, prompt/tool/profile changes, benchmark construction, reruns,
-calibration, review, documentation, PR, CI, and merge until the whole accepted
-scope is complete. A progress report is never a stopping point: after reporting,
-immediately execute the next unblocked step in the same turn. Do not emit a final
-answer merely because one role, slice, test, review, or research report finished.
+So: derive the initial matrix by rule from published evidence -- agentic and
+tool-use scores, an intelligence index, latency, and the subscription allowance
+-- and mark it `estimated`. Then correct it from work the project actually does.
 
-When dogfood exposes a benchmark-blocking ad-coder defect, stop the affected
-benchmark generation, preserve its evidence as rejected/diagnostic, fix and test
-the product defect, then rerun every invalidated cell under a new versioned
-generation. Non-blocking defects may wait only until the current bounded round
-finishes. Never trade research quality for a superficially cheaper run when its
-decision controls architecture, dependencies, provider economics, or model
-routing.
+**What research must establish before a cell is seeded.** Open the primary
+source; a vendor blog is a claim, not a measurement. Read several benchmarks
+rather than one, and prefer independently reproduced numbers -- the same
+checkpoint moves 3-8 points on the same benchmark by harness alone, so a single
+leaderboard row is not a fact about a model. Record the dated checkpoint, the
+provider, the effort the numbers were produced at, and whether the figure is
+vendor-reported. A model name alone does not identify what will run: providers
+retire and realias slugs, and structured-output support differs per provider for
+one model id.
 
-If the host forcibly ends a turn or process, persist a cold-session handoff before
-the boundary: current branch/commit, accepted and rejected evidence, exact active
-checkpoint/run IDs, token/cost totals, files changed, verified commands, blockers,
-and the exact next command. On the next turn, resume from that handoff without
-asking the operator to restate scope and without repeating completed work.
-
-The completion condition for this program is all of: blocking pipeline defects
-fixed; model research independently verified and durable; role briefs and native
-Orchestrator behavior updated; portable profiles/economics history/import/export
-implemented; representative benchmark corpus built; manual-role, manual-workflow,
-and automatic-pipeline modes exercised; model/role/complexity calibration recorded
-with accepted-result economics; full checks and independent review clean; and the
-resulting PR merged. Until all conditions hold, report at most 99% and continue.
-
-For the active ad-coder optimization and model-calibration program, do not use
-LDO. Develop directly or through ad-coder's native Planner, Researcher, Security,
-Coder, Reviewer, Auditor, and Orchestrator roles. Exercise standalone roles,
-manual workflow stepping, and the fully automatic built-in pipeline so product
-failures remain visible. This explicit operator instruction overrides the generic
-LDO guidance below for this program.
+**What corrects a cell.** Real runs already emit the signals: rounds to
+acceptance, stage-limit hits, rejected verdicts, rework, and accepted-result
+cost. A role that repeatedly needs rework moves up a tier; one that lands
+first-try and cheap moves down. Persist an evidenced project-local override;
+never silently rewrite the user baseline from one run. The reusable calibrated
+base and the full price/limit history belong to the user profile; a project may
+retain a bounded anonymous snapshot so it stays portable. Export/import must be
+versioned, validated before atomic mutation, and must exclude credentials,
+account identity, raw provider responses, transcripts, and precise private
+activity history.
 
 Optimize accepted-result efficiency, never token count alone. Charge planning,
-research, security, coding, repair, re-review, failed stages, and recovery to the
-route being evaluated. Preserve identical quality gates. Record duration,
-model/tool turns, fresh/cache/output/reasoning tokens, provider-reported and
-estimated cost, context size/tier, stage limits, verdict, escaped defects, and
-operator interventions. Keep API token billing separate from subscription
-capacity and rate-limit/reset observations.
+research, security, coding, repair, re-review, failed stages, and recovery to
+the route being evaluated. Keep API token billing separate from subscription
+capacity: on a subscription the comparable quantity is the fraction of that
+model's allowance, not the dollars.
 
-Calibrate against small realistic repositories covering trivial changes, medium
-repairs, behavior-preserving refactors, complex cross-surface features, hidden
-review defects, and orchestration/recovery choices. Start unfamiliar inventories
-from documented provider guidance and independent evidence, then test the
-cheapest plausible models at one effort level. Vary effort or an adjacent model
-only around failed or unstable cells. Prefer a different model family for Coder
-and Reviewer when the operator-authored inventory permits it; within a Codex-only
-inventory use distinct recommended variants such as Sol and Terra.
+**What the eval corpus is for.** `evals/` exercises the harness on adversarial
+shapes -- a race across an `await`, two documents that disagree, a constraint
+that must survive context eviction. Running it on 2026-09-16 found two product
+defects that reading the code did not: a complexity rubric that reached one of
+three callers, and a runner that dropped aborted runs so the worst ones vanished
+from the sample. That is its job. It is not a model ranking, and a score from it
+must not seed or override a routing cell.
 
-Treat Orchestrator, Planner, and observed complexity as separate calibration
-signals. Planner disagreement and actual rounds, scope changes, limit hits,
-quality gates, and accepted-result cost refine only an explicit project-local
-override. The reusable calibrated base and full price/limit history belong to the
-user profile. A project may retain a bounded anonymous current snapshot so it is
-portable. Export/import must be versioned, validated before atomic mutation, and
-must exclude credentials, account identity, raw provider responses, transcripts,
-and precise private activity history.
-Use the root agent's own routing decisions as shadow Orchestrator samples: before
-dispatch, note the mode, estimated complexity, model/effort, and finite budgets;
-afterward compare them with Planner and observed outcomes. A role prompt's soft
-turn guidance is not a runtime limit. Apply an explicit ceiling during dogfood
-and treat overruns as evidence for role-specific defaults.
+**Rules that survive from that work**, because they apply to any measurement
+including a public one:
+
+- One run samples a model; it does not measure one. Five runs, judged on the
+  worst.
+- A failure is data, not an exception. Dropped runs are the bad ones, so
+  dropping them flatters the model.
+- Never compare models across different tasks.
+- Route per role, not per model, and treat effort as part of the selection.
+- When several models fail a check identically, read an artifact before
+  concluding anything about the models: in this corpus that signal meant the
+  check was wrong seven times out of seven.
+
+If the host forcibly ends a turn or process, persist a cold-session handoff
+before the boundary: current branch/commit, accepted and rejected evidence,
+exact active checkpoint/run IDs, token/cost totals, files changed, verified
+commands, blockers, and the exact next command. On the next turn, resume from
+that handoff without asking the operator to restate scope.
+
+For this program, do not use LDO. Develop directly or through ad-coder's native
+roles, exercising standalone roles, manual workflow stepping, and the fully
+automatic pipeline so product failures stay visible. This explicit operator
+instruction overrides the generic LDO guidance below.
 
 Write durable decisions to `docs/ROADMAP.md`, unresolved implementation to a
-GitHub issue under the matching epic, provider/economic evidence to the relevant research note, and
-aggregate benchmark conclusions to `docs/model-calibration.md`. Raw runs remain
-gitignored. After finding pipeline waste or failure, fix and verify it before
-expanding the benchmark matrix; do not run a broad suite until the targeted fix
-passes focused checks.
-
-Every bootstrap or refresh research run that can affect routing must leave a
-dated, source-linked note in the developed project's `docs/`; preserve verified
-facts, unknowns, confidence, model/effort, run ID, and aggregate usage so a later
-Researcher can compare rather than start over. Update the existing thematic note
-instead of scattering equivalent research. Never leave useful research only in
-`.ad-coder/` or chat.
-For model bootstrap, use the strongest available Researcher with finite budgets.
-The active Orchestrator must independently open the primary official source before
-accepting a conclusion that sets the initial model matrix, price, limit, or route.
-Claims that documentation does not exist require a family/product-index search,
-an exact catalog check, and a provider-domain web search; one empty search result
-is never enough. If verification overturns the report, retain it only as rejected
-role-calibration evidence and rerun every benchmark whose routing premise depended
-on it.
-Check exact identifiers in official provider material first. If they are absent,
-confirm against one official catalog and stop variant-specific web expansion;
-mark specifications unknown and proceed to empirical calibration. If present,
-collect only routing-relevant capability, effort, context/cache, price-tier,
-subscription/rate-limit, and published-eval facts, then seek one independent
-exact-model source. Never infer a tier from a model name.
-
-Append every meaningful role or benchmark sample to
-`docs/calibration-evidence.jsonl`. Keep one bounded secret-free JSON object per
-sample: schema version, date, task/corpus ID, mode, role, assigned and observed
-complexity, provider/model/effort, accepted/verdict, rounds, duration, model/tool
-turns, fresh/cache/output/reasoning tokens, reported/estimated cost, limit event,
-escaped-defect count, and a short behavioral observation. Omit unavailable
-values rather than estimating them. This compact ledger is committed for later
-statistics; raw outputs, prompts, transcripts, exact private activity times, and
-account identity remain gitignored.
-
+GitHub issue under the matching epic, and provider/economic evidence to the
+relevant research note. Every research run that can affect routing must leave a
+dated, source-linked note in the developed project's `docs/`: verified facts,
+unknowns, confidence, and sources, so a later Researcher can compare rather than
+start over. Update the existing thematic note instead of scattering equivalent
+research. Never leave useful research only in `.ad-coder/` or chat.
 ## Working-tree and harness notes
 
 - Every change merged into `main`, including documentation-only work, must bump

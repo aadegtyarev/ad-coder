@@ -114,12 +114,12 @@ cannot be reached at all** — `grok-4.6` answers 401 not-supported,
 `minimax-m2.7` and `gpt-5.6-luna` answer 500. Listed and available are different
 facts.
 
-Full per-model numbers are in `model-calibration.md`; the raw measurements, with
-provider and harness outcome, are in `calibration-evidence.jsonl`.
+Per-model measurements from the retired local sweep are in the git history; they
+are not a routing source (see AGENTS.md, "Model routing").
 
 Routing from these numbers is a procedure in its own right — bands against a
 reference, the allowance rather than the list price, cost and latency reported
-together. See [benchmark-method.md](benchmark-method.md) §4.
+together.
 
 ## What ad-coder cannot yet represent
 

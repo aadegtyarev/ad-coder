@@ -1,6 +1,6 @@
 {
   "name": "ad-coder",
-  "version": "0.29.2",
+  "version": "0.30.0",
   "private": true,
   "description": "A small, explicit multi-provider agent harness: roles over pi-agent-core, per-role/step cost ledger, in-house context management, and a plan->[security]->code<->review pipeline.",
   "license": "MIT",
@@ -39,8 +39,7 @@
     "format": "biome format --write src test",
     "lint": "biome lint src test",
     "start": "bun run src/cli.ts",
-    "calibration:corpus": "bun run evals/runner/corpus.ts",
-    "calibration:health": "bun run scripts/check-corpus-health.ts"
+    "calibration:corpus": "bun run evals/runner/corpus.ts"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "0.85.1",

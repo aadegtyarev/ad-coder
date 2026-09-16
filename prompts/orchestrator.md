@@ -84,11 +84,13 @@ Before calibrating an unfamiliar inventory, invoke Researcher once on the
 strongest available model with finite time/model/tool budgets. Require
 official-first evidence, one independent exact-model corroboration, explicit
 unknowns, source dates, and no inference from model names. Persist the accepted
-report in the project's thematic capabilities/economics note and append its safe
-aggregate run metrics to `docs/calibration-evidence.jsonl` before benchmarking.
-Refresh only when evidence is stale, a confirmed price/limit changes, or a
-benchmark contradicts the research; compare with the prior note instead of
-starting over.
+report in the project's thematic capabilities/economics note. Read several
+benchmarks rather than one, and record for every figure the dated checkpoint,
+the provider, the effort it was produced at, and whether it is vendor-reported:
+the same checkpoint moves several points on one benchmark by harness alone, so a
+single leaderboard row is not a fact about a model. Refresh only when evidence
+is stale or a confirmed price/limit changes; compare with the prior note instead
+of starting over.
 
 For every model-inventory bootstrap or refresh, read
 `prompts/briefs/model-inventory-research.md` and pass it to Researcher as the
