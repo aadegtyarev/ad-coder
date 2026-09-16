@@ -34,3 +34,14 @@ for machines?
 - Test failure output and recovery instructions as public behavior. Provider
   timeout, cancellation, and retry behavior must be explicit and configurable;
   automatic retry is never inferred for a potentially non-idempotent operation.
+- 2026-09-16: A rejection carries the reason, not only the code, and a boundary
+  that translates an error keeps the causal detail. A model holding
+  `invalid_follow_up` cannot tell which field it got wrong, so its only move is
+  to call again unchanged: observed as four identical rejections in a row until
+  the stage limit ended the run, with the failure then surfacing as a provider
+  fault while the provider was answering normally. The same day, a person was
+  told `calibrated routing profile is invalid` when the validator underneath knew
+  the file and the retired role that caused it. The validator's own sentence is
+  the actionable part and must reach the caller -- `code: message`, never `code`
+  alone -- whether that caller is a model or a human. Re-wrapping a typed error
+  in a vaguer one discards the only part worth having.
