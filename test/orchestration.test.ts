@@ -410,6 +410,26 @@ test("submit_follow_up advertises one typed object and rejects all-fields calls 
   expect((unknownKind as ProjectOperationsError).detail).toBe("kind is unsupported");
 });
 
+test("a rejected tool call tells the model WHAT was wrong, not only that it was", async () => {
+  // A model that receives "invalid_follow_up" cannot tell which field it got
+  // wrong, so its only move is to call again unchanged. Observed 2026-09-16:
+  // four identical rejections in a row, the stage exhausted, and the run
+  // reported as a provider fault while the provider was answering normally.
+  // docs/contracts/errors.md now requires `code: message`.
+  const tool = buildSubmitFollowUpTool({ followUps: [] }, { producer: "coder", runId: "run-1" });
+  const result = await tool.execute("call-1", {
+    kind: "note",
+    title: "Zephyrine cataloguing",
+    evidence: [],
+  });
+  const text = (result.content[0] as { text: string }).text;
+  expect(text).toContain("invalid_follow_up");
+  // The actionable half: the validator's own sentence naming the field.
+  expect(text).toContain("evidence must be non-empty");
+  // And still no content from the rejected payload.
+  expect(text).not.toContain("Zephyrine");
+});
+
 test("Coder and Reviewer primary results survive rejected all-fields follow-up metadata", async () => {
   const fx = fixture();
   const tools = [SUBMIT_FOLLOW_UP_TOOL_NAME];

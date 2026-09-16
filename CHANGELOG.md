@@ -6,6 +6,21 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.31.1] - 2026-09-16
+
+### Fixed
+- A rejected `submit_follow_up` or `submit_plan` call now tells the model what
+  was wrong, not only that something was. Both returned `error.code` alone --
+  `invalid_follow_up`, `malformed_plan` -- while the validator's own sentence
+  ("evidence must be non-empty", "coverage.contractIds must be bounded non-empty
+  strings") was discarded one line before the model saw it. A model holding only
+  the code cannot repair the call, so it calls again unchanged: observed as four
+  identical rejections in a row until the stage limit ended the run, with the
+  failure reported as "research provider response was unavailable or invalid"
+  while the provider was answering normally. `verdict.ts` had been doing this
+  correctly all along, which is why the rule now lives in
+  `docs/contracts/errors.md` rather than in one author's head. (#209)
+
 ## [0.31.0] - 2026-09-16
 
 ### Added

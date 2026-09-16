@@ -71,7 +71,17 @@ export function buildSubmitFollowUpTool(
       } catch (error) {
         if (error instanceof ProjectOperationsError) {
           capture.error = error;
-          return { content: [{ type: "text", text: error.code }], details: undefined };
+          // The CODE alone ("invalid_follow_up") names the disease, not the
+          // symptom: a model holding it cannot tell which field it got wrong,
+          // so its only move is to guess and call again. Observed on
+          // 2026-09-16 -- four identical rejections in a row, no progress, the
+          // stage exhausted, and the run surfaced as "research provider
+          // response was unavailable or invalid" when the provider was fine.
+          // The validator already writes a usable sentence ("evidence must be
+          // non-empty"); it was being discarded one line before the model.
+          // `ProjectOperationsError.message` is already `code: detail`, so the
+          // code is in there once and only once.
+          return { content: [{ type: "text", text: error.message }], details: undefined };
         }
         throw error;
       }
