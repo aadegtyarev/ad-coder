@@ -1,0 +1,18 @@
+{
+  "finding": "All twelve handlers duplicate the same reduce-and-average body; extract one shared helper and have each call it.",
+  "constraint": "Keep the public response shape stable so callers do not break.",
+  "handlers": [
+    "handle01",
+    "handle02",
+    "handle03",
+    "handle04",
+    "handle05",
+    "handle06",
+    "handle07",
+    "handle08",
+    "handle09",
+    "handle10",
+    "handle11",
+    "handle12"
+  ]
+}

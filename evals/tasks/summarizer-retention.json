@@ -1,0 +1,41 @@
+{
+  "id": "summarizer-retention-v1",
+  "role": "auditor",
+  "measuredRoles": ["auditor", "summarizer"],
+  "complexity": "medium",
+  "mode": "role",
+  "purpose": "calibration",
+  "fixture": "summarizer-retention",
+  "scorer": "summarizer-retention.ts",
+  "scorerInput": "artifact",
+  "prompt": "Read `docs/ROLLOUT.md` FIRST and in full, then read every file in `src/`, then answer. Return ONLY a JSON object: {\"finding\": \"<the defect these handlers share>\", \"constraint\": \"<the constraint the rollout notes record, in enough detail to act on>\", \"handlers\": [\"<every handler function you inspected>\"]}. Read all of them; do not sample two and generalise. This is a read-only task: report what you found and change no file in the repository.",
+  "checks": [
+    {
+      "id": "retains-the-constraint",
+      "weight": 7
+    },
+    {
+      "id": "knows-what-the-constraint-protects",
+      "weight": 3
+    },
+    {
+      "id": "reports-the-duplication",
+      "weight": 3
+    },
+    {
+      "id": "inspected-every-handler",
+      "weight": 2
+    },
+    {
+      "id": "stays-in-scope",
+      "weight": 2
+    }
+  ],
+  "writes": [],
+  "requiresCompaction": true,
+  "source": {
+    "url": "original",
+    "license": "n/a",
+    "note": "A constraint stated once at the start of a run, then buried under twelve files of bulk the role must read before it can answer. Written because `summarizer` was the only role the corpus measured with nothing at all -- and it could not be measured the usual way, since the summarizer is not dispatchable as a role: it runs only inside compaction, when a context budget overflows. So this task measures what compaction is FOR. Run it with a small `--max-tokens-percent` and the early messages are evicted before the answer is written; the constraint is exactly the shape of thing that gets lost, because nothing in the code enforces it and it is never restated. Shape invented here; the plant-a-fact-and-evict-it framing follows the long-context retention benchmarks surveyed in docs/benchmark-scoring-research.md, none of which test it through a live compaction subsystem. Calibrated live before committing: deepseek-v4-flash 1.00 with one compaction, glm-5.3-flash 0.12 with two, minimax-m3 0.12 (unreadable answer after compaction), deepseek-v4.1-flash 0.12 (also unreadable). The task discriminates hard, and two of the three failures are a format collapse rather than a lost fact -- which is a real trait under compaction but is confounded with our asking for JSON in the prompt rather than through the provider's structured-output flag (#168)."
+  }
+}

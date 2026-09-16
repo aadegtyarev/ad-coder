@@ -1,0 +1,18 @@
+{
+  "finding": "All twelve handlers duplicate one body: rows.reduce for the total, a guarded divide for the average, and the same response shape.",
+  "constraint": "Every handler's response body must keep the `handler` field spelled exactly as its function name, because the dashboards key on it and a mismatch blanks the panel silently.",
+  "handlers": [
+    "handle01",
+    "handle02",
+    "handle03",
+    "handle04",
+    "handle05",
+    "handle06",
+    "handle07",
+    "handle08",
+    "handle09",
+    "handle10",
+    "handle11",
+    "handle12"
+  ]
+}

@@ -1,0 +1,5 @@
+{
+  "finding": "The handlers look fine.",
+  "constraint": "",
+  "handlers": ["handle01", "handle02"]
+}

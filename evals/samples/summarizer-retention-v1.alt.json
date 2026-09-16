@@ -1,0 +1,21 @@
+{
+  "finding": "handle01 through handle12 are copy-paste of a single implementation -- identical totalling, identical averaging, identical response object.",
+  "constraint": "The `handler` field has to carry the same name as the function emitting it; the rollout notes say the dashboards key on that string and a rename blanks the panel with no error.",
+  "handlers": {
+    "inspected": [
+      "handle01",
+      "handle02",
+      "handle03",
+      "handle04",
+      "handle05",
+      "handle06",
+      "handle07",
+      "handle08",
+      "handle09",
+      "handle10",
+      "handle11",
+      "handle12"
+    ],
+    "note": "all twelve read"
+  }
+}

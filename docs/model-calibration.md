@@ -171,6 +171,50 @@ deliberate: a live run grouped two requirements the task does not require apart,
 and scored full marks. A decomposition has many right shapes and a few wrong
 ones, and only the wrong ones are worth scoring.
 
+`summarizer-retention-v1` is the first task to measure the `summarizer` role,
+which until it existed was measured by nothing at any tier. It could not be
+measured the usual way: the summarizer is not dispatchable as a role at all, and
+runs only inside compaction when a context budget overflows. So the task measures
+what compaction is FOR. A constraint is stated once in `docs/ROLLOUT.md`, the
+role must then read twelve bulky handler files before it can answer, and the run
+is given a context budget small enough that the early messages are evicted first.
+Nothing in the fixture's code enforces the constraint and nothing restates it,
+which is what an operator's requirement looks like in a real run.
+
+Two attempts failed before it worked, and both failures are the same lesson. The
+first scored 1.00 in three turns: the fixture fit in the budget and compaction
+never ran, so the task measured reading rather than retention. The second, with a
+budget tightened to 4%, hit the ceiling and the turn was refused instead of
+compacted. Only the third both overflowed and recovered.
+
+Two early results from it are worth recording, both because they change what a
+profile should say. Holding the ROLE fixed and varying the summarizer left the
+score at 1.00 either way; holding the summarizer fixed and varying the role moved
+it from 1.00 to 0.12. On this evidence what breaks under compaction is the role
+reading the summary, not the model writing it -- which means the cheapest
+acceptable model belongs in the summarizer slot, and that slot is exercised on
+every overflow. Separately, one run recorded `compactions: 0` at a budget where
+another needed two: models spend context differently on identical work, and that
+difference is money.
+
+The summarizer result was then confirmed across three summarizers -- glm-5.3-flash,
+deepseek-v4.1-flash and kimi-k2.7-code -- all 1.00 with the role held fixed. The
+context-spend difference remains a single observation.
+
+One caveat applies to every `unreadable_answer` in this project's recorded
+evidence: these tasks ask for JSON in the PROMPT, and the provider's
+structured-output flag is never set outside `submit_plan` and `submit_verdict`
+(#168). So an unreadable answer conflates "could not do the task" with "did not
+format the answer", and only the first is evidence about capability.
+
+That could only be established because compaction became observable. ad-coder
+announced a compaction FAILURE and said nothing on success, so a completed run
+was indistinguishable from one that never needed to compact. It now prints the
+numbers -- messages replaced, tokens measured, threshold -- and the runner counts
+them into the measurement as `compactions`. A task declaring
+`requiresCompaction: true` is answering a different question when that count is
+zero, and the measurement says so rather than being quietly scored.
+
 **What the field already knows, and what we were reinventing.** A research brief
 commissioned on 2026-09-16 (`benchmark-scoring-research.md`) settled several
 things this document had been asserting from taste. Three matter enough to state

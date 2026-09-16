@@ -15,6 +15,7 @@
     "tasks/researcher-absence-claim.json",
     "tasks/orchestrator-decompose.json",
     "tasks/planner-absent-artifact.json",
-    "tasks/coder-retention.json"
+    "tasks/coder-retention.json",
+    "tasks/summarizer-retention.json"
   ]
 }
