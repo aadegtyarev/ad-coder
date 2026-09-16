@@ -197,8 +197,9 @@ every overflow. Separately, one run recorded `compactions: 0` at a budget where
 another needed two: models spend context differently on identical work, and that
 difference is money.
 
-Both are single runs and neither is settled. They are written down because they
-point at a routing decision, not because they are proven.
+The summarizer result was then confirmed across three summarizers -- glm-5.3-flash,
+deepseek-v4.1-flash and kimi-k2.7-code -- all 1.00 with the role held fixed. The
+context-spend difference remains a single observation.
 
 One caveat applies to every `unreadable_answer` in this project's recorded
 evidence: these tasks ask for JSON in the PROMPT, and the provider's
