@@ -108,6 +108,20 @@ sweep cannot quietly total them together.
 Labelling is the cheap half. The other half is not quoting a smoke task's score
 when a routing decision is being argued.
 
+`bun run calibration:health` reads the recorded evidence and names any task that
+has stopped telling models apart. Two signatures, meaning opposite things.
+**Saturated**: every model of every price is accepted, so the task does not
+measure the difference a routing decision needs and quoting it in favour of any
+model quotes nothing. **Inverted**: quality falls as price rises, which is not a
+hard task but a broken one -- an expensive model has no reason to do worse unless
+the checks are scoring something other than capability.
+
+Both of this project's task defects were found by a person reading a sweep
+printout. Both were visible in the numbers, so neither should have needed one.
+The check reports rather than fails: the evidence is observational, a sweep may
+cover two models one week and six the next, so a finding is a question put to
+whoever reads it rather than a gate on sample size.
+
 **A failure is data, not an exception.** One shape of bug appeared three times in
 one day, in three unrelated places, and each time it destroyed measurements
 rather than recording them: a scorer threw on an answer it could not read, so the

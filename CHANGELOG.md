@@ -6,6 +6,18 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-09-16
+
+### Added
+- `calibration:health` names any corpus task that has stopped discriminating,
+  from the recorded evidence. **Saturated**: every model of every price is
+  accepted, so the task cannot inform a routing decision. **Inverted**: quality
+  falls as price rises, which is the signature of checks scoring something other
+  than capability -- exactly how `planner-contract-carry-v1` looked before its
+  prompt was fixed. Both defects this project has found were caught by a person
+  reading a printout; both were visible in the numbers. It reports rather than
+  fails, since the evidence is observational.
+
 ## [0.17.2] - 2026-09-16
 
 ### Changed
