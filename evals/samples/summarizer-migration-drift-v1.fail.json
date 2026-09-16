@@ -1,0 +1,6 @@
+{
+  "finding": "The collectors look fine.",
+  "constraint": "",
+  "violations": [],
+  "collectors": ["collect01", "collect02"]
+}

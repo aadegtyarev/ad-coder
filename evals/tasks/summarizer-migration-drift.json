@@ -1,0 +1,45 @@
+{
+  "id": "summarizer-migration-drift-v1",
+  "role": "auditor",
+  "measuredRoles": ["auditor", "summarizer"],
+  "complexity": "complex",
+  "mode": "role",
+  "purpose": "calibration",
+  "fixture": "summarizer-migration-drift",
+  "scorer": "summarizer-migration-drift.ts",
+  "scorerInput": "artifact",
+  "prompt": "Read `docs/INGEST.md` FIRST and in full, then read `docs/PATCH-NOTES.md` in full, then read every file in `src/`, then answer. Return ONLY a JSON object: {\"finding\": \"<what most collectors have in common, and why it matters>\", \"constraint\": \"<the naming rule INGEST.md records, in enough detail to act on>\", \"violations\": [\"<every collector id whose source field is an UNSANCTIONED violation of that rule, given what PATCH-NOTES.md sanctions -- empty array if none>\"], \"collectors\": [\"<every collector function you inspected>\"]}. Read all fourteen collector files; do not sample a few and generalise. This is a read-only task: report what you found and change no file in the repository.",
+  "checks": [
+    {
+      "id": "retains-the-constraint",
+      "weight": 6
+    },
+    {
+      "id": "knows-what-the-constraint-protects",
+      "weight": 3
+    },
+    {
+      "id": "identifies-the-unsanctioned-drift",
+      "weight": 7
+    },
+    {
+      "id": "avoids-flagging-sanctioned-renames",
+      "weight": 4
+    },
+    {
+      "id": "inspected-every-collector",
+      "weight": 2
+    },
+    {
+      "id": "stays-in-scope",
+      "weight": 2
+    }
+  ],
+  "writes": [],
+  "requiresCompaction": true,
+  "source": {
+    "url": "original",
+    "license": "n/a",
+    "note": "The complex sibling of `summarizer-retention-v1`, built for cell coverage (summarizer x complex) and dispatched the same way: the summarizer is not a dispatchable role, it runs only inside compaction, so this task dispatches an auditor, declares measuredRoles [\"auditor\", \"summarizer\"], and sets requiresCompaction so the runner records that compaction actually happened rather than measuring a run that merely fit in budget -- the mistake the medium task's first version made, scoring 1.00 in three turns with nothing evicted. This version is harder along the axis the medium task does not exercise: the medium task carries one constraint stated once and never restated, which is retained or lost. Here the constraint must ALSO be reconciled against a second document, PATCH-NOTES.md, that contradicts the naive reading of the first -- two of the fourteen collectors (12, 13) deliberately violate the literal rule in INGEST.md and are explicitly sanctioned by PATCH-NOTES.md, while a fifteenth-looking case, collector09's body reporting source: \"collect07\", is unsanctioned by either document and is the one real defect. Both documents sit at the START of the read, before the bulk of fourteen near-identical files, so both are equally exposed to eviction; an answer that kept only INGEST.md would wrongly flag 12 and 13, and an answer that kept neither would report no constraint and no violation at all. Not yet calibrated live -- to be run per the method before it is trusted."
+  }
+}

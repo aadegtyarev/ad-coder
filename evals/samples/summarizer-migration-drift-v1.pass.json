@@ -1,0 +1,21 @@
+{
+  "finding": "All fourteen collectors duplicate one body -- points.reduce for the total, a guarded divide for the mean, and the same response shape.",
+  "constraint": "Every collector's response body must carry a source field whose value is exactly its own function name, because the alerting pipeline keys off that string to attribute a reading to the collector that produced it.",
+  "violations": ["collect09"],
+  "collectors": [
+    "collect01",
+    "collect02",
+    "collect03",
+    "collect04",
+    "collect05",
+    "collect06",
+    "collect07",
+    "collect08",
+    "collect09",
+    "collect10",
+    "collect11",
+    "collect12",
+    "collect13",
+    "collect14"
+  ]
+}
