@@ -6,6 +6,17 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.24.1] - 2026-09-16
+
+### Changed
+- `docs/calibration-evidence.jsonl` gains the 56 measurements taken during the
+  bench rebuild -- eleven models across four vendors on ten tasks, with the
+  provider, effort, harness outcome, cost and duration of each. They had been
+  sitting in a scratch directory where the next session would not have found
+  them, which defeats the point of keeping an append-only record: the file
+  exists so a tier can be revisited against evidence rather than re-run from
+  scratch, and so the data can eventually be published.
+
 ## [0.24.0] - 2026-09-16
 
 ### Added
