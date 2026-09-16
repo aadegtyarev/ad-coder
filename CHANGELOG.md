@@ -6,6 +6,17 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-09-16
+
+### Changed
+- The opencode-go starting grid is rewritten from measurement rather than from
+  the price list, which is what it said it was waiting for. `glm-5.2` replaces
+  `glm-5.3-flash` in the middle tier on five runs against three, and is also the
+  better buy under the allowance arithmetic. `minimax-m3` leaves the strong tier:
+  it is the fastest model measured and spans 0.25 to 1.00 across five runs on one
+  task, which places it where a bad run is cheap and nowhere else. The superseded
+  choices are named rather than quietly replaced.
+
 ## [0.24.3] - 2026-09-16
 
 ### Changed
