@@ -154,6 +154,82 @@ deliberate: a live run grouped two requirements the task does not require apart,
 and scored full marks. A decomposition has many right shapes and a few wrong
 ones, and only the wrong ones are worth scoring.
 
+**What the field already knows, and what we were reinventing.** A research brief
+commissioned on 2026-09-16 (`benchmark-scoring-research.md`) settled several
+things this document had been asserting from taste. Three matter enough to state
+here.
+
+*Judging a cell on its worst run has a name.* It is `pass^k`, introduced by
+τ-bench and adopted by Terminal-Bench, CORE-Bench and others -- requiring all k
+trials to succeed is the same thing as scoring the minimum. The practice was
+right; calling it by its name makes it citable instead of a preference.
+
+*Three repeats is too few.* Terminal-Bench, FrontierCode and SWE-Doctor each
+independently settled on five runs per cell. Our three came from a budget guess.
+
+*A task every model fails identically is a defective task, and that is the
+published position, not a hunch.* The ABC audit states it directly, the
+item-response literature names near-zero or negative discrimination as the
+signature of a wrong answer key, and a unanimous agent failure is recommended as
+a quality-control step in its own right. This project reached the same
+conclusion twice by hand, on `planner-contract-carry-v1` and on
+`coder-retention-v1`, before knowing it had a name.
+
+The gap that matters most is in the other direction. Every artifact task here
+ships a `.gamed.json` -- the cheating answer that must fail -- and none ships its
+mirror: a *different but equally valid* answer that must pass. FrontierCode calls
+the pair a hack report, and the missing half is exactly what let
+`coder-retention-v1` ship a fixture that argued against its own scorer. Terminal-
+Bench's acceptance criterion says it as an iff: the scorer passes if and only if
+the artifact is acceptable, which means the task must describe every acceptable
+end state and the scorer must accept every one of them.
+
+One number from that research is worth keeping in view. Terminal-Bench spends
+about three hours of combined expert review per task, and its v2.1 release still
+fixed defects in 28 of 89 tasks. SWE-bench Verified put 93 developers and three
+independent reviews across 1,699 samples, discarded 68% of them, and an audit
+still estimated 5-10% of the survivors flawed. Task defects are the normal
+condition of a benchmark, not evidence that its author was careless -- which is
+the argument for finding them by running the thing rather than by staring at it.
+
+`coder-retention-v1` measures the coder at medium complexity, the cell the
+corpus could not measure at all once `refactor-config-v1` saturated -- the
+busiest cell in real use, and the one where the routing decision has the most
+money in it. Four surfaces spread across four modules answer the same retention
+question four ways, and the correct answer is split between a contract file and
+a checked-in test the contract never mentions. So the majority behaviour is
+wrong, and a model that carefully preserves what the code does today fails: the
+committed rule outranks the status quo, which is this project's own priority
+rule.
+
+Its first version is the more useful half of the record. Three surfaces in one
+file, both rules stated plainly in the contract, and glm-5.3-flash -- the
+cheapest model on the provider -- scored 1.00 twice. That is the saturation
+signature, caught before the task was committed rather than after it had been
+quoted in a profile. Rebuilt with the rules split across two sources, the callers
+crossing module boundaries, and a fourth surface violating a contract line nobody
+thinks to check, it separates four models across two vendors: 0.78-0.88 for the
+cheapest with nothing accepted, 0.94-1.00 for the dearest. Eight cents.
+
+`planner-contract-carry-v1` is the standing example of a task scoring its
+author. Six models across four families and two vendors scored 0.82 by failing
+one check identically -- and the most expensive scored lowest, the inverted
+signature the health check calls broken rather than hard. Three separate defects
+hid behind one number. The fixture's third rule governed identifier validation
+while the change reads a report by id, so carrying it was a defensible reading.
+The check demanded the carried set be exactly two rules, so a plan that also
+carried a real invariant it had read in the code was marked wrong for good
+planning. And verification demanded a verbatim contract quotation from an entry
+sourced to the code, where no verbatim text exists.
+
+Each fix narrowed what the check asserts. The rule is now plainly inapplicable to
+the change; the check forbids carrying that rule rather than forbidding anything
+unlisted; and verbatim matching applies only where a plan claims to be quoting a
+file. The lesson is worth more than the fix: when a check and a model disagree,
+read the model's reasoning from the artifact before concluding the model is
+wrong. Six models agreeing with each other and disagreeing with the check is
+evidence about the check.
+
 `bun run calibration:health` reads the recorded evidence and names any task that
 has stopped telling models apart. Two signatures, meaning opposite things.
 **Saturated**: every model of every price is accepted, so the task does not

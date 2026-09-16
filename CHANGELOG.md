@@ -6,6 +6,42 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-09-16
+
+### Added
+- `coder-retention-v1` measures the coder at medium complexity, the busiest
+  routing cell and the one the corpus could not measure at all after
+  `refactor-config-v1` saturated (#159). Four surfaces across four modules
+  answer the same retention question four ways; the correct answer is split
+  between a contract file and a checked-in test the contract never mentions, so
+  the majority behaviour is wrong and a model that carefully preserves what the
+  code does today fails. Calibrated on four models across two vendors before
+  being committed: 0.78-0.88 for the cheapest with nothing accepted, 0.94-1.00
+  for the dearest. A first version, with three surfaces in one file and both
+  rules stated plainly, was solved outright by the cheapest model and rebuilt.
+
+- `docs/benchmark-scoring-research.md` records how public coding and agentic
+  benchmarks actually score model output, with sources and confidence labels:
+  which scorer families are reliable and how they fail, what the contamination
+  audits found, how many repeats a ranking claim needs, the published saturation
+  index, and which of this bench's own checks were reinventing named techniques.
+  Commissioned because a bench justified only by its author's taste is not
+  defensible.
+
+### Fixed
+- `planner-contract-carry-v1` scored the task author's reading of "applicable"
+  rather than the model's ability to select (#161). Six models across four
+  families and two vendors scored 0.82 by failing one check identically, and the
+  most expensive scored lowest -- the inverted signature this project's own
+  health check calls a broken task. Three separate defects: the fixture's third
+  rule governed identifier validation while the change reads a report by id, so
+  carrying it was defensible; the check demanded exactly two rules, so a plan
+  that also carried a real invariant read from the code was marked wrong; and
+  verification demanded a verbatim contract quotation from entries sourced to
+  the code, where no verbatim text exists. The rule is now plainly inapplicable,
+  the check forbids that rule rather than everything unlisted, and verbatim
+  matching applies only to entries claiming to quote a contract file.
+
 ## [0.21.1] - 2026-09-16
 
 ### Fixed
