@@ -108,6 +108,21 @@ sweep cannot quietly total them together.
 Labelling is the cheap half. The other half is not quoting a smoke task's score
 when a routing decision is being argued.
 
+`refactor-config-v1` is `smoke`, and how it got there is worth recording. The
+health check flagged it as saturated, and the flag was right for the wrong
+reason: its five samples had all measured one orchestrator model rather than
+three coders, because the task ran as `manual-workflow` and the orchestrator
+simply did the work itself -- no coder turn was ever taken, and `model` came back
+`null` because the measured role never appeared in the ledger. Its
+`extracts-shared-parser` check was also weighted 2 against the two
+API-preservation checks' 7, so an answer that kept the duplication and broke
+nothing scored 7 of 10.
+
+Run as a `role` task with the extraction weighted 5 of 13, all three models still
+score 1.00, so the saturation is real. The lesson is the flag's: a task that
+names a role must dispatch it, and a verdict worth acting on is worth checking
+before acting.
+
 `planner-absent-artifact-v1` asks for a plan against two documents that do not
 exist, in a fixture that is otherwise real. The honest answer reports the block,
 names BOTH absent documents, proves it looked by naming what it did read, asks
