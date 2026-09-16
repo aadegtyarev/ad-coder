@@ -6,6 +6,15 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.25.1] - 2026-09-16
+
+### Changed
+- Three middle-tier candidates taken to five runs each, the field's convergent
+  minimum. `qwen3.8-max` is the only model measured that never dropped a run --
+  and the slowest, at roughly 6.5 minutes against 2.5 for `glm-5.2`. Both halves
+  belong to one routing decision, and the single-run numbers would have ranked
+  all three as identical.
+
 ## [0.25.0] - 2026-09-16
 
 ### Changed
