@@ -6,6 +6,22 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-09-16
+
+### Added
+- `docs/contracts/operator-flow.md` states how the operator works with ad-coder
+  as rules rather than as a feature list -- the product's UX, written down
+  because everything else exists to make that shape possible. It fixes four
+  things the session found by trying to work that way and failing:
+  a brief is intent and constraint, never a file to edit; the budget for a
+  feature is agreed before the work starts, and the system answers with an
+  estimate, a counter-estimate with evidence, or an admission that it has none;
+  routing is proposed, evidenced and persisted by the system rather than
+  hand-edited by the operator; and an interruption must be a decision the
+  operator can make. "The stage ran out, shall I raise it?" is not one -- the
+  only available answer is yes, and the system knows more than the operator
+  does at that moment.
+
 ## [0.30.1] - 2026-09-16
 
 ### Changed
