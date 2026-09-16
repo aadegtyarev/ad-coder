@@ -654,6 +654,13 @@ if (action === "list")
       tasks.map(({ task }) => ({
         id: task.id,
         role: task.role,
+        // What the task MEASURES, when that differs from what it dispatches.
+        // `summarizer-retention-v1` dispatches an auditor because the summarizer
+        // is not dispatchable at all, so a listing keyed on `role` alone showed
+        // the summarizer as uncovered while a task for it existed -- and showed
+        // the auditor as covered twice. A coverage table that misreports both
+        // directions is worse than none.
+        ...(task.measuredRoles === undefined ? {} : { measuredRoles: task.measuredRoles }),
         complexity: task.complexity,
         purpose: task.purpose ?? "calibration",
         mode: task.mode,
