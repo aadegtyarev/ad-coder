@@ -1,0 +1,7 @@
+[
+  {
+    "code": "falsy-check-replaces-nullish-coalescing",
+    "severity": "blocker",
+    "evidence": "ran `bun -e 'import {retryCount} from \"./src/retry\"; console.log(retryCount(0))'` and it printed 3, where the retry contract requires 0"
+  }
+]
