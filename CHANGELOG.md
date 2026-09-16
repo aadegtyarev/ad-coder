@@ -6,6 +6,21 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.26.2] - 2026-09-16
+
+### Fixed
+- `kimi-k3` was recommended on quality and list price and carries a **$15**
+  allowance against `glm-5.2`'s $60 -- four times the worse buy, the same trap
+  `glm-5.3` vs `glm-5.2` was written up for. Recommendation withdrawn, allowance
+  recorded.
+- The allowance table now covers every model measured, taken from the provider's
+  documentation rather than its pricing page, which lists ten of twenty-seven.
+  It changes the answer: of the four models reaching 1.00 on the coder task,
+  `glm-5.2` is allowanced $60 while `kimi-k3` and `qwen3.8-max` are $15, so the
+  two that look cheapest per token buy a quarter of the work.
+- `gpt-5.6-luna` is listed with a $15 allowance and answers HTTP 500 on every
+  request. Listed, allowanced and available are three different states.
+
 ## [0.26.1] - 2026-09-16
 
 ### Added

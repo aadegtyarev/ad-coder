@@ -35,6 +35,36 @@ Blended at 90% input / 10% output, which is the shape agent traffic actually has
 | `kimi-k2.7-code` | $60 | 0.95 / 4.00 | 48M | 6x |
 | `glm-5.2` | $60 | 1.40 / 4.40 | 35M | 6x |
 | `glm-5.3` | $15 | 1.40 / 4.40 | 8.8M | 1.5x |
+| `kimi-k3` | **$15** | — | — | **1.5x** |
+| `glm-5.2` | $60 | 1.40 / 4.40 | 35M | 6x |
+| `longcat-2.0` | $60 | — | — | 6x |
+| `minimax-m2.5` | $60 | — | — | 6x |
+| `qwen3.8-flash` | $30 | — | — | 3x |
+| `qwen3.8-max` | **$15** | — | — | **1.5x** |
+| `deepseek-v4-pro` | **$15** | — | — | **1.5x** |
+| `grok-4.6` | $15 | — | — | 1.5x |
+| `gpt-5.6-luna` | $15 | — | — | 1.5x |
+| `mimo-v2.5` | $60 | — | — | 6x |
+
+Allowances are published on `opencode.ai/docs/go/`, not on the marketing page,
+which lists ten of twenty-seven models. The same page states how the ceiling is
+spent: a five-hour window is 20% of the monthly figure, a week is 50%.
+
+**Measured quality and allowance disagree, and the allowance wins.** Of the four
+models that reached 1.00 on `coder-retention-v1`, `glm-5.2` carries a $60
+allowance and `kimi-k3` and `qwen3.8-max` carry $15 -- so the two that look
+cheapest per token buy a quarter of the work. `longcat-2.0` and `minimax-m2.5`
+are $60 but score 0.88. The buy is `glm-5.2`: best allowance among the models
+that actually reach 1.00.
+
+**`kimi-k3` is the second instance of the trap this document was written for.**
+It reaches 1.00 on `coder-retention-v1` and its list price is about half
+`glm-5.2`'s, which reads as the better buy -- and its allowance is $15 against
+`glm-5.2`'s $60, so it is four times the worse one. Checked only after a live
+sweep had already recommended it here; the recommendation is withdrawn.
+
+`gpt-5.6-luna` is listed at $15 and answers HTTP 500 on every request. Listed,
+allowanced, and unavailable are three different states.
 
 The find worth naming is `kimi-k2.7-code`: 48M monthly tokens of a strong
 code-specialized model, inside the same $10. No comparable rate exists on
