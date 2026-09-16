@@ -48,8 +48,15 @@ unbounded prompt directory.
   instructions. It cannot be combined with `--skills` -- exactly one of pin,
   off, or default resolves. Background workers inherit the off like they
   inherit a pin.
-   off, or default resolves. Background workers inherit the off like they
-  inherit a pin.
+- 2026-09-16: A persistent setting lives in the user profile at
+  `~/.config/ad-coder/profile.json`: `"capabilities": {"skills": false}` turns
+  the skill capability off for every run; the field absent or `true` is the
+  built-in enabled default. This is an optional field accepted by the v1
+  profile parser -- not a v2 bump -- so existing exports and stored profiles
+  stay valid; the field is carried through export/import verbatim and omitted
+  when unset. Layer order: explicit launch parameter beats the setting beats
+  the default. `--no-skills` and `--skills` are both explicit, so a `--skills`
+  pin disables the setting in its own direction too.
 - 2026-09-16: Loading obeys every constraint selection obeyed: the id pattern,
   the manifest's role scope, per-turn count and byte ceilings, and a typed
   content-free error carrying its reason. A refusal for a skill outside the

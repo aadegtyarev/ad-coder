@@ -116,6 +116,7 @@ import {
   exportUserProfile,
   FileUserProfileStore,
   parseUserProfileJson,
+  readUserProfileCapabilitiesSync,
   UserProfileError,
 } from "./user-profile";
 import type { WorkflowContext } from "./workflow";
@@ -2018,6 +2019,22 @@ function buildConfigOptions(
           .split(",")
           .map((name) => name.trim())
           .filter(Boolean);
+  // Layer order (docs/contracts/config.md): explicit flag beats the persistent
+  // setting, which beats the built-in default. A pin is also explicit, so a
+  // `--skills` value disables the setting in both directions; only when NEITHER
+  // flag resolves does the profile's capability switch apply.
+  let skillsDisabled = flags["--no-skills"] !== undefined;
+  if (!skillsDisabled && skillsFlag === undefined) {
+    // The user profile is a user-level boundary, outside the target's dotenv
+    // boundary: read the process environment directly, exactly as the profile
+    // store's own default-location choice does.
+    const xdgConfigHome = process.env.XDG_CONFIG_HOME;
+    const capabilities = readUserProfileCapabilitiesSync({
+      userHome: os.homedir(),
+      ...(xdgConfigHome === undefined ? {} : { xdgConfigHome }),
+    });
+    skillsDisabled = capabilities.skills === false;
+  }
   const workflows = resolveWorkflowsFlag(flags["--workflows"]);
   return {
     targetDir,
@@ -2038,7 +2055,7 @@ function buildConfigOptions(
     }),
     ...(provider !== undefined && { provider }),
     ...(selectedSkills !== undefined && { selectedSkills }),
-    ...(flags["--no-skills"] !== undefined && { skillsDisabled: true }),
+    ...(skillsDisabled && { skillsDisabled: true }),
     ...(flags["--strong-model"] !== undefined && { strongModel: flags["--strong-model"] }),
     ...(flags["--mid-model"] !== undefined && { midModel: flags["--mid-model"] }),
     ...(flags["--cheap-model"] !== undefined && { cheapModel: flags["--cheap-model"] }),

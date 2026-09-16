@@ -8,6 +8,7 @@ import type {
   ModelInventoryConfig,
   SubscriptionCapacityRange,
   UserProfile,
+  UserProfileCapabilities,
 } from "./types";
 
 const ECONOMIC_KINDS = new Set<EconomicRecordKind>([
@@ -230,6 +231,14 @@ export function parseEconomicRecord(value: unknown): EconomicRecord {
   };
 }
 
+function parseCapabilities(value: unknown): UserProfileCapabilities {
+  const capabilities = object(value, "profile capabilities must be an object");
+  exactKeys(capabilities, ["skills"], "profile capabilities");
+  if (capabilities.skills !== undefined && typeof capabilities.skills !== "boolean")
+    invalid("profile.capabilities.skills must be a boolean");
+  return capabilities.skills === undefined ? {} : { skills: capabilities.skills };
+}
+
 /** Parse untrusted persisted or imported data without coercing its fields. */
 export function parseUserProfile(value: unknown): UserProfile {
   const profile = object(value, "profile must be an object");
@@ -241,6 +250,7 @@ export function parseUserProfile(value: unknown): UserProfile {
       "calibratedRouting",
       "economicRecords",
       "subscriptionCapacityRanges",
+      "capabilities",
     ],
     "profile",
   );
@@ -260,6 +270,8 @@ export function parseUserProfile(value: unknown): UserProfile {
     invalid(
       "profile inventories, calibratedRouting, economicRecords, and subscriptionCapacityRanges must be arrays",
     );
+  const capabilities =
+    profile.capabilities === undefined ? undefined : parseCapabilities(profile.capabilities);
   const inventories = profile.inventories.map(parseInventory);
   const names = new Set<string>();
   for (const inventory of inventories) {
@@ -317,6 +329,7 @@ export function parseUserProfile(value: unknown): UserProfile {
     calibratedRouting,
     economicRecords,
     subscriptionCapacityRanges,
+    ...(capabilities !== undefined && Object.keys(capabilities).length > 0 ? { capabilities } : {}),
   };
 }
 

@@ -63,6 +63,19 @@ export interface UserProfile {
   calibratedRouting: CalibratedRouting[];
   economicRecords: EconomicRecord[];
   subscriptionCapacityRanges: SubscriptionCapacityRange[];
+  /** Capability switches; absent means every built-in default (enabled). */
+  capabilities?: UserProfileCapabilities;
+}
+
+/**
+ * Capability switches a profile may carry. Absence means every built-in
+ * default (enabled); `false` is the operator's persistent off for that
+ * capability, mirrored by a matching launch parameter (issue #116, item 3:
+ * an optional field under the v1 parser, not a v2 bump).
+ */
+export interface UserProfileCapabilities {
+  /** Skill capability: `false` is the persistent off, absent or `true` is enabled. */
+  skills?: boolean;
 }
 
 /** Location inputs are explicit so callers can override the user-level default. */

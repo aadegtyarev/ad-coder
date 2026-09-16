@@ -1274,3 +1274,54 @@ test("--no-skills is the explicit off and never shares a line with a selection",
   expect(conflict.code).toBe(2);
   expect(conflict.stderr).toContain("--no-skills cannot be combined with --skills");
 });
+
+test("profile.capabilities.skills=false is the persistent off, and explicit flags beat it", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-skills-setting-"));
+  const home = path.join(root, "home");
+  const xdg = path.join(home, ".config");
+  const profileDir = path.join(xdg, "ad-coder");
+  // The store itself creates private directories; a test-held profile must
+  // meet the same 0o700 receipt, otherwise the read correctly fails.
+  fs.mkdirSync(profileDir, { recursive: true, mode: 0o700 });
+  fs.chmodSync(profileDir, 0o700);
+  fs.writeFileSync(
+    path.join(profileDir, "profile.json"),
+    `${JSON.stringify({
+      version: 1,
+      inventories: [],
+      calibratedRouting: [],
+      economicRecords: [],
+      subscriptionCapacityRanges: [],
+      capabilities: { skills: false },
+    })}\n`,
+  );
+  // Same private-file receipt the store itself enforces.
+  fs.chmodSync(path.join(profileDir, "profile.json"), 0o600);
+  const target = path.join(root, "project");
+  fs.mkdirSync(target, { recursive: true });
+  const show = (...args: string[]) =>
+    runCli(["config", "show", "--target-dir", target, "--json", ...args], {
+      env: { ...process.env, XDG_CONFIG_HOME: xdg },
+    });
+
+  // The setting alone is the persistent off: every command that runs a role
+  // resolves no skill capability without any launch parameter.
+  const unset = show();
+  expect(unset.code).toBe(0);
+
+  // An explicit `--skills` pin beats the setting in its own direction...
+  expect(show("--skills", "repository-navigation").code).toBe(0);
+  // ...and the explicit `--no-skills` mirrors the setting (same off).
+  expect(show("--no-skills").code).toBe(0);
+
+  // Mode permission sanity: an unreadable profile is not silently default.
+  const broken = path.join(root, "broken-home");
+  const brokenXdg = path.join(broken, ".config");
+  fs.mkdirSync(path.join(brokenXdg, "ad-coder"), { recursive: true });
+  fs.writeFileSync(path.join(brokenXdg, "ad-coder", "profile.json"), "not json\n");
+  const brokenResult = runCli(["config", "show", "--target-dir", target, "--json"], {
+    env: { ...process.env, XDG_CONFIG_HOME: brokenXdg },
+  });
+  expect(brokenResult.code).toBe(1);
+  expect(brokenResult.stderr).toContain("profile");
+});

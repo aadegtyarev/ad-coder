@@ -18,8 +18,16 @@ All notable changes to ad-coder are recorded here. The format follows
   `docs/contracts/config.md`; issue #216 holds the whole-surface audit.
 - `--no-skills` turns the skill capability off explicitly on every command that
   runs a role: no catalogue in any prompt, no `load_skill` tool registered. It
-  cannot be combined with `--skills`. Skills remain catalogue-by-default otherwise;
-  `--skills a,b` pins an exact set.
+  cannot be combined with `--skills`.
+- A persistent setting can now turn the skill capability off:
+  `~/.config/ad-coder/profile.json` accepts an optional
+  `"capabilities": {"skills": false}` under the unchanged v1 schema (no
+  version bump; the field rides through export/import verbatim). Layer order:
+  explicit flag beats the setting beats the built-in default, so `--skills`
+  and `--no-skills` each disable the setting without it ever marking a flag.
+  A missing profile is the enabled default, not an error; an unsafe or invalid
+  profile store fails the command with the store's usual error codes. Skills
+  remain catalogue-by-default otherwise; `--skills a,b` pins an exact set.
 
 ## [0.33.0] - 2026-09-16
 
