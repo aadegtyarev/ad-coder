@@ -210,16 +210,36 @@ describe("tool activity core", () => {
     detach();
 
     const serialized = JSON.stringify(records);
-    expect(serialized).not.toContain(secret);
     expect(serialized).not.toContain("public-run");
     expect(serialized).not.toContain('"operationId":"operation"');
     expect(serialized).not.toContain('"turnId":"turn"');
     expect(serialized).not.toContain('"toolCallId":"never-started"');
-    expect(serialized).not.toContain("projectable");
     expect(records.every((record) => Buffer.byteLength(JSON.stringify(record)) <= 2048)).toBe(true);
-    for (const record of records) {
-      if (record.type === "tool_activity") expect(record.projection).toBeUndefined();
+
+    // The SUBJECT is projected on purpose: the operator asked to see which file
+    // is read, which command runs, which URL opens -- "I need to know the model
+    // is not wandering off." A path is not a secret to the person whose
+    // repository it is, and anyone who can start ad-coder already reads every
+    // file on the machine. The former rule blanked these to "unknown", which
+    // protected nothing and hid the one thing worth watching.
+    const projections = records.flatMap((record) =>
+      record.type === "tool_activity" && record.projection !== undefined ? [record.projection] : [],
+    );
+    expect(projections.some((projection) => projection.path?.startsWith("src/"))).toBe(true);
+    expect(projections.some((projection) => projection.command !== undefined)).toBe(true);
+    expect(projections.some((projection) => projection.url?.startsWith("https://"))).toBe(true);
+    expect(projections.some((projection) => projection.query !== undefined)).toBe(true);
+
+    // CONTENT a tool carries is still never projected: `write` supplies its body
+    // as `content` and `edit` its replacement text, and only their line COUNTS
+    // may appear.
+    for (const projection of projections) {
+      const values = [projection.path, projection.command, projection.url, projection.query];
+      for (const value of values)
+        if (value !== undefined) expect(Buffer.byteLength(value)).toBeLessThanOrEqual(160);
     }
+    expect(serialized).not.toContain('"content"');
+    expect(serialized).not.toContain('"newText"');
   });
 
   test("sanitizes Unicode safely and validates mandatory output ceilings", () => {
@@ -324,8 +344,16 @@ describe("tool activity renderer", () => {
     human.consume(lifecycleEvent({ lifecycle: "requested", sequence: 2 }));
     human.consume(lifecycleEvent({ lifecycle: "failed", sequence: 3, durationMs: 8 }));
     human.close();
-    expect(humanOutput.text()).toContain("Activity: Read");
-    expect(humanOutput.text()).toContain("failed");
+    // Left to right: when, who, what. The operator asked for the time first
+    // ("время бы ещё в начале строки") so a reader can scan the left edge.
+    const rendered = humanOutput.text();
+    expect(rendered).toMatch(/^\d{2}:\d{2}:\d{2}\s/m);
+    expect(rendered).toContain("coder");
+    expect(rendered).toContain("Read");
+    expect(rendered).toContain("failed");
+    // A completed line does not print "completed": success is the default and
+    // saying so on every line pushes the interesting words off the scan path.
+    expect(rendered).not.toContain("completed");
 
     const jsonOutput = new MemoryWritable();
     const json = new ToolActivityRenderer(jsonOutput, "json");

@@ -6,7 +6,7 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
-## [0.31.1] - 2026-09-16
+## [0.32.1] - 2026-09-16
 
 ### Added
 - A capability rule in `docs/contracts/config.md`: every capability ad-coder
@@ -17,6 +17,48 @@ All notable changes to ad-coder are recorded here. The format follows
   but owe a dated entry naming the safety or cost reason. The rule generalises
   the 2026-09-11 configurability pair from values to switchable features; the
   audit that applies it to every startup capability is tracked on GitHub.
+
+## [0.32.0] - 2026-09-16
+
+### Changed
+- Console activity lines say who is working, on what, and when. They read
+  `17:03:41  coder·glm53flash  Edit  src/cli/console.ts +12 -3  1.2s` instead of
+  `Activity: Edit — completed 1234ms`: time first so the left edge is scannable,
+  then role and model together, then the subject -- the path read or written,
+  the command run, the URL fetched, the query searched, and the line counts an
+  edit moves. A read shows the window it asked for -- `plan.ts:120+40` is a
+  slice, a bare path is the whole file -- because reading in slices and
+  swallowing a large file cost differently and the difference was invisible. A
+  successful line omits "completed", because saying it every time pushes the
+  interesting words off the scan path.
+- Projections now carry that subject. They had been declared in the event type
+  and never populated, so every line was anonymous; the rule that kept them out
+  ("arbitrary labels, commands, queries and URLs are never projected") protected
+  nothing -- these events never leave the process, and anyone able to start
+  ad-coder already reads every file on the machine. `docs/contracts/tool-observability.md`
+  now draws the line where it belongs: the SUBJECT of a tool call is shown, the
+  CONTENT a tool returns is not, and credential-shaped values inside a command
+  are replaced (`echo API_KEY=***`) because terminal scrollback gets
+  screenshotted.
+- The orchestration tools are named. `submit_plan`, `run_role`, `decompose_task`
+  and the rest rendered as a bare `Tool`, which is how four consecutive
+  `submit_follow_up` rejections hid in plain sight earlier the same day until
+  someone opened the ledger.
+
+## [0.31.1] - 2026-09-16
+
+### Fixed
+- A rejected `submit_follow_up` or `submit_plan` call now tells the model what
+  was wrong, not only that something was. Both returned `error.code` alone --
+  `invalid_follow_up`, `malformed_plan` -- while the validator's own sentence
+  ("evidence must be non-empty", "coverage.contractIds must be bounded non-empty
+  strings") was discarded one line before the model saw it. A model holding only
+  the code cannot repair the call, so it calls again unchanged: observed as four
+  identical rejections in a row until the stage limit ended the run, with the
+  failure reported as "research provider response was unavailable or invalid"
+  while the provider was answering normally. `verdict.ts` had been doing this
+  correctly all along, which is why the rule now lives in
+  `docs/contracts/errors.md` rather than in one author's head. (#209)
 
 ## [0.31.0] - 2026-09-16
 

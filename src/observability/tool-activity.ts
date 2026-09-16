@@ -17,9 +17,44 @@ export type ToolActivityKind =
   | "Inspect image"
   | "Tool";
 
+/**
+ * What a tool is acting ON, so an operator can see a role going the wrong way
+ * before it gets there.
+ *
+ * WHAT IS PROJECTED: the path being read or written, the command being run, the
+ * URL being fetched, the query being searched -- bounded in length, never
+ * dropped for containing a word like "token". A file named `src/auth/token.ts`
+ * is not a secret to the person whose repository it is, and anyone able to start
+ * ad-coder can already read every file on the machine. The previous rule
+ * replaced such values with "unknown", which protected nothing and hid the one
+ * thing worth watching.
+ *
+ * WHAT IS NOT: the CONTENT a tool returns -- file bodies, command output,
+ * response bodies. That is where an unrequested secret actually surfaces (an
+ * environment value echoed by a script, a key inside a config the operator never
+ * opened), and the operator asked to see what is being done, not everything it
+ * produced.
+ */
 export interface ToolActivityProjection {
-  /** A verified target-relative path. Arbitrary labels, commands, queries and URLs are never projected. */
+  /** Target-relative path for a read or write. */
   path?: string;
+  /** The command line for a shell tool, bounded. */
+  command?: string;
+  /** The URL for a web tool, bounded. */
+  url?: string;
+  /** The search pattern or query, bounded. */
+  query?: string;
+  /** For an edit: lines added and removed, so a runaway rewrite is visible as it happens. */
+  linesAdded?: number;
+  linesRemoved?: number;
+  /**
+   * For a read: the window requested, as `offset` and `limit`.
+   *
+   * Reading in slices and swallowing a whole file are different behaviours with
+   * different costs, and the difference is invisible without this.
+   */
+  readOffset?: number;
+  readLimit?: number;
 }
 
 /** Numeric-only remaining stage capacity attached after a tool reaches a terminal state. */
@@ -40,6 +75,11 @@ export interface ToolActivityEvent {
   lifecycle: ToolActivityLifecycle;
   activity: ToolActivityKind;
   role: string;
+  /**
+   * The model serving that role, so a routing decision is visible while it runs
+   * rather than inferred from a banner printed minutes earlier.
+   */
+  model?: string;
   runId: string;
   operationId: string;
   turnId: string;
@@ -185,10 +225,135 @@ const KNOWN_TOOLS: Readonly<Record<string, { activity: ToolActivityKind; publicN
   web_search: { activity: "Web", publicName: "web_search" },
   web_read: { activity: "Web", publicName: "web_read" },
   inspect_image: { activity: "Inspect image", publicName: "inspect_image" },
+  // The orchestration tools. Without these a `submit_plan` rejection loop reads
+  // as an anonymous "Activity: Tool -- failed 0ms", which is how four identical
+  // failures hid in plain sight on 2026-09-16 until someone opened the ledger.
+  run_role: { activity: "Tool", publicName: "run_role" },
+  run_pipeline: { activity: "Tool", publicName: "run_pipeline" },
+  start_pipeline: { activity: "Tool", publicName: "start_pipeline" },
+  resume_pipeline: { activity: "Tool", publicName: "resume_pipeline" },
+  cancel_pipeline: { activity: "Tool", publicName: "cancel_pipeline" },
+  pipeline_status: { activity: "Tool", publicName: "pipeline_status" },
+  pipeline_events: { activity: "Tool", publicName: "pipeline_events" },
+  pipeline_result: { activity: "Tool", publicName: "pipeline_result" },
+  decompose_task: { activity: "Tool", publicName: "decompose_task" },
+  run_step: { activity: "Tool", publicName: "run_step" },
+  choose_transition: { activity: "Tool", publicName: "choose_transition" },
+  show_cost: { activity: "Tool", publicName: "show_cost" },
+  submit_plan: { activity: "Tool", publicName: "submit_plan" },
+  submit_verdict: { activity: "Tool", publicName: "submit_verdict" },
+  submit_follow_up: { activity: "Tool", publicName: "submit_follow_up" },
 };
+
+/**
+ * Redacts VALUES that look like credentials while leaving the shape readable.
+ *
+ * `echo API_KEY=ultra-secret` becomes `echo API_KEY=***`, and a bearer token
+ * becomes `Authorization: Bearer ***`. The operator asked to see which commands
+ * run -- and this still shows that -- but a command line is the one projected
+ * field that can carry a literal secret inline, and this output lands in
+ * terminal scrollback that gets screenshotted and pasted. Names stay, values go.
+ */
+function redactInlineSecrets(value: string): string {
+  return value
+    .replace(
+      /((?:api[_-]?key|token|secret|password|passwd|auth)\s*[:=]\s*)(\S+)/giu,
+      (_match, name: string) => `${name}***`,
+    )
+    .replace(/(bearer\s+)(\S+)/giu, (_match, name: string) => `${name}***`);
+}
+
+function boundProjection(
+  projection: ToolActivityProjection,
+  maxBytes: number,
+): ToolActivityProjection {
+  const bound = (value: string | undefined) =>
+    value === undefined ? undefined : boundToolActivityText(value, maxBytes);
+  const out: ToolActivityProjection = {};
+  const path = bound(projection.path);
+  if (path) out.path = path;
+  const command = bound(projection.command);
+  if (command) out.command = redactInlineSecrets(command);
+  const url = bound(projection.url);
+  if (url) out.url = redactInlineSecrets(url);
+  const query = bound(projection.query);
+  if (query) out.query = redactInlineSecrets(query);
+  const added = projection.linesAdded;
+  if (added !== undefined && Number.isSafeInteger(added)) out.linesAdded = added;
+  const removed = projection.linesRemoved;
+  if (removed !== undefined && Number.isSafeInteger(removed)) out.linesRemoved = removed;
+  const offset = projection.readOffset;
+  if (offset !== undefined && Number.isSafeInteger(offset)) out.readOffset = offset;
+  const limit = projection.readLimit;
+  if (limit !== undefined && Number.isSafeInteger(limit)) out.readLimit = limit;
+  return out;
+}
 
 function classifyTool(name: string): { activity: ToolActivityKind; publicName: string } {
   return KNOWN_TOOLS[name] ?? { activity: "Tool", publicName: "custom" };
+}
+
+/** Argument keys each tool family carries its subject in, in order of preference. */
+const SUBJECT_KEYS: Readonly<Record<string, readonly string[]>> = {
+  path: ["path", "file", "filePath", "file_path", "target"],
+  command: ["command", "cmd", "script"],
+  url: ["url", "href"],
+  query: ["query", "pattern", "q", "search"],
+};
+
+function pickString(args: Record<string, unknown>, keys: readonly string[]): string | undefined {
+  for (const key of keys) {
+    const value = args[key];
+    if (typeof value === "string" && value.trim() !== "") return value;
+  }
+  return undefined;
+}
+
+function countLines(value: unknown): number | undefined {
+  if (typeof value !== "string" || value === "") return undefined;
+  return value.split("\n").length;
+}
+
+/**
+ * Reads a tool's arguments into the subject the operator wants to watch.
+ *
+ * Only the SUBJECT is taken -- which file, which command, which URL, how many
+ * lines an edit moves. The content a tool returns is never read here; see
+ * `ToolActivityProjection`.
+ */
+export function projectToolArguments(
+  toolName: string,
+  args: unknown,
+  maxBytes: number,
+): ToolActivityProjection | undefined {
+  if (typeof args !== "object" || args === null || Array.isArray(args)) return undefined;
+  const record = args as Record<string, unknown>;
+  const bound = (value: string | undefined) =>
+    value === undefined ? undefined : boundToolActivityText(value, maxBytes);
+  const projection: ToolActivityProjection = {};
+  const path = bound(pickString(record, SUBJECT_KEYS.path ?? []));
+  if (path !== undefined && path !== "") projection.path = path;
+  const command = bound(pickString(record, SUBJECT_KEYS.command ?? []));
+  if (command !== undefined && command !== "") projection.command = command;
+  const url = bound(pickString(record, SUBJECT_KEYS.url ?? []));
+  if (url !== undefined && url !== "") projection.url = url;
+  const query = bound(pickString(record, SUBJECT_KEYS.query ?? []));
+  if (query !== undefined && query !== "") projection.query = query;
+  // An edit's size, not its text: a rewrite ballooning from three lines to three
+  // hundred is exactly what the operator is watching for.
+  if (toolName === "read" || toolName === "read_project") {
+    const offset = record.offset;
+    const limit = record.limit;
+    if (typeof offset === "number" && Number.isSafeInteger(offset)) projection.readOffset = offset;
+    if (typeof limit === "number" && Number.isSafeInteger(limit)) projection.readLimit = limit;
+  }
+  if (toolName === "edit" || toolName === "write") {
+    const added = countLines(record.new_string ?? record.newString ?? record.content);
+    const removed = countLines(record.old_string ?? record.oldString);
+    if (added !== undefined) projection.linesAdded = added;
+    if (removed !== undefined) projection.linesRemoved = removed;
+  }
+  return Object.keys(projection).length === 0 ? undefined : projection;
 }
 
 const SENSITIVE_TEXT =
@@ -324,6 +489,16 @@ export class ToolActivityChannel {
           durationMs: Math.round(record.durationMs),
         }),
       ...(record.budget !== undefined && { budget: record.budget }),
+      // The subject, bounded but NOT redacted: a path or command is what the
+      // operator is watching for, and anyone who can start ad-coder can already
+      // read every file on this machine. Content a tool RETURNS is still never
+      // projected -- see `ToolActivityProjection`.
+      ...(record.projection !== undefined && {
+        projection: boundProjection(record.projection, this.config.projectionBytes),
+      }),
+      ...(record.model !== undefined && {
+        model: boundToolActivityText(record.model, this.config.maxStringBytes),
+      }),
     };
     if (!this.fits(event)) {
       this.noteDrop(1);
@@ -439,6 +614,8 @@ export interface AttachToolActivityOptions {
   role: string;
   runId: string;
   step: string;
+  /** The model serving `role`, shown beside it so routing is visible while it runs. */
+  model?: string;
   parentOperation?: string;
   now?: () => number;
   /** Supplies a content-free stage-budget projection after terminal tool events. */
@@ -467,8 +644,17 @@ export function attachToolActivity(options: AttachToolActivityOptions): ToolActi
     args?: unknown;
   }) => {
     const classification = classifyTool(event.toolName);
+    const projection = projectToolArguments(
+      event.toolName,
+      event.args,
+      options.channel.config.projectionBytes,
+    );
     return {
       activity: classification.activity,
+      ...(projection !== undefined && { projection }),
+      ...(options.model !== undefined && {
+        model: boundToolActivityText(options.model, options.channel.config.maxStringBytes),
+      }),
       role: boundToolActivityText(options.role, options.channel.config.maxStringBytes),
       runId: boundToolActivityText(options.runId, options.channel.config.maxStringBytes),
       operationId: event.runId ?? "",

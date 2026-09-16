@@ -577,7 +577,15 @@ export function buildSubmitPlanTool(
         if (error instanceof OrchestrationError) {
           capture.error = error;
           delete capture.plan;
-          return { content: [{ type: "text", text: error.code }], details: undefined };
+          // Same reason as `submit_follow_up`: "malformed_plan" tells a planner
+          // nothing it can act on, while the validator's own message names the
+          // field ("coverage.contractIds must be bounded non-empty strings").
+          // This is the rejection five model families hit on the pipeline
+          // tasks, each retrying blind until its stage ran out.
+          return {
+            content: [{ type: "text", text: `${error.code}: ${error.message}` }],
+            details: undefined,
+          };
         }
         throw error;
       }
