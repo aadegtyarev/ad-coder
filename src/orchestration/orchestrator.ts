@@ -19,7 +19,12 @@ import type { Tool } from "../runner/tool";
 import { defineTool } from "../runner/tool";
 import type { SessionLimitSnapshot, SessionLimits } from "../session-limits";
 import { SessionLimitController } from "../session-limits";
-import { resolveSkills } from "../skills/resolver";
+import {
+  buildLoadSkillTool,
+  formatSkillCatalogue,
+  LOAD_SKILL_TOOL_NAME,
+} from "../skills/load-tool";
+import { resolveSkills, skillCatalogue } from "../skills/resolver";
 import { buildWebTools } from "../web/tools";
 import { resolveWorkflowModules } from "../workflows/registry";
 import type { OrchestratorWorkflowModule } from "../workflows/types";
@@ -1015,14 +1020,22 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
   delete sharedConfig.activityConsumer;
   const buildConfig = (task: string): PipelineConfig =>
     resolvePipelineConfig({ ...sharedConfig, task });
-  const selectedSkills = resolveSkills(config.selectedSkills ?? [], {
-    projectDir: config.targetDir,
-  });
+  // Two paths, deliberately. An explicit `--skills` list is a PIN: the operator
+  // said "use exactly these", and those are pasted as before. With no pin, a
+  // role receives the CATALOGUE -- ids and one-line descriptions -- and pulls
+  // what it needs with `load_skill` after reading the task. Selecting
+  // everything and pasting it cost the orchestrator 2106 words of appendix it
+  // mostly did not need; `docs/contracts/skills.md` forbids exactly that.
+  const pinnedSkillIds = config.selectedSkills ?? [];
+  const pinnedSkills = resolveSkills(pinnedSkillIds, { projectDir: config.targetDir });
   const skillInstructions = (role: DelegatableRoleName | "orchestrator"): string => {
-    const applicableSkills = selectedSkills.filter((skill) => skill.roles.includes(role));
-    return applicableSkills.length === 0
-      ? ""
-      : `\n\nSelected skills:\n${applicableSkills.map((skill) => `## ${skill.id}@${skill.version}\n${skill.instructions}`).join("\n\n")}`;
+    if (pinnedSkillIds.length > 0) {
+      const applicable = pinnedSkills.filter((skill) => skill.roles.includes(role));
+      return applicable.length === 0
+        ? ""
+        : `\n\nSelected skills:\n${applicable.map((skill) => `## ${skill.id}@${skill.version}\n${skill.instructions}`).join("\n\n")}`;
+    }
+    return formatSkillCatalogue(skillCatalogue(role, { projectDir: config.targetDir }));
   };
   // A placeholder task only seeds the config that yields the orchestrator's own
   // conversation model + window budget; the real per-run task arrives through
@@ -1081,6 +1094,10 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
           "read",
           "bash",
           ...(writable ? ["write", "edit"] : []),
+          // A catalogue without a way to act on it is a menu in a locked
+          // kitchen: the loader ships exactly when the prompt lists skills
+          // rather than pasting them.
+          ...(pinnedSkillIds.length === 0 ? [LOAD_SKILL_TOOL_NAME] : []),
           ...availablePluginNames,
         ],
       },
@@ -1120,7 +1137,15 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
   });
   const tools = buildOrchestratorTools(
     core,
-    [...(seed.pluginTools ?? []), delegatedRoleTool],
+    [
+      ...(seed.pluginTools ?? []),
+      delegatedRoleTool,
+      // Same condition as the delegated roles: pinned skills are already in the
+      // prompt, so the loader would have nothing left to fetch.
+      ...(pinnedSkillIds.length === 0
+        ? [buildLoadSkillTool({ role: "orchestrator", projectDir: config.targetDir })]
+        : []),
+    ],
     enabledModules,
   );
   const orchestratorSpec = seed.roles.orchestrator ?? seed.roles.coder;

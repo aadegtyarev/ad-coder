@@ -2,7 +2,14 @@ import { expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { resolveSkills, SkillResolutionError } from "ad-coder";
+import type { SkillLoadRecord } from "ad-coder";
+import {
+  buildLoadSkillTool,
+  formatSkillCatalogue,
+  resolveSkills,
+  SkillResolutionError,
+  skillCatalogue,
+} from "ad-coder";
 
 function expectSkillError(action: () => unknown, code: SkillResolutionError["code"]): void {
   try {
@@ -206,4 +213,40 @@ test("rejects invalid skill resolver limits", () => {
   expectSkillError(() => resolveSkills([], { maxRequestedSkills: 0 }), "malformed");
   expectSkillError(() => resolveSkills([], { maxManifestBytes: Infinity }), "malformed");
   expectSkillError(() => resolveSkills([], { maxInstructionBytes: 1.5 }), "malformed");
+});
+
+test("a role receives the catalogue, and loads instructions only when it asks", async () => {
+  // Selecting every skill and pasting it cost the orchestrator 2106 words of
+  // appendix regardless of the task. docs/contracts/skills.md forbids exactly
+  // that: discovery "must never silently inject full instructions into every
+  // role prompt". So the prompt carries names, and the tool carries text.
+  const catalogue = skillCatalogue("orchestrator");
+  expect(catalogue.length).toBeGreaterThan(0);
+  const rendered = formatSkillCatalogue(catalogue);
+  for (const entry of catalogue) expect(rendered).toContain(entry.id);
+  // Cheap by construction: names and one-liners, not methods.
+  expect(rendered.length).toBeLessThan(1200);
+  expect(rendered).not.toContain("git status");
+
+  const loaded: SkillLoadRecord[] = [];
+  const tool = buildLoadSkillTool({ role: "orchestrator", loaded });
+  const call = tool.execute as unknown as (
+    id: string,
+    params: unknown,
+  ) => Promise<{ content: { text: string }[] }>;
+
+  const ok = await call("c1", { id: "repository-navigation" });
+  expect(ok.content[0]?.text).toContain("git status");
+  expect(loaded).toHaveLength(1);
+  expect(loaded[0]?.sha256).toMatch(/^[a-f0-9]{64}$/);
+
+  // Role scope still gates: a skill not written for this role is refused with
+  // the same answer the catalogue gave, not a different one that reveals it.
+  const denied = await call("c2", { id: "no-such-skill" });
+  expect(denied.content[0]?.text).toContain("skill_not_available");
+
+  // Loading twice is answered, not repeated.
+  const again = await call("c3", { id: "repository-navigation" });
+  expect(again.content[0]?.text).toContain("already loaded");
+  expect(loaded).toHaveLength(1);
 });
