@@ -6,6 +6,19 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.29.1] - 2026-09-16
+
+### Fixed
+- A single corpus run that aborts is now recorded as a failed measurement with a
+  named `harnessOutcome` instead of taking the whole invocation down. The repeat
+  path already caught, counted and continued; the single-run path threw, so the
+  protection existed and reached one of its two callers. Two runs of the
+  2026-09-16 round vanished this way -- a planner whose plan the product rejected
+  for incomplete coverage fields -- and the runs that abort are the bad ones, so
+  dropping them flatters the model. `classifyAbort` names which problem it was,
+  because a rejected handoff, an exhausted stage and a failing provider are three
+  different things to whoever reads the sweep. (#190)
+
 ## [0.29.0] - 2026-09-16
 
 ### Fixed
