@@ -13,6 +13,16 @@ All notable changes to ad-coder are recorded here. The format follows
   roles it serves, and that declaration is now the selection; `--skills` narrows
   rather than enables. A skill nobody remembers to pass is a skill that never
   runs, and the operator had been typing the list by hand on every invocation.
+- The four shipped skills are rewritten to carry something. They were 19-26
+  words each -- `acceptance-review` in full was "compare the diff and test
+  evidence with acceptance criteria and applicable contracts; report gaps and a
+  decision", which the reviewer's own prompt already says. Against a 16 KiB
+  ceiling they used about a two-hundredth of the room. Each now holds what a
+  role prompt has no space for: the technique, the failure it prevents, and the
+  stopping rule -- a claim of passing tests is not evidence of passing tests;
+  reconnaissance stops when it can name surfaces, contracts and unknowns; a
+  slice that cannot be tested is not ready; three different events wear the
+  symptom of an exhausted stage and need different answers.
 - A new `repository-navigation` skill, and the same rule in every role prompt
   that can call `bash`: ask the repository one question per call. `git status`
   and `git diff --stat` answer "what changed here" completely; locate with

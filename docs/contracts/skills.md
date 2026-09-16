@@ -22,8 +22,18 @@ unbounded prompt directory.
   Future discovery may let the orchestrator recommend skills from manifest
   descriptions, but it must never silently inject full instructions into every
   role prompt.
-- Built-in `architecture-recon`, `task-slicing`, `acceptance-review`, and
-  `delivery-calibration` are the
-  first shipped skills. Their outputs respectively bound exploration, define a
-  minimal acceptance-tested slice, verify delivery independently, and estimate
-  accepted-result cost before bounded dispatch.
+- Built-in `architecture-recon`, `task-slicing`, `acceptance-review`,
+  `delivery-calibration` and `repository-navigation` are the shipped skills.
+  Their outputs respectively bound exploration, define a minimal
+  acceptance-tested slice, verify delivery independently, estimate
+  accepted-result cost before bounded dispatch, and keep repository questions to
+  one call each.
+- 2026-09-16: A skill carries what a role prompt has no room for: the specific
+  technique, the failure it prevents, and the rule for stopping. A skill that
+  restates its role prompt in one sentence costs a load and teaches nothing --
+  the first four shipped at 19-26 words each against a 16 KiB ceiling, which is
+  why a reviewer holding `acceptance-review` behaved exactly as one without it.
+- 2026-09-16: Skills are selected by default and `--skills` narrows that
+  selection. Each manifest declares the roles it serves and that declaration is
+  the filter, so an opt-in list the operator has to retype on every invocation
+  is not the mechanism.

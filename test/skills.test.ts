@@ -23,7 +23,13 @@ test("loads shipped skills with a content digest", () => {
   expect(skill).toBeDefined();
   if (skill === undefined) throw new Error("missing built-in skill");
   expect(skill).toMatchObject({ id: "task-slicing", version: "1", source: "builtin" });
-  expect(skill.instructions).toContain("acceptance criteria");
+  // Substance, not a phrase: a skill that only restates the role prompt is the
+  // defect these were expanded to fix. Each must carry a stop rule and the
+  // failure it exists to prevent, which is what a role prompt does not have
+  // room for.
+  expect(skill.instructions).toContain("Acceptance");
+  expect(skill.instructions).toContain("Stop condition");
+  expect(skill.instructions.length).toBeGreaterThan(600);
   expect(skill.sha256).toMatch(/^[a-f0-9]{64}$/);
   expect(resolveSkills(["delivery-calibration"])[0]).toMatchObject({
     id: "delivery-calibration",
