@@ -24,6 +24,7 @@ import { buildWebTools } from "../web/tools";
 import { resolveWorkflowModules } from "../workflows/registry";
 import type { OrchestratorWorkflowModule } from "../workflows/types";
 import { type BackgroundRunLimits, BackgroundRunManager } from "./background-runs";
+import { COMPLEXITY_RUBRIC } from "./plan";
 import type { WorkflowSession } from "./session";
 import { autoDriver, createWorkflowSession } from "./session";
 import { assertTransitionOffered, DriveError } from "./transition-guard";
@@ -1072,7 +1073,10 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
       {
         ...base.role,
         name,
-        systemPrompt: `${resolvePrompt(name, { projectDir: config.targetDir })}${skillInstructions(name)}\n\nThis is an independent role invocation. Return the complete result as assistant text; do not expect pipeline submission tools.`,
+        // A planner reached this way rates complexity like any other, so it
+        // needs the same definition the pipeline's plan stage sends. Without
+        // it the tier came from whatever the model assumed a tier meant.
+        systemPrompt: `${resolvePrompt(name, { projectDir: config.targetDir })}${skillInstructions(name)}\n\nThis is an independent role invocation. Return the complete result as assistant text; do not expect pipeline submission tools.\n\n${COMPLEXITY_RUBRIC}`,
         activeToolNames: [
           "read",
           "bash",
@@ -1126,7 +1130,9 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
       name: "orchestrator",
       provider: orchestratorModel.provider,
       modelId: orchestratorModel.id,
-      systemPrompt: `${resolvePrompt("orchestrator", { projectDir: config.targetDir })}${skillInstructions("orchestrator")}`,
+      // The orchestrator routes on its own pre-read tier before any planner
+      // runs, so it decides with the same definition rather than its own.
+      systemPrompt: `${resolvePrompt("orchestrator", { projectDir: config.targetDir })}${skillInstructions("orchestrator")}\n\n${COMPLEXITY_RUBRIC}`,
       // Read off the spec like every other field here. `resolve-config` has
       // already applied the profile's value (defaulting to "short"), so
       // restating a literal here would discard a declared "long"/"none" for

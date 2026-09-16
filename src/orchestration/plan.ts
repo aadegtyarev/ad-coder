@@ -16,6 +16,29 @@ export const SUBMIT_PLAN_TOOL_NAME = "submit_plan";
 
 const COMPLEXITIES: readonly Complexity[] = ["trivial", "medium", "complex"];
 
+/**
+ * The one definition of the three tiers, quoted verbatim everywhere a tier gets
+ * decided: the pipeline's plan stage, a planner reached through `run_role`, and
+ * the orchestrator classifying in its own turn.
+ *
+ * It tiers by what a change REQUIRES, not by how many lines it spans. The
+ * size-based wording that stood here ("trivial for a one-liner, complex for a
+ * cross-cutting or high-risk one") rated "make Pool.reserve linearizable under
+ * concurrent calls" as trivial across two model families -- one file, a few
+ * lines, and the single hardest class of defect in the corpus: the same sweep
+ * measured a seeded race at 0.07 on one model and 1.00 on another. Concurrency
+ * is where the choice of model decides the outcome, so a rubric that prices it
+ * by diff size routes exactly the wrong work to the cheapest cell.
+ *
+ * It lived in the planner instruction alone, which reaches a model only from
+ * the pipeline's plan stage -- so the other two paths decided tiers with no
+ * definition at all, and the corpus was scoring them against a rule they were
+ * never given. Same vocabulary as docs/benchmark-method.md, deliberately: one
+ * definition beats three paraphrases that drift.
+ */
+export const COMPLEXITY_RUBRIC =
+  'Choose "trivial" when the change is confined to one function with no call sites and the fix is uniquely determined; "medium" when it crosses call sites, preserves two public behaviours at once, or carries a rule into another artifact; "complex" when it turns on an ordering or concurrency invariant, reconciles sources of truth that disagree, or fixes an error observable only far from its cause. Size is evidence, not the criterion: a one-line change to a race is complex.';
+
 const SECURITY_SURFACES: readonly SecuritySurface[] = ["none", "low", "elevated"];
 const COVERAGE_STATUSES: readonly ContractCoverageStatus[] = [
   "covered",
@@ -587,7 +610,7 @@ export function formatPlannerInstruction(): string {
     `Canonical contract IDs accepted by this pipeline: ${canonicalIds}.`,
     'For status "not_applicable", contractIds must be empty and evidence must explain why no contract applies.',
     'For status "research_required", evidence must name the missing contract knowledge; do not claim "covered" with empty arrays.',
-    'Choose "trivial" for a one-liner, "medium" for a routine multi-file change, "complex" for a cross-cutting or high-risk one.',
+    COMPLEXITY_RUBRIC,
     'Choose "none" when the task touches no attack surface, "low" for incidental exposure, "elevated" when it touches auth, secrets, user input, crypto, or an external boundary.',
   ].join("\n");
 }
