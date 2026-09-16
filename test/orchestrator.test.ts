@@ -61,6 +61,7 @@ import { defineRole } from "../src/role";
 import { ProviderLimitError } from "../src/runner/errors";
 import type { Tool } from "../src/runner/tool";
 import { SessionLimitController, SessionLimitError } from "../src/session-limits";
+import { LOAD_SKILL_TOOL_NAME } from "../src/skills/load-tool";
 import {
   INSPECT_IMAGE_TOOL_NAME,
   WEB_READ_TOOL_NAME,
@@ -220,6 +221,7 @@ test("startOrchestrator preserves the resolved seed thinking level", async () =>
     WEB_READ_TOOL_NAME,
     INSPECT_IMAGE_TOOL_NAME,
     RUN_ROLE_TOOL_NAME,
+    LOAD_SKILL_TOOL_NAME,
     RUN_PIPELINE_TOOL_NAME,
     RESUME_PIPELINE_TOOL_NAME,
     START_PIPELINE_TOOL_NAME,
