@@ -1,0 +1,39 @@
+{
+  "id": "researcher-trivial-v1",
+  "role": "researcher",
+  "complexity": "trivial",
+  "mode": "role",
+  "purpose": "calibration",
+  "fixture": "reviewer-trivial",
+  "scorer": "researcher-trivial.ts",
+  "scorerInput": "artifact",
+  "prompt": "Answer ONE question, using sources outside this repository.\n\nQ1. RFC 9110 defines a status code for a request the origin server requires to be conditional. Which code is it, and what is its registered reason phrase?\n\nReturn ONLY a JSON object: {\"claims\": [{\"question\": \"Q1\", \"answer\": \"<the code and its reason phrase>\", \"confidence\": \"high|medium|low\", \"sources\": [\"<url you actually fetched>\"]}], \"observedOn\": \"<YYYY-MM-DD>\"}. Answer only the question asked -- one claim, no more. This fact is settled and published: if your sources state it plainly, say so with `high` confidence rather than hedging. This is a read-only task: report what you found and change no file in the repository.",
+  "checks": [
+    {
+      "id": "answers-the-status-code",
+      "weight": 6
+    },
+    {
+      "id": "is-confident-about-a-settled-fact",
+      "weight": 3
+    },
+    {
+      "id": "cites-a-well-formed-source",
+      "weight": 3
+    },
+    {
+      "id": "answers-only-what-was-asked",
+      "weight": 3
+    },
+    {
+      "id": "stays-in-scope",
+      "weight": 2
+    }
+  ],
+  "writes": [],
+  "source": {
+    "url": "https://www.rfc-editor.org/rfc/rfc9110",
+    "license": "IETF Trust, RFC text is freely redistributable",
+    "note": "One question with one settled published answer: no cross-verification between disagreeing sources, no absence to establish -- which is the trivial tier's definition for this role. Reuses a fixture only because the harness materializes one; the work is entirely outside the repository. Written for #174. What it still measures is the discipline the role exists for: a source that was fetched, a confidence that means something, and no padding. Hedging on a fact the RFC states outright is the failure that makes a researcher useless, because every answer then arrives equally uncertain. The citation check is named for what it can see -- the scorer receives the artifact and cannot distinguish a retrieved page from an invented one, the same limit the medium task records."
+  }
+}

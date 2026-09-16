@@ -1,0 +1,32 @@
+{
+  "summary": "Overhaul the retry subsystem: fix the zero-handling defect, then harden the surrounding module.",
+  "steps": [
+    {
+      "step": "Replace the falsy fallback with nullish coalescing in src/retry.ts.",
+      "acceptance": "retryCount(0) returns 0"
+    },
+    {
+      "step": "Add input validation rejecting negative and non-integer retry counts.",
+      "acceptance": "retryCount(-1) throws"
+    },
+    {
+      "step": "Introduce an upper bound on retries and a named constant for it.",
+      "acceptance": "retryCount(1000) returns the ceiling"
+    },
+    {
+      "step": "Add structured logging when the default is applied.",
+      "acceptance": "the log line appears once per defaulted call"
+    },
+    {
+      "step": "Extract the retry policy into its own module for reuse.",
+      "acceptance": "the existing tests still pass after the move"
+    }
+  ],
+  "contracts": [
+    {
+      "rule": "A caller-supplied retry count is honoured exactly, including zero, which means\n  \"do not retry\".",
+      "source": "docs/contracts/retry.md"
+    }
+  ],
+  "complexity": "trivial"
+}

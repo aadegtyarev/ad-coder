@@ -1,0 +1,8 @@
+[
+  {
+    "surface": "src/retry.ts:retryCount",
+    "status": "violates",
+    "contract": "docs/contracts/retry.md",
+    "evidence": "line 10 returns `maxRetries || DEFAULT_RETRIES`, so a caller-supplied 0 is falsy and the default applies; the contract says a caller-supplied count is honoured exactly, including zero"
+  }
+]

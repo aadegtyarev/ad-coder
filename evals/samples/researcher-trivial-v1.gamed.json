@@ -1,0 +1,23 @@
+{
+  "claims": [
+    {
+      "question": "Q1",
+      "answer": "428 Precondition Required",
+      "confidence": "medium",
+      "sources": ["https://www.rfc-editor.org/rfc/rfc9110"]
+    },
+    {
+      "question": "Q2",
+      "answer": "412 Precondition Failed is the related code returned when a condition evaluates false.",
+      "confidence": "high",
+      "sources": ["https://www.rfc-editor.org/rfc/rfc9110"]
+    },
+    {
+      "question": "Q3",
+      "answer": "Conditional requests are defined in section 13 and use If-Match and If-None-Match.",
+      "confidence": "high",
+      "sources": ["https://www.rfc-editor.org/rfc/rfc9110"]
+    }
+  ],
+  "observedOn": "2026-09-16"
+}

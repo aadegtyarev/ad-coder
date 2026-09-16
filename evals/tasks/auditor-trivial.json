@@ -1,0 +1,39 @@
+{
+  "id": "auditor-trivial-v1",
+  "role": "auditor",
+  "complexity": "trivial",
+  "mode": "role",
+  "purpose": "calibration",
+  "fixture": "reviewer-trivial",
+  "scorer": "auditor-trivial.ts",
+  "scorerInput": "artifact",
+  "prompt": "Audit the exported surface of `src/` against the contracts in `docs/contracts/`. This project is one file with one exported function.\n\nReturn ONLY a JSON array. One element per exported function: {\"surface\": \"<file>:<exported function name>\", \"status\": \"conforms|violates|contract_missing\", \"contract\": \"<canonical source of the governing rule, or null when none governs it>\", \"evidence\": \"<what in the code shows this, cited by line>\"}. Use `contract_missing` only when no contract governs the surface at all -- never for a surface whose contract exists, and never for one you did not check. Cite only material that exists: every surface must be a function `src/` actually exports, and every `contract` must be a file in this repository. This is a read-only task: report what you found and change no file in the repository.",
+  "checks": [
+    {
+      "id": "finds-the-violation",
+      "weight": 6
+    },
+    {
+      "id": "does-not-claim-the-contract-is-absent",
+      "weight": 3
+    },
+    {
+      "id": "cites-only-real-material",
+      "weight": 4
+    },
+    {
+      "id": "audits-only-what-is-there",
+      "weight": 3
+    },
+    {
+      "id": "stays-in-scope",
+      "weight": 2
+    }
+  ],
+  "writes": [],
+  "source": {
+    "url": "original",
+    "license": "n/a",
+    "note": "The smallest audit available: one exported function, one governing contract, one question. Reuses the `reviewer-trivial` fixture -- the trivial tier is cheap precisely because the fixtures exist. Written for #174. What it still measures is that the auditor CHECKED rather than assumed: `contract_missing` is the tempting wrong answer, since it is what an auditor says when it did not look, and `auditor.md` forbids treating silence as conformance. The `cites-only-real-material` check is carried over from the medium task, where an audit of confident invented surfaces scored as well as one that did the work."
+  }
+}

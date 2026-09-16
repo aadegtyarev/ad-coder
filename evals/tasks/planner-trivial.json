@@ -1,0 +1,43 @@
+{
+  "id": "planner-trivial-v1",
+  "role": "planner",
+  "complexity": "trivial",
+  "mode": "role",
+  "purpose": "calibration",
+  "fixture": "reviewer-trivial",
+  "scorer": "planner-trivial.ts",
+  "scorerInput": "artifact",
+  "prompt": "Plan the fix for this defect, do not implement it: `retryCount` in `src/retry.ts` returns the default when the caller passes 0, and `docs/contracts/retry.md` says a caller-supplied zero is honoured exactly. One file, one function, no other call sites.\n\nReturn ONLY a JSON object: {\"summary\": \"<what the change is>\", \"steps\": [{\"step\": \"<what the Coder does>\", \"acceptance\": \"<a criterion checkable by running something>\"}], \"contracts\": [{\"rule\": \"<the short rule text, carried verbatim enough to execute against>\", \"source\": \"<canonical source>\"}], \"complexity\": \"trivial|medium|complex\"}. The Coder receives only this object. This is a bounded task: keep the plan to the work it names -- at most two steps -- and do not widen into modules it does not touch. This is a read-only task: report what you found and change no file in the repository.",
+  "checks": [
+    {
+      "id": "names-the-fix",
+      "weight": 5
+    },
+    {
+      "id": "carries-the-contract-rule",
+      "weight": 3
+    },
+    {
+      "id": "acceptance-is-runnable",
+      "weight": 2
+    },
+    {
+      "id": "bounded-plan",
+      "weight": 4
+    },
+    {
+      "id": "rates-trivial",
+      "weight": 2
+    },
+    {
+      "id": "stays-in-scope",
+      "weight": 2
+    }
+  ],
+  "writes": [],
+  "source": {
+    "url": "original",
+    "license": "n/a",
+    "note": "The smallest planning job available: one function, one operator, the fix uniquely determined -- which is the trivial tier's definition. Reuses the `reviewer-trivial` fixture, since the trivial tier is cheap precisely because the fixtures exist. Written for #174. A trivial task is not a smaller medium one: the expensive failure here is a planner that turns a one-line fix into a six-step project, which `planner.md` forbids in as many words, so the plan is capped at two steps and the cap is stated in the prompt."
+  }
+}

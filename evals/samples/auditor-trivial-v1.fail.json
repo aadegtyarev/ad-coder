@@ -1,0 +1,8 @@
+[
+  {
+    "surface": "src/retry.ts:retryCount",
+    "status": "contract_missing",
+    "contract": null,
+    "evidence": "no contract found"
+  }
+]
