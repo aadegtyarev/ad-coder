@@ -319,6 +319,25 @@ interface Execution {
 }
 
 /**
+ * Names what intervened when a run never reached a scored answer.
+ *
+ * Shared by the single-run and repeat paths so the two cannot drift: the reason
+ * a run aborted is the whole diagnosis, and `provider_error` versus
+ * `stage_limit` versus a rejected handoff are three different problems for
+ * whoever reads the sweep.
+ */
+function classifyAbort(message: string): "stage_limit" | "provider_error" | "tool_error" {
+  const text = message.toLowerCase();
+  if (text.includes("limit") || text.includes("timed out") || text.includes("timeout"))
+    return "stage_limit";
+  // A plan the product REJECTED is the harness refusing a malformed handoff, not
+  // the provider failing: the request succeeded and its content did not pass.
+  if (text.includes("invalid") || text.includes("must ") || text.includes("rejected"))
+    return "tool_error";
+  return "provider_error";
+}
+
+/**
  * The routing cell the task declares, as a flag ad-coder will honour.
  *
  * A task names the `(role, complexity)` cell it exists to measure, and the
@@ -750,8 +769,42 @@ else if (action === "smoke") {
     timeoutMs: timeoutRaw === undefined ? 45 * 60_000 : Number(timeoutRaw),
     keep: own.includes("--keep"),
   };
-  if (repeat === 1) runTask(entry.task, entry.file, options);
-  else {
+  if (repeat === 1) {
+    // A run that never reached a scored answer is a FACT ABOUT THE CELL, not a
+    // reason to print nothing. Throwing here dropped the measurement entirely,
+    // and the runs that abort are the bad ones -- so a dropped run flatters the
+    // model, which is the exact failure `harnessOutcome` was added to stop. The
+    // repeat path below already caught and counted; this one did not, so the
+    // protection existed and reached one of the two callers. See issue #190.
+    try {
+      runTask(entry.task, entry.file, options);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.log(
+        JSON.stringify(
+          {
+            taskId: entry.task.id,
+            inventory: options.inventory,
+            model: null,
+            provider: null,
+            thinkingLevel: options.thinkingLevel,
+            role: entry.task.role,
+            complexity: entry.task.complexity,
+            mode: entry.task.mode ?? "role",
+            accepted: false,
+            quality: 0,
+            harnessOutcome: classifyAbort(message),
+            // The first line only: the reason is the diagnosis and a stack trace
+            // buries it, the same rule the repeat path's `aborted` follows.
+            abortReason: message.split("\n")[0] ?? message,
+          },
+          null,
+          2,
+        ),
+      );
+      process.exitCode = 1;
+    }
+  } else {
     // WHY REPEATS ARE A FIRST-CLASS ACTION. One run does not measure a model, it
     // samples one. The same model on the same task produced 0.43, 0.79, an
     // unreadable answer and 1.00 in one sitting -- a routing cell decided from
