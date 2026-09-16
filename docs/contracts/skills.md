@@ -42,13 +42,13 @@ unbounded prompt directory.
   reached 2106 words of appendix for the orchestrator regardless of the task.
   `--skills` remains a pin -- "use exactly these", pasted as before -- for when
   the operator does know better.
-- 2026-09-16: `--no-skills` is the explicit off for the skill capability,
+- 2026-09-17: `--no-skills` is the explicit off for the skill capability,
   declared once in the shared pipeline options for every command that runs a
   role: no catalogue in any prompt, no loader tool registered, no appended
   instructions. It cannot be combined with `--skills` -- exactly one of pin,
   off, or default resolves. Background workers inherit the off like they
   inherit a pin.
-- 2026-09-16: A persistent setting lives in the user profile at
+- 2026-09-17: A persistent setting lives in the user profile at
   `~/.config/ad-coder/profile.json`: `"capabilities": {"skills": false}` turns
   the skill capability off for every run; the field absent or `true` is the
   built-in enabled default. This is an optional field accepted by the v1
@@ -57,7 +57,7 @@ unbounded prompt directory.
   when unset. Layer order: explicit launch parameter beats the setting beats
   the default. `--no-skills` and `--skills` are both explicit, so a `--skills`
   pin disables the setting in its own direction too.
-- 2026-09-16: The resolved skill set is visible in `config show`: a `skills`
+- 2026-09-17: The resolved skill set is visible in `config show`: a `skills`
   row carries every skill a run can reach as id, version, source tier
   (`builtin`/`project`), and the SHA-256 digest of the loaded content, plus the
   winning layer (`cli`, `profile`, or `built-in-default`). A pin reports

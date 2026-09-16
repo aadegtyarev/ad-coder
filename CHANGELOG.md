@@ -6,7 +6,12 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-09-17
+
 ### Changed
+> Skills on this branch answer to the enable-by-default capability rule in
+> `docs/contracts/config.md` (2026-09-16); the reason the profile switch is an
+> optional v1 field rather than a v2 bump is recorded there and in its PR text.
 - Workflow modules ship enabled: a plain console session resolves the built-in
   `pipeline` module to its tools (`run_pipeline`, `decompose_task`, `run_step`,
   `choose_transition`, `show_cost`) without any flag. `--workflows` is now the
@@ -28,9 +33,10 @@ All notable changes to ad-coder are recorded here. The format follows
   A missing profile is the enabled default, not an error; an unsafe or invalid
   profile store fails the command with the store's usual error codes. Skills
   remain catalogue-by-default otherwise; `--skills a,b` pins an exact set.
-- `config show` now reports a `skills` row: every skill a run can reach with
-  id, version, source tier (`builtin`/`project`), SHA-256 digest, and the
-  winning layer (`cli`, `profile`, or `built-in-default`).
+- `config show` reports a `skills` row that says whether the capability is ON
+  or OFF, then lists every skill a run can reach with id, version, source tier
+  (`builtin`/`project`), SHA-256 digest, and the winning layer (`cli`,
+  `profile`, or `built-in-default`).
 
 ## [0.33.0] - 2026-09-16
 
