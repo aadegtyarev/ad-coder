@@ -33,7 +33,17 @@ unbounded prompt directory.
   restates its role prompt in one sentence costs a load and teaches nothing --
   the first four shipped at 19-26 words each against a 16 KiB ceiling, which is
   why a reviewer holding `acceptance-review` behaved exactly as one without it.
-- 2026-09-16: Skills are selected by default and `--skills` narrows that
-  selection. Each manifest declares the roles it serves and that declaration is
-  the filter, so an opt-in list the operator has to retype on every invocation
-  is not the mechanism.
+- 2026-09-16: A role prompt carries the CATALOGUE -- each available skill's id,
+  version and one-line description -- and a role loads a skill's instructions
+  with `load_skill` once it has read the task. Which methodology a task needs is
+  knowledge the model has and the operator does not, but only after reading the
+  task, which is when a tool call can still happen and a prompt can no longer
+  change. Selecting every skill and pasting it was tried for one afternoon and
+  reached 2106 words of appendix for the orchestrator regardless of the task.
+  `--skills` remains a pin -- "use exactly these", pasted as before -- for when
+  the operator does know better.
+- 2026-09-16: Loading obeys every constraint selection obeyed: the id pattern,
+  the manifest's role scope, per-turn count and byte ceilings, and a typed
+  content-free error carrying its reason. A refusal for a skill outside the
+  role's scope says what the catalogue said, so it cannot be used to enumerate
+  skills written for other roles.

@@ -543,13 +543,25 @@ export type {
   SessionLimits,
 } from "./session-limits";
 export { SessionLimitController, SessionLimitError } from "./session-limits";
+export type { BuildLoadSkillToolOptions, SkillLoadRecord } from "./skills/load-tool";
+export {
+  buildLoadSkillTool,
+  formatSkillCatalogue,
+  LOAD_SKILL_TOOL_NAME,
+} from "./skills/load-tool";
 export type {
   ResolvedSkill,
   ResolveSkillsOptions,
+  SkillCatalogueEntry,
   SkillManifest,
   SkillResolutionErrorCode,
 } from "./skills/resolver";
-export { resolveSkills, SkillResolutionError } from "./skills/resolver";
+export {
+  listSkillIds,
+  resolveSkills,
+  SkillResolutionError,
+  skillCatalogue,
+} from "./skills/resolver";
 export type {
   UpdateCommandResult,
   UpdateCommandRunner,

@@ -223,11 +223,17 @@ function readSkill(
  * Every skill available to a run, built-ins plus project overrides.
  *
  * WHY THIS EXISTS. Skills were opt-in through `--skills`, and a skill nobody
- * remembers to pass is a skill that never runs: the operator was typing the
- * list by hand on every invocation. Each skill already declares the roles it
- * serves, and `skillInstructions` filters on that declaration -- so listing
- * them all is not indiscriminate, it defers the decision to the manifest that
- * was written for exactly this purpose.
+ * remembers to pass is a skill that never runs. But selecting them all and
+ * pasting every instruction into every role prompt is the opposite mistake:
+ * with the skills written out properly that reached 2106 words of appendix for
+ * the orchestrator, on top of its own 166-line prompt, whether or not the task
+ * needed any of it. `docs/contracts/skills.md` names that boundary directly --
+ * discovery "must never silently inject full instructions into every role
+ * prompt".
+ *
+ * So this lists what EXISTS. The catalogue built from it carries ids and
+ * one-line descriptions; the instructions arrive only when a role asks for
+ * them by calling `load_skill`.
  */
 export function listSkillIds(options: { projectDir?: string; builtinDir?: string } = {}): string[] {
   const ids = new Set<string>();
@@ -257,6 +263,50 @@ export function listSkillIds(options: { projectDir?: string; builtinDir?: string
     }
   }
   return [...ids].sort();
+}
+
+/** One catalogue row: what a role needs to decide whether to load a skill. */
+export interface SkillCatalogueEntry {
+  id: string;
+  version: string;
+  description: string;
+  roles: string[];
+  source: "builtin" | "project";
+}
+
+/**
+ * The skills a role may load, as names and one-line descriptions.
+ *
+ * Cheap by construction: the shipped manifests' descriptions total well under
+ * 500 bytes, against several kilobytes of instructions that were previously
+ * all-in or all-out. A manifest that fails to parse is skipped rather than
+ * taking the catalogue down -- a broken skill must not stop a run that was
+ * never going to use it.
+ */
+export function skillCatalogue(
+  role: string,
+  options: ResolveSkillsOptions = {},
+): SkillCatalogueEntry[] {
+  const rows: SkillCatalogueEntry[] = [];
+  for (const id of listSkillIds(options)) {
+    let skill: ResolvedSkill;
+    try {
+      const resolved = resolveSkills([id], options)[0];
+      if (resolved === undefined) continue;
+      skill = resolved;
+    } catch {
+      continue;
+    }
+    if (!skill.roles.includes(role)) continue;
+    rows.push({
+      id: skill.id,
+      version: skill.version,
+      description: skill.description,
+      roles: skill.roles,
+      source: skill.source,
+    });
+  }
+  return rows;
 }
 
 /** Project skills shadow built-ins, but every requested ID is explicit and bounded. */

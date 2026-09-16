@@ -257,6 +257,7 @@ const KNOWN_TOOLS: Readonly<Record<string, { activity: ToolActivityKind; publicN
   control_decisions: { activity: "Tool", publicName: "control_decisions" },
   control_decision_request: { activity: "Tool", publicName: "control_decision_request" },
   control_run_until: { activity: "Tool", publicName: "control_run_until" },
+  load_skill: { activity: "Read", publicName: "load_skill" },
 };
 
 /**

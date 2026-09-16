@@ -6,6 +6,27 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.33.0] - 2026-09-16
+
+### Changed
+- A role prompt now carries a CATALOGUE of available skills -- id, version, one
+  line each -- and a role pulls the instructions it needs with the new
+  `load_skill` tool after reading the task. Selecting every skill and pasting it
+  shipped earlier the same day and reached **2106 words** of appendix for the
+  orchestrator whether or not the task called for any of it; the operator caught
+  the behaviour change immediately. `docs/contracts/skills.md` had named that
+  boundary in advance -- discovery "must never silently inject full instructions
+  into every role prompt" -- and this is the mechanism it was waiting for: which
+  methodology a task needs is knowledge the model has and the operator does not,
+  but only after reading the task, which is when a tool call can still happen
+  and a prompt can no longer change.
+- `--skills` keeps working as a pin: "use exactly these", pasted as before, for
+  when the operator does know better. Loading obeys everything selection obeyed
+  -- id pattern, the manifest's role scope, per-turn and byte ceilings, and a
+  typed error that names its reason. A skill outside a role's scope is refused
+  with what the catalogue already said, so the refusal cannot be used to
+  enumerate skills written for other roles. (#129)
+
 ## [0.32.1] - 2026-09-16
 
 ### Added
