@@ -7,9 +7,9 @@ reviewed pipeline. It supports a human CLI, a programmatic API, persistent
 conversations, and a daemon-free control plane. The headless core owns behavior;
 the CLI is only an adapter.
 
-This document is a map for contributors. Detailed invariants live in
-`docs/contracts/`, accepted future design lives in `docs/ROADMAP.md`, and open
-work lives in GitHub issues indexed by `docs/BACKLOG.md`.
+This document is a map for contributors; invariants live in `docs/contracts/`,
+accepted future design in `docs/ROADMAP.md`, open work in GitHub issues indexed
+by `docs/BACKLOG.md`.
 
 ## Runtime and dependencies
 
@@ -38,7 +38,7 @@ work lives in GitHub issues indexed by `docs/BACKLOG.md`.
 | Workflow core | `src/orchestration/` | Run the plan, research, security, code, and review graph. |
 | Durable coordination | `src/project-operations/`, `src/project-store/` | Checkpoint runs, coordinate resume, and manage follow-ups and publication. |
 | Quality and exploration | `src/gates/`, `src/project-tools/` | Run bounded checks and Git-ignore-aware structural reconnaissance. |
-| Web and media plugins | `src/web/` | Search, read navigable pages, and inspect images with capability routing. |
+| Web and media plugins | `src/web/` | Search, read pages, and inspect images with capability routing. |
 
 ## Main execution paths
 
@@ -55,11 +55,11 @@ UTF-8 files under one byte ceiling; credential-like lines are redacted before
 the projection is handed to a role.
 
 Stage limits resolve as built-in global, built-in role, caller global, then caller
-role defaults; zero disables a limit. The selected role limits apply to workflows
-and standalone `role`.
+role defaults; zero disables a limit, and the selected role limits apply to
+workflows and standalone `role`.
 
-After a dispatched Researcher failure, `research_rejected` retains run ID and
-numeric metrics, never raw provider content.
+After a Researcher dispatch fails, `research_rejected` retains run ID and numeric
+metrics, never raw provider content.
 
 ### Tool activity flow
 
@@ -96,13 +96,11 @@ same substrate without becoming the built-in pipeline.
 
 The conversational Orchestrator exposes the same execution choices: `run_role`
 for one specialist, `run_step` plus `choose_transition` for manual workflow
-control, and `run_pipeline` for automatic completion. The built-in workflow
-module is enabled in a plain session; `--workflows` is the shared set-valued
-switch (select members, `^name` excludes, `false` disables), and `config show`
-reports the resolved set. Pipeline results include a
-durable run ID and aggregate stage usage. `resume_pipeline` reopens that run with
-the original task and reuses committed stages. After raising the budget, recovery
-resumes its durable role lane without repeating work.
+control, and `run_pipeline` for automatic completion (the built-in module ships
+enabled; `--workflows` selects or excludes members). Results carry a durable run
+ID; `resume_pipeline` reopens that run with the original task and reuses
+committed stages. After raising a budget, recovery resumes without repeating
+work.
 
 ### Conversation and orchestrator
 
@@ -195,9 +193,10 @@ configured default complexity before it has produced a rating; later roles use
 the submitted rating.
 
 Configuration follows `docs/contracts/config.md`: reasonable alternatives are
-configurable, defaults favor efficiency, and numeric limits use zero for disabled
-unless a mandatory safety ceiling says otherwise. `config show` exposes effective
-values and sources without credentials.
+configurable, defaults favor efficiency, and numeric limits default to zero
+unless a safety ceiling says otherwise. Switchable capabilities ship enabled;
+settings and flags turn them off, and `config show` reports every resolved value
+and source without credentials.
 
 The Planner instruction derives allowed canonical IDs from validation's
 `CONTRACT_INDEX`, avoiding speculative research and duplicate identifier sources.
@@ -215,22 +214,21 @@ the accepted Planner result.
 
 ## Context, usage, and recovery
 
-ad-coder disables the framework's built-in compaction and owns its context
-policy. Auto mode summarizes only the evicted head through a configured
-summarizer. Disabled mode never summarizes and halts when the full branch no
-longer fits. Context refusals use the effective ceiling
+ad-coder owns its context policy. Auto mode summarizes only the evicted head
+through a configured summarizer; disabled mode never summarizes and halts when
+the full branch no longer fits. Context refusals use the effective ceiling
 `min(maxTokens, contextWindow)`, including when a role is run with a smaller
 runtime model window; the typed diagnostic reports that ceiling without
 transcript content. Operators should select a model with a larger context window
-or lower the role's context-budget settings before retrying. Cross-provider
-summarization requires explicit authorization.
+or lower the role's context-budget settings before retrying; cross-provider
+summarization needs explicit authorization.
 
 Pipeline handoff policy is separate from transcript compaction. The first review
 is broad; later Coder and Reviewer turns default to bounded findings, response,
-contract, path/count, and credential-redacted diff evidence. Configurable modes
-are `incremental`, `full`, and manually controlled `off`. Missing or truncated
-evidence, sensitive paths, review-control changes, risk changes, and material
-diffs widen the handoff with a stable reason. Workflow state retains bounded
+contract, path/count, and credential-redacted diff evidence. Modes are
+`incremental`, `full`, and manual `off`. Missing or truncated evidence,
+sensitive paths, review-control or risk changes, and material diffs widen the
+handoff with a stable reason. Workflow state keeps bounded
 metadata, a diff digest, and the decision, never raw patches. An untracked
 addition stays focused because its bounded path permits an explicit role read;
 path truncation still widens the handoff.

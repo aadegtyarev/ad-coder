@@ -4,7 +4,6 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { CredentialStore } from "@earendil-works/pi-ai";
 import { resolvePipelineConfig } from "../src/cli/resolve-config";
-import { roleSkillKit } from "../src/skills/role-kit";
 import { deriveContextBudget } from "../src/context/budget";
 import {
   COST_ANOMALY_STATE_PATH,
@@ -19,6 +18,7 @@ import { writeProjectCalibrationSnapshot } from "../src/project-calibration";
 import { RegistryError } from "../src/registry/errors";
 import type { RegistryConfig } from "../src/registry/types";
 import { parseRegistryConfig } from "../src/registry/validate";
+import { roleSkillKit } from "../src/skills/role-kit";
 
 /** A fake env accessor over a plain record; nothing touches the real process.env. */
 function fakeEnv(vars: Record<string, string>): (name: string) => string | undefined {

@@ -13,9 +13,9 @@ import {
 import type {
   ImportMode,
   UserProfile,
+  UserProfileCapabilities,
   UserProfileImportPreview,
   UserProfileStoreOptions,
-  UserProfileCapabilities,
 } from "./types";
 
 const DIRECTORY_MODE = 0o700;

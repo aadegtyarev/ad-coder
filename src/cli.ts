@@ -109,8 +109,7 @@ import type { Tool } from "./runner/tool";
 import type { SessionLimits } from "./session-limits";
 import { SessionLimitController } from "./session-limits";
 import { buildLoadSkillTool, LOAD_SKILL_TOOL_NAME } from "./skills/load-tool";
-import { resolveSkills, skillInventory } from "./skills/resolver";
-import { SkillResolutionError } from "./skills/resolver";
+import { resolveSkills, SkillResolutionError, skillInventory } from "./skills/resolver";
 import { UpdateError, updateAdCoder } from "./update/updater";
 import {
   createDefaultUserProfileStore,
