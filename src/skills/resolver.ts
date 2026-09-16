@@ -309,6 +309,27 @@ export function skillCatalogue(
   return rows;
 }
 
+/**
+ * Every skill a run can reach, resolved: the visibility source for `config
+ * show` (id, version, source tier, SHA-256 digest of the loaded content).
+ * Catalogue semantics: an entry that fails to resolve is skipped, exactly as a
+ * per-role catalogue skips it, because the default set never loads at dispatch
+ * -- a pin still fails loudly through `resolveSkills` on the same paths.
+ */
+export function skillInventory(options: ResolveSkillsOptions = {}): ResolvedSkill[] {
+  const resolved: ResolvedSkill[] = [];
+  for (const id of listSkillIds(options)) {
+    try {
+      const skill = resolveSkills([id], options)[0];
+      if (skill !== undefined) resolved.push(skill);
+    } catch {
+      // Same per-role catalogue contract: inform the operator in config show
+      // that a row is unavailable rather than aborting the enumeration.
+    }
+  }
+  return resolved;
+}
+
 /** Project skills shadow built-ins, but every requested ID is explicit and bounded. */
 export function resolveSkills(
   ids: readonly string[],

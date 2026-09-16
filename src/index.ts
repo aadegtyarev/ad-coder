@@ -562,6 +562,8 @@ export {
   SkillResolutionError,
   skillCatalogue,
 } from "./skills/resolver";
+export type { RoleSkillKit, RoleSkillKitOptions } from "./skills/role-kit";
+export { roleSkillKit } from "./skills/role-kit";
 export type {
   UpdateCommandResult,
   UpdateCommandRunner,

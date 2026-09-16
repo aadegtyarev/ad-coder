@@ -49,6 +49,7 @@ import { parseRegistryConfig } from "../registry/validate";
 import type { Role } from "../role";
 import { defineRole } from "../role";
 import type { Tool } from "../runner/tool";
+import { LOAD_SKILL_TOOL_NAME, roleSkillKit } from "../skills/role-kit";
 import { buildImageInspectionTool, buildWebTools } from "../web/tools";
 
 /**
@@ -258,6 +259,20 @@ export interface ResolvePipelineConfigOptions {
   monotonicNow?: () => number;
   /** Explicit model-inventory operation that receives the shipped Researcher brief. */
   researchPurpose?: ResearchPurpose;
+  /** Trusted simple skill selection for every role prompt; absent means the catalogue. */
+  selectedSkills?: readonly string[] | undefined;
+  /** Explicit off: no catalogue, no loader, no appendix (the `--no-skills` flag resolves to this). */
+  skillsDisabled?: boolean | undefined;
+  /** The skill set a run can reach, resolved with digests, for the visibility row. */
+  skillInventory?:
+    | readonly { id: string; version: string; source: string; sha256: string }[]
+    | undefined;
+  /** Where that skill set came from: flag, profile setting, or the default. */
+  skillsSource?: "cli" | "profile" | "built-in-default" | undefined;
+  /** Resolved enabled workflow-module names; absent means the built-in default, empty means off. */
+  selectedWorkflows?: readonly string[] | undefined;
+  /** Where that selection came from, so enabled-by-default is never silent. */
+  workflowsSource?: "cli" | "built-in-default" | undefined;
   /** Trusted replacement source for the versioned model-inventory Researcher brief. */
   researchBrief?: RoleBriefSource;
 }
@@ -633,13 +648,31 @@ function resolveConfig(
       model.contextWindow,
       options.roleBudgetPercents?.[name as ConfigurableRole] ?? options.budgetPercents,
     );
+    // Same skill surface every front uses: the role's own kit (pin or
+    // catalogue) rides on its resolved prompt. An invalid pin fails HERE,
+    // before any provider dispatch.
+    const kit = roleSkillKit({
+      role: name,
+      selectedSkills: options.selectedSkills,
+      disabled: options.skillsDisabled,
+      projectDir: options.targetDir,
+    });
+    const activeTools =
+      kit.includeLoadTool && !tools.includes(LOAD_SKILL_TOOL_NAME)
+        ? [...tools, LOAD_SKILL_TOOL_NAME]
+        : tools;
+    const rolePrompt = resolvePrompt(name, { projectDir: options.targetDir });
+    // An empty target-local prompt override must still fail exactly as it did
+    // before a skill appendix existed: a catalogue row is not a role prompt.
+    if (rolePrompt === "")
+      throw new Error(`defineRole(${name}): systemPrompt must be a non-empty string`);
     const role: Role = defineRole(
       {
         name,
         provider: model.provider,
         modelId: model.id,
-        systemPrompt: resolvePrompt(name, { projectDir: options.targetDir }),
-        activeToolNames: tools,
+        systemPrompt: `${rolePrompt}${kit.appendix}`,
+        activeToolNames: activeTools,
         // The profile's value when it states one, "short" otherwise. This is
         // the sink `ResolvedSelection.cacheRetention` was surfaced for: without
         // it a declared "long"/"none" parsed, validated, and was then silently
@@ -785,6 +818,21 @@ function resolveConfig(
       model.contextWindow,
       options.roleBudgetPercents?.[name] ?? options.budgetPercents,
     );
+    // Same kit as every other role definition: the pinned skills or the
+    // catalogue ride on the resolved prompt, everywhere this role is built.
+    const kit = roleSkillKit({
+      role: name,
+      selectedSkills: options.selectedSkills,
+      disabled: options.skillsDisabled,
+      projectDir: options.targetDir,
+    });
+    const activeTools =
+      kit.includeLoadTool && !tools.includes(LOAD_SKILL_TOOL_NAME)
+        ? [...tools, LOAD_SKILL_TOOL_NAME]
+        : tools;
+    const rolePrompt = resolvePrompt(name, { projectDir: options.targetDir });
+    if (rolePrompt === "")
+      throw new Error(`defineRole(${name}): systemPrompt must be a non-empty string`);
     return {
       model,
       role: defineRole(
@@ -792,8 +840,8 @@ function resolveConfig(
           name,
           provider: model.provider,
           modelId: model.id,
-          systemPrompt: resolvePrompt(name, { projectDir: options.targetDir }),
-          activeToolNames: tools,
+          systemPrompt: `${rolePrompt}${kit.appendix}`,
+          activeToolNames: activeTools,
           // Same sink as the routed roles above: a profile that states a
           // retention must reach the request, not be dropped on the floor.
           cacheRetention: cacheRetention ?? "short",
@@ -949,6 +997,47 @@ function resolveConfig(
     },
     effectiveConfig: {
       ...contextWindowProjection,
+      // Set-valued capability visibility (docs/contracts/config.md): the
+      // resolved names and where the selection came from. `none` names the
+      // explicit off, never a silent absence.
+      skills: {
+        // The capability state plus the reach set, the way "enabled by default
+        // is never silent" reads in `config show`: it says ON/OFF explicitly,
+        // then lists id, version, source tier, and digest of what a role can
+        // load. An empty list alone cannot say off -- an empty pin -- so
+        // `enabled` carries the switch and the layer names who set it.
+        value: {
+          enabled: options.skillsDisabled !== true,
+          skills:
+            options.skillInventory === undefined
+              ? null
+              : options.skillInventory.map((skill) => ({
+                  id: skill.id,
+                  version: skill.version,
+                  source: skill.source,
+                  sha256: skill.sha256,
+                })),
+        },
+        // A caller that supplies the resolved set without naming a source is the source.
+        source:
+          options.skillsSource ??
+          (options.skillInventory === undefined ? "built-in-default" : "caller"),
+      },
+      workflows: {
+        // Absent selection means the built-in default (every shipped module
+        // ON), but the resolver does not own the list of shipped names, so it
+        // names the default instead of inventing an enumeration. A provided
+        // but empty set is the explicit off and says 'none'.
+        value:
+          options.selectedWorkflows === undefined
+            ? "built-in-default"
+            : options.selectedWorkflows.join(",") || "none",
+        // A caller that sets the resolved set without naming a source is the
+        // source: a default shape that never came from a default would lie.
+        source:
+          options.workflowsSource ??
+          (options.selectedWorkflows === undefined ? "built-in-default" : "caller"),
+      },
       inventoryProfile: {
         value: inventory?.name ?? "not-configured",
         source: inventory?.source ?? "built-in-default",

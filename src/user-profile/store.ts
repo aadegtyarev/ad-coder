@@ -13,6 +13,7 @@ import {
 import type {
   ImportMode,
   UserProfile,
+  UserProfileCapabilities,
   UserProfileImportPreview,
   UserProfileStoreOptions,
 } from "./types";
@@ -330,4 +331,41 @@ export function createDefaultUserProfileStore(): FileUserProfileStore {
     userHome: os.homedir(),
     ...(xdgConfigHome === undefined ? {} : { xdgConfigHome }),
   });
+}
+
+/**
+ * A synchronous read of the profile's capability switches, taken before run
+ * configuration. Run-configuration building is synchronous by design, and
+ * capability settings must reach every command the same way inventories do;
+ * the async store owns mutation and locking, while this never writes and reads
+ * the committed file once. Same safety checks as `read`: no symlinks, no world
+ * access, single hard link. A missing store is the built-in default -- it is
+ * not an error and not an override.
+ */
+export function readUserProfileCapabilitiesSync(
+  options: UserProfileStoreOptions & { path?: string },
+): UserProfileCapabilities {
+  const selected = options.path ?? options.configPath ?? defaultUserProfilePath(options);
+  if (!path.isAbsolute(selected))
+    throw new UserProfileError("invalid_path", "profile", "user profile path must be absolute");
+  try {
+    const directory = fs.lstatSync(path.dirname(selected));
+    if (directory.isSymbolicLink() || !directory.isDirectory() || (directory.mode & 0o077) !== 0)
+      throw new UserProfileError("unsafe_file", "directory", "user profile directory is unsafe");
+    const handle = fs.openSync(selected, fs.constants.O_RDONLY | NOFOLLOW);
+    try {
+      const stat = fs.fstatSync(handle);
+      if (!stat.isFile() || stat.nlink !== 1 || (stat.mode & 0o077) !== 0)
+        throw new UserProfileError("unsafe_file", "profile", "user profile file is unsafe");
+      const buffer = Buffer.alloc(stat.size);
+      fs.readSync(handle, buffer, 0, stat.size, 0);
+      return parseUserProfileJson(buffer.toString("utf8")).capabilities ?? {};
+    } finally {
+      fs.closeSync(handle);
+    }
+  } catch (error) {
+    if (error instanceof UserProfileError) throw error;
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
+    throw storeError(error);
+  }
 }

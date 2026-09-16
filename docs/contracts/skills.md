@@ -10,18 +10,24 @@ unbounded prompt directory.
   `.ad-coder/skills/<id>/`; project skills are trusted operator configuration,
   like project prompt overrides. Package/remote skills require an explicit later
   plugin installation path.
-- V1 resolves only explicitly selected IDs and therefore does not scan or
-  enumerate skill directories. Selected manifests and instructions load under
-  separate finite count/byte limits. Unknown, malformed, duplicate, escaping,
-  or oversized skills fail loudly before provider dispatch. Bounded manifest
-  discovery is a separately tracked v2 capability.
-- Selection is programmatic and visible: callers supply skill IDs through the
-  library or console `--skills`. Version, source tier and digest are exposed by
-  the resolver. Durable pipeline snapshots are a separately tracked v2 boundary;
-  v1 never claims resume-stable skill selection.
-  Future discovery may let the orchestrator recommend skills from manifest
-  descriptions, but it must never silently inject full instructions into every
-  role prompt.
+- V1 resolves a default set (the catalogue a role loads from with `load_skill`),
+  explicit pinned IDs, and the explicit off (`--no-skills`, or the profile
+  setting). Selected manifests and instructions load under separate finite
+  count/byte limits, identical for every layer. Pinned or loaded, unknown,
+  malformed, duplicate, escaping, or oversized skills fail loudly before
+  provider dispatch. Bounded manifest discovery is a separately tracked v2
+  capability; the per-role catalogue's bounded discovery is not a scan claim --
+  it enumerates trusted directories that operator configuration owns.
+- Selection is programmatic and visible: the default set is the catalog a role
+  loads from, a `--skills` value pins exactly those ids pasted into the prompt,
+  and the resolved set -- ids, versions, source tiers, digests -- is reported by
+  the resolver and visible in `config show`. Version, source tier and digest
+  are always exposed. Durable pipeline snapshots are a separately tracked v2
+  boundary; v1 never claims resume-stable skill selection. Future discovery may
+  let the orchestrator recommend skills from manifest descriptions, and the
+  2026-09-16 catalogue rule below is that recommendation -- but full
+  instructions still reach a prompt only through an explicit load or a pin,
+  never silently.
 - Built-in `architecture-recon`, `task-slicing`, `acceptance-review`,
   `delivery-calibration` and `repository-navigation` are the shipped skills.
   Their outputs respectively bound exploration, define a minimal
@@ -42,6 +48,29 @@ unbounded prompt directory.
   reached 2106 words of appendix for the orchestrator regardless of the task.
   `--skills` remains a pin -- "use exactly these", pasted as before -- for when
   the operator does know better.
+- 2026-09-17: `--no-skills` is the explicit off for the skill capability,
+  declared once in the shared pipeline options for every command that runs a
+  role: no catalogue in any prompt, no loader tool registered, no appended
+  instructions. It cannot be combined with `--skills` -- exactly one of pin,
+  off, or default resolves. Background workers inherit the off like they
+  inherit a pin.
+- 2026-09-17: A persistent setting lives in the user profile at
+  `~/.config/ad-coder/profile.json`: `"capabilities": {"skills": false}` turns
+  the skill capability off for every run; the field absent or `true` is the
+  built-in enabled default. This is an optional field accepted by the v1
+  profile parser -- not a v2 bump -- so existing exports and stored profiles
+  stay valid; the field is carried through export/import verbatim and omitted
+  when unset. Layer order: explicit launch parameter beats the setting beats
+  the default. `--no-skills` and `--skills` are both explicit, so a `--skills`
+  pin disables the setting in its own direction too.
+- 2026-09-17: The resolved skill set is visible in `config show`: a `skills`
+  row carries every skill a run can reach as id, version, source tier
+  (`builtin`/`project`), and the SHA-256 digest of the loaded content, plus the
+  winning layer (`cli`, `profile`, or `built-in-default`). A pin reports
+  exactly the pinned ids; the default enumerates the catalogue across all
+  roles and, like a per-role catalogue, skips an entry that fails to resolve
+  rather than failing the default path -- the count an operator sees is the
+  count a role can load.
 - 2026-09-16: Loading obeys every constraint selection obeyed: the id pattern,
   the manifest's role scope, per-turn count and byte ceilings, and a typed
   content-free error carrying its reason. A refusal for a skill outside the

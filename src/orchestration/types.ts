@@ -300,8 +300,17 @@ export interface PipelineConfig {
    * pipeline. See `WorkflowDefaults`.
    */
   defaults?: WorkflowDefaults;
-  /** Secret-free resolved values and their winning precedence tier. */
-  effectiveConfig?: Readonly<Record<string, { value: string | number | boolean; source: string }>>;
+  /** Secret-free resolved values and their winning precedence tier.
+   * A set-valued capability projects its members (objects), not just scalars. */
+  effectiveConfig?: Readonly<
+    Record<
+      string,
+      {
+        value: string | number | boolean | readonly unknown[] | Readonly<Record<string, unknown>>;
+        source: string;
+      }
+    >
+  >;
   /** Shared generation-call accounting for every role in this workflow session. */
   sessionLimitController?: SessionLimitController;
   /** Shared cost-per-token anomaly tracking for every role in this session. */

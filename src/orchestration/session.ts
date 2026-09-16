@@ -23,6 +23,7 @@ import {
 } from "../runner/runner";
 import type { Tool } from "../runner/tool";
 import { SessionLimitError } from "../session-limits";
+import { buildLoadSkillTool, LOAD_SKILL_TOOL_NAME } from "../skills/load-tool";
 import {
   buildSubmitFollowUpTool,
   type FollowUpCapture,
@@ -307,6 +308,15 @@ interface ResolvedDefaults {
  * from `targetDir`) are unchanged.
  */
 export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
+  // Skills must behave identically in every user-facing command: a stage role
+  // whose prompt lists skills gets a working loader for its turn, built fresh
+  // per turn so the per-turn load count starts at zero each time. Roles whose
+  // `--skills` pin was pasted into the prompt (roles.skill's activeToolNames
+  // lacks the loader) get nothing extra here.
+  const skillTools = (spec: { role: { name: string; activeToolNames?: string[] } }): Tool[] =>
+    spec.role.activeToolNames?.includes(LOAD_SKILL_TOOL_NAME)
+      ? [buildLoadSkillTool({ role: spec.role.name, projectDir: config.targetDir })]
+      : [];
   const resolvedMaxRounds = config.defaults?.maxRounds ?? config.maxRounds;
   if (!Number.isInteger(resolvedMaxRounds) || resolvedMaxRounds < 1) {
     throw new OrchestrationError(
@@ -735,6 +745,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
         [
           submitPlanTool,
           ...(config.pluginToolsForModel?.(selection.model) ?? config.pluginTools ?? []),
+          ...skillTools(plannerWithRequiredTool),
         ],
         true,
         attempt.resume ? attempt.stage : undefined,
@@ -941,7 +952,10 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
         ].join("\n"),
         "research",
         researchRunId,
-        config.pluginToolsForModel?.(researcher.model) ?? config.pluginTools ?? [],
+        [
+          ...(config.pluginToolsForModel?.(researcher.model) ?? config.pluginTools ?? []),
+          ...skillTools(researcher),
+        ],
         false,
       );
     } catch {
@@ -1091,7 +1105,10 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       prompt,
       "security",
       runId,
-      config.pluginToolsForModel?.(selection.model) ?? config.pluginTools,
+      [
+        ...(config.pluginToolsForModel?.(selection.model) ?? config.pluginTools ?? []),
+        ...skillTools(security),
+      ],
       true,
       attempt.resume ? attempt.stage : undefined,
     );
@@ -1163,7 +1180,10 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       context,
       `code:${round}`,
       runId,
-      config.pluginToolsForModel?.(selection.model) ?? config.pluginTools,
+      [
+        ...(config.pluginToolsForModel?.(selection.model) ?? config.pluginTools ?? []),
+        ...skillTools(config.roles.coder),
+      ],
       true,
       attempt.resume ? attempt.stage : undefined,
     );
@@ -1259,7 +1279,11 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       prompt,
       `review:${round}`,
       runId,
-      [submitTool, ...(config.pluginToolsForModel?.(selection.model) ?? config.pluginTools ?? [])],
+      [
+        submitTool,
+        ...(config.pluginToolsForModel?.(selection.model) ?? config.pluginTools ?? []),
+        ...skillTools(config.roles.reviewer),
+      ],
       true,
       attempt.resume ? attempt.stage : undefined,
     );

@@ -6,6 +6,38 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-09-17
+
+### Changed
+> Skills on this branch answer to the enable-by-default capability rule in
+> `docs/contracts/config.md` (2026-09-16); the reason the profile switch is an
+> optional v1 field rather than a v2 bump is recorded there and in its PR text.
+- Workflow modules ship enabled: a plain console session resolves the built-in
+  `pipeline` module to its tools (`run_pipeline`, `decompose_task`, `run_step`,
+  `choose_transition`, `show_cost`) without any flag. `--workflows` is now the
+  shared set-valued launch parameter (declared once for every
+  pipeline-capable command): a comma list selects modules, `^name` excludes
+  from the built-in default, and `--workflows=false` disables the capability.
+  `config show` reports the resolved workflow set and its source. The
+  persistent-setting layer is recorded as an open gap in
+  `docs/contracts/config.md`; issue #216 holds the whole-surface audit.
+- `--no-skills` turns the skill capability off explicitly on every command that
+  runs a role: no catalogue in any prompt, no `load_skill` tool registered. It
+  cannot be combined with `--skills`.
+- A persistent setting can now turn the skill capability off:
+  `~/.config/ad-coder/profile.json` accepts an optional
+  `"capabilities": {"skills": false}` under the unchanged v1 schema (no
+  version bump; the field rides through export/import verbatim). Layer order:
+  explicit flag beats the setting beats the built-in default, so `--skills`
+  and `--no-skills` each disable the setting without it ever marking a flag.
+  A missing profile is the enabled default, not an error; an unsafe or invalid
+  profile store fails the command with the store's usual error codes. Skills
+  remain catalogue-by-default otherwise; `--skills a,b` pins an exact set.
+- `config show` reports a `skills` row that says whether the capability is ON
+  or OFF, then lists every skill a run can reach with id, version, source tier
+  (`builtin`/`project`), SHA-256 digest, and the winning layer (`cli`,
+  `profile`, or `built-in-default`).
+
 ## [0.33.1] - 2026-09-16
 
 ### Added

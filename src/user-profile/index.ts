@@ -13,6 +13,7 @@ export {
   createDefaultUserProfileStore,
   defaultUserProfilePath,
   FileUserProfileStore,
+  readUserProfileCapabilitiesSync,
 } from "./store";
 export type {
   CalibratedRouting,

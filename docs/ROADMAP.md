@@ -975,11 +975,14 @@ workflows — one substrate, swappable drivers.
 - **Just-in-time orchestration skills v1 (decided 2026-09-14)** — implement the
   enforceable `docs/contracts/skills.md`: built-in and project-local trusted
   skills share a bounded manifest/instruction resolver; project skills live in
-  `.ad-coder/skills/<id>/`. The Orchestrator selects skills explicitly through
-  the library or console `--skills`; the resolver exposes version/source/digest.
+  `.ad-coder/skills/<id>/`. Shipped 0.34.0: every pipeline-capable command's
+  shared `--skills` flag pins explicitly, the default set is the per-role
+  catalogue loaded with `load_skill`, and `--no-skills` plus the profile's
+  `capabilities.skills` turn the capability off; the resolver exposes
+  version/source/digest and `config show` reports the resolved set.
   Resume-stable pipeline snapshots remain v2 work. First skills are architecture
-  reconnaissance, task slicing, independent acceptance review, and delivery
-  calibration. They replace
+  reconnaissance, task slicing, independent acceptance review, delivery
+  calibration, and repository navigation. They replace
   permanent prompt bulk with role-scoped lazy instructions, never silent global
   injection.
 

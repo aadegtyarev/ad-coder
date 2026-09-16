@@ -1225,3 +1225,156 @@ test("a usage error under a machine front stays machine-readable instead of prin
   // A human front keeps the help text it has always printed.
   expect(runCli(["update", "stray"]).stderr).toContain("usage: ad-coder <command> [options]");
 });
+
+test("workflow modules ship enabled, and --workflows selects, excludes, or disables", () => {
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-workflows-flag-"));
+  const show = (...args: string[]) =>
+    runCli(["config", "show", "--target-dir", target, "--json", ...args]);
+
+  // Unset: the built-in default — every shipped module ON, and never silent.
+  const unset = show();
+  expect(unset.code).toBe(0);
+  expect(JSON.parse(unset.stdout).workflows).toEqual({
+    value: "pipeline",
+    source: "built-in-default",
+  });
+
+  // An exact selection is recorded as such.
+  const selected = show("--workflows", "pipeline");
+  expect(JSON.parse(selected.stdout).workflows).toEqual({ value: "pipeline", source: "cli" });
+
+  // Excluding the only shipped module and explicit off resolve to the same
+  // empty set, both by explicit choice.
+  for (const argv of [
+    ["--workflows", "^pipeline"],
+    ["--workflows", "false"],
+    ["--workflows", "off"],
+  ]) {
+    const result = show(...argv);
+    expect(JSON.parse(result.stdout).workflows).toEqual({ value: "none", source: "cli" });
+  }
+
+  // An unknown member fails HERE with the available list, not later.
+  const unknown = show("--workflows", "nope");
+  expect(unknown.code).toBe(2);
+  expect(unknown.stderr).toContain("--workflows expects comma-separated pipeline");
+  const unknownExclude = show("--workflows", "^nope");
+  expect(unknownExclude.code).toBe(2);
+});
+
+test("--no-skills is the explicit off and never shares a line with a selection", () => {
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-no-skills-"));
+  const show = (...args: string[]) =>
+    runCli(["config", "show", "--target-dir", target, "--json", ...args]);
+  // The off alone resolves: every command that runs a role shares the flag via
+  // the pipeline options, so the capability truly turns off everywhere.
+  expect(show("--no-skills").code).toBe(0);
+  // Pin and off are mutually exclusive; neither silently wins.
+  const conflict = show("--no-skills", "--skills", "repository-navigation");
+  expect(conflict.code).toBe(2);
+  expect(conflict.stderr).toContain("--no-skills cannot be combined with --skills");
+});
+
+test("profile.capabilities.skills=false is the persistent off, and explicit flags beat it", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-skills-setting-"));
+  const home = path.join(root, "home");
+  const xdg = path.join(home, ".config");
+  const profileDir = path.join(xdg, "ad-coder");
+  // The store itself creates private directories; a test-held profile must
+  // meet the same 0o700 receipt, otherwise the read correctly fails.
+  fs.mkdirSync(profileDir, { recursive: true, mode: 0o700 });
+  fs.chmodSync(profileDir, 0o700);
+  fs.writeFileSync(
+    path.join(profileDir, "profile.json"),
+    `${JSON.stringify({
+      version: 1,
+      inventories: [],
+      calibratedRouting: [],
+      economicRecords: [],
+      subscriptionCapacityRanges: [],
+      capabilities: { skills: false },
+    })}\n`,
+  );
+  // Same private-file receipt the store itself enforces.
+  fs.chmodSync(path.join(profileDir, "profile.json"), 0o600);
+  const target = path.join(root, "project");
+  fs.mkdirSync(target, { recursive: true });
+  const show = (...args: string[]) =>
+    runCli(["config", "show", "--target-dir", target, "--json", ...args], {
+      env: { ...process.env, XDG_CONFIG_HOME: xdg },
+    });
+
+  // The setting alone is the persistent off: every command that runs a role
+  // resolves no skill capability without any launch parameter.
+  const unset = JSON.parse(show().stdout).skills as {
+    value: { enabled: boolean; skills: unknown[] };
+    source: string;
+  };
+  expect(unset.source).toBe("profile");
+  // The row says the capability is OFF, not merely that the set is empty.
+  expect(unset.value).toEqual({ enabled: false, skills: [] });
+
+  // An explicit `--skills` pin beats the setting in its own direction...
+  const pinned = JSON.parse(show("--skills", "repository-navigation").stdout).skills as {
+    value: { enabled: boolean; skills: { id: string }[] };
+    source: string;
+  };
+  expect(pinned.value.enabled).toBe(true);
+  // ...and the explicit `--no-skills` mirrors the setting (same off).
+  expect(show("--no-skills").code).toBe(0);
+  expect(pinned.value.skills.map((entry) => entry.id)).toEqual(["repository-navigation"]);
+
+  // Mode permission sanity: an unreadable profile is not silently default.
+  const broken = path.join(root, "broken-home");
+  const brokenXdg = path.join(broken, ".config");
+  fs.mkdirSync(path.join(brokenXdg, "ad-coder"), { recursive: true });
+  fs.writeFileSync(path.join(brokenXdg, "ad-coder", "profile.json"), "not json\n");
+  const brokenResult = runCli(["config", "show", "--target-dir", target, "--json"], {
+    env: { ...process.env, XDG_CONFIG_HOME: brokenXdg },
+  });
+  expect(brokenResult.code).toBe(1);
+  expect(brokenResult.stderr).toContain("profile");
+});
+
+test("config show reports the resolved skill set with version, source tier, and digest", () => {
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-skills-show-"));
+  const show = (...args: string[]) =>
+    runCli(["config", "show", "--target-dir", target, "--json", ...args]);
+
+  // Unset: the built-in default says ON and enumerates the reach set with digests.
+  const unset = JSON.parse(show().stdout).skills as {
+    value: {
+      enabled: boolean;
+      skills: { id: string; version: string; source: string; sha256: string }[];
+    };
+    source: string;
+  };
+  expect(unset.source).toBe("built-in-default");
+  expect(unset.value.enabled).toBe(true);
+  expect(unset.value.skills.length).toBeGreaterThan(0);
+  for (const entry of unset.value.skills) {
+    expect(entry).toMatchObject({ id: expect.any(String), version: expect.any(String) });
+    expect(entry.source).toMatch(/^(builtin|project)$/);
+    expect(entry.sha256).toMatch(/^[0-9a-f]{64}$/);
+  }
+  const ids = unset.value.skills.map((entry) => entry.id);
+  expect(new Set(ids).size).toBe(ids.length);
+
+  // A pin reports exactly those ids, resolved, flagged as operator-set.
+  const pinned = JSON.parse(show("--skills", "repository-navigation").stdout).skills as {
+    value: { enabled: boolean; skills: { id: string }[] };
+    source: string;
+  };
+  expect(pinned.source).toBe("cli");
+  expect(pinned.value.enabled).toBe(true);
+  expect(pinned.value.skills.map((entry) => entry.id)).toEqual(["repository-navigation"]);
+
+  // The explicit off says OFF, not just an empty list: an empty pin would
+  // otherwise be indistinguishable from a switched capability.
+  const off = JSON.parse(show("--no-skills").stdout).skills as {
+    value: { enabled: boolean; skills: unknown[] };
+    source: string;
+  };
+  expect(off.value).toEqual({ enabled: false, skills: [] });
+  expect(off.source).toBe("cli");
+});

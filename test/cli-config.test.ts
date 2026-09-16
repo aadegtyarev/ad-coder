@@ -18,6 +18,7 @@ import { writeProjectCalibrationSnapshot } from "../src/project-calibration";
 import { RegistryError } from "../src/registry/errors";
 import type { RegistryConfig } from "../src/registry/types";
 import { parseRegistryConfig } from "../src/registry/validate";
+import { roleSkillKit } from "../src/skills/role-kit";
 
 /** A fake env accessor over a plain record; nothing touches the real process.env. */
 function fakeEnv(vars: Record<string, string>): (name: string) => string | undefined {
@@ -368,7 +369,16 @@ test("all pipeline roles automatically use byte-verbatim target prompt overrides
   });
 
   for (const name of names) {
-    expect(config.roles[name]?.role.systemPrompt).toBe(`target ${name} \t\n`);
+    // The override survives byte-verbatim; the role's own skill kit (here the
+    // catalogue, since nothing pins --skills) rides on top of it identically.
+    // Every role scopes repository-navigation, so the appendix is non-empty.
+    expect(config.roles[name]?.role.systemPrompt).toBe(
+      `target ${name} \t\n` +
+        roleSkillKit({
+          role: name,
+          projectDir: targetDir,
+        }).appendix,
+    );
   }
 });
 
@@ -780,6 +790,7 @@ test("built-in plugin groups are selectable, visible, and mutually exclusive wit
     "read_project",
     "submit_plan",
     "submit_follow_up",
+    "load_skill",
   ]);
   expect(selected.roles.coder?.role.activeToolNames).toEqual([
     "read",
@@ -789,6 +800,7 @@ test("built-in plugin groups are selectable, visible, and mutually exclusive wit
     "search_project",
     "read_project",
     "submit_follow_up",
+    "load_skill",
   ]);
   for (const role of ["security", "reviewer", "auditor"] as const) {
     expect(selected.roles[role]?.role.activeToolNames).toContain("explore_project");
@@ -1212,4 +1224,58 @@ test("a profile missing a non-orchestrator cell still fails instead of falling b
       warn: silent,
     }),
   ).toThrow(/reviewer:medium/);
+});
+
+test("config show reports the resolved workflow capability and its source", () => {
+  // Built-in default and launch parameter agree on the resolved shape; only the
+  // source differs, which is what "enabled-by-default is never silent" means.
+  const base = {
+    task: "x",
+    targetDir: "/tmp/target",
+    registryConfig: mixedRegistry(),
+    profile: buildDefaultProfile({ strong: "large", mid: "small", cheap: "small" }),
+    summarizerModel: "large",
+    env: fakeEnv({ LOCAL_KEY: "k" }),
+    warn: silent,
+  };
+  const unset = resolvePipelineConfig(base);
+  expect(unset.effectiveConfig?.workflows).toEqual({
+    value: "built-in-default",
+    source: "built-in-default",
+  });
+  const off = resolvePipelineConfig({
+    ...base,
+    selectedWorkflows: [],
+    workflowsSource: "cli",
+  });
+  expect(off.effectiveConfig?.workflows).toEqual({ value: "none", source: "cli" });
+  const selected = resolvePipelineConfig({ ...base, selectedWorkflows: ["pipeline"] });
+  expect(selected.effectiveConfig?.workflows).toEqual({
+    value: "pipeline",
+    source: "caller",
+  });
+});
+
+test("--no-skills leaves a role with no catalogue, no loader, and no appendix", () => {
+  // The explicit off beats the built-in default: nothing pasted, nothing to
+  // load, and no loader registered -- a name-only tool list would advertise a
+  // tool the turn could never call.
+  const config = resolvePipelineConfig({
+    task: "x",
+    targetDir: "/tmp/target",
+    registryConfig: mixedRegistry(),
+    profile: buildDefaultProfile({ strong: "large", mid: "small", cheap: "small" }),
+    summarizerModel: "large",
+    skillsDisabled: true,
+    env: fakeEnv({ LOCAL_KEY: "k" }),
+    warn: silent,
+  });
+  for (const role of ["planner", "orchestrator", "coder"] as const) {
+    const spec = config.roles[role];
+    expect(spec?.role.activeToolNames).not.toContain("load_skill");
+    if (!spec) continue;
+    // The prompt is exactly the target prompt: no skill appendix followed it.
+    expect(spec.role.systemPrompt).not.toContain("Selected skills");
+    expect(spec.role.systemPrompt).not.toContain("Available skills");
+  }
 });

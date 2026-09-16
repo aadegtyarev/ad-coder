@@ -108,13 +108,15 @@ import { createRoleRunner } from "./runner/role-runner";
 import type { Tool } from "./runner/tool";
 import type { SessionLimits } from "./session-limits";
 import { SessionLimitController } from "./session-limits";
-import { SkillResolutionError } from "./skills/resolver";
+import { buildLoadSkillTool, LOAD_SKILL_TOOL_NAME } from "./skills/load-tool";
+import { resolveSkills, SkillResolutionError, skillInventory } from "./skills/resolver";
 import { UpdateError, updateAdCoder } from "./update/updater";
 import {
   createDefaultUserProfileStore,
   exportUserProfile,
   FileUserProfileStore,
   parseUserProfileJson,
+  readUserProfileCapabilitiesSync,
   UserProfileError,
 } from "./user-profile";
 import type { WorkflowContext } from "./workflow";
@@ -213,7 +215,12 @@ function parseArgs(argv: string[], command: CommandDefinition): ParsedArgs {
     const arg = argv[i] as string;
     for (const option of command.options) {
       if (arg === option.name && option.value === undefined) {
+        // A boolean flag lands in both records: run handlers read nuance-free
+        // booleans, while shared option plumbing (`buildConfigOptions`) reads
+        // the single flags map. No boolean flag is consumed elsewhere as a
+        // value flag, so the alias cannot change existing source semantics.
         booleans[option.name] = true;
+        flags[option.name] = "true";
         continue outer;
       }
       if (arg === option.name && option.value !== undefined) {
@@ -1596,8 +1603,57 @@ function defaultBackgroundOwnerId(targetDir: string): string {
   return `local.${process.getuid?.() ?? "user"}.${digest}`;
 }
 
+/** Every workflow module a plain ad-coder ships; the pool a selection resolves against. */
+const BUILT_IN_WORKFLOW_NAMES: readonly string[] = [BUILT_IN_PIPELINE_WORKFLOW_NAME];
+
+/**
+ * `--workflows` is the launch parameter for the set-valued workflow capability.
+ * Unset keeps the built-in default (every shipped module ON); a comma list is
+ * an exact selection; a `^name` token excludes from the default; `false` turns
+ * the capability off explicitly. An unknown or malformed name fails HERE, with
+ * the available list, instead of falling through to a resolver error.
+ */
+function resolveWorkflowsFlag(flag: string | undefined): {
+  names: readonly string[];
+  source: "cli" | "built-in-default";
+} {
+  if (flag === undefined) return { names: BUILT_IN_WORKFLOW_NAMES, source: "built-in-default" };
+  if (flag === "false" || flag === "off") return { names: [], source: "cli" };
+  const excludedShape = BUILT_IN_WORKFLOW_NAMES.map((name) => `^${name}`).join(",");
+  const tokens = flag
+    .split(",")
+    .map((token) => token.trim())
+    .filter(Boolean);
+  for (const name of tokens) {
+    const bare = name.startsWith("^") ? name.slice(1) : name;
+    if (!BUILT_IN_WORKFLOW_NAMES.includes(bare))
+      fail(
+        `--workflows expects comma-separated ${BUILT_IN_WORKFLOW_NAMES.join(",")}, false, or ` +
+          `${excludedShape} to exclude`,
+      );
+  }
+  const selected = tokens.filter((token) => !token.startsWith("^"));
+  const excluded = tokens.filter((token) => token.startsWith("^")).map((token) => token.slice(1));
+  return {
+    names: [
+      ...new Set(
+        selected.length > 0
+          ? selected
+          : BUILT_IN_WORKFLOW_NAMES.filter((name) => !excluded.includes(name)),
+      ),
+    ],
+    source: "cli",
+  };
+}
+
 /** The CLI owns process creation; orchestration only receives this provider. */
-function createBackgroundHostLauncher(targetDir: string, ownerId: string): BackgroundHostLauncher {
+function createBackgroundHostLauncher(
+  targetDir: string,
+  ownerId: string,
+  /** Pinned ids travel to the isolated worker verbatim; the catalogue needs nothing. */
+  selectedSkills: readonly string[] = [],
+  skillsDisabled: boolean = false,
+): BackgroundHostLauncher {
   return async ({ runId, task, limits }) => {
     const entrypoint = process.argv[1];
     if (entrypoint === undefined) fail("background worker entrypoint is unavailable");
@@ -1614,6 +1670,11 @@ function createBackgroundHostLauncher(targetDir: string, ownerId: string): Backg
           runId,
           "--owner-id",
           ownerId,
+          ...(selectedSkills.length > 0
+            ? ["--skills", selectedSkills.join(",")]
+            : skillsDisabled
+              ? ["--no-skills"]
+              : []),
         ],
         {
           detached: true,
@@ -1658,7 +1719,14 @@ async function backgroundCommand(
     }
   })();
   const launcher =
-    action === "start" ? createBackgroundHostLauncher(targetDir, ownerId) : undefined;
+    action === "start"
+      ? createBackgroundHostLauncher(
+          targetDir,
+          ownerId,
+          buildConfigOptions(targetArg, flags).selectedSkills, // catalogue needs nothing; pins travel verbatim
+          flags["--no-skills"] !== undefined,
+        )
+      : undefined;
   const manager = new BackgroundRunManager(
     async (task, runId, control) => {
       const config = resolvePipelineConfig({ task, ...buildConfigOptions(targetArg, flags) });
@@ -1939,13 +2007,75 @@ function buildConfigOptions(
   const credentialEnv = credentialEnvForTarget(targetDir, !consoleJsonFront);
   const credentialPath = flags["--credential-path"];
   if (credentialPath !== undefined) assertCredentialPathOutsideProject(credentialPath, targetDir);
+  // Same surface every command: no `--skills` means the catalogue a role
+  // loads from; a value pins exactly those ids (empty trims back to catalogue).
+  const skillsFlag = flags["--skills"];
+  if (flags["--no-skills"] !== undefined && skillsFlag !== undefined)
+    fail("--no-skills cannot be combined with --skills");
+  const selectedSkills =
+    skillsFlag === undefined
+      ? undefined
+      : skillsFlag
+          .split(",")
+          .map((name) => name.trim())
+          .filter(Boolean);
+  // Layer order (docs/contracts/config.md): explicit flag beats the persistent
+  // setting, which beats the built-in default. A pin is also explicit, so a
+  // `--skills` value disables the setting in both directions; only when NEITHER
+  // flag resolves does the profile's capability switch apply.
+  let skillsDisabled = flags["--no-skills"] !== undefined;
+  if (!skillsDisabled && skillsFlag === undefined) {
+    // The user profile is a user-level boundary, outside the target's dotenv
+    // boundary: read the process environment directly, exactly as the profile
+    // store's own default-location choice does.
+    const xdgConfigHome = process.env.XDG_CONFIG_HOME;
+    const capabilities = readUserProfileCapabilitiesSync({
+      userHome: os.homedir(),
+      ...(xdgConfigHome === undefined ? {} : { xdgConfigHome }),
+    });
+    skillsDisabled = capabilities.skills === false;
+  }
+  const workflows = resolveWorkflowsFlag(flags["--workflows"]);
+  const skillSet = skillsDisabled
+    ? []
+    : selectedSkills !== undefined
+      ? resolveSkills(selectedSkills, { projectDir: targetDir })
+      : skillInventory({ projectDir: targetDir });
+  // Source names the layer that decided the set, so profile-off cannot hide
+  // behind a flag default and a flag cannot pose as the built-in default.
+  const skillsSource: "cli" | "profile" | "built-in-default" =
+    flags["--no-skills"] !== undefined || skillsFlag !== undefined
+      ? "cli"
+      : skillsDisabled
+        ? "profile"
+        : "built-in-default";
   return {
     targetDir,
+    // Set-valued capability with the one shared resolution: unset = built-in
+    // default (every shipped module), `false` = off, a comma list selects,
+    // `^name` excludes from the default. Source travels so enabled-by-default
+    // is never silent (docs/contracts/config.md, 2026-09-16).
+    selectedWorkflows: workflows.names,
+    workflowsSource: workflows.source,
+    skillInventory: skillSet.map(({ id, version, source, sha256 }) => ({
+      id,
+      version,
+      source,
+      sha256,
+    })),
+    skillsSource,
+    // A machine front parses stderr as JSON: the resolver's operator-facing
+    // banner must never mix into it (docs/contracts/cli.md).
+    warn: (message: string) => {
+      if (!machineJsonFront) process.stderr.write(message);
+    },
     env: credentialEnv,
     ...(credentialPath !== undefined && {
       credentials: new FileCredentialStore({ path: credentialPath }),
     }),
     ...(provider !== undefined && { provider }),
+    ...(selectedSkills !== undefined && { selectedSkills }),
+    ...(skillsDisabled && { skillsDisabled: true }),
     ...(flags["--strong-model"] !== undefined && { strongModel: flags["--strong-model"] }),
     ...(flags["--mid-model"] !== undefined && { midModel: flags["--mid-model"] }),
     ...(flags["--cheap-model"] !== undefined && { cheapModel: flags["--cheap-model"] }),
@@ -2025,6 +2155,17 @@ async function roleCommand(
   });
 
   const spec = roleSpecFor(config, name as RoleName);
+  // Identical skill behaviour in every command: the role's prompt (pinned or
+  // catalogue) comes from the resolver; the loader ships exactly when the
+  // prompt lists skills, alongside the same plugin tools the runner receives.
+  const rolePluginTools = config.pluginToolsForModel?.(spec.model) ?? config.pluginTools;
+  const roleSkillTools = spec.role.activeToolNames?.includes(LOAD_SKILL_TOOL_NAME)
+    ? [buildLoadSkillTool({ role: name, projectDir: configOptions.targetDir })]
+    : [];
+  const standaloneTools =
+    rolePluginTools === undefined && roleSkillTools.length === 0
+      ? undefined
+      : [...roleSkillTools, ...(rolePluginTools ?? [])];
   const standaloneRole = defineRole(
     {
       ...spec.role,
@@ -2073,9 +2214,7 @@ async function roleCommand(
         task,
         runId: standaloneRunId,
         ...(resumeRunId !== undefined && { resumeExisting: true }),
-        ...((config.pluginToolsForModel?.(spec.model) ?? config.pluginTools) !== undefined && {
-          tools: config.pluginToolsForModel?.(spec.model) ?? config.pluginTools,
-        }),
+        ...(standaloneTools !== undefined && { tools: standaloneTools }),
         activityConsumer: renderer.consume,
         ...(config.compaction !== undefined && { compaction: config.compaction }),
         ...(config.projectStoreConfig !== undefined && {
@@ -2221,27 +2360,20 @@ async function consoleCommand(
     flags["--escape-sequence-timeout-ms"],
   );
   const sessionLimits = parseSessionLimits(flags);
-  const enabledWorkflows =
-    flags["--workflows"] === undefined
-      ? []
-      : flags["--workflows"]
-          .split(",")
-          .map((name) => name.trim())
-          .filter(Boolean);
   // No `--skills` means the CATALOGUE: each role is told which skills exist and
   // loads what the task needs. Passing `--skills` pins an exact set and pastes
   // it, for when the operator knows better than the model will.
   //
   // Briefly in between, this defaulted to "every id", which pinned everything
   // and pasted 2106 words into the orchestrator's prompt regardless of task.
-  const selectedSkills =
-    flags["--skills"] === undefined
-      ? []
-      : flags["--skills"]
-          .split(",")
-          .map((name) => name.trim())
-          .filter(Boolean);
+  // Every user-facing command resolves skills through `buildConfigOptions`:
+  // no `--skills` means the CATALOGUE (each role sees ids and one-line
+  // descriptions and loads what the task needs with `load_skill`), passing it
+  // pins an exact set and pastes it. Briefly in between, the console defaulted
+  // to "every id", which pinned everything and pasted 2106 words into the
+  // orchestrator's prompt regardless of task.
   const configOptions = buildConfigOptions(targetDirArg, flags);
+  const selectedSkills = configOptions.selectedSkills ?? [];
   const selectedInventory = configOptions.inventoryConfig?.profiles.find(
     (entry) =>
       entry.name === (configOptions.inventoryProfile ?? configOptions.inventoryConfig?.default),
@@ -2263,10 +2395,14 @@ async function consoleCommand(
     ...configOptions,
     sessionLimits,
     workflowModules: [BUILT_IN_PIPELINE_WORKFLOW],
-    enabledWorkflows,
+    enabledWorkflows: configOptions.selectedWorkflows ?? [],
     selectedSkills,
     backgroundOwnerId,
-    backgroundHostLauncher: createBackgroundHostLauncher(backgroundTargetDir, backgroundOwnerId),
+    backgroundHostLauncher: createBackgroundHostLauncher(
+      backgroundTargetDir,
+      backgroundOwnerId,
+      selectedSkills,
+    ),
     ...(Object.keys(configuredLimits).length === 0 ? {} : { backgroundRuns: configuredLimits }),
   });
   // Same line `role` and `drive` print: whichever front an operator reaches
@@ -2335,6 +2471,32 @@ async function runCommand(
 }
 
 const PIPELINE_OPTIONS: CommandDefinition["options"] = [
+  {
+    name: "--skills",
+    value: "<names>",
+    description:
+      "Select comma-separated built-in or project-local skills; omit to ship the catalogue every role loads from.",
+  },
+  {
+    name: "--workflows",
+    value: "<names|false|^name>",
+    description:
+      // Set-valued switch, declared ONCE here for every pipeline front. Unset
+      // keeps the built-in default (each shipped module ON); `false` turns the
+      // capability off; a comma list selects exactly those; `^name` excludes.
+      `Select comma-separated workflow modules (${BUILT_IN_WORKFLOW_NAMES.join(",")}); ` +
+      "^name excludes from the built-in default; false disables them entirely; unset keeps all shipped modules enabled.",
+  },
+  /**
+   * `--no-skills` is the explicit off, declared once for every pipeline-capable
+   * command: no catalogue, no loader, no prompt appendix. It refuses to share a
+   * command line with a selection -- exactly one of pin, off, or default.
+   */
+  {
+    name: "--no-skills",
+    description:
+      "Disable skills entirely: no catalogue, no load_skill tool. Cannot be combined with --skills.",
+  },
   {
     name: "--stage-final-response-reserve-input-tokens",
     value: "<n>",
@@ -3032,16 +3194,6 @@ const COMMANDS: readonly CommandDefinition[] = [
           : option,
       ),
       { name: "--json", description: "Write one JSON record per completed turn." },
-      {
-        name: "--workflows",
-        value: "<names>",
-        description: `Enable comma-separated workflow modules; available: ${BUILT_IN_PIPELINE_WORKFLOW_NAME}.`,
-      },
-      {
-        name: "--skills",
-        value: "<names>",
-        description: "Enable comma-separated built-in or project-local skills for delegated roles.",
-      },
       {
         name: "--max-input-bytes",
         value: "<n>",
