@@ -12,6 +12,7 @@
     "tasks/planner-contract-carry.json",
     "tasks/security-plan-threats.json",
     "tasks/auditor-contract-status.json",
-    "tasks/researcher-absence-claim.json"
+    "tasks/researcher-absence-claim.json",
+    "tasks/orchestrator-decompose.json"
   ]
 }

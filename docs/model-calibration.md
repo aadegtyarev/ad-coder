@@ -108,6 +108,22 @@ sweep cannot quietly total them together.
 Labelling is the cheap half. The other half is not quoting a smoke task's score
 when a routing decision is being argued.
 
+`orchestrator-decompose-v1` measures the operation the orchestrator is expected
+to perform on a real ticket: turn it into issues someone can pick up. Its six
+requirements each carry a trap that decomposition actually fails on. One is
+already satisfied by the fixture's code, so a decomposition that schedules it is
+scheduling work that is done. One is phrased with an "and" and is nevertheless a
+single requirement -- a rate limit that does not reject is not a limit -- so a
+model splitting on the conjunction produces an issue nobody can finish. Two
+adjacent requirements sound like one topic and are separately shippable. And one
+pair carries the only real ordering constraint among several that merely sound
+related.
+
+The checks ask for those properties rather than for one correct answer, which is
+deliberate: a live run grouped two requirements the task does not require apart,
+and scored full marks. A decomposition has many right shapes and a few wrong
+ones, and only the wrong ones are worth scoring.
+
 `bun run calibration:health` reads the recorded evidence and names any task that
 has stopped telling models apart. Two signatures, meaning opposite things.
 **Saturated**: every model of every price is accepted, so the task does not

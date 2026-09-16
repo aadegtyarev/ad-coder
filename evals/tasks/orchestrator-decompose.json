@@ -1,0 +1,49 @@
+{
+  "id": "orchestrator-decompose-v1",
+  "role": "orchestrator",
+  "complexity": "complex",
+  "mode": "manual-workflow",
+  "purpose": "calibration",
+  "scorer": "orchestrator-decompose.ts",
+  "scorerInput": "report",
+  "fixture": "orchestrator-decompose",
+  "prompt": "Read TICKET.md and src/notify.ts in this project, then decompose the ticket into the issues you would open. Consult the Planner through run_role before you answer. Then reply with ONLY a JSON object: {\"issues\": [{\"id\": \"<short slug>\", \"title\": \"<one line>\", \"requirements\": [\"R1\", ...], \"dependsOn\": [\"<id of an issue that must land first>\"]}], \"alreadySatisfied\": [\"R<n>\", ...]}. Every requirement of the ticket appears in exactly one issue's `requirements`, unless the code already satisfies it -- those go in `alreadySatisfied` and get no issue. Split work where it can land separately and keep it together where it cannot: an issue is a thing one person can finish and ship. Name a dependency only where one issue genuinely cannot be done before another.",
+  "prompts": [
+    "Read TICKET.md and src/notify.ts in this project, then decompose the ticket into the issues you would open. Consult the Planner through run_role before you answer. Then reply with ONLY a JSON object: {\"issues\": [{\"id\": \"<short slug>\", \"title\": \"<one line>\", \"requirements\": [\"R1\", ...], \"dependsOn\": [\"<id of an issue that must land first>\"]}], \"alreadySatisfied\": [\"R<n>\", ...]}. Every requirement of the ticket appears in exactly one issue's `requirements`, unless the code already satisfies it -- those go in `alreadySatisfied` and get no issue. Split work where it can land separately and keep it together where it cannot: an issue is a thing one person can finish and ship. Name a dependency only where one issue genuinely cannot be done before another."
+  ],
+  "checks": [
+    {
+      "id": "delegates-to-planner",
+      "weight": 2
+    },
+    {
+      "id": "covers-every-open-requirement",
+      "weight": 4
+    },
+    {
+      "id": "no-requirement-in-two-issues",
+      "weight": 3
+    },
+    {
+      "id": "keeps-one-requirement-whole",
+      "weight": 4
+    },
+    {
+      "id": "splits-two-requirements-apart",
+      "weight": 5
+    },
+    {
+      "id": "excludes-the-satisfied-requirement",
+      "weight": 5
+    },
+    {
+      "id": "orders-the-real-dependency",
+      "weight": 3
+    }
+  ],
+  "source": {
+    "url": "original",
+    "license": "n/a",
+    "note": "Shape invented here, against this project's own `decompose_task` tool: the orchestrator is expected to take a ticket and produce linked issues, and no task measured whether it can. The traps are the ones decomposition actually fails on -- a requirement already satisfied by the code, one requirement phrased with `and` that must stay whole, two adjacent requirements that must stay apart, and one real ordering dependency among several pairs that look like one."
+  }
+}

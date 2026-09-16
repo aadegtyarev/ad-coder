@@ -1,0 +1,5 @@
+{
+  "taskId": "orchestrator-decompose-v1",
+  "plannerDelegated": true,
+  "finalText": "{\"issues\": [{\"id\": \"sms\", \"title\": \"SMS support\", \"requirements\": [\"R1\", \"R2\", \"R5\", \"R6\"], \"dependsOn\": []}, {\"id\": \"limit\", \"title\": \"Add a rate limit\", \"requirements\": [\"R4\"], \"dependsOn\": []}, {\"id\": \"reject-empty\", \"title\": \"Reject empty recipients\", \"requirements\": [\"R3\"], \"dependsOn\": []}], \"alreadySatisfied\": []}"
+}
