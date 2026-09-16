@@ -14,8 +14,11 @@ All notable changes to ad-coder are recorded here. The format follows
   `Activity: Edit — completed 1234ms`: time first so the left edge is scannable,
   then role and model together, then the subject -- the path read or written,
   the command run, the URL fetched, the query searched, and the line counts an
-  edit moves. A successful line omits "completed", because saying it every time
-  pushes the interesting words off the scan path.
+  edit moves. A read shows the window it asked for -- `plan.ts:120+40` is a
+  slice, a bare path is the whole file -- because reading in slices and
+  swallowing a large file cost differently and the difference was invisible. A
+  successful line omits "completed", because saying it every time pushes the
+  interesting words off the scan path.
 - Projections now carry that subject. They had been declared in the event type
   and never populated, so every line was anonymous; the rule that kept them out
   ("arbitrary labels, commands, queries and URLs are never projected") protected

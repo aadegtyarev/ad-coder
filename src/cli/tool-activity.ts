@@ -49,10 +49,20 @@ function subjectOf(projection: ToolActivityProjection | undefined): string {
   if (subject === "") return "";
   const added = projection.linesAdded;
   const removed = projection.linesRemoved;
-  if (added === undefined && removed === undefined) return subject;
-  const plus = added === undefined ? "" : ` +${added}`;
-  const minus = removed === undefined ? "" : ` -${removed}`;
-  return `${subject}${plus}${minus}`;
+  if (added !== undefined || removed !== undefined) {
+    const plus = added === undefined ? "" : ` +${added}`;
+    const minus = removed === undefined ? "" : ` -${removed}`;
+    return `${subject}${plus}${minus}`;
+  }
+  // A read shows the window it asked for: `:120+40` is a slice, a bare path is
+  // the whole file. Reading in slices and swallowing a large file cost
+  // differently, and the difference is otherwise invisible.
+  const offset = projection.readOffset;
+  const limit = projection.readLimit;
+  if (offset === undefined && limit === undefined) return subject;
+  const from = offset === undefined ? "" : `:${offset}`;
+  const span = limit === undefined ? "" : `+${limit}`;
+  return `${subject}${from}${span}`;
 }
 
 /** Seconds, not milliseconds: `1.2s` reads at a glance where `1234ms` does not. */

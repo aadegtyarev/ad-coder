@@ -47,6 +47,14 @@ export interface ToolActivityProjection {
   /** For an edit: lines added and removed, so a runaway rewrite is visible as it happens. */
   linesAdded?: number;
   linesRemoved?: number;
+  /**
+   * For a read: the window requested, as `offset` and `limit`.
+   *
+   * Reading in slices and swallowing a whole file are different behaviours with
+   * different costs, and the difference is invisible without this.
+   */
+  readOffset?: number;
+  readLimit?: number;
 }
 
 /** Numeric-only remaining stage capacity attached after a tool reaches a terminal state. */
@@ -274,6 +282,10 @@ function boundProjection(
   if (added !== undefined && Number.isSafeInteger(added)) out.linesAdded = added;
   const removed = projection.linesRemoved;
   if (removed !== undefined && Number.isSafeInteger(removed)) out.linesRemoved = removed;
+  const offset = projection.readOffset;
+  if (offset !== undefined && Number.isSafeInteger(offset)) out.readOffset = offset;
+  const limit = projection.readLimit;
+  if (limit !== undefined && Number.isSafeInteger(limit)) out.readLimit = limit;
   return out;
 }
 
@@ -329,6 +341,12 @@ export function projectToolArguments(
   if (query !== undefined && query !== "") projection.query = query;
   // An edit's size, not its text: a rewrite ballooning from three lines to three
   // hundred is exactly what the operator is watching for.
+  if (toolName === "read" || toolName === "read_project") {
+    const offset = record.offset;
+    const limit = record.limit;
+    if (typeof offset === "number" && Number.isSafeInteger(offset)) projection.readOffset = offset;
+    if (typeof limit === "number" && Number.isSafeInteger(limit)) projection.readLimit = limit;
+  }
   if (toolName === "edit" || toolName === "write") {
     const added = countLines(record.new_string ?? record.newString ?? record.content);
     const removed = countLines(record.old_string ?? record.oldString);
