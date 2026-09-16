@@ -1,0 +1,9 @@
+[
+  {
+    "code": "LOOKS_OK",
+    "severity": "info",
+    "cwe": "CWE-0",
+    "exploit": "none",
+    "mitigation": "none"
+  }
+]

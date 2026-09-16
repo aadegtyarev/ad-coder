@@ -1,0 +1,16 @@
+[
+  {
+    "code": "delete-route-bypasses-the-session-door",
+    "severity": "high",
+    "cwe": "CWE-306",
+    "exploit": "src/router.ts registers the new handler without the requireSession call that GET /reports and GET /reports/:id both make, so an unauthenticated request destroys data",
+    "mitigation": "register it behind the same door as its siblings"
+  },
+  {
+    "code": "cross-tenant-delete",
+    "severity": "high",
+    "cwe": "CWE-863",
+    "exploit": "even once a session is required, nothing ties the id to the session: listReports scopes by owner prefix, deleteReport does not, so one authenticated user removes another user's report",
+    "mitigation": "resolve the target from the session owner rather than from the caller's id alone"
+  }
+]

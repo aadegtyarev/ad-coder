@@ -17,6 +17,7 @@
     "tasks/planner-absent-artifact.json",
     "tasks/coder-retention.json",
     "tasks/summarizer-retention.json",
-    "tasks/reviewer-trivial.json"
+    "tasks/reviewer-trivial.json",
+    "tasks/security-trivial.json"
   ]
 }

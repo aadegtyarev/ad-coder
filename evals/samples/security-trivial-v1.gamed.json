@@ -1,0 +1,16 @@
+[
+  {
+    "code": "MISSING_AUTHORIZATION_ON_DELETE",
+    "severity": "critical",
+    "cwe": "CWE-862",
+    "exploit": "no requireSession call on the delete route",
+    "mitigation": "add it"
+  },
+  {
+    "code": "PATH_TRAVERSAL_VIA_ID",
+    "severity": "high",
+    "cwe": "CWE-22",
+    "exploit": "the id reaches path.join and could escape the report directory",
+    "mitigation": "validate the id"
+  }
+]
