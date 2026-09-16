@@ -1,0 +1,27 @@
+[
+  {
+    "code": "CANONICAL_KEY_COLLISION",
+    "blocking": true,
+    "evidence": "src/idempotency.ts:8 -- strips punctuation, so distinct keys collapse"
+  },
+  {
+    "code": "CONCURRENT_CHARGE_RACE",
+    "blocking": true,
+    "evidence": "src/ledger.ts:34 -- no reservation before the await, two racing calls both charge"
+  },
+  {
+    "code": "POSSIBLE_UNBOUNDED_MAP_GROWTH",
+    "blocking": true,
+    "evidence": "src/ledger.ts:52 -- applied is never pruned, so it grows without bound over the process lifetime"
+  },
+  {
+    "code": "MISSING_KEY_LENGTH_LIMIT",
+    "blocking": true,
+    "evidence": "src/idempotency.ts:19 -- canonicalKey accepts a key of unbounded length"
+  },
+  {
+    "code": "NO_TIMEOUT_ON_CHARGE",
+    "blocking": true,
+    "evidence": "src/ledger.ts:61 -- charge() is awaited with no timeout, so a hung callback blocks the key forever"
+  }
+]

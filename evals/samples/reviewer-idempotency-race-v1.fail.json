@@ -1,0 +1,17 @@
+[
+  {
+    "code": "CANONICAL_KEY_COLLISION",
+    "blocking": true,
+    "evidence": "src/idempotency.ts:8 -- strips punctuation so two different keys can collapse into one"
+  },
+  {
+    "code": "REDUNDANT_VALIDATION_ON_RETRY",
+    "blocking": true,
+    "evidence": "src/ledger.ts:32 -- validateAmount runs even when the key already exists, revalidating an amount that was already checked on the first call"
+  },
+  {
+    "code": "NO_LOGGING_ON_DUPLICATE",
+    "blocking": true,
+    "evidence": "no logging on duplicate"
+  }
+]

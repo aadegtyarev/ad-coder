@@ -1,0 +1,26 @@
+[
+  {
+    "surface": "src/retry.ts:scheduleRetry",
+    "status": "violates",
+    "contract": "docs/decisions/0021-retry-cap-raise.md",
+    "evidence": "line 5 returns attempt < 3, but ADR 0021 raised the enforceable cap to 5 and supersedes the contract's stale 3"
+  },
+  {
+    "surface": "src/retry.ts:attemptsRemaining",
+    "status": "conforms",
+    "contract": "docs/decisions/0021-retry-cap-raise.md",
+    "evidence": "line 12 computes 5 - attempt, matching the reconciled cap ADR 0021 sets, not the stale 3 still written in docs/contracts/retry.md"
+  },
+  {
+    "surface": "src/retry.ts:backoffDelay",
+    "status": "conforms",
+    "contract": "docs/contracts/retry.md",
+    "evidence": "line 17 returns Math.max(1, attempt) * 250, always nonzero, matching the contract's backoff clause, which ADR 0021 does not touch"
+  },
+  {
+    "surface": "src/retry.ts:logAttempt",
+    "status": "violates",
+    "contract": "docs/contracts/retry.md",
+    "evidence": "line 22 returns only `retry attempt ${attempt}` with no jobId, but the contract requires the log line to include the job id"
+  }
+]

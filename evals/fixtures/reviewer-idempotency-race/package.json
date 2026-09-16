@@ -1,0 +1,5 @@
+{
+  "name": "reviewer-idempotency-race-fixture",
+  "private": true,
+  "type": "module"
+}

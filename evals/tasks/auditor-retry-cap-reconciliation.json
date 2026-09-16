@@ -1,0 +1,47 @@
+{
+  "id": "auditor-retry-cap-reconciliation-v1",
+  "role": "auditor",
+  "complexity": "complex",
+  "mode": "role",
+  "purpose": "calibration",
+  "fixture": "auditor-retry-cap-reconciliation",
+  "scorer": "auditor-retry-cap-reconciliation.ts",
+  "scorerInput": "artifact",
+  "prompt": "Audit this project's source against its enforceable rules. Judge each exported function in `src/` separately.\n\nRules live in two places that may disagree: `docs/contracts/` states the project's baseline contracts, and `docs/decisions/` may contain an ADR that amends or supersedes part of a contract without the contract's own text having been edited to match. Where a contract and a later decision disagree about the same rule, the decision is the enforceable source for what it changes; the contract's other clauses, which the decision does not touch, remain governing exactly as written. Read both directories before judging any surface, and when you find such a disagreement, cite the source that actually governs -- not the one that merely matches the code by coincidence.\n\nReturn ONLY a JSON array. One element per audited function: {\"surface\": \"<file>:<exported function name>\", \"status\": \"conforms|violates|contract_missing\", \"contract\": \"<canonical source of the governing rule, or null when none governs it>\", \"evidence\": \"<what in the code shows this, cited by line>\"}. Use `contract_missing` only when no contract or decision governs the surface at all -- never for a surface whose rule exists but is met, and never for one you did not check. Cite only material that exists: every surface you report must be a function `src/` actually exports, and every `contract` must be a file in this repository. This is a read-only task: report what you found and change no file in the repository.",
+  "checks": [
+    {
+      "id": "finds-stale-cap-violation",
+      "weight": 6
+    },
+    {
+      "id": "confirms-reconciled-surface-conforms",
+      "weight": 4
+    },
+    {
+      "id": "finds-missing-job-id-violation",
+      "weight": 4
+    },
+    {
+      "id": "confirms-untouched-clause-conforms",
+      "weight": 2
+    },
+    {
+      "id": "cites-only-real-material",
+      "weight": 6
+    },
+    {
+      "id": "audits-only-what-is-there",
+      "weight": 2
+    },
+    {
+      "id": "stays-in-scope",
+      "weight": 2
+    }
+  ],
+  "writes": [],
+  "source": {
+    "url": "original",
+    "license": "n/a",
+    "note": "Complex by reconciling two sources of truth that disagree, built for cell coverage (auditor x complex). `docs/contracts/retry.md` fixes the retry cap at 3; `docs/decisions/0021-retry-cap-raise.md` supersedes that one clause and raises it to 5, while leaving the contract's other two clauses (nonzero backoff, structured logging) governing exactly as written. `src/retry.ts` exports four functions with four distinct correct verdicts: `scheduleRetry` still hardcodes the stale cap of 3 and violates the reconciled rule of 5; `attemptsRemaining` correctly uses 5 and conforms, which is the false-positive trap -- an audit that only reads the contract text sees '5 != 3' and wrongly calls it a violation; `backoffDelay` conforms to the contract's untouched backoff clause; `logAttempt` violates the contract's third clause on its own terms, with no ADR involved, because its log message omits the job id the contract requires -- proving the audit still catches an ordinary defect and is not merely pattern-matching on the reconciliation. `cites-only-real-material` and `audits-only-what-is-there` are the precision checks this cell carries at medium, unchanged in kind: the number of exported surfaces the fixture actually has (4) sets the bound, not an imagined one."
+  }
+}

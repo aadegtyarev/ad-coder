@@ -1,0 +1,26 @@
+[
+  {
+    "surface": "src/retry.ts:scheduleRetry",
+    "status": "conforms",
+    "contract": "docs/contracts/retry.md",
+    "evidence": "line 5 returns attempt < 3, matching the contract's stated cap of 3 attempts"
+  },
+  {
+    "surface": "src/retry.ts:attemptsRemaining",
+    "status": "violates",
+    "contract": "docs/contracts/retry.md",
+    "evidence": "line 12 computes 5 - attempt, contradicting the contract's cap of 3"
+  },
+  {
+    "surface": "src/retry.ts:backoffDelay",
+    "status": "conforms",
+    "contract": "docs/contracts/retry.md",
+    "evidence": "line 17 always returns a nonzero delay"
+  },
+  {
+    "surface": "src/retry.ts:logAttempt",
+    "status": "violates",
+    "contract": "docs/contracts/retry.md",
+    "evidence": "line 22 logs only the attempt number, never the job id the contract requires"
+  }
+]

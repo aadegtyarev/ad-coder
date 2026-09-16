@@ -1,0 +1,12 @@
+[
+  {
+    "code": "CANONICAL_KEY_COLLISION",
+    "blocking": true,
+    "evidence": "src/idempotency.ts:8 -- strips every non-alphanumeric character instead of collapsing whitespace, so canonicalKey(\"order-42\") and canonicalKey(\"order 42\") both produce \"order42\" even though the contract says punctuation makes them different keys"
+  },
+  {
+    "code": "CONCURRENT_CHARGE_RACE",
+    "blocking": true,
+    "evidence": "src/ledger.ts:33-37 -- the reservation write that used to mark the key as pending before the await was removed, so two calls racing on the same key both read applied.get(key) as undefined at line 34 and both reach charge(amountCents) at line 36"
+  }
+]

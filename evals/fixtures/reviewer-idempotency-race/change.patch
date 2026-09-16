@@ -1,0 +1,23 @@
+diff --git a/src/idempotency.ts b/src/idempotency.ts
+index 2db1910..456dbb8 100644
+--- a/src/idempotency.ts
++++ b/src/idempotency.ts
+@@ -5,5 +5,5 @@
+  * else -- including punctuation -- must never collapse into the same key.
+  */
+ export function canonicalKey(rawKey: string): string {
+-  return rawKey.trim().toLowerCase().replace(/\s+/g, " ");
++  return rawKey.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+ }
+diff --git a/src/ledger.ts b/src/ledger.ts
+index 7fe7b4d..1a62daf 100644
+--- a/src/ledger.ts
++++ b/src/ledger.ts
+@@ -33,7 +33,6 @@ export async function applyCharge(
+   const key = canonicalKey(rawKey);
+   const existing = applied.get(key);
+   if (existing) return { committed: existing.committed, duplicate: true };
+-  applied.set(key, { amountCents, committed: false });
+   await charge(amountCents);
+   applied.set(key, { amountCents, committed: true });
+   return { committed: true, duplicate: false };

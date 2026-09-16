@@ -25,6 +25,8 @@
     "tasks/auditor-trivial.json",
     "tasks/researcher-trivial.json",
     "tasks/planner-retry-reconcile.json",
-    "tasks/researcher-retry-after-adr.json"
+    "tasks/researcher-retry-after-adr.json",
+    "tasks/reviewer-idempotency-race.json",
+    "tasks/auditor-retry-cap-reconciliation.json"
   ]
 }
