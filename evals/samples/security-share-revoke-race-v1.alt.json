@@ -1,0 +1,9 @@
+[
+  {
+    "code": "download-path-ignores-revocation",
+    "severity": "high",
+    "step": "step 2",
+    "exploit": "resolveForDownload only consults cache.get on a hit and never asks store.getShare again, so once a share is revoked in the canonical store the cache keeps answering with the old file path until CACHE_TTL_MS elapses -- the two records disagree and the route trusts the wrong one",
+    "mitigation": "make revokeShare call cache.evict(token) as part of revocation, or make the download path always confirm revokedAt against the canonical store even on a cache hit"
+  }
+]

@@ -21,6 +21,8 @@
     "tasks/security-trivial.json",
     "tasks/planner-trivial.json",
     "tasks/auditor-trivial.json",
-    "tasks/researcher-trivial.json"
+    "tasks/researcher-trivial.json",
+    "tasks/planner-retry-reconcile.json",
+    "tasks/researcher-retry-after-adr.json"
   ]
 }

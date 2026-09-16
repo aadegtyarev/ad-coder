@@ -1,0 +1,35 @@
+{
+  "claims": [
+    {
+      "question": "Q1",
+      "answer": "Checked the ABNF in the current spec: `Retry-After = HTTP-date / delay-seconds`. That slash is a choice, not a replacement -- a server may send either form, and this has not changed between the 2014 revision and the current one. So the local documents are each half right and half wrong: ADR 0009 correctly cites the RFC but drops the second branch of the grammar, and note 0014 does the same thing in the opposite direction. Neither restriction is supportable.",
+      "confidence": "high",
+      "sources": ["https://www.rfc-editor.org/rfc/rfc9110.html"]
+    },
+    {
+      "question": "Q2",
+      "answer": "Still RFC 6585. Searched the current HTTP semantics document for '429' directly and it does not appear among the registered status codes there (400 through 426 are the ones it defines); the only place 6585 shows up in that document is a citation in the references list, not an absorption of its content. The status code registry corroborates this -- 429's entry points at RFC 6585, section 4, not at RFC 9110.",
+      "confidence": "high",
+      "sources": [
+        "https://www.iana.org/assignments/http-status-codes/http-status-codes.xhtml",
+        "https://www.rfc-editor.org/rfc/rfc6585.html"
+      ]
+    },
+    {
+      "question": "Q3",
+      "answer": "It is permitted, not required: RFC 6585 section 4 uses 'MAY include a Retry-After header'.",
+      "confidence": "high",
+      "sources": ["https://www.rfc-editor.org/rfc/rfc6585.html"]
+    }
+  ],
+  "contradictions": [
+    {
+      "topic": "what values Retry-After may carry",
+      "doc0009Says": "an HTTP-date only, an integer is invalid syntax",
+      "doc0014Says": "an integer only, HTTP-date was deprecated by the move to RFC 9110",
+      "resolution": "Both restrictions are wrong. The grammar has always allowed either an HTTP-date or a delay-seconds integer, unchanged from RFC 7231 through the current RFC 9110; note 0014 being the newer document does not make its narrower claim correct."
+    }
+  ],
+  "gaps": [],
+  "observedOn": "2026-09-16"
+}

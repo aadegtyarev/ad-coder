@@ -1,0 +1,34 @@
+[
+  {
+    "code": "stale-cache-serves-revoked-share",
+    "severity": "high",
+    "step": 2,
+    "cwe": "CWE-613",
+    "exploit": "resolveForDownload trusts a cache hit without re-checking store.getShare, so a revoked share is still downloadable until CACHE_TTL_MS elapses",
+    "mitigation": "evict the cache entry inside revokeShare"
+  },
+  {
+    "code": "missing-auth-on-download",
+    "severity": "high",
+    "step": 1,
+    "cwe": "CWE-862",
+    "exploit": "the new download route is registered without an explicit session check in its own handler",
+    "mitigation": "add requireSession"
+  },
+  {
+    "code": "unbounded-revoke-retry",
+    "severity": "medium",
+    "step": 5,
+    "cwe": "CWE-770",
+    "exploit": "a client that retries a failed revoke without a ceiling can amplify into unbounded store writes",
+    "mitigation": "cap retries and back off between attempts"
+  },
+  {
+    "code": "concurrent-revoke-queue-race",
+    "severity": "medium",
+    "step": 6,
+    "cwe": "CWE-362",
+    "exploit": "two concurrent revokes of the same token interleave in the queue this step describes and one overwrites the other's result",
+    "mitigation": "serialize revokes per token"
+  }
+]

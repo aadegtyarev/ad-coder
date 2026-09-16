@@ -1,0 +1,38 @@
+{
+  "summary": "Change the dead-letter threshold in src/queue.ts's fail() so a failed job's attempt count is checked against the value the retry contract already governs, and flag the draft spec's higher ceiling as an unresolved operator decision rather than adopting it.",
+  "steps": [
+    {
+      "step": "In fail(), keep comparing job.attempts against the contract's ceiling of 3 rather than the draft spec's 5. Do not change MAX_ATTEMPTS.",
+      "acceptance": "A test that fails a job 3 times asserts isDeadLettered(id) becomes true on the 3rd fail() call and false after the 2nd."
+    },
+    {
+      "step": "Add a code comment at MAX_ATTEMPTS pointing to docs/contracts/retry.md and noting the draft spec's request for 5 attempts is not yet adopted.",
+      "acceptance": "grep -n 'retry.md' src/queue.ts returns a match."
+    },
+    {
+      "step": "Leave claim() exactly as it is: it already moves a job from pending into inFlight before returning it, so an in-flight job cannot be handed out a second time. Nothing here changes claim() or its surrounding module.",
+      "acceptance": "A concurrency test calls claim() twice for one enqueued job and asserts the second call returns a different job or undefined; the test passes with claim() untouched."
+    }
+  ],
+  "contracts": [
+    {
+      "rule": "A job receives at most 3 attempts total.",
+      "source": "docs/contracts/retry.md"
+    },
+    {
+      "rule": "Nothing orders one worker's claim, completion, or retry against another's",
+      "source": "docs/contracts/retry.md"
+    }
+  ],
+  "conflicts": [
+    {
+      "topic": "retry attempt ceiling",
+      "specSays": "docs/specs/backoff.md asks for up to 5 attempts before dead-letter, with doubling delay",
+      "contractSays": "docs/contracts/retry.md caps a job at 3 attempts total before dead-letter",
+      "resolution": "Implement against the contract's 3, since it is the enforceable rule; the spec's 5-attempt request is flagged for the operator rather than adopted, since docs/specs/backoff.md itself is marked as an unreconciled draft."
+    }
+  ],
+  "evidenceRating": "inspected",
+  "securitySurface": "none",
+  "complexity": "complex"
+}

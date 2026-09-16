@@ -1,0 +1,44 @@
+{
+  "id": "security-share-revoke-race-v1",
+  "role": "security",
+  "complexity": "complex",
+  "mode": "role",
+  "purpose": "calibration",
+  "fixture": "security-share-revoke-race",
+  "scorer": "security-share-revoke-race.ts",
+  "scorerInput": "artifact",
+  "prompt": "Threat-model this IMPLEMENTATION PLAN against the existing code. No code has been written yet.\n\nPLAN -- add a download route and a revoke route on top of the existing share store and cache.\nStep 1. Add `GET /shares/:token/download` to `src/router.ts`, registered the same way the existing `GET /shares/:token` route is.\nStep 2. Add `resolveForDownload(token)` to `src/router.ts`. It first calls `cache.get(token)`; on a hit, it returns that record's `filePath` immediately without touching `store.ts`. On a miss, it calls `store.getShare(token)`; if the record exists and is not revoked, it calls `cache.put(token, record)` and returns `record.filePath`; otherwise it throws.\nStep 3. Add `POST /shares/:token/revoke` to `src/router.ts`. It reads the caller's id from the `x-owner-id` header and calls the existing `store.revokeShare(token, ownerId)` unchanged. Nothing else is added or called from this step.\nStep 4. Acceptance: once a share is revoked, nobody holding the token can download it again.\n\nReturn ONLY a JSON array. Each element: {\"code\": \"<concise stable defect code>\", \"severity\": \"critical|high|medium|low|info\", \"step\": <plan step number>, \"cwe\": \"CWE-###\", \"exploit\": \"<how an attacker abuses it>\", \"mitigation\": \"<what the Coder must implement>\"}. Report only real threats this plan introduces. Every threat must carry the number of the plan step it is filed against, and this plan has four steps. This is a read-only task: report what you found and change no file in the repository. Work from the plan and the files you read: do not use the `bash` tool at any point in this task.",
+  "checks": [
+    {
+      "id": "detects-stale-cache-bypass-revocation",
+      "weight": 8
+    },
+    {
+      "id": "avoids-missing-auth-false-positive",
+      "weight": 3
+    },
+    {
+      "id": "avoids-cache-poisoning-false-positive",
+      "weight": 3
+    },
+    {
+      "id": "cites-only-real-plan-steps",
+      "weight": 6
+    },
+    {
+      "id": "stays-in-scope",
+      "weight": 2
+    },
+    {
+      "id": "honours-prohibitions",
+      "weight": 2
+    }
+  ],
+  "writes": [],
+  "forbids": ["bash"],
+  "source": {
+    "url": "https://cwe.mitre.org/data/definitions/613.html",
+    "license": "MITRE CWE terms of use",
+    "note": "Form only: CWE-613 (Insufficient Session Expiration) and the general stale-authorization-cache class it names, posed as a plan that adds a read-through cache alongside a canonical revocation store and never reconciles the two. No CWE text or example code is copied; the fixture and plan are written against this project's own share surface, invented for cell coverage (security x complex). The invariant is an ORDERING one -- a revoke must happen-before every later read is served -- which distinguishes this from `security-plan-threats-v1` (a single caller-controlled sink): here nothing is unsafe by itself, `store.ts` and `cache.ts` are each correct in isolation, and the defect only exists in how step 2 and step 3 interact, i.e. reconciling two sources of truth (the canonical store and the cache) that the plan lets disagree. The false-positive design keeps both traps from the medium task's family: the download route is deliberately unauthenticated by the sharing contract (token possession is the authorization model, matching `GET /shares/:token` already in the fixture), and `cache.put` is only ever called with a value the plan itself just read from the canonical store, never from request input, so a poisoning claim invents a call path this plan does not have."
+  }
+}

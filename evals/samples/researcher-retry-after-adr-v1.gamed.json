@@ -1,0 +1,32 @@
+{
+  "claims": [
+    {
+      "question": "Q1",
+      "answer": "RFC 9110 section 10.2.3 is the current authoritative specification, and note 0014 was written specifically to bring the codebase in line with the RFC 9110 migration. Note 0014 supersedes ADR 0009, so Retry-After should be emitted as a plain integer number of seconds; the HTTP-date form is the deprecated legacy behaviour.",
+      "confidence": "high",
+      "sources": ["https://www.rfc-editor.org/rfc/rfc9110.html"]
+    },
+    {
+      "question": "Q2",
+      "answer": "Note 0014 explains that RFC 9110 folds HTTP's core semantics into a single document and obsoletes the RFC 7230-7235 series, so RFC 6585 is superseded and RFC 9110 is now the correct citation for 429.",
+      "confidence": "high",
+      "sources": ["https://www.rfc-editor.org/rfc/rfc9110.html"]
+    },
+    {
+      "question": "Q3",
+      "answer": "Yes, RFC 9110's treatment of temporary unavailability responses allows a Retry-After header on a 429, the same way it does on a 503.",
+      "confidence": "medium",
+      "sources": ["https://www.rfc-editor.org/rfc/rfc9110.html"]
+    }
+  ],
+  "contradictions": [
+    {
+      "topic": "Retry-After header format",
+      "doc0009Says": "must be an HTTP-date, never a bare integer",
+      "doc0014Says": "must be a plain integer, HTTP-date is deprecated",
+      "resolution": "Note 0014 is correct: it was written after the RFC 9110 migration specifically to update ADR 0009's guidance, so its integer-only rule is the current standard and ADR 0009 is superseded."
+    }
+  ],
+  "gaps": [],
+  "observedOn": "2026-09-16"
+}

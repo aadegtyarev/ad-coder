@@ -1,0 +1,47 @@
+{
+  "id": "planner-retry-reconcile-v1",
+  "role": "planner",
+  "complexity": "complex",
+  "mode": "role",
+  "purpose": "calibration",
+  "fixture": "queue-retry-ordering",
+  "scorer": "planner-retry-reconcile.ts",
+  "scorerInput": "artifact",
+  "prompt": "Plan implementing the retry-count change proposed in `docs/specs/backoff.md` for `src/queue.ts`. The change must also honour `docs/contracts/retry.md`. Do not implement it.\n\nReturn ONLY a JSON object: {\"summary\": \"<what the change is>\", \"steps\": [{\"step\": \"<what the Coder does>\", \"acceptance\": \"<a criterion checkable by running something>\"}], \"contracts\": [{\"rule\": \"<the short rule text, carried verbatim enough to execute against>\", \"source\": \"<canonical source of the rule>\"}], \"conflicts\": [{\"topic\": \"<what disagrees>\", \"specSays\": \"<the spec's position, cited>\", \"contractSays\": \"<the contract's position, cited>\", \"resolution\": \"<the decision, and which side it favours>\"}], \"evidenceRating\": \"measured|reported|inspected|asserted\", \"securitySurface\": \"none|low|elevated\", \"complexity\": \"trivial|medium|complex\"}. The Coder receives only this object. The spec is a draft that its own heading marks \\\"not yet reconciled against the retry contract\\\" -- the contract is this project's enforceable rule. Where the two disagree, report the contradiction attributably on both sides, then plan on: pick the side the evidence favours (the enforceable contract, with the spec's request flagged as a decision the operator has not yet made) rather than silently implementing either one. A reconciliation is not optional here -- do not quietly drop the disagreement by only implementing one side without saying so. Separately, `claim()` in `src/queue.ts` already removes a job from the pending list into the in-flight map before returning it, so a job already in flight cannot be claimed a second time -- read the code before proposing anything that assumes otherwise. This is a read-only task: report what you found and change no file in the repository.",
+  "checks": [
+    {
+      "id": "reports-attempt-conflict",
+      "weight": 4
+    },
+    {
+      "id": "resolves-toward-contract",
+      "weight": 4
+    },
+    {
+      "id": "carries-attempt-count-rule",
+      "weight": 2
+    },
+    {
+      "id": "carries-concurrency-invariant",
+      "weight": 3
+    },
+    {
+      "id": "rejects-false-double-claim-fix",
+      "weight": 3
+    },
+    {
+      "id": "acceptance-is-runnable",
+      "weight": 2
+    },
+    {
+      "id": "stays-in-scope",
+      "weight": 2
+    }
+  ],
+  "writes": [],
+  "source": {
+    "url": "original",
+    "license": "n/a",
+    "note": "Shape invented here, from this project's own planner prompt's 'Reconcile a supplied artifact' rule: an applicable artifact (the draft backoff spec) is reconciled against both the code and an enforceable contract, and a plan that silently implements one side without reporting the disagreement has failed to reconcile. Complex by two of the method's three routes at once: two sources of truth disagree on the retry-attempt ceiling (contract: 3, draft spec: 5), and the fixture carries a concurrency invariant -- workers claim jobs with no ordering guarantee across them -- plus a planted false defect: the spec's 'two jobs with the same id should never be in flight at once' reads like a missing guard, but `claim()` already enforces it by removing a job from `pending` into `inFlight` atomically, so a plan that proposes new locking to fix it has pattern-matched the spec rather than read the code."
+  }
+}
