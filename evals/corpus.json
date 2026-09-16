@@ -16,6 +16,7 @@
     "tasks/orchestrator-decompose.json",
     "tasks/planner-absent-artifact.json",
     "tasks/coder-retention.json",
-    "tasks/summarizer-retention.json"
+    "tasks/summarizer-retention.json",
+    "tasks/reviewer-trivial.json"
   ]
 }

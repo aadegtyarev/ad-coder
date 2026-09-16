@@ -1,0 +1,35 @@
+{
+  "id": "reviewer-trivial-v1",
+  "role": "reviewer",
+  "complexity": "trivial",
+  "mode": "role",
+  "purpose": "smoke",
+  "fixture": "reviewer-trivial",
+  "scorer": "reviewer-trivial.ts",
+  "scorerInput": "artifact",
+  "prompt": "Review the uncommitted change in this repository against `docs/contracts/retry.md`. Return ONLY a JSON array of findings: [{\"code\": \"<concise stable defect code>\", \"blocking\": true|false, \"evidence\": \"<the file and line you read, or the command you ran and what it printed>\"}]. Report only what you have evidence for: this diff is two lines, and a review that lists more than it can show is as unusable as one that lists nothing. This is a read-only task: report what you found and change no file in the repository.",
+  "checks": [
+    {
+      "id": "detects-zero-coerced-to-default",
+      "weight": 6
+    },
+    {
+      "id": "avoids-optional-parameter-false-positive",
+      "weight": 3
+    },
+    {
+      "id": "reports-exactly-one-blocking-finding",
+      "weight": 3
+    },
+    {
+      "id": "stays-in-scope",
+      "weight": 2
+    }
+  ],
+  "writes": [],
+  "source": {
+    "url": "original",
+    "license": "n/a",
+    "note": "A two-line diff swapping `??` for `||`, so a caller-supplied zero silently becomes the default -- the smallest real defect this project could find that still has a contract to violate. Written for #174: the trivial tier was empty for all eight roles while the profile assigned a model to every one of them. A trivial task answers one question, whether the cheapest model is adequate, so it must still measure restraint: the fixture keeps a tempting non-defect (an optional parameter documented as optional) and the scorer requires exactly one blocking finding, because a reviewer that reports two findings on a two-line diff is unusable however cheap it is. Calibrated before committing and SATURATED: glm-5.3-flash, deepseek-v4.1-flash and minimax-m3 all score 1.00 twice, the cheapest at $0.0007 per run. That is the answer the trivial tier exists to give -- on a review this small the cheapest model on the provider is adequate -- so the task is `smoke` and its score is never quoted as evidence about a model. It also found the defect this corpus keeps producing: five of the six runs before it shipped scored exactly 0.57, and the artifact showed a model that had identified the defect, cited the contract and PROVEN it by evaluating the changed expression, coded `zero-retry-count-broken-by-falsy-fallback` -- while the check's word list lacked 'falsy fallback'."
+  }
+}

@@ -1,0 +1,11 @@
+diff --git a/src/retry.ts b/src/retry.ts
+index 1111111..2222222 100644
+--- a/src/retry.ts
++++ b/src/retry.ts
+@@ -7,5 +7,5 @@ const DEFAULT_RETRIES = 3;
+  * the default.
+  */
+ export function retryCount(maxRetries?: number): number {
+-  return maxRetries ?? DEFAULT_RETRIES;
++  return maxRetries || DEFAULT_RETRIES;
+ }

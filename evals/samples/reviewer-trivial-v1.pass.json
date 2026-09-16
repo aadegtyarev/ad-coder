@@ -1,0 +1,7 @@
+[
+  {
+    "code": "ZERO_COERCED_TO_DEFAULT",
+    "blocking": true,
+    "evidence": "src/retry.ts:10 -- `maxRetries || DEFAULT_RETRIES` treats a supplied 0 as absent, so retryCount(0) returns 3; the contract says zero is honoured and means do not retry"
+  }
+]

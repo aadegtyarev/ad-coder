@@ -6,6 +6,29 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-09-16
+
+### Added
+- `reviewer-trivial-v1` opens the trivial tier, which was empty for all eight
+  roles while the profile assigned a model to every one of them (#174). A
+  two-line diff swapping `??` for `||`; all three models score 1.00 twice, the
+  cheapest at $0.0007 a run, so it ships as `smoke` -- that is the answer the
+  tier exists to give. It still measures restraint: the fixture keeps a tempting
+  non-defect and the scorer demands exactly one blocking finding, because a
+  reviewer reporting two findings on a two-line diff is unusable however cheap.
+
+### Fixed
+- The new task's check scored the author's vocabulary, found before it shipped:
+  five of six live runs scored exactly 0.57 while one artifact showed a model
+  that had identified the defect, cited the contract and proven it by evaluating
+  the changed expression. Fifth instance of this defect in this corpus, now
+  written down in `model-calibration.md` as its recurring shape.
+
+### Changed
+- `deepseek-v4.1-flash` measured against `v4` on four role tasks: better at
+  review and auditing, worse at threat modelling. Routing per role rather than a
+  global swap, and seventeen more measurements recorded.
+
 ## [0.25.1] - 2026-09-16
 
 ### Changed

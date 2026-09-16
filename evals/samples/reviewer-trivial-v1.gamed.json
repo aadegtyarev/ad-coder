@@ -1,0 +1,17 @@
+[
+  {
+    "code": "ZERO_COERCED_TO_DEFAULT",
+    "blocking": true,
+    "evidence": "src/retry.ts:10 uses || instead of ??"
+  },
+  {
+    "code": "MISSING_VALIDATION_ON_INPUT",
+    "blocking": true,
+    "evidence": "src/retry.ts:9 accepts any number without validating it"
+  },
+  {
+    "code": "NO_UPPER_BOUND_ON_RETRIES",
+    "blocking": true,
+    "evidence": "src/retry.ts:10 permits an arbitrarily large retry count"
+  }
+]

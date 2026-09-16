@@ -446,6 +446,42 @@ make. Each bracket is now tried in turn and the first span that both closes and
 parses is the answer; a span that parses *inside* an earlier unclosed one is
 treated as truncation rather than as a brief answer.
 
+**The trivial tier answers one question, and `reviewer-trivial-v1` answers it.**
+A two-line diff swapping `??` for `||`, so a caller-supplied zero silently
+becomes the default -- the smallest defect available that still violates a
+contract. All three models tried score 1.00 twice, the cheapest at $0.0007 per
+run, so the task is `smoke`: on a review this small the cheapest model on the
+provider is adequate, and that is the answer the tier exists to give rather than
+a failure to discriminate.
+
+Its design note is the part worth keeping. A trivial task is not a smaller
+medium one: it still has to measure restraint, because a reviewer reporting two
+findings on a two-line diff is unusable however cheap it is. So the fixture keeps
+a tempting non-defect and the scorer demands exactly one blocking finding.
+
+**`deepseek-v4.1-flash` is not uniformly better than `v4`.** Measured on the same
+four role tasks: reviewer 1.00/1.00 against v4's 0.86, auditor 1.00/1.00 against
+1.00, security 0.91/0.83 against v4's 1.00/1.00, planner 0.88/0.88 against 0.82.
+It wins on review and auditing, loses on threat modelling. That is an argument
+for routing per role rather than swapping a model globally, and it is the first
+measurement this project has that distinguishes the two.
+
+**The recurring defect in this corpus is a check that scores the author's
+vocabulary.** It has now been found five times, in five different tasks, by
+five different means, and it always looks the same from outside: several models
+failing one check identically while their answers are correct. The reviewer's
+`order-reversed`, the security task's `disclosure`, the planner's notion of an
+applicable rule, `coder-retention-v1`'s fixture comment, and
+`reviewer-trivial-v1`, where one model coded the defect
+`zero-retry-count-broken-by-falsy-fallback` and *proved it by evaluating the
+changed expression* -- better evidence than the checked-in pass sample -- and
+scored zero because the word list did not contain "falsy fallback".
+
+The defence is the `.alt.json` sample, and it only works if the alternative is
+written by someone trying to phrase the answer differently rather than trying to
+pass the check they just wrote. When a live sweep produces several identical
+scores, read one artifact before concluding anything about the models.
+
 **A claim is checked against the fixture wherever a claim is checkable.** The
 artifact-scored tasks read the JSON the model asserted, so a confident,
 well-formed, wholly invented answer scored exactly as well as one that did the
