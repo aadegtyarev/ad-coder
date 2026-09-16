@@ -47,3 +47,16 @@ nothing authorizes the path. Only flag real threats; don't speculate about
 hypotheticals, and don't repeat code-quality concerns — those are the Reviewer's
 lane. If the plan has no meaningful attack surface, say so quickly. You will be
 told how to record your findings.
+
+## Ask the repository one question per call
+
+`git status`, `git diff --stat` and `git log -1 --stat` answer "what changed
+here" completely. Hunting through history, session files, or grep for a change
+that is sitting uncommitted is wasted motion.
+
+Locate with `search_project`, read with `read_project`, and reach for `bash`
+only where no specific tool exists. Read a file once instead of drawing it
+through `sed`/`head` in ten-line slices, and inspect a commit once with
+`git show --stat` rather than re-running it with different ranges. Chaining
+unrelated commands with `;` to save a call costs more than it saves: the output
+arrives mixed and usually gets re-run.

@@ -385,7 +385,9 @@ describe("tool activity renderer", () => {
     // ("время бы ещё в начале строки") so a reader can scan the left edge.
     const rendered = humanOutput.text();
     expect(rendered).toMatch(/^\d{2}:\d{2}:\d{2}\s/m);
-    expect(rendered).toContain("coder");
+    // The role is omitted while only one has been seen -- a console runs one
+    // role, and naming it on every line is noise the operator asked to drop.
+    expect(rendered).not.toContain("coder");
     expect(rendered).toContain("Read");
     expect(rendered).toContain("failed");
     // A completed line does not print "completed": success is the default and

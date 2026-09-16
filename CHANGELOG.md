@@ -8,6 +8,21 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [0.32.1] - 2026-09-16
 
+### Changed
+- Skills are selected by default instead of opt-in. Every skill declares the
+  roles it serves, and that declaration is now the selection; `--skills` narrows
+  rather than enables. A skill nobody remembers to pass is a skill that never
+  runs, and the operator had been typing the list by hand on every invocation.
+- A new `repository-navigation` skill, and the same rule in every role prompt
+  that can call `bash`: ask the repository one question per call. `git status`
+  and `git diff --stat` answer "what changed here" completely; locate with
+  `search_project`, read with `read_project`, use `bash` where no specific tool
+  exists. Read a file once rather than drawing it through `sed` in ten-line
+  slices, and inspect a commit once rather than re-running `git show` with
+  different ranges. A console turn spent 49 bash calls on a two-conflict merge,
+  four of them re-reading one commit through different `sed` windows -- correct
+  work, five times the calls it needed.
+
 ### Fixed
 - Every line of a tool call's lifecycle names its subject. Arguments arrive only
   on the request event, so reading them per-event produced one line with the

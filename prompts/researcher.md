@@ -74,3 +74,16 @@ key evidence, and rejected or blocked sources. State findings — summary, each
 claim with confidence and sources, contradictions, recommendations, gaps, and
 evidence log — as your final message. The Orchestrator persists an accepted report
 in the project; do not substitute chat memory for the report.
+
+## Ask the repository one question per call
+
+`git status`, `git diff --stat` and `git log -1 --stat` answer "what changed
+here" completely. Hunting through history, session files, or grep for a change
+that is sitting uncommitted is wasted motion.
+
+Locate with `search_project`, read with `read_project`, and reach for `bash`
+only where no specific tool exists. Read a file once instead of drawing it
+through `sed`/`head` in ten-line slices, and inspect a commit once with
+`git show --stat` rather than re-running it with different ranges. Chaining
+unrelated commands with `;` to save a call costs more than it saves: the output
+arrives mixed and usually gets re-run.

@@ -219,6 +219,46 @@ function readSkill(
   };
 }
 
+/**
+ * Every skill available to a run, built-ins plus project overrides.
+ *
+ * WHY THIS EXISTS. Skills were opt-in through `--skills`, and a skill nobody
+ * remembers to pass is a skill that never runs: the operator was typing the
+ * list by hand on every invocation. Each skill already declares the roles it
+ * serves, and `skillInstructions` filters on that declaration -- so listing
+ * them all is not indiscriminate, it defers the decision to the manifest that
+ * was written for exactly this purpose.
+ */
+export function listSkillIds(options: { projectDir?: string; builtinDir?: string } = {}): string[] {
+  const ids = new Set<string>();
+  for (const dir of [
+    options.builtinDir ?? BUILTIN_DIR,
+    options.projectDir === undefined
+      ? undefined
+      : path.join(options.projectDir, ".ad-coder", "skills"),
+  ]) {
+    if (dir === undefined) continue;
+    let entries: string[];
+    try {
+      entries = fs.readdirSync(dir);
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (!ID.test(entry)) continue;
+      // A directory without a manifest is not a skill; resolveSkills would
+      // fail on it, and a listing that breaks every run is worse than one
+      // that quietly skips a stray folder.
+      try {
+        if (fs.statSync(path.join(dir, entry, "skill.json")).isFile()) ids.add(entry);
+      } catch {
+        // not a skill directory
+      }
+    }
+  }
+  return [...ids].sort();
+}
+
 /** Project skills shadow built-ins, but every requested ID is explicit and bounded. */
 export function resolveSkills(
   ids: readonly string[],
