@@ -10,18 +10,24 @@ unbounded prompt directory.
   `.ad-coder/skills/<id>/`; project skills are trusted operator configuration,
   like project prompt overrides. Package/remote skills require an explicit later
   plugin installation path.
-- V1 resolves only explicitly selected IDs and therefore does not scan or
-  enumerate skill directories. Selected manifests and instructions load under
-  separate finite count/byte limits. Unknown, malformed, duplicate, escaping,
-  or oversized skills fail loudly before provider dispatch. Bounded manifest
-  discovery is a separately tracked v2 capability.
-- Selection is programmatic and visible: callers supply skill IDs through the
-  library or console `--skills`. Version, source tier and digest are exposed by
-  the resolver. Durable pipeline snapshots are a separately tracked v2 boundary;
-  v1 never claims resume-stable skill selection.
-  Future discovery may let the orchestrator recommend skills from manifest
-  descriptions, but it must never silently inject full instructions into every
-  role prompt.
+- V1 resolves a default set (the catalogue a role loads from with `load_skill`),
+  explicit pinned IDs, and the explicit off (`--no-skills`, or the profile
+  setting). Selected manifests and instructions load under separate finite
+  count/byte limits, identical for every layer. Pinned or loaded, unknown,
+  malformed, duplicate, escaping, or oversized skills fail loudly before
+  provider dispatch. Bounded manifest discovery is a separately tracked v2
+  capability; the per-role catalogue's bounded discovery is not a scan claim --
+  it enumerates trusted directories that operator configuration owns.
+- Selection is programmatic and visible: the default set is the catalog a role
+  loads from, a `--skills` value pins exactly those ids pasted into the prompt,
+  and the resolved set -- ids, versions, source tiers, digests -- is reported by
+  the resolver and visible in `config show`. Version, source tier and digest
+  are always exposed. Durable pipeline snapshots are a separately tracked v2
+  boundary; v1 never claims resume-stable skill selection. Future discovery may
+  let the orchestrator recommend skills from manifest descriptions, and the
+  2026-09-16 catalogue rule below is that recommendation -- but full
+  instructions still reach a prompt only through an explicit load or a pin,
+  never silently.
 - Built-in `architecture-recon`, `task-slicing`, `acceptance-review`,
   `delivery-calibration` and `repository-navigation` are the shipped skills.
   Their outputs respectively bound exploration, define a minimal
