@@ -1654,6 +1654,8 @@ function createBackgroundHostLauncher(
   /** Pinned ids travel to the isolated worker verbatim; the catalogue needs nothing. */
   selectedSkills: readonly string[] = [],
   skillsDisabled: boolean = false,
+  /** Capability switches launched explicitly travel verbatim to the worker. */
+  inheritedFlags: readonly string[] = [],
 ): BackgroundHostLauncher {
   return async ({ runId, task, limits }) => {
     const entrypoint = process.argv[1];
@@ -1675,7 +1677,10 @@ function createBackgroundHostLauncher(
             ? ["--skills", selectedSkills.join(",")]
             : skillsDisabled
               ? ["--no-skills"]
-              : []),
+              : // A set-valued switch the operator typed (workflows, plugins)
+                // repeats verbatim; anything else the worker re-resolves from
+                // its own profile read (docs/contracts/config.md, 2026-09-17).
+                [...inheritedFlags]),
         ],
         {
           detached: true,
@@ -1696,8 +1701,45 @@ function createBackgroundHostLauncher(
   };
 }
 
-/** JSON-only management front for session-owned background pipeline records. */
-async function backgroundCommand(
+/**
+ * The set-valued capability switches an operator typed at launch. The worker
+ * re-resolves everything else from its own environment; repeating these words
+ * verbatim is what keeps `--workflows false` and `--plugins none` from
+ * resolving back to enabled-by-default inside the detached process.
+ */
+function inheritedCapabilityFlags(flags: Record<string, string | undefined>): readonly string[] {
+  const inherited: string[] = [];
+  if (flags["--workflows"] !== undefined) inherited.push("--workflows", flags["--workflows"]);
+  if (flags["--plugins"] !== undefined) inherited.push("--plugins", flags["--plugins"]);
+  return inherited;
+}
+
+/**
+ * The one launcher seam every background front builds through: the console
+ * session and the `background start` front. It re-resolves the operator's own
+ * flag surface and carries the resolved pin, the off, and every explicitly
+ * launched set-valued switch into the worker command, so a capability the
+ * operator switched off stays off inside the detached process it cannot see
+ * (docs/contracts/config.md, 2026-09-17; issue #245). Exported so the boundary
+ * is testable as shipped behavior rather than only through a spawn.
+ */
+export function backgroundHostLauncherFor(
+  targetDirArg: string,
+  ownerId: string,
+  flags: Record<string, string | undefined>,
+  configOptions?: Omit<ResolvePipelineConfigOptions, "task">,
+): BackgroundHostLauncher {
+  const options = configOptions ?? buildConfigOptions(targetDirArg, flags);
+  return createBackgroundHostLauncher(
+    resolveTargetDir(targetDirArg),
+    ownerId,
+    options.selectedSkills ?? [],
+    options.skillsDisabled === true,
+    inheritedCapabilityFlags(flags),
+  );
+}
+
+/** JSON-only management front for session-owned background pipeline records. */ async function backgroundCommand(
   positionals: string[],
   flags: Record<string, string | undefined>,
 ): Promise<void> {
@@ -1720,14 +1762,7 @@ async function backgroundCommand(
     }
   })();
   const launcher =
-    action === "start"
-      ? createBackgroundHostLauncher(
-          targetDir,
-          ownerId,
-          buildConfigOptions(targetArg, flags).selectedSkills, // catalogue needs nothing; pins travel verbatim
-          flags["--no-skills"] !== undefined,
-        )
-      : undefined;
+    action === "start" ? backgroundHostLauncherFor(targetArg, ownerId, flags) : undefined;
   const manager = new BackgroundRunManager(
     async (task, runId, control) => {
       const config = resolvePipelineConfig({ task, ...buildConfigOptions(targetArg, flags) });
@@ -2399,10 +2434,11 @@ async function consoleCommand(
     enabledWorkflows: configOptions.selectedWorkflows ?? [],
     selectedSkills,
     backgroundOwnerId,
-    backgroundHostLauncher: createBackgroundHostLauncher(
-      backgroundTargetDir,
+    backgroundHostLauncher: backgroundHostLauncherFor(
+      targetDirArg,
       backgroundOwnerId,
-      selectedSkills,
+      flags,
+      configOptions,
     ),
     ...(Object.keys(configuredLimits).length === 0 ? {} : { backgroundRuns: configuredLimits }),
   });
