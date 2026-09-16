@@ -68,7 +68,6 @@ test("the corpus reports which of its tasks have stopped telling models apart", 
   // so neither should depend on someone noticing.
   const health = Bun.spawnSync(["bun", "run", "scripts/check-corpus-health.ts"], {
     cwd: REPO_ROOT,
-    encoding: "utf8",
   });
   expect(health.stderr.toString()).toBe("");
   expect(health.exitCode).toBe(0);
