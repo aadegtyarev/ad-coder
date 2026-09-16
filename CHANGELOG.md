@@ -6,6 +6,22 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.20.1] - 2026-09-16
+
+### Fixed
+- `refactor-config-v1` never ran a coder. It declared `role: coder` and mode
+  `manual-workflow`, so the orchestrator did the work itself and the measurement
+  reported `model: null` -- the measured role was absent from the ledger. It now
+  runs as a `role` task, and `extracts-shared-parser` is weighted 5 of 13 rather
+  than 2 of 10, since keeping the duplication while breaking nothing should not
+  score most of the marks for a task about removing duplication.
+
+### Changed
+- `refactor-config-v1` is `smoke`. Re-measured properly, all three models score
+  1.00, so the health check's saturation flag was right -- though for the wrong
+  reason, since its samples had measured one orchestrator rather than three
+  coders.
+
 ## [0.20.0] - 2026-09-16
 
 ### Added

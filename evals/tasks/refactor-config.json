@@ -2,10 +2,11 @@
   "id": "refactor-config-v1",
   "role": "coder",
   "complexity": "medium",
-  "mode": "manual-workflow",
+  "mode": "role",
+  "purpose": "smoke",
   "fixture": "refactor-config",
   "scorer": "refactor-config.ts",
-  "prompt": "Remove the duplicated APP_HOST parsing while preserving both public functions and exact behavior. Extract one reusable pure parser and add regression tests for missing, blank, padded, and normal values.",
+  "prompt": "Remove the duplicated APP_HOST parsing while preserving both public functions and exact behavior. Extract one reusable pure parser so both entry points read their value through it, and add regression tests for missing, blank, padded, and normal values.",
   "checks": [
     {
       "id": "preserves-host-api",
@@ -17,7 +18,7 @@
     },
     {
       "id": "extracts-shared-parser",
-      "weight": 2
+      "weight": 5
     },
     {
       "id": "has-regression-tests",
@@ -28,6 +29,6 @@
   "source": {
     "url": "original",
     "license": "n/a",
-    "note": "Duplicated env parsing behind two public functions. Shape invented here; the behavior-preservation framing comes from this project's decomposition contract."
+    "note": "Duplicated env parsing behind two public functions. Shape invented here; the behavior-preservation framing comes from this project's decomposition contract. Re-measured 2026-09-16 after two repairs -- the task ran as `manual-workflow`, so the orchestrator did the work itself and no coder turn was ever taken, and `extracts-shared-parser` was weighted below the two API-preservation checks, so keeping the duplication and breaking nothing scored 7 of 10. Running as a `role` task with the extraction weighted 5 of 13, all three models score 1.00: glm-5.3-flash, deepseek-v4-flash and minimax-m3. The task is genuinely saturated rather than mismeasured, so it is `smoke`."
   }
 }
