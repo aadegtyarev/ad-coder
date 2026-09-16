@@ -8,6 +8,16 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [0.32.1] - 2026-09-16
 
+### Added
+- A capability rule in `docs/contracts/config.md`: every capability ad-coder
+  ships is enabled at startup, a persistent setting can switch it off, a launch
+  parameter can switch it off explicitly and beats the setting, and the
+  resolved state of every capability is visible rather than silent. Set-valued
+  capabilities can also select or exclude members. Exceptions stay possible
+  but owe a dated entry naming the safety or cost reason. The rule generalises
+  the 2026-09-11 configurability pair from values to switchable features; the
+  audit that applies it to every startup capability is tracked on GitHub.
+
 ### Changed
 - Skills are selected by default instead of opt-in. Every skill declares the
   roles it serves, and that declaration is now the selection; `--skills` narrows
@@ -33,6 +43,16 @@ All notable changes to ad-coder are recorded here. The format follows
   four of them re-reading one commit through different `sed` windows -- correct
   work, five times the calls it needed.
 
+- The orchestrator prompt requires search to narrow or stop: before a third
+  search, state what the previous two ruled out, and if the answer is "nothing",
+  ask instead of widening. Broadening a pattern, dropping a filter, and
+  re-running the same grep with different words elsewhere are the same move.
+  A live console turn spent six minutes and eighteen bash calls hunting for a
+  contract change that `git status` would have shown -- it even read the right
+  file and went back to searching. Asking the working tree first is now stated,
+  as is: when the operator refers to recent work, look in the tree, the last
+  commits, or the branch diff, and if it is not there, say what you checked.
+
 ### Fixed
 - Every line of a tool call's lifecycle names its subject. Arguments arrive only
   on the request event, so reading them per-event produced one line with the
@@ -44,17 +64,6 @@ All notable changes to ad-coder are recorded here. The format follows
   the renderer starts naming roles once it has seen a second one.
 - Twelve durable-run control tools were still rendering as an anonymous `Tool`.
   All shipped tool names are now classified.
-
-### Changed
-- The orchestrator prompt requires search to narrow or stop: before a third
-  search, state what the previous two ruled out, and if the answer is "nothing",
-  ask instead of widening. Broadening a pattern, dropping a filter, and
-  re-running the same grep with different words elsewhere are the same move.
-  A live console turn spent six minutes and eighteen bash calls hunting for a
-  contract change that `git status` would have shown -- it even read the right
-  file and went back to searching. Asking the working tree first is now stated,
-  as is: when the operator refers to recent work, look in the tree, the last
-  commits, or the branch diff, and if it is not there, say what you checked.
 
 ## [0.32.0] - 2026-09-16
 

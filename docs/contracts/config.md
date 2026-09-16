@@ -96,6 +96,20 @@ Rules the operator declared for ad-coder. A violation is always blocking.
   still naming `recorder` is a blocking `unknown_role`, like any other unknown
   role.
 
+- 2026-09-16: Every capability ad-coder ships is enabled at startup. A capability
+  is a switchable feature a run does not need to survive: a workflow module,
+  skills, background dispatch, accounting and observability features, and their
+  future kind. Three layers resolve in one order: the built-in default
+  (enabled), then a persistent setting the operator owns, then an explicit
+  launch parameter. Each layer must be able to switch the capability off, and a
+  set-valued capability must also allow selecting or excluding members. An
+  explicit parameter beats the setting; when both are absent the default
+  resolves enabled. The resolved state of every capability is visible in the
+  effective configuration, so enabled-by-default is never silent. A capability
+  that ships off by default, cannot be disabled through a setting, or cannot be
+  switched at launch violates this rule. The only exceptions are dated entries
+  in this file that name the safety or cost reason.
+
 ## Sources
 
 The 2026-09-11 rules implement “good out of the box, everything overridable.”
@@ -107,3 +121,9 @@ console surfaces without changing the existing context-window safeguards. The
 through pipeline-capable CLI commands.
 The decomposition-depth exception implements the operation-mode contract's
 default stop after a child pipeline asks for decomposition again.
+The 2026-09-16 capability rule generalises the 2026-09-11 pair from values to
+switchable features: shipped means enabled, a setting and a matching launch
+parameter can each turn a capability off, and the resolved set is visible rather
+than silent. It is the contract the skills default and the workflow-modules
+default answer to; anything that must stay off by default owes a dated exception
+in the rule list above.
