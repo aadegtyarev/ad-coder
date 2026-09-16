@@ -1,0 +1,21 @@
+{
+  "taskId": "orchestrator-tool-use-v1",
+  "mode": "manual-workflow",
+  "predictedComplexity": "complex",
+  "predictedBeforeDelegation": true,
+  "plannerComplexity": "complex",
+  "plannerDelegated": true,
+  "approved": true,
+  "tools": [
+    "explore_project",
+    "search_project",
+    "run_role",
+    "run_step",
+    "choose_transition",
+    "run_step",
+    "choose_transition",
+    "submit_follow_up"
+  ],
+  "roles": ["orchestrator", "planner", "coder", "reviewer"],
+  "finalText": "COMPLEXITY: complex"
+}

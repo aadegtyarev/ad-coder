@@ -1,0 +1,18 @@
+[
+  {
+    "code": "server-side-request-forgery",
+    "severity": "high",
+    "step": "step 2",
+    "cwe": "CWE-918",
+    "exploit": "exportReport POSTs the report body to whatever absolute URL the caller put in the destination query parameter, so an internal address reachable from the server is reachable from the internet through it",
+    "mitigation": "resolve the destination and require the host to be on the configured allow list before any outbound call"
+  },
+  {
+    "code": "failure-response-reveals-storage-layout",
+    "severity": "medium",
+    "step": "step 3",
+    "cwe": "CWE-200",
+    "exploit": "the error path returns the caught message together with the resolved destination and the report path that was read, so a caller learns where reports live on disk",
+    "mitigation": "return a stable failure code naming the operation and log the detail server-side"
+  }
+]

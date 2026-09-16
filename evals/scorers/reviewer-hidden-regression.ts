@@ -202,6 +202,17 @@ const checks = [
       ["metadata", "order"],
       ["primary", "discarded"],
       ["partial", "save"],
+      // The same defect named by which write moved rather than by the word
+      // "order", and by what the caller is told rather than by "swallowed". An
+      // alternative-valid sample scored 0 on this check for
+      // `primary-write-precedes-metadata` and `metadata-failure-hidden`, which
+      // describe the seeded defect exactly. A vocabulary that only admits the
+      // author's phrasing is measuring phrasing.
+      ["primary", "precedes"],
+      ["primary", "before"],
+      ["metadata", "hidden"],
+      ["metadata", "silent"],
+      ["silent", "fallback"],
     ),
   },
   {

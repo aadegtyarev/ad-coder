@@ -1,0 +1,34 @@
+{
+  "summary": "Add POST /reports/:id/export behind the existing session gate: read the report with readReport, check the caller-supplied destination host against the configured allow list before any outbound call, POST the body, and on failure return a stable code naming the operation without the destination, the path or the query.",
+  "steps": [
+    {
+      "step": "Add an allow-list check and exportReport(id, destination) to src/reports.ts. Parse the destination with new URL inside a try/catch, reject a host that is not on the list and a URL carrying userinfo before any network call, then POST the report body.",
+      "acceptance": "a stubbed fetch is never called for a destination off the allow list, and the rejection throws Error(\"export failed: destination not permitted\")"
+    },
+    {
+      "step": "Register the route in src/router.ts the way the existing report routes are registered, resolving the id exactly as GET /reports/:id does.",
+      "acceptance": "a request without a session header fails with the existing unauthenticated error, and the recorded POST body equals the stored report"
+    },
+    {
+      "step": "Make the failure path return a stable code and log the detail server-side.",
+      "acceptance": "grep the error construction in src/reports.ts and src/router.ts and the destination variable appears in no message; the client response contains no path"
+    }
+  ],
+  "contracts": [
+    {
+      "rule": "Errors returned to a client name the failed operation and never include the\n  filesystem path, the query, or credential material.",
+      "source": "docs/contracts/errors.md"
+    },
+    {
+      "rule": "Outbound requests go only to hosts on the configured allow list.",
+      "source": "docs/contracts/errors.md"
+    },
+    {
+      "rule": "Every report route is registered behind requireSession",
+      "source": "src/router.ts"
+    }
+  ],
+  "evidenceRating": "asserted",
+  "securitySurface": "elevated",
+  "complexity": "medium"
+}

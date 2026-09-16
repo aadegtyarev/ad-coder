@@ -6,6 +6,26 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-09-16
+
+### Added
+- Every artifact-scored task now ships `.alt.json`, an answer materially
+  different from its pass sample that must still score every check. It is the
+  mirror of `.gamed.json`: that one proves the scorer rejects a plausible
+  evasion, this one proves it accepts a right answer that is not the author's.
+  Writing both is what a single author can do in place of a second reviewer, and
+  its absence is what let a task ship whose own fixture argued against its
+  scorer.
+
+### Fixed
+- Two of eight tasks rejected a correct answer phrased differently, found by the
+  new samples on the day they were written. A reviewer finding coded
+  `primary-write-precedes-metadata` scored zero where `order-reversed` scored
+  full; a security finding coded `failure-response-reveals-storage-layout`,
+  carrying CWE-200 and an exploit naming the report path, scored zero for
+  omitting the word "disclosure". Both checks were measuring the author's
+  vocabulary rather than the finding.
+
 ## [0.22.0] - 2026-09-16
 
 ### Added

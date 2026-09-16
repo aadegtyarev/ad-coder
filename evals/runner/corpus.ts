@@ -541,6 +541,31 @@ function checkSamples(task: Task): void {
       throw new Error(`pass sample does not score every check: ${task.id}`);
     if (kind === "fail" && allPassed) throw new Error(`fail sample scores every check: ${task.id}`);
   }
+  // The MIRROR of the gamed sample, and the half this corpus was missing.
+  //
+  // `.gamed.json` proves the scorer rejects a plausible evasion -- the
+  // false-POSITIVE direction. `.alt.json` proves it accepts an answer that is
+  // materially different from the pass sample and still correct: the
+  // false-NEGATIVE direction, where a scorer quietly demands the author's own
+  // phrasing rather than a right answer.
+  //
+  // That direction is not hypothetical here. `coder-retention-v1` shipped a
+  // fixture whose own comment argued against the rule its scorer required, and
+  // four models across three vendors independently gave the reading the scorer
+  // called wrong. An alternative-valid sample would have caught it before the
+  // task was ever run. The practice is FrontierCode's: the task author writes
+  // both the cheating answer and a second valid one, and the pair is the test
+  // of the scorer rather than of the model.
+  const alternative = path.join(root, "samples", `${task.id}.alt.json`);
+  if (!fs.existsSync(alternative))
+    throw new Error(`${task.scorerInput} task needs an alt sample: ${task.id}`);
+  {
+    const checks = runScorer(scorer, alternative);
+    assertScorerMatchesTask(task, checks);
+    const missed = checks.filter((check) => !check.passed).map((check) => check.id);
+    if (missed.length > 0)
+      throw new Error(`alternative valid sample fails ${missed.join(", ")}: ${task.id}`);
+  }
   const gamed = path.join(root, "samples", `${task.id}.gamed.json`);
   if (!fs.existsSync(gamed)) return;
   const checks = runScorer(scorer, gamed);

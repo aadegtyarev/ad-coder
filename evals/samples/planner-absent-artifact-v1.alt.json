@@ -1,0 +1,7 @@
+{
+  "blocked": true,
+  "missing": ["docs/contracts/currency.md", "docs/specs/export-format.md"],
+  "found": ["docs/contracts/rounding.md", "src/ledger.ts", "package.json"],
+  "ask": "I need the export format specification and the currency contract before I can plan this. Either add docs/specs/export-format.md and docs/contracts/currency.md to the repository, or tell me the column order and the currency rounding mode and I will work from that.",
+  "steps": []
+}

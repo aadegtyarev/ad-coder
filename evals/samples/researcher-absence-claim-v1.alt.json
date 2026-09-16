@@ -1,0 +1,26 @@
+{
+  "claims": [
+    {
+      "question": "Q1",
+      "answer": "The semantically correct status is 422; RFC 9110 renamed it from Unprocessable Entity to Unprocessable Content.",
+      "confidence": "high",
+      "sources": ["https://httpwg.org/specs/rfc9110.html#status.422"]
+    },
+    {
+      "question": "Q2",
+      "answer": "Retry-After is permitted but not required, and it is defined for 503, 429 and 3xx rather than being tied to one of them.",
+      "confidence": "medium",
+      "sources": ["https://httpwg.org/specs/rfc9110.html#field.retry-after"]
+    },
+    {
+      "question": "Q3",
+      "answer": "There is no such field. It appears in neither RFC 9110 nor the IANA HTTP field name registry, so nothing standardises it and any implementation using it has invented it.",
+      "confidence": "high",
+      "sources": ["https://www.iana.org/assignments/http-fields/http-fields.xhtml"]
+    }
+  ],
+  "gaps": [
+    "Whether any widely deployed proxy emits the header as a vendor extension was not checked."
+  ],
+  "observedOn": "2026-09-16"
+}

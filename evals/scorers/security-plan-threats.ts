@@ -120,6 +120,16 @@ const checks = [
       ["path", "disclosure"],
       ["verbose", "error"],
       ["leak", "path"],
+      // The same defect named by WHAT is revealed rather than by the word
+      // "disclosure". An alternative-valid sample coding it
+      // `failure-response-reveals-storage-layout` -- with a CWE-200 id and an
+      // exploit naming the report path -- scored zero here, which is the check
+      // measuring vocabulary rather than the finding.
+      ["reveals", "layout"],
+      ["reveals", "path"],
+      ["exposes", "path"],
+      ["storage", "layout"],
+      ["error", "message"],
     ),
   },
   {

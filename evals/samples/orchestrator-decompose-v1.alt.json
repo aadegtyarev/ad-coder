@@ -1,0 +1,5 @@
+{
+  "taskId": "orchestrator-decompose-v1",
+  "plannerDelegated": true,
+  "finalText": "{\"issues\": [{\"id\": \"NS-1\", \"title\": \"Deliver notifications over SMS\", \"requirements\": [\"R1\"], \"dependsOn\": []}, {\"id\": \"NS-2\", \"title\": \"Record the provider delivery id on each send\", \"requirements\": [\"R2\"], \"dependsOn\": [\"NS-1\"]}, {\"id\": \"NS-3\", \"title\": \"Cap outbound sends per recipient and reject over the cap\", \"requirements\": [\"R4\"], \"dependsOn\": []}, {\"id\": \"NS-4\", \"title\": \"Ingest delivery-status callbacks\", \"requirements\": [\"R5\"], \"dependsOn\": []}, {\"id\": \"NS-5\", \"title\": \"Re-send failures with backoff\", \"requirements\": [\"R6\"], \"dependsOn\": [\"NS-4\"]}], \"alreadySatisfied\": [\"R3\"]}"
+}
