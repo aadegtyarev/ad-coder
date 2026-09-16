@@ -247,6 +247,17 @@ are the two halves of one routing decision: it belongs where correctness matters
 more than latency, and nowhere a person is waiting. The single-run numbers above
 would have ranked all three as identical.
 
+**A quality table is not a buying table.** Four models reach 1.00 here, and
+their subscription allowances are $60 for `glm-5.2` against $15 for both
+`kimi-k3` and `qwen3.8-max` -- so two of the three that look cheapest per token
+buy a quarter of the work. `longcat-2.0` and `minimax-m2.5` carry $60 and score
+0.88. On this evidence the buy is `glm-5.2`, and `kimi-k3`, which this table was
+used to recommend earlier the same day, is four times the worse choice.
+
+Read `opencode-go-economics.md` before moving anything in the grid. On a
+subscription the list price is the wrong number, and the right one is published
+on the provider's documentation rather than its pricing page.
+
 Three things follow. The dearest model is not the best: `deepseek-v4-pro` scores
 0.88 in five minutes where `kimi-k3` and `glm-5.2` reach 1.00, and both of those
 are inside the subscription. `glm-5.2` beats `glm-5.3-flash` on quality while
