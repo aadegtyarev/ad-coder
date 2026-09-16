@@ -1,0 +1,12 @@
+[
+  {
+    "code": "decoded-path-escape",
+    "severity": "blocker",
+    "evidence": "ran `bun -e 'import {resultPath} from \"./src/result-store\"; console.log(resultPath(\"/base\", \"%2e%2e%2fetc\"))'` and it printed /etc/result.json, outside baseDir"
+  },
+  {
+    "code": "primary-write-precedes-metadata",
+    "severity": "critical",
+    "evidence": "src/result-store.ts:14-19 -- the primary write now runs first and a metadata throw is swallowed into {saved:false}, so the file is on disk and the caller is told it is not"
+  }
+]

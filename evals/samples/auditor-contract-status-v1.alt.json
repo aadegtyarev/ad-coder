@@ -1,0 +1,32 @@
+[
+  {
+    "surface": "queue.readJob",
+    "status": "violates",
+    "contract": "errors.md",
+    "evidence": "the catch at the end of the function throws a fresh Error(\"queue read failed\"), so the original error is gone rather than attached as cause -- and the same catch swallows the function's own invalid-id rejection"
+  },
+  {
+    "surface": "queue.enqueue",
+    "status": "violates",
+    "contract": "persistence.md",
+    "evidence": "writeSync then closeSync with no fsync, so the call returns before the record is durable"
+  },
+  {
+    "surface": "queue.parseJob",
+    "status": "conforms",
+    "contract": "docs/contracts/errors.md",
+    "evidence": "rejects with Error(\"invalid id\") and Error(\"invalid payload\"), which is the fixed wording the contract names"
+  },
+  {
+    "surface": "metrics.snapshot",
+    "status": "contract_missing",
+    "contract": null,
+    "evidence": "nothing under docs/contracts governs counter naming, reset semantics, or concurrent reads"
+  },
+  {
+    "surface": "metrics.reset",
+    "status": "contract_missing",
+    "contract": null,
+    "evidence": "same absence: no rule fixes what reset does to in-flight readers"
+  }
+]

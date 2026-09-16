@@ -77,6 +77,23 @@ the `harnessOutcome` tally says how many runs reached a scored answer at all.
 No routing cell should move on a single run. Repeats cost what the task costs:
 those five runs came to two cents.
 
+Every artifact-scored task also ships `.alt.json`: an answer materially
+different from the pass sample that must still score every check. It is the
+mirror of `.gamed.json` and the half this corpus was missing. The gamed sample
+proves the scorer rejects a plausible evasion; the alternative proves it accepts
+a right answer that is not the author's. FrontierCode calls the pair a hack
+report, and writing both is what a single author can do in place of a second
+reviewer.
+
+It paid for itself the day it was added. Two of eight tasks rejected a correct
+answer outright: a reviewer finding coded `primary-write-precedes-metadata`
+scored zero where `order-reversed` scored full, and a security finding coded
+`failure-response-reveals-storage-layout`, carrying CWE-200 and an exploit naming
+the report path, scored zero for not containing the word "disclosure". Both
+checks were measuring the author's vocabulary. The corpus had verified six times
+that a cheat would fail and never once that an honest answer in different words
+would pass.
+
 An artifact-scored task may also ship `.gamed.json` beside its pass and fail
 samples. The other two prove the scorer can tell a good answer from a bad one;
 this one proves it resists the SPECIFIC evasion the task was built to catch --
