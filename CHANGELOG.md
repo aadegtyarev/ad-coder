@@ -6,6 +6,18 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.31.1] - 2026-09-16
+
+### Added
+- A capability rule in `docs/contracts/config.md`: every capability ad-coder
+  ships is enabled at startup, a persistent setting can switch it off, a launch
+  parameter can switch it off explicitly and beats the setting, and the
+  resolved state of every capability is visible rather than silent. Set-valued
+  capabilities can also select or exclude members. Exceptions stay possible
+  but owe a dated entry naming the safety or cost reason. The rule generalises
+  the 2026-09-11 configurability pair from values to switchable features; the
+  audit that applies it to every startup capability is tracked on GitHub.
+
 ## [0.31.0] - 2026-09-16
 
 ### Added
