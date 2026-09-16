@@ -417,12 +417,19 @@ test("a rejected tool call tells the model WHAT was wrong, not only that it was"
   // reported as a provider fault while the provider was answering normally.
   // docs/contracts/errors.md now requires `code: message`.
   const tool = buildSubmitFollowUpTool({ followUps: [] }, { producer: "coder", runId: "run-1" });
-  const result = await tool.execute("call-1", {
+  // The harness passes six arguments; this tool reads only the first two, so the
+  // rest are the narrowest stubs that satisfy the signature.
+  const result = await (
+    tool.execute as unknown as (
+      id: string,
+      params: unknown,
+    ) => Promise<{ content: { text: string }[] }>
+  )("call-1", {
     kind: "note",
     title: "Zephyrine cataloguing",
     evidence: [],
   });
-  const text = (result.content[0] as { text: string }).text;
+  const text = result.content[0]?.text ?? "";
   expect(text).toContain("invalid_follow_up");
   // The actionable half: the validator's own sentence naming the field.
   expect(text).toContain("evidence must be non-empty");
