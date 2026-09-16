@@ -1,0 +1,5 @@
+{
+  "name": "retention-under-compaction",
+  "private": true,
+  "type": "module"
+}

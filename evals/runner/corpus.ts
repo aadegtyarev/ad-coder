@@ -79,6 +79,19 @@ type Task = CalibrationTask & {
    * prompt as well as here.
    */
   forbids?: string[];
+  /**
+   * True when the task only means anything if the run COMPACTED its context.
+   *
+   * `summarizer-retention-v1` measures whether a fact planted early survives
+   * eviction, and the summarizer is not dispatchable as a role -- it runs only
+   * inside compaction. A run that happened to fit in its budget answers a
+   * different question and must not be scored as if it answered this one: the
+   * first probe of that task scored 1.00 in three turns without compacting once.
+   * So the runner reads the compaction line ad-coder prints and records
+   * `compacted`; a task that demands it and did not get it is reported rather
+   * than silently counted.
+   */
+  requiresCompaction?: boolean;
 };
 
 /**
@@ -157,6 +170,8 @@ function loadTasks(): { file: string; task: Task }[] {
     // Same pairing rule as `writes`, for the same reason: a list nobody scores
     // is a comment, and a check with nothing to compare against would pass for
     // free on every run.
+    if (task.requiresCompaction !== undefined && typeof task.requiresCompaction !== "boolean")
+      throw new Error(`invalid requiresCompaction: ${task.id}`);
     const prohibited = task.checks.some((check) => check.id === PROHIBITION_CHECK);
     if (prohibited !== (task.forbids !== undefined))
       throw new Error(`${PROHIBITION_CHECK} and forbids must be declared together: ${task.id}`);
@@ -298,6 +313,8 @@ interface Execution {
   target: string;
   ledgerFile: string;
   stdout: string;
+  /** What ad-coder reported about the run itself: compaction, limits, refusals. */
+  stderr: string;
   report?: OrchestratorReport;
 }
 
@@ -326,7 +343,12 @@ function executeRole(task: Task, target: string, extra: string[], timeoutMs: num
     },
   );
   if (run.status !== 0) throw new Error(run.stderr || "ad-coder role failed");
-  return { target, ledgerFile: ledgerPathFrom(run.stderr), stdout: run.stdout };
+  return {
+    target,
+    ledgerFile: ledgerPathFrom(run.stderr),
+    stdout: run.stdout,
+    stderr: run.stderr,
+  };
 }
 
 function executePipeline(
@@ -343,7 +365,12 @@ function executePipeline(
     },
   );
   if (run.status !== 0) throw new Error(run.stderr || "ad-coder drive failed");
-  return { target, ledgerFile: ledgerPathFrom(run.stderr), stdout: run.stdout };
+  return {
+    target,
+    ledgerFile: ledgerPathFrom(run.stderr),
+    stdout: run.stdout,
+    stderr: run.stderr,
+  };
 }
 
 function executeManualWorkflow(
@@ -382,7 +409,7 @@ function executeManualWorkflow(
       ? {}
       : { workflowState: checkpoint.workflowState as { complexity?: string; approved?: boolean } }),
   });
-  return { target, ledgerFile, stdout: run.stdout, report };
+  return { target, ledgerFile, stdout: run.stdout, stderr: run.stderr, report };
 }
 
 function runTask(
@@ -401,6 +428,7 @@ function runTask(
   report?: OrchestratorReport;
   strayPaths?: string[];
   forbiddenTools?: string[];
+  compactions?: number;
 } {
   if (!task.scorer) throw new Error(`task has no scorer: ${task.id}`);
   const target = freshTarget(task.id);
@@ -435,10 +463,21 @@ function runTask(
     if (scorerInput === "target") checks = runScorer(task.scorer, target);
     else {
       const file = path.join(target, scorerInput === "artifact" ? "artifact.json" : "report.json");
-      const answer =
-        scorerInput === "artifact"
-          ? extractJsonArtifact(execution.stdout)
-          : `${JSON.stringify(execution.report ?? {}, null, 2)}\n`;
+      // A role that produced no readable JSON has FAILED THE TASK, and that is a
+      // measurement. Letting the extractor throw here made it a harness error
+      // instead: the run was dropped, and the runs dropped are the worst ones,
+      // so the model is flattered by exactly the answers it botched. Same rule
+      // the scorers already follow -- an unreadable answer fails every check.
+      let answer: string;
+      if (scorerInput !== "artifact")
+        answer = `${JSON.stringify(execution.report ?? {}, null, 2)}\n`;
+      else {
+        try {
+          answer = extractJsonArtifact(execution.stdout);
+        } catch {
+          answer = "";
+        }
+      }
       fs.writeFileSync(file, answer);
       unreadableAnswer = !isReadableJson(answer);
       checks = runScorer(task.scorer, file);
@@ -451,6 +490,10 @@ function runTask(
     // that ran the test suite it was told not to, produces an identical answer.
     const forbidden =
       task.forbids === undefined ? undefined : violatedProhibitions(ledger, task.forbids);
+    // Counted from the line the compactor prints on every successful
+    // compaction. Zero on a task that demands it means the run answered a
+    // different question than the task asked -- see `Task.requiresCompaction`.
+    const compactions = [...execution.stderr.matchAll(/ad-coder: context compacted /g)].length;
     if (strayPaths !== undefined)
       checks = [...checks, { id: SCOPE_CHECK, passed: strayPaths.length === 0 }];
     if (forbidden !== undefined)
@@ -492,6 +535,7 @@ function runTask(
       // word. A boolean would send the reader to a ledger file whose path the
       // summary does not carry.
       ...(forbidden !== undefined && forbidden.length > 0 ? { forbiddenTools: forbidden } : {}),
+      ...(task.requiresCompaction === true ? { compactions } : {}),
     };
     if (options.quiet !== true)
       console.log(

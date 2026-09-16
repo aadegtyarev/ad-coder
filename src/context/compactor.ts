@@ -243,6 +243,21 @@ export class ContextCompactor {
       }
       return undefined;
     }
+    // Announced, for the same reason the failure below it is: a compaction that
+    // happens silently cannot be distinguished afterwards from one that never
+    // needed to happen. That mattered the moment a calibration task tried to
+    // measure retention ACROSS compaction -- the run looked identical whether
+    // the history had been summarised or had simply fit, so the task could not
+    // show it was measuring what it claimed.
+    //
+    // NUMBERS ONLY, like every other line this file writes: how much was
+    // measured, what the threshold was, and how many messages were replaced by
+    // the summary. The summary itself is model output over the conversation and
+    // never goes to stderr.
+    process.stderr.write(
+      `ad-coder: context compacted ${head.length} messages ` +
+        `(measured ${measured} tokens, threshold ${threshold})\n`,
+    );
     const summaryMessage = createCompactionSummaryMessage(summary, measured, Date.now());
     return { messages: [summaryMessage, ...tail] };
   }

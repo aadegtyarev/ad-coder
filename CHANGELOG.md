@@ -6,6 +6,31 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-09-16
+
+### Added
+- `summarizer-retention-v1` measures the `summarizer`, the only role the corpus
+  measured with nothing at any tier. It could not be measured the usual way --
+  the summarizer is not dispatchable as a role and runs only inside compaction --
+  so the task measures what compaction is for: a constraint stated once, twelve
+  bulky files that must be read before answering, and a context budget small
+  enough that the early messages are evicted first.
+- A successful context compaction now says so on stderr, with numbers only:
+  messages replaced, tokens measured, threshold. A compaction FAILURE was already
+  announced and success was silent, so a finished run could not be distinguished
+  from one that never needed to compact -- invisible in production, and fatal to
+  a task trying to measure retention across eviction. The corpus runner counts
+  the line into the measurement as `compactions`, and a task may declare
+  `requiresCompaction` so a run that never compacted is reported rather than
+  silently scored as if it had.
+
+### Fixed
+- A role that produced no readable JSON destroyed its own measurement: the
+  artifact extractor threw, the runner dropped the run, and the runs dropped were
+  the worst ones -- so a model was flattered by exactly the answers it botched.
+  The same rule the scorers already follow now applies here, and an unreadable
+  answer is recorded as a failing run.
+
 ## [0.23.0] - 2026-09-16
 
 ### Added
