@@ -940,6 +940,8 @@ export type OrchestratorConfig = Omit<ResolvePipelineConfigOptions, "task"> & {
   runId?: string;
   /** Explicit lazy skills for this managed conversation; absent means none. */
   selectedSkills?: readonly string[];
+  /** Explicit off: no catalogue, no loader, no appendix for any role. */
+  skillsDisabled?: boolean | undefined;
   sessionLimits?: SessionLimits;
   /** Optional construction seam for embedding hosts that own the conversation lifecycle. */
   startConversation?: typeof startConversationImpl;
@@ -1021,7 +1023,12 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
   // it cost the orchestrator 2106 words of appendix it mostly did not need;
   // `docs/contracts/skills.md` forbids exactly that.
   const roleKit = (role: DelegatableRoleName | "orchestrator") =>
-    roleSkillKit({ role, selectedSkills: config.selectedSkills, projectDir: config.targetDir });
+    roleSkillKit({
+      role,
+      selectedSkills: config.selectedSkills,
+      disabled: config.skillsDisabled,
+      projectDir: config.targetDir,
+    });
 
   // A placeholder task only seeds the config that yields the orchestrator's own
   // conversation model + window budget; the real per-run task arrives through

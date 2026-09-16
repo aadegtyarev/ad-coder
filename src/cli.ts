@@ -214,7 +214,12 @@ function parseArgs(argv: string[], command: CommandDefinition): ParsedArgs {
     const arg = argv[i] as string;
     for (const option of command.options) {
       if (arg === option.name && option.value === undefined) {
+        // A boolean flag lands in both records: run handlers read nuance-free
+        // booleans, while shared option plumbing (`buildConfigOptions`) reads
+        // the single flags map. No boolean flag is consumed elsewhere as a
+        // value flag, so the alias cannot change existing source semantics.
         booleans[option.name] = true;
+        flags[option.name] = "true";
         continue outer;
       }
       if (arg === option.name && option.value !== undefined) {
@@ -1646,6 +1651,7 @@ function createBackgroundHostLauncher(
   ownerId: string,
   /** Pinned ids travel to the isolated worker verbatim; the catalogue needs nothing. */
   selectedSkills: readonly string[] = [],
+  skillsDisabled: boolean = false,
 ): BackgroundHostLauncher {
   return async ({ runId, task, limits }) => {
     const entrypoint = process.argv[1];
@@ -1663,7 +1669,11 @@ function createBackgroundHostLauncher(
           runId,
           "--owner-id",
           ownerId,
-          ...(selectedSkills.length > 0 ? ["--skills", selectedSkills.join(",")] : []),
+          ...(selectedSkills.length > 0
+            ? ["--skills", selectedSkills.join(",")]
+            : skillsDisabled
+              ? ["--no-skills"]
+              : []),
         ],
         {
           detached: true,
@@ -1713,6 +1723,7 @@ async function backgroundCommand(
           targetDir,
           ownerId,
           buildConfigOptions(targetArg, flags).selectedSkills, // catalogue needs nothing; pins travel verbatim
+          flags["--no-skills"] !== undefined,
         )
       : undefined;
   const manager = new BackgroundRunManager(
@@ -1998,6 +2009,8 @@ function buildConfigOptions(
   // Same surface every command: no `--skills` means the catalogue a role
   // loads from; a value pins exactly those ids (empty trims back to catalogue).
   const skillsFlag = flags["--skills"];
+  if (flags["--no-skills"] !== undefined && skillsFlag !== undefined)
+    fail("--no-skills cannot be combined with --skills");
   const selectedSkills =
     skillsFlag === undefined
       ? undefined
@@ -2025,6 +2038,7 @@ function buildConfigOptions(
     }),
     ...(provider !== undefined && { provider }),
     ...(selectedSkills !== undefined && { selectedSkills }),
+    ...(flags["--no-skills"] !== undefined && { skillsDisabled: true }),
     ...(flags["--strong-model"] !== undefined && { strongModel: flags["--strong-model"] }),
     ...(flags["--mid-model"] !== undefined && { midModel: flags["--mid-model"] }),
     ...(flags["--cheap-model"] !== undefined && { cheapModel: flags["--cheap-model"] }),
@@ -2435,6 +2449,16 @@ const PIPELINE_OPTIONS: CommandDefinition["options"] = [
       // capability off; a comma list selects exactly those; `^name` excludes.
       `Select comma-separated workflow modules (${BUILT_IN_WORKFLOW_NAMES.join(",")}); ` +
       "^name excludes from the built-in default; false disables them entirely; unset keeps all shipped modules enabled.",
+  },
+  /**
+   * `--no-skills` is the explicit off, declared once for every pipeline-capable
+   * command: no catalogue, no loader, no prompt appendix. It refuses to share a
+   * command line with a selection -- exactly one of pin, off, or default.
+   */
+  {
+    name: "--no-skills",
+    description:
+      "Disable skills entirely: no catalogue, no load_skill tool. Cannot be combined with --skills.",
   },
   {
     name: "--stage-final-response-reserve-input-tokens",

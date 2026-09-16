@@ -261,6 +261,8 @@ export interface ResolvePipelineConfigOptions {
   researchPurpose?: ResearchPurpose;
   /** Trusted simple skill selection for every role prompt; absent means the catalogue. */
   selectedSkills?: readonly string[] | undefined;
+  /** Explicit off: no catalogue, no loader, no appendix (the `--no-skills` flag resolves to this). */
+  skillsDisabled?: boolean | undefined;
   /** Resolved enabled workflow-module names; absent means the built-in default, empty means off. */
   selectedWorkflows?: readonly string[] | undefined;
   /** Where that selection came from, so enabled-by-default is never silent. */
@@ -646,6 +648,7 @@ function resolveConfig(
     const kit = roleSkillKit({
       role: name,
       selectedSkills: options.selectedSkills,
+      disabled: options.skillsDisabled,
       projectDir: options.targetDir,
     });
     const activeTools =
@@ -814,6 +817,7 @@ function resolveConfig(
     const kit = roleSkillKit({
       role: name,
       selectedSkills: options.selectedSkills,
+      disabled: options.skillsDisabled,
       projectDir: options.targetDir,
     });
     const activeTools =

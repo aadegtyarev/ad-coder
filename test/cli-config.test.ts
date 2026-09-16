@@ -1239,7 +1239,7 @@ test("config show reports the resolved workflow capability and its source", () =
     warn: silent,
   };
   const unset = resolvePipelineConfig(base);
-  expect(unset.effectiveConfig?.["workflows"]).toEqual({
+  expect(unset.effectiveConfig?.workflows).toEqual({
     value: "built-in-default",
     source: "built-in-default",
   });
@@ -1248,10 +1248,34 @@ test("config show reports the resolved workflow capability and its source", () =
     selectedWorkflows: [],
     workflowsSource: "cli",
   });
-  expect(off.effectiveConfig?.["workflows"]).toEqual({ value: "none", source: "cli" });
+  expect(off.effectiveConfig?.workflows).toEqual({ value: "none", source: "cli" });
   const selected = resolvePipelineConfig({ ...base, selectedWorkflows: ["pipeline"] });
-  expect(selected.effectiveConfig?.["workflows"]).toEqual({
+  expect(selected.effectiveConfig?.workflows).toEqual({
     value: "pipeline",
     source: "caller",
   });
+});
+
+test("--no-skills leaves a role with no catalogue, no loader, and no appendix", () => {
+  // The explicit off beats the built-in default: nothing pasted, nothing to
+  // load, and no loader registered -- a name-only tool list would advertise a
+  // tool the turn could never call.
+  const config = resolvePipelineConfig({
+    task: "x",
+    targetDir: "/tmp/target",
+    registryConfig: mixedRegistry(),
+    profile: buildDefaultProfile({ strong: "large", mid: "small", cheap: "small" }),
+    summarizerModel: "large",
+    skillsDisabled: true,
+    env: fakeEnv({ LOCAL_KEY: "k" }),
+    warn: silent,
+  });
+  for (const role of ["planner", "orchestrator", "coder"] as const) {
+    const spec = config.roles[role];
+    expect(spec?.role.activeToolNames).not.toContain("load_skill");
+    if (!spec) continue;
+    // The prompt is exactly the target prompt: no skill appendix followed it.
+    expect(spec.role.systemPrompt).not.toContain("Selected skills");
+    expect(spec.role.systemPrompt).not.toContain("Available skills");
+  }
 });

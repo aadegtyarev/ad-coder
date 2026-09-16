@@ -1234,14 +1234,14 @@ test("workflow modules ship enabled, and --workflows selects, excludes, or disab
   // Unset: the built-in default — every shipped module ON, and never silent.
   const unset = show();
   expect(unset.code).toBe(0);
-  expect(JSON.parse(unset.stdout)["workflows"]).toEqual({
+  expect(JSON.parse(unset.stdout).workflows).toEqual({
     value: "pipeline",
     source: "built-in-default",
   });
 
   // An exact selection is recorded as such.
   const selected = show("--workflows", "pipeline");
-  expect(JSON.parse(selected.stdout)["workflows"]).toEqual({ value: "pipeline", source: "cli" });
+  expect(JSON.parse(selected.stdout).workflows).toEqual({ value: "pipeline", source: "cli" });
 
   // Excluding the only shipped module and explicit off resolve to the same
   // empty set, both by explicit choice.
@@ -1251,7 +1251,7 @@ test("workflow modules ship enabled, and --workflows selects, excludes, or disab
     ["--workflows", "off"],
   ]) {
     const result = show(...argv);
-    expect(JSON.parse(result.stdout)["workflows"]).toEqual({ value: "none", source: "cli" });
+    expect(JSON.parse(result.stdout).workflows).toEqual({ value: "none", source: "cli" });
   }
 
   // An unknown member fails HERE with the available list, not later.
@@ -1260,4 +1260,17 @@ test("workflow modules ship enabled, and --workflows selects, excludes, or disab
   expect(unknown.stderr).toContain("--workflows expects comma-separated pipeline");
   const unknownExclude = show("--workflows", "^nope");
   expect(unknownExclude.code).toBe(2);
+});
+
+test("--no-skills is the explicit off and never shares a line with a selection", () => {
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-no-skills-"));
+  const show = (...args: string[]) =>
+    runCli(["config", "show", "--target-dir", target, "--json", ...args]);
+  // The off alone resolves: every command that runs a role shares the flag via
+  // the pipeline options, so the capability truly turns off everywhere.
+  expect(show("--no-skills").code).toBe(0);
+  // Pin and off are mutually exclusive; neither silently wins.
+  const conflict = show("--no-skills", "--skills", "repository-navigation");
+  expect(conflict.code).toBe(2);
+  expect(conflict.stderr).toContain("--no-skills cannot be combined with --skills");
 });

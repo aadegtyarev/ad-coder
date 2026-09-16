@@ -42,6 +42,14 @@ unbounded prompt directory.
   reached 2106 words of appendix for the orchestrator regardless of the task.
   `--skills` remains a pin -- "use exactly these", pasted as before -- for when
   the operator does know better.
+- 2026-09-16: `--no-skills` is the explicit off for the skill capability,
+  declared once in the shared pipeline options for every command that runs a
+  role: no catalogue in any prompt, no loader tool registered, no appended
+  instructions. It cannot be combined with `--skills` -- exactly one of pin,
+  off, or default resolves. Background workers inherit the off like they
+  inherit a pin.
+   off, or default resolves. Background workers inherit the off like they
+  inherit a pin.
 - 2026-09-16: Loading obeys every constraint selection obeyed: the id pattern,
   the manifest's role scope, per-turn count and byte ceilings, and a typed
   content-free error carrying its reason. A refusal for a skill outside the

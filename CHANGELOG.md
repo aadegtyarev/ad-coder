@@ -16,6 +16,10 @@ All notable changes to ad-coder are recorded here. The format follows
   `config show` reports the resolved workflow set and its source. The
   persistent-setting layer is recorded as an open gap in
   `docs/contracts/config.md`; issue #216 holds the whole-surface audit.
+- `--no-skills` turns the skill capability off explicitly on every command that
+  runs a role: no catalogue in any prompt, no `load_skill` tool registered. It
+  cannot be combined with `--skills`. Skills remain catalogue-by-default otherwise;
+  `--skills a,b` pins an exact set.
 
 ## [0.33.0] - 2026-09-16
 

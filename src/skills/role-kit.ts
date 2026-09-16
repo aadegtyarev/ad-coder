@@ -41,6 +41,8 @@ export interface RoleSkillKitOptions {
   role: string;
   /** Explicit pinned ids; absent, empty, or only whitespace-with-commas means catalogue. */
   selectedSkills?: readonly string[] | undefined;
+  /** `--no-skills`: no catalogue, no loader, no prompt appendix. */
+  disabled?: boolean | undefined;
   projectDir?: string | undefined;
 }
 
@@ -48,6 +50,14 @@ export function roleSkillKit(options: RoleSkillKitOptions): RoleSkillKit {
   const { role, projectDir } = options;
   const resolverOptions: { projectDir?: string } = projectDir === undefined ? {} : { projectDir };
   const ids = (options.selectedSkills ?? []).map((id) => id.trim()).filter((id) => id.length > 0);
+  // An explicit off beats everything: nothing is pasted and no loader ships.
+  if (options.disabled === true) {
+    return {
+      appendix: "",
+      includeLoadTool: false,
+      buildTool: () => buildLoadSkillTool({ role, ...resolverOptions }),
+    };
+  }
   // resolveSkills enforces every ceiling and fails loudly BEFORE dispatch;
   // this mirrors the selection-time guarantees the catalogue path inherits.
   if (ids.length > 0) {
