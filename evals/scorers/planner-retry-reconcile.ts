@@ -36,7 +36,20 @@ const CONTRACT_TEXT = (() => {
   return `${read(path.join(root, "docs/contracts"), ".md")}\n${read(path.join(root, "src"), ".ts")}`;
 })();
 
-const normalize = (text: string): string => text.toLowerCase().replace(/\s+/g, " ").trim();
+/**
+ * Case, whitespace AND markdown emphasis removed before comparing.
+ *
+ * WHY THE MARKUP GOES. The contract writes "up to `CONCURRENCY` at once" with
+ * the identifier fenced, because it is a markdown document. A planner carrying
+ * that rule into a plan for a Coder writes it as prose, without the backticks --
+ * which is the right thing to do. Comparing the raw strings failed such a quote
+ * at the 39th character and scored the planner zero for a rule it had carried
+ * perfectly. That check would have been grading markdown fidelity, not
+ * comprehension: three models across two families lost the same five weights
+ * this way, all of them correct.
+ */
+const normalize = (text: string): string =>
+  text.toLowerCase().replace(/[`*_]/g, "").replace(/\s+/g, " ").trim();
 
 const NORMALIZED_CONTRACTS = normalize(CONTRACT_TEXT);
 
@@ -164,7 +177,7 @@ function proposesInventedGuard(step: { step?: string; acceptance?: string }): bo
  * sentence shape, since models phrase this many ways.
  */
 const RUNNABLE =
-  /\b(\d{3}\b|curl|test|assert|throws?|rejects?|returns?|exits?|logs?|fails?|status|response)\b/i;
+  /\b(\d{3}\b|curl|git|diff|test|assert|throws?|rejects?|returns?|exits?|logs?|fails?|status|response|empty|identical|unchanged|untouched|absent|present)\b/i;
 
 const checks = [
   {
@@ -209,6 +222,12 @@ const checks = [
   {
     // "returns 429 after 100 requests in a minute", not "retries work" -- the
     // planner prompt's own example. Demanded of every step, not just one.
+    //
+    // The observable list covers `git diff` and the words for an unchanged
+    // file, because the correct plan here leaves src/queue.ts alone: "git diff
+    // -- src/queue.ts is empty" is exactly as runnable as a status code, and
+    // the narrower list scored it as unverifiable. A step whose whole point is
+    // that code must NOT change still has a criterion someone can run.
     id: "acceptance-is-runnable",
     passed: steps.length > 0 && steps.every((step) => RUNNABLE.test(step.acceptance ?? "")),
   },

@@ -6,6 +6,20 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.29.2] - 2026-09-16
+
+### Fixed
+- `planner-retry-reconcile-v1` scored markdown fidelity instead of comprehension.
+  Its carried-rule check compared a quoted rule against the contract file
+  verbatim, and the contract writes ``up to `CONCURRENCY` at once`` with the
+  identifier fenced -- so a planner that carried the rule into prose, correctly,
+  diverged at the 39th character and lost five weights. Three runs across two
+  model families scored exactly 0.75 this way, every one of them right. Its
+  acceptance check had the matching flaw: the correct plan leaves `src/queue.ts`
+  untouched, and "git diff -- src/queue.ts is empty" is as runnable as a status
+  code, but the observable list knew only status codes and test verbs. Seventh
+  instance in this corpus of a check grading the author's vocabulary.
+
 ## [0.29.1] - 2026-09-16
 
 ### Fixed
