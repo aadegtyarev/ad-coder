@@ -60,3 +60,26 @@ test(
   },
   TIMEOUT_MS,
 );
+
+test("the corpus reports which of its tasks have stopped telling models apart", () => {
+  // Both task defects this project has found were caught by a person reading a
+  // sweep printout: one task failing every model identically, three others
+  // passing every model including the cheapest. Both are visible in the numbers,
+  // so neither should depend on someone noticing.
+  const health = Bun.spawnSync(["bun", "run", "scripts/check-corpus-health.ts"], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+  });
+  expect(health.stderr.toString()).toBe("");
+  expect(health.exitCode).toBe(0);
+  const report = JSON.parse(health.stdout.toString()) as {
+    findings: { taskId: string; signature: string }[];
+    valid: boolean;
+  };
+  expect(report.valid).toBe(true);
+  // Reports rather than gates: the evidence is observational, so the assertion
+  // is that the check runs and answers, not that the answer is empty. A finding
+  // is a question for whoever reads it.
+  for (const finding of report.findings)
+    expect(["saturated", "inverted"]).toContain(finding.signature);
+});
