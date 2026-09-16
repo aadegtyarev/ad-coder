@@ -243,6 +243,20 @@ const KNOWN_TOOLS: Readonly<Record<string, { activity: ToolActivityKind; publicN
   submit_plan: { activity: "Tool", publicName: "submit_plan" },
   submit_verdict: { activity: "Tool", publicName: "submit_verdict" },
   submit_follow_up: { activity: "Tool", publicName: "submit_follow_up" },
+  // The durable-run control surface. Same reasoning: a bare "Tool" in the
+  // console tells the operator nothing about what the orchestrator just did.
+  control_start: { activity: "Tool", publicName: "control_start" },
+  control_status: { activity: "Tool", publicName: "control_status" },
+  control_events: { activity: "Tool", publicName: "control_events" },
+  control_report: { activity: "Tool", publicName: "control_report" },
+  control_resume: { activity: "Tool", publicName: "control_resume" },
+  control_cancel: { activity: "Tool", publicName: "control_cancel" },
+  control_list: { activity: "Tool", publicName: "control_list" },
+  control_publish: { activity: "Tool", publicName: "control_publish" },
+  control_triage: { activity: "Tool", publicName: "control_triage" },
+  control_decisions: { activity: "Tool", publicName: "control_decisions" },
+  control_decision_request: { activity: "Tool", publicName: "control_decision_request" },
+  control_run_until: { activity: "Tool", publicName: "control_run_until" },
 };
 
 /**
@@ -636,6 +650,17 @@ export function attachToolActivity(options: AttachToolActivityOptions): ToolActi
   >();
   const requested = new Set<string>();
   const terminal = new Set<string>();
+  /**
+   * The subject projected when a call was first seen, keyed by tool call.
+   *
+   * Arguments arrive only on the REQUEST event; `tool_start` and `tool_end`
+   * carry none. Reading them per-event therefore produced one line with the
+   * command and the next two blank -- `Run  ls -la; git log ...  started`
+   * followed by a bare `Run  25ms`. The operator saw exactly that and asked
+   * what the empty ones were. Remembering the subject makes every line in a
+   * call's lifecycle say what it is about.
+   */
+  const subjects = new Map<string, ToolActivityProjection>();
   const base = (event: {
     runId?: string;
     turnId?: string;
@@ -644,11 +669,10 @@ export function attachToolActivity(options: AttachToolActivityOptions): ToolActi
     args?: unknown;
   }) => {
     const classification = classifyTool(event.toolName);
-    const projection = projectToolArguments(
-      event.toolName,
-      event.args,
-      options.channel.config.projectionBytes,
-    );
+    const projection =
+      projectToolArguments(event.toolName, event.args, options.channel.config.projectionBytes) ??
+      subjects.get(event.toolCallId);
+    if (projection !== undefined) subjects.set(event.toolCallId, projection);
     return {
       activity: classification.activity,
       ...(projection !== undefined && { projection }),
@@ -707,6 +731,9 @@ export function attachToolActivity(options: AttachToolActivityOptions): ToolActi
       ...(began !== undefined && { durationMs: Math.max(0, now() - began.at) }),
       ...(budget !== undefined && { budget }),
     });
+    // Published; the subject has served its purpose and must not accumulate
+    // one entry per call for the life of the session.
+    subjects.delete(event.toolCallId);
   });
   const offRunEnd = options.events.on("run_end", (event) => {
     if (event.status !== "aborted") return;

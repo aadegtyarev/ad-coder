@@ -18,6 +18,53 @@ All notable changes to ad-coder are recorded here. The format follows
   the 2026-09-11 configurability pair from values to switchable features; the
   audit that applies it to every startup capability is tracked on GitHub.
 
+### Changed
+- Skills are selected by default instead of opt-in. Every skill declares the
+  roles it serves, and that declaration is now the selection; `--skills` narrows
+  rather than enables. A skill nobody remembers to pass is a skill that never
+  runs, and the operator had been typing the list by hand on every invocation.
+- The four shipped skills are rewritten to carry something. They were 19-26
+  words each -- `acceptance-review` in full was "compare the diff and test
+  evidence with acceptance criteria and applicable contracts; report gaps and a
+  decision", which the reviewer's own prompt already says. Against a 16 KiB
+  ceiling they used about a two-hundredth of the room. Each now holds what a
+  role prompt has no space for: the technique, the failure it prevents, and the
+  stopping rule -- a claim of passing tests is not evidence of passing tests;
+  reconnaissance stops when it can name surfaces, contracts and unknowns; a
+  slice that cannot be tested is not ready; three different events wear the
+  symptom of an exhausted stage and need different answers.
+- A new `repository-navigation` skill, and the same rule in every role prompt
+  that can call `bash`: ask the repository one question per call. `git status`
+  and `git diff --stat` answer "what changed here" completely; locate with
+  `search_project`, read with `read_project`, use `bash` where no specific tool
+  exists. Read a file once rather than drawing it through `sed` in ten-line
+  slices, and inspect a commit once rather than re-running `git show` with
+  different ranges. A console turn spent 49 bash calls on a two-conflict merge,
+  four of them re-reading one commit through different `sed` windows -- correct
+  work, five times the calls it needed.
+
+- The orchestrator prompt requires search to narrow or stop: before a third
+  search, state what the previous two ruled out, and if the answer is "nothing",
+  ask instead of widening. Broadening a pattern, dropping a filter, and
+  re-running the same grep with different words elsewhere are the same move.
+  A live console turn spent six minutes and eighteen bash calls hunting for a
+  contract change that `git status` would have shown -- it even read the right
+  file and went back to searching. Asking the working tree first is now stated,
+  as is: when the operator refers to recent work, look in the tree, the last
+  commits, or the branch diff, and if it is not there, say what you checked.
+
+### Fixed
+- Every line of a tool call's lifecycle names its subject. Arguments arrive only
+  on the request event, so reading them per-event produced one line with the
+  command and the next two blank -- `Run  ls -la ...  started` followed by a bare
+  `Run  25ms`. The subject is now remembered for the call and released when it
+  ends.
+- The console stops printing the role on every line. It runs one role, so the
+  name is noise there; a pipeline alternates roles and still shows them, because
+  the renderer starts naming roles once it has seen a second one.
+- Twelve durable-run control tools were still rendering as an anonymous `Tool`.
+  All shipped tool names are now classified.
+
 ## [0.32.0] - 2026-09-16
 
 ### Changed

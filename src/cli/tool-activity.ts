@@ -86,6 +86,8 @@ function costOf(costUsd: number | undefined): string {
 export class ToolActivityRenderer {
   private readonly config: ToolActivityConfig;
   private readonly groups = new Map<string, HumanGroup>();
+  /** Roles seen so far: one means the console, several mean a pipeline. */
+  private readonly seenRoles = new Set<string>();
   private readonly queue: string[] = [];
   private queuedBytes = 0;
   private dropped = 0;
@@ -115,7 +117,11 @@ export class ToolActivityRenderer {
     const label = subjectOf(record.projection);
     // Grouping keys on WHO and WHAT: two roles touching one file are two lines,
     // because "which role went there" is the question being asked.
-    const actor = [record.role, record.model]
+    // The console runs one role, so printing "orchestrator" on every line is
+    // noise the operator asked to drop. A pipeline alternates roles, where the
+    // name IS the point -- so the role appears once a second one has been seen.
+    this.seenRoles.add(record.role);
+    const actor = [this.seenRoles.size > 1 ? record.role : undefined, record.model]
       .filter((part) => part !== undefined && part !== "")
       .join("\u00b7");
     const key = `${actor}\0${record.activity}\0${label}`;

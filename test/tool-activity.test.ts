@@ -242,6 +242,43 @@ describe("tool activity core", () => {
     expect(serialized).not.toContain('"newText"');
   });
 
+  test("every line of a call's lifecycle names its subject, not just the first", () => {
+    // Arguments arrive only on the REQUEST event; tool_start and tool_end carry
+    // none. Reading them per-event gave one line with the command and the next
+    // two blank -- `Run  ls -la ...  started` then a bare `Run  25ms` -- which
+    // is what the operator saw and asked about.
+    const records: ToolActivityRecord[] = [];
+    const channel = new ToolActivityChannel();
+    channel.subscribe((record) => {
+      records.push(record);
+    });
+    const fake = new FakeEvents();
+    const detach = attachToolActivity({
+      channel,
+      events: fake as unknown as Events,
+      targetDir: process.cwd(),
+      role: "orchestrator",
+      runId: "run-1",
+      step: "console",
+    });
+    fake.emit("message_end", message("call-1", "bash", { command: "ls -la" }));
+    fake.emit("tool_start", { toolCallId: "call-1", toolName: "bash", runId: "r", turnId: "t" });
+    fake.emit("tool_end", {
+      toolCallId: "call-1",
+      toolName: "bash",
+      runId: "r",
+      turnId: "t",
+      result: { details: undefined },
+      isError: false,
+    });
+    detach();
+    const lifecycle = records.flatMap((record) =>
+      record.type === "tool_activity" ? [record] : [],
+    );
+    expect(lifecycle.length).toBe(3);
+    for (const record of lifecycle) expect(record.projection?.command).toBe("ls -la");
+  });
+
   test("sanitizes Unicode safely and validates mandatory output ceilings", () => {
     expect(boundToolActivityText("a\u202eb\n😀z", 6)).toBe("ab😀");
     expect(() => resolveToolActivityConfig({ maxEventBytes: 0 })).toThrow(RangeError);
@@ -348,7 +385,9 @@ describe("tool activity renderer", () => {
     // ("время бы ещё в начале строки") so a reader can scan the left edge.
     const rendered = humanOutput.text();
     expect(rendered).toMatch(/^\d{2}:\d{2}:\d{2}\s/m);
-    expect(rendered).toContain("coder");
+    // The role is omitted while only one has been seen -- a console runs one
+    // role, and naming it on every line is noise the operator asked to drop.
+    expect(rendered).not.toContain("coder");
     expect(rendered).toContain("Read");
     expect(rendered).toContain("failed");
     // A completed line does not print "completed": success is the default and

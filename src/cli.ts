@@ -108,7 +108,7 @@ import { createRoleRunner } from "./runner/role-runner";
 import type { Tool } from "./runner/tool";
 import type { SessionLimits } from "./session-limits";
 import { SessionLimitController } from "./session-limits";
-import { SkillResolutionError } from "./skills/resolver";
+import { listSkillIds, SkillResolutionError } from "./skills/resolver";
 import { UpdateError, updateAdCoder } from "./update/updater";
 import {
   createDefaultUserProfileStore,
@@ -2228,9 +2228,13 @@ async function consoleCommand(
           .split(",")
           .map((name) => name.trim())
           .filter(Boolean);
+  // A skill nobody remembers to pass is a skill that never runs: every skill
+  // shipped here declares the roles it serves, and that declaration is the
+  // selection. `--skills` narrows rather than enables, and `--skills ""`
+  // selects none.
   const selectedSkills =
     flags["--skills"] === undefined
-      ? []
+      ? listSkillIds({ projectDir: targetDirArg })
       : flags["--skills"]
           .split(",")
           .map((name) => name.trim())
