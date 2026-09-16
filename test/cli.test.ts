@@ -1225,3 +1225,39 @@ test("a usage error under a machine front stays machine-readable instead of prin
   // A human front keeps the help text it has always printed.
   expect(runCli(["update", "stray"]).stderr).toContain("usage: ad-coder <command> [options]");
 });
+
+test("workflow modules ship enabled, and --workflows selects, excludes, or disables", () => {
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-workflows-flag-"));
+  const show = (...args: string[]) =>
+    runCli(["config", "show", "--target-dir", target, "--json", ...args]);
+
+  // Unset: the built-in default — every shipped module ON, and never silent.
+  const unset = show();
+  expect(unset.code).toBe(0);
+  expect(JSON.parse(unset.stdout)["workflows"]).toEqual({
+    value: "pipeline",
+    source: "built-in-default",
+  });
+
+  // An exact selection is recorded as such.
+  const selected = show("--workflows", "pipeline");
+  expect(JSON.parse(selected.stdout)["workflows"]).toEqual({ value: "pipeline", source: "cli" });
+
+  // Excluding the only shipped module and explicit off resolve to the same
+  // empty set, both by explicit choice.
+  for (const argv of [
+    ["--workflows", "^pipeline"],
+    ["--workflows", "false"],
+    ["--workflows", "off"],
+  ]) {
+    const result = show(...argv);
+    expect(JSON.parse(result.stdout)["workflows"]).toEqual({ value: "none", source: "cli" });
+  }
+
+  // An unknown member fails HERE with the available list, not later.
+  const unknown = show("--workflows", "nope");
+  expect(unknown.code).toBe(2);
+  expect(unknown.stderr).toContain("--workflows expects comma-separated pipeline");
+  const unknownExclude = show("--workflows", "^nope");
+  expect(unknownExclude.code).toBe(2);
+});

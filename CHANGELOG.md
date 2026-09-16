@@ -6,6 +6,17 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- Workflow modules ship enabled: a plain console session resolves the built-in
+  `pipeline` module to its tools (`run_pipeline`, `decompose_task`, `run_step`,
+  `choose_transition`, `show_cost`) without any flag. `--workflows` is now the
+  shared set-valued launch parameter (declared once for every
+  pipeline-capable command): a comma list selects modules, `^name` excludes
+  from the built-in default, and `--workflows=false` disables the capability.
+  `config show` reports the resolved workflow set and its source. The
+  persistent-setting layer is recorded as an open gap in
+  `docs/contracts/config.md`; issue #216 holds the whole-surface audit.
+
 ## [0.33.0] - 2026-09-16
 
 ### Changed

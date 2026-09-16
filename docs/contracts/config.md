@@ -110,6 +110,20 @@ Rules the operator declared for ad-coder. A violation is always blocking.
   switched at launch violates this rule. The only exceptions are dated entries
   in this file that name the safety or cost reason.
 
+- 2026-09-16: Workflow modules resolve enabled: a plain session carries the
+  built-in `pipeline` module and its tools without any flag. `--workflows` is
+  the set-valued launch parameter, declared once for every pipeline-capable
+  command: a comma list selects exactly those modules, a `^name` token excludes
+  from the built-in default, and `--workflows=false` switches the capability
+  off explicitly. `ad-coder config show` reports the resolved names and where
+  the selection came from. The persistent-setting layer is open, on purpose:
+  ad-coder has no operator-owned settings store yet; its home and schema are
+  being decided for skills first (issue #116, item 3) and every other
+  capability follows the same store. Until a store exists, only the launch
+  parameter can turn workflow modules off. This entry records that gap so it
+  cannot count as a completed exception; the audit issue (#216) holds the
+  resulting capability table.
+
 ## Sources
 
 The 2026-09-11 rules implement “good out of the box, everything overridable.”

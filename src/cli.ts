@@ -1597,6 +1597,49 @@ function defaultBackgroundOwnerId(targetDir: string): string {
   return `local.${process.getuid?.() ?? "user"}.${digest}`;
 }
 
+/** Every workflow module a plain ad-coder ships; the pool a selection resolves against. */
+const BUILT_IN_WORKFLOW_NAMES: readonly string[] = [BUILT_IN_PIPELINE_WORKFLOW_NAME];
+
+/**
+ * `--workflows` is the launch parameter for the set-valued workflow capability.
+ * Unset keeps the built-in default (every shipped module ON); a comma list is
+ * an exact selection; a `^name` token excludes from the default; `false` turns
+ * the capability off explicitly. An unknown or malformed name fails HERE, with
+ * the available list, instead of falling through to a resolver error.
+ */
+function resolveWorkflowsFlag(flag: string | undefined): {
+  names: readonly string[];
+  source: "cli" | "built-in-default";
+} {
+  if (flag === undefined) return { names: BUILT_IN_WORKFLOW_NAMES, source: "built-in-default" };
+  if (flag === "false" || flag === "off") return { names: [], source: "cli" };
+  const excludedShape = BUILT_IN_WORKFLOW_NAMES.map((name) => `^${name}`).join(",");
+  const tokens = flag
+    .split(",")
+    .map((token) => token.trim())
+    .filter(Boolean);
+  for (const name of tokens) {
+    const bare = name.startsWith("^") ? name.slice(1) : name;
+    if (!BUILT_IN_WORKFLOW_NAMES.includes(bare))
+      fail(
+        `--workflows expects comma-separated ${BUILT_IN_WORKFLOW_NAMES.join(",")}, false, or ` +
+          `${excludedShape} to exclude`,
+      );
+  }
+  const selected = tokens.filter((token) => !token.startsWith("^"));
+  const excluded = tokens.filter((token) => token.startsWith("^")).map((token) => token.slice(1));
+  return {
+    names: [
+      ...new Set(
+        selected.length > 0
+          ? selected
+          : BUILT_IN_WORKFLOW_NAMES.filter((name) => !excluded.includes(name)),
+      ),
+    ],
+    source: "cli",
+  };
+}
+
 /** The CLI owns process creation; orchestration only receives this provider. */
 function createBackgroundHostLauncher(
   targetDir: string,
@@ -1962,8 +2005,15 @@ function buildConfigOptions(
           .split(",")
           .map((name) => name.trim())
           .filter(Boolean);
+  const workflows = resolveWorkflowsFlag(flags["--workflows"]);
   return {
     targetDir,
+    // Set-valued capability with the one shared resolution: unset = built-in
+    // default (every shipped module), `false` = off, a comma list selects,
+    // `^name` excludes from the default. Source travels so enabled-by-default
+    // is never silent (docs/contracts/config.md, 2026-09-16).
+    selectedWorkflows: workflows.names,
+    workflowsSource: workflows.source,
     // A machine front parses stderr as JSON: the resolver's operator-facing
     // banner must never mix into it (docs/contracts/cli.md).
     warn: (message: string) => {
@@ -2259,13 +2309,6 @@ async function consoleCommand(
     flags["--escape-sequence-timeout-ms"],
   );
   const sessionLimits = parseSessionLimits(flags);
-  const enabledWorkflows =
-    flags["--workflows"] === undefined
-      ? []
-      : flags["--workflows"]
-          .split(",")
-          .map((name) => name.trim())
-          .filter(Boolean);
   // No `--skills` means the CATALOGUE: each role is told which skills exist and
   // loads what the task needs. Passing `--skills` pins an exact set and pastes
   // it, for when the operator knows better than the model will.
@@ -2301,7 +2344,7 @@ async function consoleCommand(
     ...configOptions,
     sessionLimits,
     workflowModules: [BUILT_IN_PIPELINE_WORKFLOW],
-    enabledWorkflows,
+    enabledWorkflows: configOptions.selectedWorkflows ?? [],
     selectedSkills,
     backgroundOwnerId,
     backgroundHostLauncher: createBackgroundHostLauncher(
@@ -2382,6 +2425,16 @@ const PIPELINE_OPTIONS: CommandDefinition["options"] = [
     value: "<names>",
     description:
       "Select comma-separated built-in or project-local skills; omit to ship the catalogue every role loads from.",
+  },
+  {
+    name: "--workflows",
+    value: "<names|false|^name>",
+    description:
+      // Set-valued switch, declared ONCE here for every pipeline front. Unset
+      // keeps the built-in default (each shipped module ON); `false` turns the
+      // capability off; a comma list selects exactly those; `^name` excludes.
+      `Select comma-separated workflow modules (${BUILT_IN_WORKFLOW_NAMES.join(",")}); ` +
+      "^name excludes from the built-in default; false disables them entirely; unset keeps all shipped modules enabled.",
   },
   {
     name: "--stage-final-response-reserve-input-tokens",
@@ -3080,11 +3133,6 @@ const COMMANDS: readonly CommandDefinition[] = [
           : option,
       ),
       { name: "--json", description: "Write one JSON record per completed turn." },
-      {
-        name: "--workflows",
-        value: "<names>",
-        description: `Enable comma-separated workflow modules; available: ${BUILT_IN_PIPELINE_WORKFLOW_NAME}.`,
-      },
       {
         name: "--max-input-bytes",
         value: "<n>",

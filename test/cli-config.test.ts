@@ -1225,3 +1225,33 @@ test("a profile missing a non-orchestrator cell still fails instead of falling b
     }),
   ).toThrow(/reviewer:medium/);
 });
+
+test("config show reports the resolved workflow capability and its source", () => {
+  // Built-in default and launch parameter agree on the resolved shape; only the
+  // source differs, which is what "enabled-by-default is never silent" means.
+  const base = {
+    task: "x",
+    targetDir: "/tmp/target",
+    registryConfig: mixedRegistry(),
+    profile: buildDefaultProfile({ strong: "large", mid: "small", cheap: "small" }),
+    summarizerModel: "large",
+    env: fakeEnv({ LOCAL_KEY: "k" }),
+    warn: silent,
+  };
+  const unset = resolvePipelineConfig(base);
+  expect(unset.effectiveConfig?.["workflows"]).toEqual({
+    value: "built-in-default",
+    source: "built-in-default",
+  });
+  const off = resolvePipelineConfig({
+    ...base,
+    selectedWorkflows: [],
+    workflowsSource: "cli",
+  });
+  expect(off.effectiveConfig?.["workflows"]).toEqual({ value: "none", source: "cli" });
+  const selected = resolvePipelineConfig({ ...base, selectedWorkflows: ["pipeline"] });
+  expect(selected.effectiveConfig?.["workflows"]).toEqual({
+    value: "pipeline",
+    source: "caller",
+  });
+});

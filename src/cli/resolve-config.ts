@@ -261,6 +261,10 @@ export interface ResolvePipelineConfigOptions {
   researchPurpose?: ResearchPurpose;
   /** Trusted simple skill selection for every role prompt; absent means the catalogue. */
   selectedSkills?: readonly string[] | undefined;
+  /** Resolved enabled workflow-module names; absent means the built-in default, empty means off. */
+  selectedWorkflows?: readonly string[] | undefined;
+  /** Where that selection came from, so enabled-by-default is never silent. */
+  workflowsSource?: "cli" | "built-in-default" | undefined;
   /** Trusted replacement source for the versioned model-inventory Researcher brief. */
   researchBrief?: RoleBriefSource;
 }
@@ -983,6 +987,24 @@ function resolveConfig(
     },
     effectiveConfig: {
       ...contextWindowProjection,
+      // Set-valued capability visibility (docs/contracts/config.md): the
+      // resolved names and where the selection came from. `none` names the
+      // explicit off, never a silent absence.
+      workflows: {
+        // Absent selection means the built-in default (every shipped module
+        // ON), but the resolver does not own the list of shipped names, so it
+        // names the default instead of inventing an enumeration. A provided
+        // but empty set is the explicit off and says 'none'.
+        value:
+          options.selectedWorkflows === undefined
+            ? "built-in-default"
+            : options.selectedWorkflows.join(",") || "none",
+        // A caller that sets the resolved set without naming a source is the
+        // source: a default shape that never came from a default would lie.
+        source:
+          options.workflowsSource ??
+          (options.selectedWorkflows === undefined ? "built-in-default" : "caller"),
+      },
       inventoryProfile: {
         value: inventory?.name ?? "not-configured",
         source: inventory?.source ?? "built-in-default",

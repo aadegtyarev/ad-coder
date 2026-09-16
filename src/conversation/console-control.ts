@@ -270,7 +270,7 @@ export const CONSOLE_COMMANDS: readonly ConsoleCommandDefinition[] = [
 ];
 
 const BACKGROUND_RUNS_ACTION =
-  "restart the console with --workflows pipeline to enable background runs";
+  "start the console with --workflows pipeline (its default) instead of --workflows=false";
 const COST_ANOMALY_ACTION =
   "restart the console in a project directory so its cost-anomaly state can be read";
 
