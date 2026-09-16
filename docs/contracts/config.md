@@ -123,6 +123,16 @@ Rules the operator declared for ad-coder. A violation is always blocking.
   parameter can turn workflow modules off. This entry records that gap so it
   cannot count as a completed exception; the audit issue (#216) holds the
   resulting capability table.
+- 2026-09-17: An explicit capability switch crosses every process boundary the
+  product creates verbatim, including the boundary into a detached background
+  worker (issue #245). The worker command repeats the launch parameter words
+  the operator typed -- the skills pin, the explicit off (`--no-skills`), and
+  the set-valued `--workflows` and `--plugins` values -- so an off or a
+  selection reaches the process the operator cannot see, instead of resolving
+  back to enabled-by-default from the worker's own profile read. The
+  persistent-setting layer does not repeat: the worker re-reads it on its own,
+  as it already did. The pin and the off inherit like each other -- asymmetry
+  here is what #245 was (a pin inherited, the off stopped at the console).
 
 ## Sources
 
@@ -141,3 +151,7 @@ parameter can each turn a capability off, and the resolved set is visible rather
 than silent. It is the contract the skills default and the workflow-modules
 default answer to; anything that must stay off by default owes a dated exception
 in the rule list above.
+The 2026-09-17 boundary rule extends the capability table across the one
+process boundary the CLI itself owns: the detached background worker repeats
+the operator's explicit capability words verbatim (issue #245) instead of
+re-resolving them to enabled defaults.

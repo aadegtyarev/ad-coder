@@ -6,6 +6,33 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.35.2] - 2026-09-17
+
+### Fixed
+- The explicit capability off now crosses the background-worker boundary
+  (issue #245). `console` built a background launcher with three of four
+  arguments, so `skillsDisabled` defaulted to `false` and `--no-skills` stopped
+  at the console: the detached worker re-resolved skills from its own profile
+  read and ran with the full catalogue while the operator's foreground `config`
+  `show` reported the capability off. The launcher seam is now one shared
+  function (`backgroundHostLauncherFor`) both the console session and the
+  `background start` front build through, passing the resolved pin, the
+  resolved off (flag or profile setting), and the operator's explicit
+  `--workflows` / `--plugins` words verbatim into the worker command;
+  tests no longer rely on a defaulted parameter to hold the boundary.
+- The same boundary audit fixed two more capability switches that never
+  reached a detached worker: `--workflows=false|<list>|^name` and `--plugins
+  none|<list>` were also dropped, so a workflow module or plugin group an
+  operator switched off resolved back to shipped-enabled inside the worker
+  (docs/contracts/config.md, 2026-09-17).
+
+### Added
+- The #245 boundary test every gate lacked: a test-only seam observes the
+  actual detached worker command and asserts the pin, the explicit off,
+  `--workflows`, and `--plugins` reach it verbatim, and that an inherited
+  pin and an inherited off stay mutually exclusive. It fails without a
+  launch parameter arriving at the boundary (the #245 shape), which a defaulted
+  parameter and all seven gates passed silently.
 ## [0.35.1] - 2026-09-17
 
 ### Fixed
