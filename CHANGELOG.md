@@ -6,6 +6,22 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.30.1] - 2026-09-16
+
+### Added
+- `docs/benchmark-role-fitness.md` -- an external review of what public
+  benchmarks can and cannot say about routing a role, restated as a research
+  note. It is the evidence base for seeding a routing matrix, and its central
+  findings are why the local bench was retired rather than a casualty of it: the
+  ABC audit (25 authors) found task-validity defects in 7 of 10 major
+  benchmarks, and the IRT literature names uniform failure across models as the
+  signature of a wrong answer key rather than a hard task -- which this corpus
+  hit seven times. It also supplies what this project had been deciding by eye:
+  a published saturation index with a 0.7 threshold, `pass^k` as the citable
+  name for judging on the worst run, and exact McNemar for comparing two models
+  at small n. The repository-audit section is dropped, since its subjects were
+  deleted with the bench.
+
 ## [0.30.0] - 2026-09-16
 
 ### Removed
