@@ -660,6 +660,7 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
     events: harness.events,
     targetDir: absTargetDir,
     role: params.role.name,
+    model: params.role.modelId,
     runId,
     step: params.step ?? "run",
     ...(stageLimitController !== undefined && {

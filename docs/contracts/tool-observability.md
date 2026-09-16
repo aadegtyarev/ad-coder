@@ -15,10 +15,18 @@ arguments or drowning in implementation noise?
 - Machine mode exposes a stable event schema and keeps final-result stdout
   unpolluted. Consumers can correlate events with the role, run, turn, tool call,
   and parent operation without parsing prose.
-- Event projections are allowlisted and bounded. They may include safe relative
-  paths, operation names, counts, status, duration, and sanitized search labels;
-  they never include credentials, environment values, prompts, file contents,
-  arbitrary command arguments/output, request bodies, or unrestricted URLs.
+- 2026-09-16: Event projections are bounded, and they name the SUBJECT a tool is
+  acting on: the path read or written, the command run, the URL fetched, the
+  query searched, and the line counts an edit moves. The operator needs these to
+  see a role going the wrong way before it gets there. A path is not a secret to
+  the person whose repository it is, and anyone able to start ad-coder can
+  already read every file on the machine -- the former rule replaced such values
+  with "unknown", which protected nothing and hid the only thing worth watching.
+- Projections never include the CONTENT a tool returns or carries: file bodies,
+  command output, response bodies, prompts. That is where a secret the operator
+  never asked for actually surfaces. Credential-shaped VALUES inside a projected
+  command or URL are replaced (`echo API_KEY=***`) while the shape stays
+  readable, because terminal scrollback gets screenshotted and pasted.
 - Tool lifecycle reporting is truthful: requested, started, completed, failed,
   cancelled, and timed out are distinct. Missing instrumentation never fabricates
   completion, and dropped events are counted visibly.

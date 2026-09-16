@@ -6,6 +6,33 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.32.0] - 2026-09-16
+
+### Changed
+- Console activity lines say who is working, on what, and when. They read
+  `17:03:41  coder·glm53flash  Edit  src/cli/console.ts +12 -3  1.2s` instead of
+  `Activity: Edit — completed 1234ms`: time first so the left edge is scannable,
+  then role and model together, then the subject -- the path read or written,
+  the command run, the URL fetched, the query searched, and the line counts an
+  edit moves. A read shows the window it asked for -- `plan.ts:120+40` is a
+  slice, a bare path is the whole file -- because reading in slices and
+  swallowing a large file cost differently and the difference was invisible. A
+  successful line omits "completed", because saying it every time pushes the
+  interesting words off the scan path.
+- Projections now carry that subject. They had been declared in the event type
+  and never populated, so every line was anonymous; the rule that kept them out
+  ("arbitrary labels, commands, queries and URLs are never projected") protected
+  nothing -- these events never leave the process, and anyone able to start
+  ad-coder already reads every file on the machine. `docs/contracts/tool-observability.md`
+  now draws the line where it belongs: the SUBJECT of a tool call is shown, the
+  CONTENT a tool returns is not, and credential-shaped values inside a command
+  are replaced (`echo API_KEY=***`) because terminal scrollback gets
+  screenshotted.
+- The orchestration tools are named. `submit_plan`, `run_role`, `decompose_task`
+  and the rest rendered as a bare `Tool`, which is how four consecutive
+  `submit_follow_up` rejections hid in plain sight earlier the same day until
+  someone opened the ledger.
+
 ## [0.31.1] - 2026-09-16
 
 ### Fixed
