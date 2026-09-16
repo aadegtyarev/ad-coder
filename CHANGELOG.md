@@ -6,6 +6,22 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-09-16
+
+### Added
+- `orchestrator-decompose-v1`: the first task measuring task decomposition, the
+  operation `decompose_task` exists for and nothing measured. A six-requirement
+  ticket where one requirement is already satisfied by the code, one reads as two
+  and is one, two read as one and are two, and one pair carries the only real
+  ordering dependency. Checks ask for those properties rather than for a single
+  correct answer -- a decomposition has many right shapes and a few wrong ones.
+- `OrchestratorReport.finalText` carries the last turn's own words, for a task
+  whose answer is the text rather than the state a tool left behind.
+
+### Fixed
+- A repeat summary dropped each run's orchestrator report, so a manual-workflow
+  task's only record of what happened was lost exactly when runs were repeated.
+
 ## [0.18.0] - 2026-09-16
 
 ### Added

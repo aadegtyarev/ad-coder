@@ -1,0 +1,5 @@
+{
+  "taskId": "orchestrator-decompose-v1",
+  "plannerDelegated": true,
+  "finalText": "{\"issues\": [{\"id\": \"sms-channel\", \"title\": \"Send over SMS\", \"requirements\": [\"R1\"], \"dependsOn\": []}, {\"id\": \"sms-delivery-log\", \"title\": \"Log the SMS delivery id\", \"requirements\": [\"R2\"], \"dependsOn\": [\"sms-channel\"]}, {\"id\": \"rate-limit-count\", \"title\": \"Count sends per minute\", \"requirements\": [\"R4\"], \"dependsOn\": []}, {\"id\": \"sms-robustness\", \"title\": \"SMS webhook and retries\", \"requirements\": [\"R5\", \"R6\"], \"dependsOn\": []}, {\"id\": \"reject-empty\", \"title\": \"Reject empty recipients\", \"requirements\": [\"R3\"], \"dependsOn\": []}], \"alreadySatisfied\": []}"
+}

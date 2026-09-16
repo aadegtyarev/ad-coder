@@ -35,6 +35,16 @@ export interface OrchestratorReport {
   tools: string[];
   /** Ledger role column, deduplicated. */
   roles: string[];
+  /**
+   * The last turn's assistant text.
+   *
+   * For a task whose answer IS the text -- a decomposition, a classification --
+   * rather than the state a tool left behind. Delegation and ordering are
+   * observable from the ledger and the tool list; a structure the orchestrator
+   * writes out is not, so without this a report could say the Planner was
+   * consulted and never what came of it.
+   */
+  finalText: string;
 }
 
 const TIERS = ["trivial", "medium", "complex"] as const;
@@ -95,6 +105,12 @@ export function buildOrchestratorReport(input: {
     approved: input.workflowState?.approved === true,
     tools,
     roles: [...new Set(input.ledger.map((row) => row.role))],
+    // The last turn's own words, for a task whose answer IS the text rather than
+    // the state a tool left behind. Delegation and ordering are observable from
+    // the ledger and the tool list; a decomposition is not -- it is a structure
+    // the orchestrator writes out, and without this the report could say the
+    // Planner was consulted but never what came of it.
+    finalText: input.turns.at(-1)?.assistantText ?? "",
   };
 }
 

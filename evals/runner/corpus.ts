@@ -311,7 +311,7 @@ function runTask(
     /** Suppress the per-run print, for a repeat loop that reports a summary. */
     quiet?: boolean;
   },
-): CalibrationMeasurement {
+): CalibrationMeasurement & { report?: OrchestratorReport } {
   if (!task.scorer) throw new Error(`task has no scorer: ${task.id}`);
   const target = freshTarget(task.id);
   if (task.fixture) materialize(task.fixture, target);
@@ -363,19 +363,26 @@ function runTask(
           plannerComplexity: execution.report.plannerComplexity as CalibrationTask["complexity"],
         }),
     });
+    // The report travels WITH the measurement rather than only being printed,
+    // because a repeat prints a summary instead -- and a summary whose per-run
+    // entries have lost the report has thrown away the only record of what a
+    // manual-workflow run actually did.
+    const scored = {
+      ...measurement,
+      ...(execution.report === undefined ? {} : { report: execution.report }),
+    };
     if (options.quiet !== true)
       console.log(
         JSON.stringify(
           {
-            ...measurement,
-            ...(execution.report === undefined ? {} : { report: execution.report }),
+            ...scored,
             ...(options.keep ? { target, ledger: execution.ledgerFile } : {}),
           },
           null,
           2,
         ),
       );
-    return measurement;
+    return scored;
   } finally {
     if (!options.keep) fs.rmSync(target, { recursive: true, force: true });
   }
@@ -550,7 +557,7 @@ else if (action === "smoke") {
     // So a repeat reports the spread rather than an average that hides it: the
     // worst run is what an operator actually lives with, and a task where every
     // model scores identically is a task that has stopped discriminating.
-    const runs: CalibrationMeasurement[] = [];
+    const runs: (CalibrationMeasurement & { report?: OrchestratorReport })[] = [];
     // A run that never reached a scored answer -- a stage limit, a provider that
     // refused -- is a fact about the cell, not a reason to lose the runs that
     // did. The first repeat run to throw took four completed runs down with it,
