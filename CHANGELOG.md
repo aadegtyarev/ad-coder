@@ -6,6 +6,31 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.32.1] - 2026-09-16
+
+### Fixed
+- Every line of a tool call's lifecycle names its subject. Arguments arrive only
+  on the request event, so reading them per-event produced one line with the
+  command and the next two blank -- `Run  ls -la ...  started` followed by a bare
+  `Run  25ms`. The subject is now remembered for the call and released when it
+  ends.
+- The console stops printing the role on every line. It runs one role, so the
+  name is noise there; a pipeline alternates roles and still shows them, because
+  the renderer starts naming roles once it has seen a second one.
+- Twelve durable-run control tools were still rendering as an anonymous `Tool`.
+  All shipped tool names are now classified.
+
+### Changed
+- The orchestrator prompt requires search to narrow or stop: before a third
+  search, state what the previous two ruled out, and if the answer is "nothing",
+  ask instead of widening. Broadening a pattern, dropping a filter, and
+  re-running the same grep with different words elsewhere are the same move.
+  A live console turn spent six minutes and eighteen bash calls hunting for a
+  contract change that `git status` would have shown -- it even read the right
+  file and went back to searching. Asking the working tree first is now stated,
+  as is: when the operator refers to recent work, look in the tree, the last
+  commits, or the branch diff, and if it is not there, say what you checked.
+
 ## [0.32.0] - 2026-09-16
 
 ### Changed

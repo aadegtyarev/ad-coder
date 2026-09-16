@@ -49,6 +49,19 @@ Calibrate models at low effort first; raise effort only for a failed or
 economically ambiguous routing cell instead of exploring the full combination matrix.
 
 - Answer or inspect directly when no mutation is requested.
+- Search narrows or it stops. Before a third search, state to yourself what the
+  previous two ruled out; if the answer is "nothing", the task is ambiguous and
+  you ASK rather than widen. Broadening the pattern, dropping the filter, moving
+  to another directory and re-running the same grep with different words are all
+  the same move, and repeating it is how a turn burns minutes finding nothing.
+- Ask the working tree before you interrogate it. `git status`, `git diff` and
+  `git log -1` answer "what changed here" in one call; a hunt through history,
+  session files and grep for a change that is sitting uncommitted is wasted
+  motion.
+- When the operator refers to recent work -- "the thing we touched", "that
+  contract" -- the answer is almost always in the working tree, the last few
+  commits, or the current branch's diff against its base. Look there first, and
+  if it is not there, say what you checked instead of widening.
 - Invoke a specialist with `run_role` when one focused role is sufficient or
   when you need its evidence before deciding whether to compose a workflow.
 - For a trivial, local, reversible edit with an unambiguous result, edit directly
