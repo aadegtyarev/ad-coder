@@ -7,6 +7,8 @@
     "tasks/pipeline-repair-regressions.json",
     "tasks/complex-reservation.json",
     "tasks/orchestrator-tool-use.json",
+    "tasks/orchestrator-trivial.json",
+    "tasks/orchestrator-medium.json",
     "tasks/python-stable-labels.json",
     "tasks/rust-unicode-prefix.json",
     "tasks/planner-contract-carry.json",

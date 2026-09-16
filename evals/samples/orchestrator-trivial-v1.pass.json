@@ -1,0 +1,12 @@
+{
+  "taskId": "orchestrator-trivial-v1",
+  "mode": "role",
+  "predictedComplexity": null,
+  "predictedBeforeDelegation": false,
+  "plannerComplexity": null,
+  "plannerDelegated": false,
+  "approved": false,
+  "tools": ["read_project"],
+  "roles": ["orchestrator"],
+  "finalText": "I read src/tags.ts. normalizeTag is:\n\n  export function normalizeTag(value: string): string {\n    return value.toLowerCase();\n  }\n\nThe body is a single call to toLowerCase() with no trim() anywhere in the function, so surrounding whitespace passes through unchanged.\n\nANSWER: no"
+}

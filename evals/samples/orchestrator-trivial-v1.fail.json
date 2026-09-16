@@ -1,0 +1,12 @@
+{
+  "taskId": "orchestrator-trivial-v1",
+  "mode": "role",
+  "predictedComplexity": null,
+  "predictedBeforeDelegation": false,
+  "plannerComplexity": null,
+  "plannerDelegated": false,
+  "approved": false,
+  "tools": ["read_project"],
+  "roles": ["orchestrator"],
+  "finalText": "Tag normalizers conventionally trim surrounding whitespace before lowercasing, and this one follows that pattern.\n\nANSWER: yes"
+}

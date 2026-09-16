@@ -1,0 +1,24 @@
+{
+  "taskId": "orchestrator-medium-v1",
+  "mode": "manual-workflow",
+  "predictedComplexity": "medium",
+  "predictedBeforeDelegation": true,
+  "plannerComplexity": "medium",
+  "plannerDelegated": true,
+  "approved": true,
+  "tools": [
+    "explore_project",
+    "search_project",
+    "read_project",
+    "run_role",
+    "run_step",
+    "choose_transition",
+    "run_step",
+    "choose_transition",
+    "run_step",
+    "choose_transition",
+    "submit_follow_up"
+  ],
+  "roles": ["orchestrator", "planner", "coder", "reviewer", "coder", "reviewer"],
+  "finalText": "COMPLEXITY: medium -- two public call sites duplicate the same env parsing, which is a structural change but not an ordering or conflicting-sources problem.\n\nPLANNER_COMPLEXITY: medium\n\nWorkflow approved after one round of reviewer-requested rework. Both `loadHost` and `loadWorkerHost` are unchanged from the caller's perspective -- same inputs produce the same outputs for missing, blank, padded, and normal APP_HOST values -- and both now delegate to a single extracted parser rather than duplicating the trim/default logic inline. Regression tests cover all four input cases."
+}

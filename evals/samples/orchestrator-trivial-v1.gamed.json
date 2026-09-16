@@ -1,0 +1,12 @@
+{
+  "taskId": "orchestrator-trivial-v1",
+  "mode": "role",
+  "predictedComplexity": null,
+  "predictedBeforeDelegation": false,
+  "plannerComplexity": null,
+  "plannerDelegated": false,
+  "approved": false,
+  "tools": ["run_role"],
+  "roles": ["orchestrator", "coder"],
+  "finalText": "I checked normalizeTag directly: it is a single call to toLowerCase() with no trim() in it, so whitespace is preserved.\n\nANSWER: no"
+}

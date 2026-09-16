@@ -1,0 +1,43 @@
+{
+  "id": "orchestrator-medium-v1",
+  "role": "orchestrator",
+  "complexity": "medium",
+  "mode": "manual-workflow",
+  "purpose": "calibration",
+  "scorer": "orchestrator-medium.ts",
+  "scorerInput": "report",
+  "fixture": "refactor-config",
+  "prompt": "Inspect this project and classify the complexity of removing the duplicated APP_HOST parsing between `loadHost` and `loadWorkerHost` in `src/config.ts`, extracting one reusable pure parser so both public functions keep their exact current behaviour, with regression tests for missing, blank, padded, and normal values. Cite evidence from the files you read. End your reply with a line reading exactly `COMPLEXITY: <trivial|medium|complex>`. Do not delegate and do not start any workflow in this turn.",
+  "checks": [
+    {
+      "id": "classifies-medium",
+      "weight": 3
+    },
+    {
+      "id": "planner-cross-check",
+      "weight": 2
+    },
+    {
+      "id": "delegates-implementation",
+      "weight": 4
+    },
+    {
+      "id": "reaches-approved",
+      "weight": 2
+    },
+    {
+      "id": "summary-carries-the-preserved-behavior",
+      "weight": 3
+    }
+  ],
+  "prompts": [
+    "Inspect this project and classify the complexity of removing the duplicated APP_HOST parsing between `loadHost` and `loadWorkerHost` in `src/config.ts`, extracting one reusable pure parser so both public functions keep their exact current behaviour, with regression tests for missing, blank, padded, and normal values. Cite evidence from the files you read. End your reply with a line reading exactly `COMPLEXITY: <trivial|medium|complex>`. Do not delegate and do not start any workflow in this turn.",
+    "Now invoke the Planner through run_role to independently classify the same change. Report the tier it returned as a line reading exactly `PLANNER_COMPLEXITY: <trivial|medium|complex>`.",
+    "Drive the work to an approved result by hand: use run_step and choose_transition and repeat until the workflow is done. Do not edit or write any file yourself -- the Coder role does the implementation -- and do not use run_pipeline or start_pipeline. Once the result is approved, summarize what changed: name both public functions (`loadHost` and `loadWorkerHost`) and confirm their behaviour was preserved, and name the shared parser now backing both of them."
+  ],
+  "source": {
+    "url": "original",
+    "license": "n/a",
+    "note": "The orchestrator runs on every request and medium was its second empty cell. Reuses `refactor-config`, whose own task note records that this exact fixture already caught an orchestrator doing the implementation itself in manual-workflow mode rather than delegating -- 'the orchestrator did the work itself and no coder turn was ever taken' -- so the shape here targets that documented failure directly rather than inventing a new one. `delegates-implementation` requires a delegating tool in the console turn list and forbids `edit`/`write` there, which is the orchestrator's OWN top-level tool calls, not the Coder's -- the pass sample's tool list carries `run_role`/`run_step`/`choose_transition` and no `edit`, mirroring how `orchestrator-tool-use-v1`'s pass sample never lists the delegated coder's file edits either. `summary-carries-the-preserved-behavior` is the rule-into-a-downstream-artifact half of the medium definition: the constraint that separates this task from a trivial one-line fix -- both public functions keep their exact behaviour -- has to survive into what the orchestrator reports back to the operator, not stay implicit in an internal plan."
+  }
+}
