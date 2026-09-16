@@ -61,6 +61,13 @@ cannot.
   something it cannot. "The stage ran out, shall I raise the limit?" is not such
   a moment: the only available answer is yes, and the system has more information
   than the operator does. It raises it and records the correction.
+- 2026-09-16: A milestone is informational, not an interruption. A front may
+  push milestones by default -- a run started or finished, a cost spike crossing
+  a threshold, a transfer settling -- but a milestone arrives, is visible, and
+  never blocks a turn or a run or demands a reply. Progress itself (steps, tool
+  calls, stage transitions) stays pull-only through status/summary and is never
+  pushed. Only a decision push is an interruption, and it always carries the
+  diagnosis and the choices, never an open question.
 - 2026-09-16: When it does stop, it reports a diagnosis rather than a question.
   "Planner on this model is not progressing: nine turns, the same three files, no
   new tool targets" is actionable -- change the model, restate the task, abandon
