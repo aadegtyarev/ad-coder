@@ -494,6 +494,7 @@ bun run check
 - [OpenCode Go economics](docs/opencode-go-economics.md) — what a subscription buys per model
 - [Roadmap](docs/ROADMAP.md) — decisions and future work
 - [Backlog](docs/BACKLOG.md) — index of the GitHub issues holding unresolved work
+- [Benchmark scoring research](docs/benchmark-scoring-research.md) — how public benchmarks score, and what holds up
 - [Contracts](docs/contracts/) — enforceable rules
 - [Changelog](CHANGELOG.md) — shipped history
 

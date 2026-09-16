@@ -1,0 +1,55 @@
+{
+  "id": "coder-retention-v1",
+  "role": "coder",
+  "complexity": "medium",
+  "mode": "role",
+  "purpose": "calibration",
+  "fixture": "coder-retention",
+  "scorer": "coder-retention.ts",
+  "prompt": "Four surfaces in `src/` decide what has expired, and they do not agree with each other. Make them all answer from one shared rule. Read `docs/contracts/retention.md` and the existing tests before deciding what that rule is -- where the code disagrees with itself, the answer is in what this project has already committed to, not in what most of the code happens to do. Keep `collectExpired`, `previewExpired` and `countExpired` exactly as they are called today; `expiringSoon` may change shape if the contract requires it. Add tests for the cases you had to reconcile. Confine the change to `src/` and a test file: do not edit, reformat, or add anything else in the repository.",
+  "checks": [
+    {
+      "id": "honours-pinned",
+      "weight": 6
+    },
+    {
+      "id": "reconciles-read-refresh",
+      "weight": 7
+    },
+    {
+      "id": "still-expires-the-expired",
+      "weight": 3
+    },
+    {
+      "id": "surfaces-agree",
+      "weight": 5
+    },
+    {
+      "id": "alert-takes-the-clock",
+      "weight": 4
+    },
+    {
+      "id": "unifies-on-one-rule",
+      "weight": 2
+    },
+    {
+      "id": "preserves-surfaces",
+      "weight": 2
+    },
+    {
+      "id": "has-tests",
+      "weight": 1
+    },
+    {
+      "id": "stays-in-scope",
+      "weight": 2
+    }
+  ],
+  "scorerInput": "target",
+  "writes": ["src/**", "test/**", "tests/**", "package.json"],
+  "source": {
+    "url": "original",
+    "license": "n/a",
+    "note": "Four surfaces across four modules answering the same question four ways, with the correct answer split between a contract file and a checked-in test that the contract does not mention. Shape invented here; the compositional framing follows BigCodeBench's finding that models cap out on composition rather than syntax, and the priority framing -- a committed rule outranks what the code does today -- is this project's own. Written for #159. A first version put all three surfaces in one file with both rules stated in the contract; glm-5.3-flash scored 1.00 twice, so it was rebuilt: the read-refresh rule now lives only in the dashboard's test, the callers cross module boundaries, and a fourth surface reads the wall clock in violation of a contract line nobody will think to check. The trap is that the MAJORITY behaviour is wrong, so a model that carefully preserves what the code does fails. A SECOND defect was then found the same way: the fixture's hidden rule carried a comment calling itself drift from the contract, so four models across three vendors -- gpt-5.6-sol at two effort levels, Sonnet and Opus -- independently concluded the rule should be deleted, and each argued it from that comment. They were reading the fixture correctly; the fixture was arguing against its own scorer. The comment now states the rule was agreed with operators and that the disagreement is the defect, and the contract says where the surfaces disagree the already-agreed behaviour wins. With that fixed, the task discriminates across three vendors: gpt-5.6-sol 1.00/1.00 and gpt-5.6-terra 1.00/1.00 accepted, glm-5.3-flash 0.88, Sonnet 0.87, minimax-m3 0.25 then 0.94 -- the same model, so that cell is unstable rather than good, which is the distinction a routing decision needs. gpt-5.6-sol had scored 0.78 twice on the previous fixture at the same effort, one sentence of prose apart."
+  }
+}
