@@ -5,6 +5,11 @@ model inventory's `(role, complexity)` routing. Quality gates are invariant;
 the objective is the lowest total provider cost and wall time through accepted
 implementation, including repair and re-review.
 
+The procedures behind everything below — how a task is designed, how it is
+proved before it is trusted, and how a sweep becomes a routing decision — are in
+[benchmark-method.md](benchmark-method.md). This file records what was measured
+and what it means; that one records how.
+
 ## Evaluation corpus
 
 Keep versioned realistic fixtures in `evals/fixtures/`, tasks and expected

@@ -117,6 +117,10 @@ facts.
 Full per-model numbers are in `model-calibration.md`; the raw measurements, with
 provider and harness outcome, are in `calibration-evidence.jsonl`.
 
+Routing from these numbers is a procedure in its own right — bands against a
+reference, the allowance rather than the list price, cost and latency reported
+together. See [benchmark-method.md](benchmark-method.md) §4.
+
 ## What ad-coder cannot yet represent
 
 The pi-ai catalog carries a single list price per model, so none of the above is

@@ -6,6 +6,16 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-09-16
+
+### Added
+- `docs/benchmark-method.md` collects the three procedures this project had been
+  carrying in its head, its scorer comments and its chat log: how to design a
+  bench task, how to prove it before trusting it, and how to turn a sweep into a
+  routing decision. Each rule names the wrong answer that produced it, because a
+  rule whose cost is invisible gets dropped by the first person in a hurry. The
+  routing half was written down nowhere at all.
+
 ## [0.26.2] - 2026-09-16
 
 ### Fixed
