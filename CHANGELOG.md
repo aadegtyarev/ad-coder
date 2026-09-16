@@ -4,6 +4,27 @@ All notable changes to ad-coder are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project aims at
 [Semantic Versioning](https://semver.org/).
 
+## [0.36.0] - 2026-09-17
+
+### Added
+- **Ledger reporting** (issue #234): a CLI command an operator runs and a
+  library function a role calls that read `.ad-coder/ledger/<runId>.jsonl`
+  files and report how real work behaved -- per role, per provider/model, and
+  in totals. `bun run src/cli.ts ledger report [files...] [--json]` (with no
+  files it reads every `*.jsonl` in the project's ledger directory) is backed by
+  `readLedgerFiles` / `aggregateLedgerRecords` in `src/ledger/analytics.ts`,
+  exported from `src/index.ts`. Numbers read straight off the ledger: model
+  calls, fresh input, cached input (read + write), output, reasoning,
+  provider-reported cost, tool mix, bash calls per edit, cache fraction,
+  `run_role` requests as the delegation signal, and time to first edit. Numbers
+  the ledger does not store -- failed-edit rate and time to green tests, both
+  outcome signals the request-only `toolCalls` and no test-outcome event cannot
+  supply -- are deliberately absent rather than invented, and the new
+  `docs/contracts/ledger-report.md` says so.
+- The reader tolerates a ledger opened mid-write by a live run: a malformed,
+  truncated, or blank line is a skipped line counted in per-file stats, never a
+  crash; a file that cannot be opened fails with its path named.
+
 ## [Unreleased]
 
 ## [0.35.2] - 2026-09-17

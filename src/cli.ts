@@ -33,7 +33,14 @@ import {
 } from "./economics/forecast";
 import { readOrCreateDefaultInventory } from "./inventory/store";
 import { parseModelInventoryConfig } from "./inventory/validate";
-import { FileLedgerSink, Ledger, type LedgerSink, MemoryLedgerSink } from "./ledger/ledger";
+import { readLedgerFiles, renderLedgerReport } from "./ledger/analytics";
+import {
+  FileLedgerSink,
+  LEDGER_BASE_DIR,
+  Ledger,
+  type LedgerSink,
+  MemoryLedgerSink,
+} from "./ledger/ledger";
 import {
   DEFAULT_TOOL_ACTIVITY_CONFIG,
   resolveToolActivityConfig,
@@ -1122,6 +1129,47 @@ function costCommand(positionals: string[], flags: Record<string, string | undef
   // block stayed up.
   if (released === undefined) fail(`no block is recorded for ${scope}`);
   process.stdout.write(`${JSON.stringify({ released: { provider, model, block: released } })}\n`);
+}
+
+/**
+ * Read real work back out of the ledger the runs already wrote.
+ *
+ * A bad action or a file that cannot be opened raises with the path named, so
+ * an operator's typo is an input error rather than a silently empty report. A
+ * file that exists but was interrupted mid-write is NOT an error: it is parsed
+ * per line, and the skipped-line count is part of the report.
+ */
+export function ledgerCommand(positionals: string[], json: boolean): void {
+  const action = positionals[1];
+  if (action !== "report") fail("the ledger command takes report");
+  const fileArgs = positionals.slice(2);
+  const paths =
+    fileArgs.length > 0
+      ? fileArgs.map((fileArg) => path.resolve(fileArg))
+      : listDefaultLedgerFiles();
+  let report: ReturnType<typeof readLedgerFiles>;
+  try {
+    report = readLedgerFiles(paths);
+  } catch (error) {
+    // A path that cannot be opened is invalid input, not an internal failure.
+    fail(`cannot read ledger file: ${errorMessage(error)}`);
+  }
+  if (json) {
+    process.stdout.write(`${JSON.stringify(report)}\n`);
+    return;
+  }
+  process.stdout.write(renderLedgerReport(report));
+}
+
+function listDefaultLedgerFiles(): string[] {
+  const base = path.resolve(LEDGER_BASE_DIR);
+  if (!fs.existsSync(base)) fail(`no ledger files exist under ${LEDGER_BASE_DIR}/`);
+  const names = fs
+    .readdirSync(base, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".jsonl"))
+    .map((entry) => path.join(base, entry.name));
+  if (names.length === 0) fail(`no *.jsonl ledger files exist under ${LEDGER_BASE_DIR}/`);
+  return names;
 }
 
 async function profileCommand(positionals: string[], flags: Record<string, string | undefined>) {
@@ -3040,6 +3088,22 @@ const COMMANDS: readonly CommandDefinition[] = [
     },
   },
   {
+    name: "ledger",
+    description: "Report how runs behaved -- calls, tokens, cost, tools -- from ledger files.",
+    positionals: [
+      { name: "<report>", description: "Report action." },
+      {
+        name: "[files...]",
+        description: "Ledger .jsonl paths; with none, every .ad-coder/ledger/*.jsonl is read.",
+      },
+    ],
+    options: [{ name: "--json", description: "Emit stable JSON." }],
+    run: ({ positionals, booleans }) => {
+      ledgerCommand(positionals, booleans["--json"] === true);
+      return Promise.resolve();
+    },
+  },
+  {
     name: "profile",
     description:
       "Show, record economics, estimate cost, export, snapshot, preview, or import the portable user profile.",
@@ -3321,7 +3385,8 @@ async function main(argv: string[]): Promise<void> {
     commandName === "background" ||
     commandName === "profile" ||
     // JSON only when asked for it.
-    ((commandName === "update" || commandName === "cost") && passedJsonFlag);
+    ((commandName === "update" || commandName === "cost" || commandName === "ledger") &&
+      passedJsonFlag);
   const command = COMMANDS.find(({ name }) => name === commandName);
   if (command === undefined)
     fail(commandName === undefined ? "missing command" : `unknown command: ${commandName}`);
