@@ -135,7 +135,8 @@ const checks = [
     // `["collect09"]` with no mention of collect07. Demanding the pair would
     // fail a correct answer for not restating a detail nobody asked it to
     // restate, which is the vocabulary-not-meaning defect this corpus keeps
-    // finding (see docs/benchmark-method.md).
+    // finding: several models failing one check identically usually means the
+    // check is wrong, not the models.
     id: "identifies-the-unsanctioned-drift",
     passed: flags(violationsText, 9),
   },

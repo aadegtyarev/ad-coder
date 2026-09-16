@@ -195,7 +195,7 @@ everything else.
 
 - **It does not replace calibration.** Prices and ceilings are facts; which
   model suits which role is measurement. See
-  [model calibration](model-calibration.md).
+  published benchmark evidence (see AGENTS.md, "Model routing").
 - **It does not admit every model it publishes.** Entries on request APIs
   ad-coder cannot construct (`bedrock-converse-stream`, `google-vertex`, the
   responses family, …) are omitted rather than registered and left to fail at
@@ -208,5 +208,4 @@ everything else.
 
 - [Configuration](../README.md#configuration) — declaring registries, headers,
   and inventories
-- [Model calibration](model-calibration.md) — measuring role fit
 - [Cost economics](cost-economics.md) — how prices become budget decisions

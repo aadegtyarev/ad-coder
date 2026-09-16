@@ -33,8 +33,7 @@ const COMPLEXITIES: readonly Complexity[] = ["trivial", "medium", "complex"];
  * It lived in the planner instruction alone, which reaches a model only from
  * the pipeline's plan stage -- so the other two paths decided tiers with no
  * definition at all, and the corpus was scoring them against a rule they were
- * never given. Same vocabulary as docs/benchmark-method.md, deliberately: one
- * definition beats three paraphrases that drift.
+ * never given. One definition beats three paraphrases that drift.
  */
 export const COMPLEXITY_RUBRIC =
   'Choose "trivial" when the change is confined to one function with no call sites and the fix is uniquely determined; "medium" when it crosses call sites, preserves two public behaviours at once, or carries a rule into another artifact; "complex" when it turns on an ordering or concurrency invariant, reconciles sources of truth that disagree, or fixes an error observable only far from its cause. Size is evidence, not the criterion: a one-line change to a race is complex.';

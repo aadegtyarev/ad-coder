@@ -6,6 +6,43 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-09-16
+
+### Removed
+- The local model-ranking bench and everything that told a future session to
+  rebuild it: `docs/benchmark-method.md`, `docs/benchmark-scoring-research.md`,
+  `docs/model-calibration.md`, `docs/calibration-evidence.jsonl`, the
+  `calibration:health` script, and the 113-line AGENTS.md program whose
+  completion condition included "representative benchmark corpus built".
+
+  A full round over nine models on 2026-09-16 showed why. Seven of twenty-two
+  tasks scored 1.00 for every model. All twenty comparable cells were decided by
+  a margin under 0.10, seventeen of them by exactly 0.00. And the same model on
+  the same task produced 0.07 and 0.82 in one afternoon -- the run-to-run spread
+  is an order of magnitude larger than any difference between models. The matrix
+  measured noise, at one run per cell, for a day and $1.49.
+
+  Public agentic benchmarks rest on thousands of tasks. Seeding the routing
+  matrix from those and correcting it with signals real project work already
+  emits -- rounds to acceptance, stage limits, rejected verdicts, rework, cost --
+  is both cheaper and better evidenced. The mechanism was already half-built:
+  `prompts/orchestrator.md` has told the orchestrator to treat its own routing
+  as a calibration sample since before this round.
+
+### Changed
+- AGENTS.md replaces that program with "Model routing: seed from published
+  evidence, correct with real work", stating what research must establish before
+  a cell is seeded (primary sources, several benchmarks, dated checkpoint,
+  provider, the effort the numbers were produced at, vendor-reported or not) and
+  what the eval corpus is actually for: exercising the harness on adversarial
+  shapes. Running it found two product defects that reading the code did not
+  (#188, #190). Its scores may not seed or override a routing cell.
+- Five rules survive, because they apply to any measurement including a public
+  one: one run samples rather than measures; a failure is data; never compare
+  across tasks; route per role; and when several models fail one check
+  identically, read an artifact first -- in this corpus that signal meant the
+  check was wrong seven times out of seven.
+
 ## [0.29.2] - 2026-09-16
 
 ### Fixed
