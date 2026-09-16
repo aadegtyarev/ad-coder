@@ -26,6 +26,7 @@ import { type BackgroundRunLimits, BackgroundRunManager } from "./background-run
 import { COMPLEXITY_RUBRIC } from "./plan";
 import type { WorkflowSession } from "./session";
 import { autoDriver, createWorkflowSession } from "./session";
+import { isSubmissionToolName } from "./submission-tools";
 import { assertTransitionOffered, DriveError } from "./transition-guard";
 import type {
   AvailableTransition,
@@ -1082,6 +1083,17 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
       ...(runnableKit.includeLoadTool ? [runnableKit.buildTool()] : []),
     ];
     const availablePluginNames = delegatedTools.map((tool) => tool.name);
+    // A delegated invocation delivers by assistant text, not by the pipeline's
+    // submission tools, and nothing here registers their objects. Inheriting
+    // the pipeline role's activeToolNames wholesale carried `submit_plan`,
+    // `submit_verdict` and `submit_follow_up` into that list (#236): the
+    // provider rejected the whole request as `configured_tools_unavailable`,
+    // and the turn settled empty. Filter them out so the listed names match
+    // what the prompt already promises: "do not expect pipeline submission
+    // tools".
+    const inheritedToolNames = (base.role.activeToolNames ?? []).filter(
+      (tool) => !isSubmissionToolName(tool),
+    );
     const role = defineRole(
       {
         ...base.role,
@@ -1098,7 +1110,7 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
             "read",
             "bash",
             ...(writable ? ["write", "edit"] : []),
-            ...(base.role.activeToolNames ?? []),
+            ...inheritedToolNames,
             ...availablePluginNames,
           ]),
         ],

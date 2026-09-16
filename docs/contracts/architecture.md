@@ -16,3 +16,9 @@ Structural rules the operator declared for ad-coder. A violation is always block
   whether or not a workflow module is enabled. Role delegation is a general
   orchestration capability; a pipeline is an optional composition of roles, not
   the gate through which all work must pass.
+- 2026-09-17: Every name in any role's `activeToolNames` must have a registered
+  tool object in the process that will serve the request. A listed name with no
+  registered object is not a narrower role -- the provider rejects the whole
+  turn (`configured_tools_unavailable`), as #236 did for delegated roles that
+  inherited workflow submission tools by name. A delegated invocation delivers
+  by assistant text, so workflow submission tools are never listed for one.
