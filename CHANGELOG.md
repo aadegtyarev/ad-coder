@@ -6,6 +6,21 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.33.1] - 2026-09-16
+
+### Added
+- A `docs/contracts/telegram.md` front contract: the room model (`switchable`
+  personal chat now, `fixed` topic room later), deterministic message routing
+  keyed by room with no content inference, the input grammar (text to the
+  selected session, one shared command schema), the pinned-dashboard views, and
+  a two-kind notification policy (decision pushes interrupt; milestone pushes
+  are informational and never block). It anticipates the later group-topic mode
+  as a second room kind rather than a rewrite.
+- A milestone rule in `docs/contracts/operator-flow.md` clarifying that
+  informational milestone pushes (run started/finished, cost spike, transfer
+  settled) are not interruptions and never demand a reply; only decision pushes
+  interrupt.
+
 ## [0.33.0] - 2026-09-16
 
 ### Changed
