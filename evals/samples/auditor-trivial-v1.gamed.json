@@ -1,0 +1,20 @@
+[
+  {
+    "surface": "src/retry.ts:retryCount",
+    "status": "violates",
+    "contract": "docs/contracts/retry.md",
+    "evidence": "line 10 uses a falsy fallback"
+  },
+  {
+    "surface": "src/retry.ts:validateRetries",
+    "status": "violates",
+    "contract": "docs/contracts/validation.md",
+    "evidence": "line 22 accepts a negative count"
+  },
+  {
+    "surface": "src/policy.ts:applyPolicy",
+    "status": "contract_missing",
+    "contract": null,
+    "evidence": "nothing governs the policy surface"
+  }
+]

@@ -1,0 +1,10 @@
+[
+  {
+    "code": "stale-cache-serves-revoked-share",
+    "severity": "high",
+    "step": 2,
+    "cwe": "CWE-613",
+    "exploit": "attacker keeps downloading the file through the cached record for up to CACHE_TTL_MS after the owner revokes the share, because resolveForDownload returns cache.get(token) on a hit without ever calling store.getShare again",
+    "mitigation": "have revokeShare evict the cache entry for the token, or have resolveForDownload re-check the canonical record's revokedAt before serving a cache hit"
+  }
+]

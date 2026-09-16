@@ -1,0 +1,11 @@
+{
+  "claims": [
+    {
+      "question": "Q1",
+      "answer": "The code is 428; its registered reason phrase is \"Precondition Required\". The origin server uses it to demand the request be made conditional, so a client cannot overwrite state it has not seen.",
+      "confidence": "high",
+      "sources": ["https://httpwg.org/specs/rfc9110.html#status.428"]
+    }
+  ],
+  "observedOn": "2026-09-16"
+}

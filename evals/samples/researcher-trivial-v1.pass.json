@@ -1,0 +1,11 @@
+{
+  "claims": [
+    {
+      "question": "Q1",
+      "answer": "428 Precondition Required",
+      "confidence": "high",
+      "sources": ["https://www.rfc-editor.org/rfc/rfc9110#section-15.5.9"]
+    }
+  ],
+  "observedOn": "2026-09-16"
+}

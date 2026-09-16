@@ -1,0 +1,8 @@
+[
+  {
+    "surface": "retry.retryCount",
+    "status": "violates",
+    "contract": "retry.md",
+    "evidence": "evaluated the expression on line 10: a falsy check cannot distinguish 0 from absent, so retryCount(0) yields 3 where the retry contract requires 0"
+  }
+]

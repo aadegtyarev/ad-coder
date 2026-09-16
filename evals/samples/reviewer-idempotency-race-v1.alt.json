@@ -1,0 +1,12 @@
+[
+  {
+    "code": "overbroad-canonicalization-merges-distinct-orders",
+    "severity": "blocker",
+    "evidence": "ran `bun -e 'import {canonicalKey} from \"./src/idempotency\"; console.log(canonicalKey(\"order-42\"), canonicalKey(\"order 42\"))'` and both printed \"order42\" -- the contract in docs/contracts/idempotency.md says a key differing by punctuation must stay distinct, and here two request ids the caller intended as separate collapse into the same ledger entry"
+  },
+  {
+    "code": "toctou-check-then-act-on-shared-map",
+    "severity": "critical",
+    "evidence": "src/ledger.ts:34-36 -- applyCharge reads applied.get(key), finds nothing, and does not write anything to the map before awaiting charge(); two calls with the same key issued back to back both pass the existing-key check before either write lands, so charge runs twice for what the contract calls one request"
+  }
+]

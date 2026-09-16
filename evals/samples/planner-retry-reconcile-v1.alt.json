@@ -1,0 +1,38 @@
+{
+  "summary": "src/queue.ts's fail() function will be updated so the retry ceiling used before dead-lettering stays at the number the project's retry contract sets, since the higher number requested in the draft backoff notes has not been reconciled with that contract yet.",
+  "steps": [
+    {
+      "step": "Verify job.attempts >= 3 is the condition that moves a job to deadLetter inside fail(); this is the contract's ceiling and stays unchanged.",
+      "acceptance": "bun test src/queue.test.ts -- a case enqueues one job, fails it 3 times, and asserts isDeadLettered(id) is only true after the 3rd call."
+    },
+    {
+      "step": "Note in the PR description (not code) that docs/specs/backoff.md wants 5 attempts and doubling delay, and that adopting it requires updating docs/contracts/retry.md first -- out of scope for this change.",
+      "acceptance": "grep -c 'retry.md' PR_DESCRIPTION.md returns 1 or more."
+    },
+    {
+      "step": "Confirm claim() is left as-is: since a claimed job is removed from the pending array and stored under its id in the inFlight map in the same call, two workers cannot hold the same job id simultaneously, so the spec's in-flight duplication request is already satisfied.",
+      "acceptance": "A test runs two concurrent claim() calls against a queue with one enqueued job and asserts at most one of them returns that job's id; no change is made to queue.ts to pass it."
+    }
+  ],
+  "contracts": [
+    {
+      "rule": "at most 3 attempts total",
+      "source": "docs/contracts/retry.md"
+    },
+    {
+      "rule": "Workers claim jobs concurrently, up to `CONCURRENCY` at once. Nothing orders one worker's claim, completion, or retry against another's",
+      "source": "docs/contracts/retry.md"
+    }
+  ],
+  "conflicts": [
+    {
+      "topic": "how many attempts a job gets before dead-letter",
+      "specSays": "up to 5, per docs/specs/backoff.md, with doubling backoff delay",
+      "contractSays": "at most 3 total, per docs/contracts/retry.md",
+      "resolution": "Keep 3, per the enforceable contract; treat the spec's 5 as an open question for the operator, since the spec document itself says it is not yet reconciled with the contract."
+    }
+  ],
+  "evidenceRating": "inspected",
+  "securitySurface": "none",
+  "complexity": "complex"
+}

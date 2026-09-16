@@ -1,0 +1,5 @@
+{
+  "name": "ingest-attribution-under-compaction",
+  "private": true,
+  "type": "module"
+}

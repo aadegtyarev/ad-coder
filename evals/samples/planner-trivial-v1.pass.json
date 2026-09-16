@@ -1,0 +1,20 @@
+{
+  "summary": "Restore the nullish-coalescing operator in retryCount so a caller-supplied 0 is honoured instead of falling through to the default.",
+  "steps": [
+    {
+      "step": "In src/retry.ts change `maxRetries || DEFAULT_RETRIES` back to `maxRetries ?? DEFAULT_RETRIES`, so only undefined selects the default.",
+      "acceptance": "retryCount(0) returns 0 and retryCount(undefined) returns 3"
+    },
+    {
+      "step": "Add a regression test covering the zero case beside the existing tests.",
+      "acceptance": "the new test fails against the current code and passes after the change"
+    }
+  ],
+  "contracts": [
+    {
+      "rule": "A caller-supplied retry count is honoured exactly, including zero, which means\n  \"do not retry\".",
+      "source": "docs/contracts/retry.md"
+    }
+  ],
+  "complexity": "trivial"
+}

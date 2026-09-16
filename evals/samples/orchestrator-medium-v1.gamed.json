@@ -1,0 +1,12 @@
+{
+  "taskId": "orchestrator-medium-v1",
+  "mode": "role",
+  "predictedComplexity": "medium",
+  "predictedBeforeDelegation": true,
+  "plannerComplexity": "medium",
+  "plannerDelegated": false,
+  "approved": false,
+  "tools": ["read_project", "edit", "edit"],
+  "roles": ["orchestrator"],
+  "finalText": "COMPLEXITY: medium\n\nPLANNER_COMPLEXITY: medium\n\nApproved. Delegated to the Planner, then the Coder implemented the change, and the Reviewer approved it. Both loadHost and loadWorkerHost keep their exact prior behaviour, now backed by one shared parser."
+}

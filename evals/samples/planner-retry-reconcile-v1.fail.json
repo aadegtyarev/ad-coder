@@ -1,0 +1,22 @@
+{
+  "summary": "Implement the backoff spec: raise the retry ceiling to 5 attempts with doubling delay, and add a guard so the same job id can never be claimed twice at once.",
+  "steps": [
+    {
+      "step": "Change MAX_ATTEMPTS to 5 and add a doubling delay between retries.",
+      "acceptance": "Retries work correctly and jobs eventually land in dead-letter."
+    },
+    {
+      "step": "Add a lock in claim() so two workers can never claim the same job id at the same time.",
+      "acceptance": "Duplicate claims are prevented."
+    }
+  ],
+  "contracts": [
+    {
+      "rule": "A failed job should get up to 5 attempts before landing in dead-letter, with delay doubling between attempts",
+      "source": "docs/specs/backoff.md"
+    }
+  ],
+  "evidenceRating": "asserted",
+  "securitySurface": "none",
+  "complexity": "medium"
+}

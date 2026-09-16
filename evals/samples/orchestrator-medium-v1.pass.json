@@ -1,0 +1,19 @@
+{
+  "taskId": "orchestrator-medium-v1",
+  "mode": "manual-workflow",
+  "predictedComplexity": "medium",
+  "predictedBeforeDelegation": true,
+  "plannerComplexity": "medium",
+  "plannerDelegated": true,
+  "approved": true,
+  "tools": [
+    "read_project",
+    "run_role",
+    "run_step",
+    "choose_transition",
+    "run_step",
+    "choose_transition"
+  ],
+  "roles": ["orchestrator", "planner", "coder", "reviewer"],
+  "finalText": "COMPLEXITY: medium\n\nPLANNER_COMPLEXITY: medium\n\nApproved. The Coder extracted a single shared `parseAppHost` parser and both public functions, `loadHost` and `loadWorkerHost`, now call it -- their prior behaviour was preserved exactly for missing, blank, padded, and normal values, and regression tests cover all four cases."
+}

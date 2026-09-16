@@ -1,0 +1,26 @@
+{
+  "summary": "Implement the backoff spec's retry ceiling change in src/queue.ts, updating MAX_ATTEMPTS from 3 to 5 with a doubling delay between attempts, per docs/specs/backoff.md.",
+  "steps": [
+    {
+      "step": "Change MAX_ATTEMPTS to 5 in src/queue.ts and add a delay that doubles between retry attempts, starting from a base delay.",
+      "acceptance": "A test enqueues a job, fails it 4 times, and asserts isDeadLettered(id) is false; a 5th fail() call asserts it becomes true."
+    },
+    {
+      "step": "Leave claim() untouched, since it already removes a job from pending into inFlight in the same call, so a job already in flight cannot be claimed again.",
+      "acceptance": "A test calls claim() twice for one enqueued job and asserts the second call returns undefined or a different job, with claim() unmodified."
+    }
+  ],
+  "contracts": [
+    {
+      "rule": "A failed job should get up to 5 attempts before landing in dead-letter, with delay doubling between attempts",
+      "source": "docs/specs/backoff.md"
+    },
+    {
+      "rule": "Nothing orders one worker's claim, completion, or retry against another's",
+      "source": "docs/contracts/retry.md"
+    }
+  ],
+  "evidenceRating": "inspected",
+  "securitySurface": "none",
+  "complexity": "complex"
+}

@@ -1,0 +1,18 @@
+[
+  {
+    "code": "missing-auth-on-download",
+    "severity": "high",
+    "step": 1,
+    "cwe": "CWE-862",
+    "exploit": "anyone with the token can call the download route with no session check",
+    "mitigation": "add requireSession to the new route"
+  },
+  {
+    "code": "cache-poisoning-risk",
+    "severity": "medium",
+    "step": 2,
+    "cwe": "CWE-349",
+    "exploit": "an attacker could forge a cache entry and point downloads at another file",
+    "mitigation": "validate every cache write"
+  }
+]

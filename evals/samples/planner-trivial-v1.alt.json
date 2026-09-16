@@ -1,0 +1,16 @@
+{
+  "summary": "retryCount uses a falsy check where it needs a nullish one, so zero is treated as omitted; swap the operator and pin the behaviour with a test.",
+  "steps": [
+    {
+      "step": "Replace the logical-or fallback in src/retry.ts with nullish coalescing, and add a case to the test file asserting the zero path.",
+      "acceptance": "asserts retryCount(0) === 0, retryCount(2) === 2 and retryCount() === 3; the zero assertion throws against the unmodified file"
+    }
+  ],
+  "contracts": [
+    {
+      "rule": "`maxRetries` is optional; when the caller omits it the default applies.",
+      "source": "docs/contracts/retry.md"
+    }
+  ],
+  "complexity": "trivial"
+}

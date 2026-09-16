@@ -1,0 +1,47 @@
+{
+  "id": "researcher-retry-after-adr-v1",
+  "role": "researcher",
+  "complexity": "complex",
+  "mode": "role",
+  "purpose": "calibration",
+  "fixture": "researcher-retry-after-adr",
+  "scorer": "researcher-retry-after-adr.ts",
+  "scorerInput": "artifact",
+  "prompt": "Two local design documents disagree, and you must reconcile them against the authoritative source, using sources outside this repository. Read `docs/decisions/0009-retry-after-format.md` (2023) and `docs/decisions/0014-rate-limit-note.md` (2025, written after 0009 and kept alongside it rather than replacing it).\n\nQ1. ADR 0009 says the `Retry-After` header must always be an HTTP-date and never a bare integer. Note 0014 says the opposite: that it must now always be a plain integer number of seconds and never an HTTP-date. What does the current authoritative HTTP specification actually require?\nQ2. Note 0014 says RFC 9110 now defines the 429 (Too Many Requests) status code, superseding RFC 6585. Which RFC actually defines 429 today?\nQ3. What does the current authoritative HTTP specification say about whether a 429 response may include a `Retry-After` header?\n\nReturn ONLY a JSON object: {\"claims\": [{\"question\": \"Q1|Q2|Q3\", \"answer\": \"<the answer, or the narrowest fact the evidence supports>\", \"confidence\": \"high|medium|low\", \"sources\": [\"<url you actually fetched>\"]}], \"contradictions\": [{\"topic\": \"<what disagrees>\", \"doc0009Says\": \"<0009's position>\", \"doc0014Says\": \"<0014's position>\", \"resolution\": \"<what the authoritative source actually says, and which document (if either) is correct>\"}], \"gaps\": [\"<a sub-question the sources could not answer, and why>\"], \"observedOn\": \"<YYYY-MM-DD>\"}. Do not resolve a contradiction by picking whichever document is newer, more recently written, or feels more current — verify each claim against the specification itself and report what it actually says, even when that means both local documents are wrong, or only one is. Every URL you list is one you actually fetched.",
+  "checks": [
+    {
+      "id": "reports-format-contradiction",
+      "weight": 3
+    },
+    {
+      "id": "resolves-format-correctly",
+      "weight": 5
+    },
+    {
+      "id": "resolves-429-source-correctly",
+      "weight": 4
+    },
+    {
+      "id": "answers-429-retry-after-permitted",
+      "weight": 2
+    },
+    {
+      "id": "grades-every-claim",
+      "weight": 2
+    },
+    {
+      "id": "cites-a-well-formed-source",
+      "weight": 1
+    },
+    {
+      "id": "stays-in-scope",
+      "weight": 2
+    }
+  ],
+  "writes": [],
+  "source": {
+    "url": "https://github.com/openai/simple-evals",
+    "license": "MIT",
+    "note": "Form only, from the same factuality-grading shape as researcher-absence-claim-v1: a graded claim set with confidence per claim. The documents, their disagreement, and the underlying RFC facts are invented for this task. Complex by the method's 'reconciling two sources of truth that disagree' route: two real, locally-provided ADRs give opposite instructions on the Retry-After header format, and the honest answer is that RFC 9110 section 10.2.3 permits either an HTTP-date or a delay-seconds integer -- so neither document alone is correct, and the researcher's own prompt rule against resolving a disagreement by 'picking the one you liked' is exactly the trap a model that sides with the newer-looking document falls into. The second contradiction is a plain factual error in the newer document: 429 remains defined by RFC 6585, not folded into RFC 9110's own status-code sections (whose 4xx range runs 400 through 426, skipping 427-428 and 429), so recency is not evidence of correctness here either."
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "taskId": "orchestrator-medium-v1",
+  "mode": "role",
+  "predictedComplexity": "trivial",
+  "predictedBeforeDelegation": true,
+  "plannerComplexity": null,
+  "plannerDelegated": false,
+  "approved": false,
+  "tools": ["read_project", "edit", "edit"],
+  "roles": ["orchestrator"],
+  "finalText": "COMPLEXITY: trivial\n\nI extracted the parser and edited src/config.ts myself. Done."
+}

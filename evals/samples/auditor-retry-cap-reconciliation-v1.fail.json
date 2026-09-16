@@ -1,0 +1,26 @@
+[
+  {
+    "surface": "src/retry.ts:scheduleRetry",
+    "status": "violates",
+    "contract": "docs/contracts/retry.md",
+    "evidence": "line 5 caps at 3"
+  },
+  {
+    "surface": "src/retry.ts:attemptsRemaining",
+    "status": "violates",
+    "contract": "docs/contracts/retry.md",
+    "evidence": "line 12 uses 5, but docs/contracts/retry.md says the cap is 3, so this contradicts the contract"
+  },
+  {
+    "surface": "src/retry.ts:backoffDelay",
+    "status": "conforms",
+    "contract": "docs/contracts/retry.md",
+    "evidence": "line 17 is nonzero"
+  },
+  {
+    "surface": "src/retry.ts:logAttempt",
+    "status": "conforms",
+    "contract": "docs/contracts/retry.md",
+    "evidence": "line 22 logs the attempt"
+  }
+]

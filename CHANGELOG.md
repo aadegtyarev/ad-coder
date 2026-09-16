@@ -6,6 +6,21 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-09-16
+
+### Added
+- Nine corpus tasks that close the last empty routing cells: every one of the
+  eight roles now has a task at trivial, medium and complex, 24 of 24. The
+  complex ones were built on properties the corpus had never tested -- an
+  interleaving across an `await`, two documents that disagree and only one
+  clause superseded, a revocation defeated by a stale cache, a constraint that
+  must survive context eviction *and* be reconciled afterwards. The trivial ones
+  measure restraint rather than capability, which is what that tier is for: a
+  plan capped at two steps, a researcher that must not hedge on a settled fact,
+  an orchestrator that must answer in one line instead of opening a pipeline.
+  Every task ships the four samples the method requires, and every gamed sample
+  was run rather than asserted.
+
 ## [0.27.0] - 2026-09-16
 
 ### Added

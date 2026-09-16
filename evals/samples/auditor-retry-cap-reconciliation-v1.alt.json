@@ -1,0 +1,26 @@
+[
+  {
+    "surface": "retry.scheduleRetry",
+    "status": "violates",
+    "contract": "decisions/0021-retry-cap-raise.md",
+    "evidence": "the March-outage ADR raised the retry ceiling to five attempts and explicitly says it overrides the number written in the retry contract, but this function's `attempt < 3` guard was never updated and still cuts a job off two attempts early"
+  },
+  {
+    "surface": "retry.attemptsRemaining",
+    "status": "conforms",
+    "contract": "docs/decisions/0021-retry-cap-raise.md",
+    "evidence": "`5 - attempt` is exactly the ceiling the ADR sets as current, even though it reads inconsistent with the plain contract text next to it -- the ADR is the newer and enforceable source for this one number"
+  },
+  {
+    "surface": "retry.backoffDelay",
+    "status": "conforms",
+    "contract": "retry.md",
+    "evidence": "always at least 250ms for any attempt >= 1, and the ADR says nothing about backoff -- only the cap changed, so the contract's original wording still governs this function"
+  },
+  {
+    "surface": "retry.logAttempt",
+    "status": "violates",
+    "contract": "docs/contracts/retry.md",
+    "evidence": "the returned message string is built from attempt alone and never includes the jobId parameter the function receives, so the required job id never reaches the log line"
+  }
+]

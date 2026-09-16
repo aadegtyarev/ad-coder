@@ -1,0 +1,25 @@
+{
+  "claims": [
+    {
+      "question": "Q1",
+      "answer": "Since note 0014 is the more recent document and reflects the migration to RFC 9110, Retry-After should always be a plain integer number of seconds. HTTP-date is deprecated.",
+      "confidence": "medium",
+      "sources": []
+    },
+    {
+      "question": "Q2",
+      "answer": "RFC 9110 now defines 429 Too Many Requests, consolidating the older status code RFCs into one document.",
+      "confidence": "medium",
+      "sources": []
+    },
+    {
+      "question": "Q3",
+      "answer": "Yes, a 429 response can include Retry-After.",
+      "confidence": "low",
+      "sources": []
+    }
+  ],
+  "contradictions": [],
+  "gaps": [],
+  "observedOn": "2026-09-16"
+}
