@@ -108,6 +108,7 @@ import { createRoleRunner } from "./runner/role-runner";
 import type { Tool } from "./runner/tool";
 import type { SessionLimits } from "./session-limits";
 import { SessionLimitController } from "./session-limits";
+import { buildLoadSkillTool, LOAD_SKILL_TOOL_NAME } from "./skills/load-tool";
 import { SkillResolutionError } from "./skills/resolver";
 import { UpdateError, updateAdCoder } from "./update/updater";
 import {
@@ -1597,7 +1598,12 @@ function defaultBackgroundOwnerId(targetDir: string): string {
 }
 
 /** The CLI owns process creation; orchestration only receives this provider. */
-function createBackgroundHostLauncher(targetDir: string, ownerId: string): BackgroundHostLauncher {
+function createBackgroundHostLauncher(
+  targetDir: string,
+  ownerId: string,
+  /** Pinned ids travel to the isolated worker verbatim; the catalogue needs nothing. */
+  selectedSkills: readonly string[] = [],
+): BackgroundHostLauncher {
   return async ({ runId, task, limits }) => {
     const entrypoint = process.argv[1];
     if (entrypoint === undefined) fail("background worker entrypoint is unavailable");
@@ -1614,6 +1620,7 @@ function createBackgroundHostLauncher(targetDir: string, ownerId: string): Backg
           runId,
           "--owner-id",
           ownerId,
+          ...(selectedSkills.length > 0 ? ["--skills", selectedSkills.join(",")] : []),
         ],
         {
           detached: true,
@@ -1658,7 +1665,13 @@ async function backgroundCommand(
     }
   })();
   const launcher =
-    action === "start" ? createBackgroundHostLauncher(targetDir, ownerId) : undefined;
+    action === "start"
+      ? createBackgroundHostLauncher(
+          targetDir,
+          ownerId,
+          buildConfigOptions(targetArg, flags).selectedSkills, // catalogue needs nothing; pins travel verbatim
+        )
+      : undefined;
   const manager = new BackgroundRunManager(
     async (task, runId, control) => {
       const config = resolvePipelineConfig({ task, ...buildConfigOptions(targetArg, flags) });
@@ -1939,13 +1952,29 @@ function buildConfigOptions(
   const credentialEnv = credentialEnvForTarget(targetDir, !consoleJsonFront);
   const credentialPath = flags["--credential-path"];
   if (credentialPath !== undefined) assertCredentialPathOutsideProject(credentialPath, targetDir);
+  // Same surface every command: no `--skills` means the catalogue a role
+  // loads from; a value pins exactly those ids (empty trims back to catalogue).
+  const skillsFlag = flags["--skills"];
+  const selectedSkills =
+    skillsFlag === undefined
+      ? undefined
+      : skillsFlag
+          .split(",")
+          .map((name) => name.trim())
+          .filter(Boolean);
   return {
     targetDir,
+    // A machine front parses stderr as JSON: the resolver's operator-facing
+    // banner must never mix into it (docs/contracts/cli.md).
+    warn: (message: string) => {
+      if (!machineJsonFront) process.stderr.write(message);
+    },
     env: credentialEnv,
     ...(credentialPath !== undefined && {
       credentials: new FileCredentialStore({ path: credentialPath }),
     }),
     ...(provider !== undefined && { provider }),
+    ...(selectedSkills !== undefined && { selectedSkills }),
     ...(flags["--strong-model"] !== undefined && { strongModel: flags["--strong-model"] }),
     ...(flags["--mid-model"] !== undefined && { midModel: flags["--mid-model"] }),
     ...(flags["--cheap-model"] !== undefined && { cheapModel: flags["--cheap-model"] }),
@@ -2025,6 +2054,17 @@ async function roleCommand(
   });
 
   const spec = roleSpecFor(config, name as RoleName);
+  // Identical skill behaviour in every command: the role's prompt (pinned or
+  // catalogue) comes from the resolver; the loader ships exactly when the
+  // prompt lists skills, alongside the same plugin tools the runner receives.
+  const rolePluginTools = config.pluginToolsForModel?.(spec.model) ?? config.pluginTools;
+  const roleSkillTools = spec.role.activeToolNames?.includes(LOAD_SKILL_TOOL_NAME)
+    ? [buildLoadSkillTool({ role: name, projectDir: configOptions.targetDir })]
+    : [];
+  const standaloneTools =
+    rolePluginTools === undefined && roleSkillTools.length === 0
+      ? undefined
+      : [...roleSkillTools, ...(rolePluginTools ?? [])];
   const standaloneRole = defineRole(
     {
       ...spec.role,
@@ -2073,9 +2113,7 @@ async function roleCommand(
         task,
         runId: standaloneRunId,
         ...(resumeRunId !== undefined && { resumeExisting: true }),
-        ...((config.pluginToolsForModel?.(spec.model) ?? config.pluginTools) !== undefined && {
-          tools: config.pluginToolsForModel?.(spec.model) ?? config.pluginTools,
-        }),
+        ...(standaloneTools !== undefined && { tools: standaloneTools }),
         activityConsumer: renderer.consume,
         ...(config.compaction !== undefined && { compaction: config.compaction }),
         ...(config.projectStoreConfig !== undefined && {
@@ -2234,14 +2272,14 @@ async function consoleCommand(
   //
   // Briefly in between, this defaulted to "every id", which pinned everything
   // and pasted 2106 words into the orchestrator's prompt regardless of task.
-  const selectedSkills =
-    flags["--skills"] === undefined
-      ? []
-      : flags["--skills"]
-          .split(",")
-          .map((name) => name.trim())
-          .filter(Boolean);
+  // Every user-facing command resolves skills through `buildConfigOptions`:
+  // no `--skills` means the CATALOGUE (each role sees ids and one-line
+  // descriptions and loads what the task needs with `load_skill`), passing it
+  // pins an exact set and pastes it. Briefly in between, the console defaulted
+  // to "every id", which pinned everything and pasted 2106 words into the
+  // orchestrator's prompt regardless of task.
   const configOptions = buildConfigOptions(targetDirArg, flags);
+  const selectedSkills = configOptions.selectedSkills ?? [];
   const selectedInventory = configOptions.inventoryConfig?.profiles.find(
     (entry) =>
       entry.name === (configOptions.inventoryProfile ?? configOptions.inventoryConfig?.default),
@@ -2266,7 +2304,11 @@ async function consoleCommand(
     enabledWorkflows,
     selectedSkills,
     backgroundOwnerId,
-    backgroundHostLauncher: createBackgroundHostLauncher(backgroundTargetDir, backgroundOwnerId),
+    backgroundHostLauncher: createBackgroundHostLauncher(
+      backgroundTargetDir,
+      backgroundOwnerId,
+      selectedSkills,
+    ),
     ...(Object.keys(configuredLimits).length === 0 ? {} : { backgroundRuns: configuredLimits }),
   });
   // Same line `role` and `drive` print: whichever front an operator reaches
@@ -2335,6 +2377,12 @@ async function runCommand(
 }
 
 const PIPELINE_OPTIONS: CommandDefinition["options"] = [
+  {
+    name: "--skills",
+    value: "<names>",
+    description:
+      "Select comma-separated built-in or project-local skills; omit to ship the catalogue every role loads from.",
+  },
   {
     name: "--stage-final-response-reserve-input-tokens",
     value: "<n>",
@@ -3036,11 +3084,6 @@ const COMMANDS: readonly CommandDefinition[] = [
         name: "--workflows",
         value: "<names>",
         description: `Enable comma-separated workflow modules; available: ${BUILT_IN_PIPELINE_WORKFLOW_NAME}.`,
-      },
-      {
-        name: "--skills",
-        value: "<names>",
-        description: "Enable comma-separated built-in or project-local skills for delegated roles.",
       },
       {
         name: "--max-input-bytes",

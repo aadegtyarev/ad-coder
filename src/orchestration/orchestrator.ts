@@ -12,19 +12,13 @@ import type { ToolActivityConsumer, ToolActivitySnapshot } from "../observabilit
 import { ToolActivityChannel } from "../observability/tool-activity";
 import { ProjectOperationsError } from "../project-operations/errors";
 import { RunCoordinator } from "../project-operations/run-coordinator";
-import { resolvePrompt } from "../prompts/prompts";
 import type { Role } from "../role";
 import { defineRole } from "../role";
 import type { Tool } from "../runner/tool";
 import { defineTool } from "../runner/tool";
 import type { SessionLimitSnapshot, SessionLimits } from "../session-limits";
 import { SessionLimitController } from "../session-limits";
-import {
-  buildLoadSkillTool,
-  formatSkillCatalogue,
-  LOAD_SKILL_TOOL_NAME,
-} from "../skills/load-tool";
-import { resolveSkills, skillCatalogue } from "../skills/resolver";
+import { roleSkillKit } from "../skills/role-kit";
 import { buildWebTools } from "../web/tools";
 import { resolveWorkflowModules } from "../workflows/registry";
 import type { OrchestratorWorkflowModule } from "../workflows/types";
@@ -1020,23 +1014,15 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
   delete sharedConfig.activityConsumer;
   const buildConfig = (task: string): PipelineConfig =>
     resolvePipelineConfig({ ...sharedConfig, task });
-  // Two paths, deliberately. An explicit `--skills` list is a PIN: the operator
-  // said "use exactly these", and those are pasted as before. With no pin, a
-  // role receives the CATALOGUE -- ids and one-line descriptions -- and pulls
-  // what it needs with `load_skill` after reading the task. Selecting
-  // everything and pasting it cost the orchestrator 2106 words of appendix it
-  // mostly did not need; `docs/contracts/skills.md` forbids exactly that.
-  const pinnedSkillIds = config.selectedSkills ?? [];
-  const pinnedSkills = resolveSkills(pinnedSkillIds, { projectDir: config.targetDir });
-  const skillInstructions = (role: DelegatableRoleName | "orchestrator"): string => {
-    if (pinnedSkillIds.length > 0) {
-      const applicable = pinnedSkills.filter((skill) => skill.roles.includes(role));
-      return applicable.length === 0
-        ? ""
-        : `\n\nSelected skills:\n${applicable.map((skill) => `## ${skill.id}@${skill.version}\n${skill.instructions}`).join("\n\n")}`;
-    }
-    return formatSkillCatalogue(skillCatalogue(role, { projectDir: config.targetDir }));
-  };
+  // One source for skill behaviour, shared with `resolve-config`, the pipeline
+  // stages, and the standalone role command: an explicit `--skills` list is a
+  // PIN pasted into the prompt; no pin means the CATALOGUE a role loads from
+  // with `load_skill` after reading the task. Selecting everything and pasting
+  // it cost the orchestrator 2106 words of appendix it mostly did not need;
+  // `docs/contracts/skills.md` forbids exactly that.
+  const roleKit = (role: DelegatableRoleName | "orchestrator") =>
+    roleSkillKit({ role, selectedSkills: config.selectedSkills, projectDir: config.targetDir });
+
   // A placeholder task only seeds the config that yields the orchestrator's own
   // conversation model + window budget; the real per-run task arrives through
   // the tools. Its independent role selection still shares the registry and
@@ -1079,8 +1065,15 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
     if (base === undefined) {
       throw new OrchestratorError("invalid_role", name, `role ${name} is not configured`);
     }
+    const runnableKit = roleKit(name);
     const writable = name === "coder";
-    const delegatedTools = resolved.pluginToolsForModel?.(base.model) ?? resolved.pluginTools ?? [];
+    // Plugin tools plus the loader, the way the runner registers tools: an
+    // activeToolNames entry with no registered object would be a listed tool
+    // the conversation could never call.
+    const delegatedTools = [
+      ...(resolved.pluginToolsForModel?.(base.model) ?? resolved.pluginTools ?? []),
+      ...(runnableKit.includeLoadTool ? [runnableKit.buildTool()] : []),
+    ];
     const availablePluginNames = delegatedTools.map((tool) => tool.name);
     const role = defineRole(
       {
@@ -1089,16 +1082,18 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
         // A planner reached this way rates complexity like any other, so it
         // needs the same definition the pipeline's plan stage sends. Without
         // it the tier came from whatever the model assumed a tier meant.
-        systemPrompt: `${resolvePrompt(name, { projectDir: config.targetDir })}${skillInstructions(name)}\n\nThis is an independent role invocation. Return the complete result as assistant text; do not expect pipeline submission tools.\n\n${COMPLEXITY_RUBRIC}`,
+        // The role spec from the resolver carries its catalogue or pin and
+        // names the loader when skills are listed; the independent-invocation
+        // framing rides on top of exactly that prompt.
+        systemPrompt: `${base.role.systemPrompt}\n\nThis is an independent role invocation. Return the complete result as assistant text; do not expect pipeline submission tools.\n\n${COMPLEXITY_RUBRIC}`,
         activeToolNames: [
-          "read",
-          "bash",
-          ...(writable ? ["write", "edit"] : []),
-          // A catalogue without a way to act on it is a menu in a locked
-          // kitchen: the loader ships exactly when the prompt lists skills
-          // rather than pasting them.
-          ...(pinnedSkillIds.length === 0 ? [LOAD_SKILL_TOOL_NAME] : []),
-          ...availablePluginNames,
+          ...new Set([
+            "read",
+            "bash",
+            ...(writable ? ["write", "edit"] : []),
+            ...(base.role.activeToolNames ?? []),
+            ...availablePluginNames,
+          ]),
         ],
       },
       base.model,
@@ -1135,19 +1130,19 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
       await conversation.close();
     }
   });
+  const seedKit = roleKit("orchestrator");
   const tools = buildOrchestratorTools(
     core,
     [
       ...(seed.pluginTools ?? []),
       delegatedRoleTool,
-      // Same condition as the delegated roles: pinned skills are already in the
-      // prompt, so the loader would have nothing left to fetch.
-      ...(pinnedSkillIds.length === 0
-        ? [buildLoadSkillTool({ role: "orchestrator", projectDir: config.targetDir })]
-        : []),
+      // Same condition as the delegated roles: pinned skills are already in
+      // the prompt, so the loader would have nothing left to fetch.
+      ...(seedKit.includeLoadTool ? [seedKit.buildTool()] : []),
     ],
     enabledModules,
   );
+
   const orchestratorSpec = seed.roles.orchestrator ?? seed.roles.coder;
   const orchestratorModel = orchestratorSpec.model;
   const orchestratorRole: Role = defineRole(
@@ -1157,7 +1152,8 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
       modelId: orchestratorModel.id,
       // The orchestrator routes on its own pre-read tier before any planner
       // runs, so it decides with the same definition rather than its own.
-      systemPrompt: `${resolvePrompt("orchestrator", { projectDir: config.targetDir })}${skillInstructions("orchestrator")}\n\n${COMPLEXITY_RUBRIC}`,
+      // The seed role prompt carries the catalogue or pin from the shared kit.
+      systemPrompt: `${orchestratorSpec.role.systemPrompt}\n\n${COMPLEXITY_RUBRIC}`,
       // Read off the spec like every other field here. `resolve-config` has
       // already applied the profile's value (defaulting to "short"), so
       // restating a literal here would discard a declared "long"/"none" for

@@ -49,6 +49,7 @@ import { parseRegistryConfig } from "../registry/validate";
 import type { Role } from "../role";
 import { defineRole } from "../role";
 import type { Tool } from "../runner/tool";
+import { LOAD_SKILL_TOOL_NAME, roleSkillKit } from "../skills/role-kit";
 import { buildImageInspectionTool, buildWebTools } from "../web/tools";
 
 /**
@@ -258,6 +259,8 @@ export interface ResolvePipelineConfigOptions {
   monotonicNow?: () => number;
   /** Explicit model-inventory operation that receives the shipped Researcher brief. */
   researchPurpose?: ResearchPurpose;
+  /** Trusted simple skill selection for every role prompt; absent means the catalogue. */
+  selectedSkills?: readonly string[] | undefined;
   /** Trusted replacement source for the versioned model-inventory Researcher brief. */
   researchBrief?: RoleBriefSource;
 }
@@ -633,13 +636,30 @@ function resolveConfig(
       model.contextWindow,
       options.roleBudgetPercents?.[name as ConfigurableRole] ?? options.budgetPercents,
     );
+    // Same skill surface every front uses: the role's own kit (pin or
+    // catalogue) rides on its resolved prompt. An invalid pin fails HERE,
+    // before any provider dispatch.
+    const kit = roleSkillKit({
+      role: name,
+      selectedSkills: options.selectedSkills,
+      projectDir: options.targetDir,
+    });
+    const activeTools =
+      kit.includeLoadTool && !tools.includes(LOAD_SKILL_TOOL_NAME)
+        ? [...tools, LOAD_SKILL_TOOL_NAME]
+        : tools;
+    const rolePrompt = resolvePrompt(name, { projectDir: options.targetDir });
+    // An empty target-local prompt override must still fail exactly as it did
+    // before a skill appendix existed: a catalogue row is not a role prompt.
+    if (rolePrompt === "")
+      throw new Error(`defineRole(${name}): systemPrompt must be a non-empty string`);
     const role: Role = defineRole(
       {
         name,
         provider: model.provider,
         modelId: model.id,
-        systemPrompt: resolvePrompt(name, { projectDir: options.targetDir }),
-        activeToolNames: tools,
+        systemPrompt: `${rolePrompt}${kit.appendix}`,
+        activeToolNames: activeTools,
         // The profile's value when it states one, "short" otherwise. This is
         // the sink `ResolvedSelection.cacheRetention` was surfaced for: without
         // it a declared "long"/"none" parsed, validated, and was then silently
@@ -785,6 +805,20 @@ function resolveConfig(
       model.contextWindow,
       options.roleBudgetPercents?.[name] ?? options.budgetPercents,
     );
+    // Same kit as every other role definition: the pinned skills or the
+    // catalogue ride on the resolved prompt, everywhere this role is built.
+    const kit = roleSkillKit({
+      role: name,
+      selectedSkills: options.selectedSkills,
+      projectDir: options.targetDir,
+    });
+    const activeTools =
+      kit.includeLoadTool && !tools.includes(LOAD_SKILL_TOOL_NAME)
+        ? [...tools, LOAD_SKILL_TOOL_NAME]
+        : tools;
+    const rolePrompt = resolvePrompt(name, { projectDir: options.targetDir });
+    if (rolePrompt === "")
+      throw new Error(`defineRole(${name}): systemPrompt must be a non-empty string`);
     return {
       model,
       role: defineRole(
@@ -792,8 +826,8 @@ function resolveConfig(
           name,
           provider: model.provider,
           modelId: model.id,
-          systemPrompt: resolvePrompt(name, { projectDir: options.targetDir }),
-          activeToolNames: tools,
+          systemPrompt: `${rolePrompt}${kit.appendix}`,
+          activeToolNames: activeTools,
           // Same sink as the routed roles above: a profile that states a
           // retention must reach the request, not be dropped on the floor.
           cacheRetention: cacheRetention ?? "short",

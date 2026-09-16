@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { CredentialStore } from "@earendil-works/pi-ai";
 import { resolvePipelineConfig } from "../src/cli/resolve-config";
+import { roleSkillKit } from "../src/skills/role-kit";
 import { deriveContextBudget } from "../src/context/budget";
 import {
   COST_ANOMALY_STATE_PATH,
@@ -368,7 +369,16 @@ test("all pipeline roles automatically use byte-verbatim target prompt overrides
   });
 
   for (const name of names) {
-    expect(config.roles[name]?.role.systemPrompt).toBe(`target ${name} \t\n`);
+    // The override survives byte-verbatim; the role's own skill kit (here the
+    // catalogue, since nothing pins --skills) rides on top of it identically.
+    // Every role scopes repository-navigation, so the appendix is non-empty.
+    expect(config.roles[name]?.role.systemPrompt).toBe(
+      `target ${name} \t\n` +
+        roleSkillKit({
+          role: name,
+          projectDir: targetDir,
+        }).appendix,
+    );
   }
 });
 
@@ -780,6 +790,7 @@ test("built-in plugin groups are selectable, visible, and mutually exclusive wit
     "read_project",
     "submit_plan",
     "submit_follow_up",
+    "load_skill",
   ]);
   expect(selected.roles.coder?.role.activeToolNames).toEqual([
     "read",
@@ -789,6 +800,7 @@ test("built-in plugin groups are selectable, visible, and mutually exclusive wit
     "search_project",
     "read_project",
     "submit_follow_up",
+    "load_skill",
   ]);
   for (const role of ["security", "reviewer", "auditor"] as const) {
     expect(selected.roles[role]?.role.activeToolNames).toContain("explore_project");
