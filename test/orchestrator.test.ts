@@ -28,6 +28,7 @@ import {
   CHOOSE_TRANSITION_TOOL_NAME,
   createOrchestrator,
   DECOMPOSE_TASK_TOOL_NAME,
+  DELEGATABLE_ROLE_NAMES,
   PIPELINE_EVENTS_TOOL_NAME,
   PIPELINE_RESULT_TOOL_NAME,
   PIPELINE_STATUS_TOOL_NAME,
@@ -420,6 +421,58 @@ test("pipeline-disabled startOrchestrator delegates Researcher and Auditor with 
   expect(delegated[0]?.tools).toContain(WEB_SEARCH_TOOL_NAME);
   expect(delegated[1]?.tools).toContain(EXPLORE_PROJECT_TOOL_NAME);
   expect(delegated.flatMap(({ tools }) => tools)).not.toContain("write");
+});
+
+test("every delegated role's activeToolNames names a tool the conversation registers", async () => {
+  // #236: a delegated role's tool list was assembled from resolver output. The
+  // reviewer inherited `submit_verdict` / `submit_follow_up` by name without
+  // any registered object behind them, so the provider rejected the whole
+  // request (`configured_tools_unavailable`) and the turn settled empty --
+  // invisibly to every gate, because none of the seven exercises a live
+  // provider. The harness registers bash/read/write/edit plus the custom
+  // tools passed to the conversation, so the invariant is: every name in a
+  // delegated role's `activeToolNames` must be in that set.
+  const targetDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-delegated-")));
+  const credentials: CredentialStore = {
+    read: async () => ({ type: "oauth", access: "a", refresh: "r", expires: 0 }),
+    list: async () => [],
+    modify: async (_providerId, fn) => fn(undefined),
+    delete: async () => {},
+  };
+  let outerTools: Tool[] = [];
+  const delegated: Array<{ role: Role; toolNames: string[] }> = [];
+  await startOrchestrator({
+    targetDir,
+    env: () => undefined,
+    warn: () => {},
+    credentials,
+    enabledWorkflows: [],
+    startConversation: async (config) => {
+      outerTools = config.tools ?? [];
+      return fakeConversation("outer");
+    },
+    startDelegatedConversation: async (config) => {
+      delegated.push({
+        role: config.role,
+        toolNames: (config.tools ?? []).map(({ name }) => name),
+      });
+      return fakeConversation(config.role.name);
+    },
+  });
+  const runRole = outerTools.find(({ name }) => name === RUN_ROLE_TOOL_NAME) as Tool;
+  for (const name of DELEGATABLE_ROLE_NAMES) {
+    await callTool(runRole, { role: name, task: "say ok" });
+  }
+
+  expect(delegated.map(({ role }) => role.name)).toEqual([...DELEGATABLE_ROLE_NAMES]);
+  for (const { role, toolNames } of delegated) {
+    // Registered tool objects exactly as `startConversation` builds them: its
+    // built-in bash/read/write/edit plus every custom tool the delegate gets.
+    const registered = new Set(["bash", "read", "write", "edit", ...toolNames]);
+    for (const activeToolName of role.activeToolNames ?? []) {
+      expect(registered.has(activeToolName)).toBe(true);
+    }
+  }
 });
 
 test("a declared cacheRetention survives into the orchestrator's own conversation role", async () => {

@@ -63,6 +63,7 @@ import {
   type StageLimitSnapshot,
   type StageLimits,
 } from "./orchestration/stage-limits";
+import { isSubmissionToolName } from "./orchestration/submission-tools";
 import type { Complexity, PipelineConfig, RoleSpec, WorkflowPhase } from "./orchestration/types";
 import { parseProfile } from "./profiles/validate";
 import {
@@ -2171,7 +2172,7 @@ async function roleCommand(
       ...spec.role,
       systemPrompt: standaloneSystemPrompt(spec.role.systemPrompt),
       activeToolNames: (spec.role.activeToolNames ?? []).filter(
-        (tool) => !tool.startsWith("submit_"),
+        (tool) => !isSubmissionToolName(tool),
       ),
     },
     spec.model,

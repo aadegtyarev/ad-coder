@@ -6,6 +6,23 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.35.1] - 2026-09-17
+
+### Fixed
+- A delegated role invocation no longer lists workflow submission tools it can
+  never call (#236). Delegated roles inherit the pipeline role's
+  `activeToolNames`, which carried `submit_plan` / `submit_verdict` /
+  `submit_follow_up` although those objects exist only inside a pipeline; the
+  provider rejected the whole request as `configured_tools_unavailable` and the
+  turn settled empty, so `run_role(role=reviewer)` was broken for every
+  submission-tool role. The inheritance now drops submission-tool names
+  (matching the delegated prompt's "do not expect pipeline submission tools"),
+  sourced from one `SUBMISSION_TOOL_NAMES` list shared with the standalone `role`
+  command.
+- Added the #236 regression test: every name in a delegated role's
+  `activeToolNames` must name a tool object the conversation registers. No gate
+  exercised a live provider, so this is the check that can fail without one.
+
 ## [0.35.0] - 2026-09-16
 
 ### Added
