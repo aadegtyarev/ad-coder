@@ -1,5 +1,81 @@
 # Checkpoint
 
+## 2026-09-16 — Calibration bench rebuilt, and the profile role it depended on
+
+The `recorder` profile role is retired. It was reserved for a role that never
+arrived -- nothing dispatched it, no prompt defined it, `ROLE_NAMES` never listed
+it -- but the cell was load-bearing: it chose the compaction summarizer's model.
+It is now `summarizer`, a routing role like any other, with `--summarizer-model`
+overriding it the way every `--<role>-model` flag overrides its own. Before, that
+flag resolved beside the shared path, so the startup banner printed the profile
+cell while the run used the flag.
+
+The calibration bench was then rebuilt, in two halves.
+
+**It stopped reporting things that were not true.** A measurement now names the
+provider that served the model -- the same model name behind two providers can be
+a different quantization and a different set of supported thinking levels -- and
+the runner passes the task's declared complexity, which it never did, so every
+task had run at `medium` and a trivial task's result credited whichever model the
+medium cell named. Measurements carry a `harnessOutcome` beside `quality`, since
+a zero from a bad answer and a zero from a refused tool are different facts.
+Scorers that could not read an answer threw, which the runner reported as a
+failed run, so the measurement left the sample -- and the runs it lost were the
+bad ones. Negative checks were satisfied by emptiness, so garbage output earned
+points for restraint. `--repeat N` reports worst, mean and best rather than one
+sample, because the same model on one task produced 0.43, 0.79, an unreadable
+answer and 1.00 in a sitting, and a series now survives a run that aborts.
+
+**It stopped measuring shape instead of substance.** The contract-carry scorer
+matched a keyword bag, so invented boilerplate scored full marks; it now verifies
+carried rule text against the fixture's real contract file. The refactoring check
+counted a declaration and two call sites, which a wrapper beside untouched
+duplication satisfies; it now proves both entry points read through one parser.
+The reviewer task gained an evidence requirement and a cap on blocking findings,
+since a review listing every suspicion is as unusable as one listing none. Each
+task may now ship a `.gamed.json` -- the specific evasion its scorer claims to
+stop, required to score at most two thirds -- which caught a precision check
+written an hour earlier whose weight let six findings instead of two cost an
+evasion fourteen percent.
+
+Tasks now declare `purpose`. Nine are `calibration`; five are `smoke`, kept
+because they prove the harness still dispatches and scores, and never quoted as
+evidence about a model. `calibration:health` names a task whose quality spread
+across models has collapsed, or whose quality falls as price rises -- both
+defects found this session were caught by a person reading a printout, and both
+were visible in the numbers.
+
+Two capabilities are measured that were not. `orchestrator-decompose-v1` puts six
+requirements to the orchestrator, one already satisfied by the code, one phrased
+as two and indivisible, two phrased as one and separable, and one real ordering
+dependency. `planner-absent-artifact-v1` asks for a plan against documents that do
+not exist inside a fixture that is otherwise real; it ships as `smoke` because
+every model scores 1.00, which says the role prompt's instruction is being
+followed rather than that models differ.
+
+`refactor-config-v1` was found never to have run a coder: it declared `role:
+coder` and mode `manual-workflow`, so the orchestrator did the work itself and
+`model` came back `null`. Repaired and re-measured, it saturates, so it is
+`smoke` -- which leaves the corpus with no coverage of `coder` at `medium`, the
+busiest routing cell (#159).
+
+Live results on OpenCode Go, 0.45 USD across roughly 80 runs: `glm-5.3-flash`
+took the trivial tier 9/9; `deepseek-v4.1-flash` matched `deepseek-v4-flash` on
+quality at two to three times the speed; `minimax-m3` solved decomposition 3/3 in
+three different shapes. The `security-plan-threats-v1` plateau at 0.83-0.89 was
+diagnosed per check and is honest difficulty -- every model finds the real threats
+and only `avoids-auth-false-positive` wobbles.
+
+Recorded separately: `docs/opencode-go-economics.md`, where a model's monthly
+allowance is a multiplier on the subscription rather than a ceiling, allowances
+multiply across models, and they do not track token price.
+
+Verification: `typecheck`, `check`, `check:release` (0.20.1), `check:docs`,
+`smoke:artifact`, and `bun test` (703 passing, 3,818 assertions) all pass on
+`main`. Corpus smoke reports 14 tasks, 9 calibration, 5 smoke, 0 unscored. Issues
+opened for what was found and not fixed: #132, #134, #137, #138, #141, #142,
+#143, #144, #146, #151, #159.
+
 ## 2026-09-12 — Documentation and onboarding reconciliation
 
 Reconciled README, ARCHITECTURE, ROADMAP, and BACKLOG with the registry-declared

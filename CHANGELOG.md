@@ -6,6 +6,14 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.20.2] - 2026-09-16
+
+### Changed
+- `docs/CHECKPOINT.md` records the calibration bench rebuild and the `recorder`
+  role retirement it rested on: what the bench stopped reporting falsely, what it
+  stopped measuring by shape, the two capabilities it now measures, and the live
+  results and costs behind those conclusions.
+
 ## [0.20.1] - 2026-09-16
 
 ### Fixed
