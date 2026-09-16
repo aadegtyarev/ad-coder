@@ -1,5 +1,79 @@
 # Checkpoint
 
+## 2026-09-16 (later) — What the bench could not see, and what the field already knew
+
+The bench measured answers. It could not see what a model did *besides*
+answering, could not tell a wrong answer from an unlucky phrasing, and was
+justified by its author's taste rather than by anything citable. All three are
+now addressed, and the corpus covers every role for the first time.
+
+**Three things a model could do freely while scoring 1.00.** Scope: a task now
+declares the paths its work may touch, and the runner compares a snapshot of the
+target before and after. A model that fixed the named function and also pulled in
+a logging framework, reformatted a neighbour and left a scratch file behind was
+previously indistinguishable from one that did the work. Prohibitions: a task may
+forbid a tool, checked against the names every ledger row already carries -- one
+mechanism for every role and mode. And claims: an auditor could cite a contract
+file that does not exist, a reviewer a line past the end of a 17-line file, a
+security answer a step of a three-step plan. Each is now the heaviest check in
+its task.
+
+**The mirror nobody had written.** Every artifact task shipped a `.gamed.json` --
+the cheat that must fail -- and none shipped its opposite: a different, equally
+valid answer that must pass. So the corpus had verified six times that a cheat
+would be caught and never once that an honest answer in other words would be
+accepted. Two of eight tasks rejected one on the day the samples were added; both
+were matching the author's vocabulary rather than the finding.
+
+**Tasks that argued against their own scorers.** `planner-contract-carry-v1` was
+failed identically by six models across four families and two vendors, the
+dearest scoring lowest -- the inverted signature this project's own health check
+calls broken rather than hard. `coder-retention-v1` shipped a fixture whose
+comment called the rule its scorer required a drift from the contract, and four
+models across three vendors deleted the rule and cited that comment. Both were
+task defects. The second cost `gpt-5.6-sol` 0.78 twice where it now scores 1.00
+twice at the same effort -- one sentence of fixture prose apart.
+
+**The summarizer, and why its cell was empty.** It is not dispatchable as a role
+at all; it runs only inside compaction. So the task measures what compaction is
+for: a constraint stated once, twelve bulky files that must be read first, and a
+budget small enough to evict the early messages. Two attempts failed before it
+worked -- one fit in the budget and never compacted, one hit the ceiling and was
+refused -- and neither was diagnosable, because ad-coder announced a compaction
+FAILURE and said nothing on success. It now reports itself in numbers, the runner
+counts it, and a task can demand it. That gap was invisible in production too.
+
+**Theory, instead of taste.** `docs/benchmark-scoring-research.md` records what
+the field has settled, with sources. Worst-run scoring is `pass^k` and has a
+citation. Five repeats is the convergent choice of three independent
+maintainers; three was a budget guess. A task every model fails identically is a
+published defect signal, not a hunch -- this project reached that conclusion
+twice by hand before learning it had a name. And Terminal-Bench spends three
+expert hours per task and still fixed 28 of 89 in a point release: task defects
+are the normal condition of a benchmark, found by running it.
+
+**Coverage.** All nine roles are measured, `summarizer` included. The listing
+reports what a task measures rather than what it dispatches -- it had shown the
+summarizer uncovered and the auditor covered twice, which is the table used to
+decide what to build next. What remains empty is by tier: `trivial` and `complex`
+are measured only for the orchestrator and the coder.
+
+**Evidence.** 56 runs from this rebuild -- eleven models, four vendors, ten tasks
+-- are in `docs/calibration-evidence.jsonl` with provider, effort, harness
+outcome, cost and duration. The row that justifies the file: `minimax-m3` scored
+0.25, 0.94 and 0.41 on one task. Any single number would have been a lie about
+that cell. Live results worth carrying forward: `glm-5.2` and `kimi-k3` reach
+1.00 on coder/medium where `deepseek-v4-pro` reaches 0.88 in eleven minutes, and
+varying the summarizer while holding the role fixed changed nothing -- what
+breaks under compaction is the role reading the summary, not the model writing
+it.
+
+**Open, with issues filed rather than fixed:** #143 handoff fidelity, #164
+reference-relative bands, #165 tests that cannot fail, #168 structured output
+(every `unreadable_answer` on record was produced without the flag, and the docs
+say so), #171 a role declaring absent what is in front of it.
+
+
 ## 2026-09-16 — Calibration bench rebuilt, and the profile role it depended on
 
 The `recorder` profile role is retired. It was reserved for a role that never
