@@ -13,6 +13,7 @@ export type ConsoleControlCode =
   | "invalid_request"
   | "launch_failed"
   | "resource_limit"
+  | "task_file_unreadable"
   | "interrupted";
 
 /**
@@ -50,7 +51,7 @@ export interface ConsoleCommandDefinition {
    * this instead of matching a command name literally, so the registry stays the
    * one source of dispatch (`docs/contracts/cli.md`).
    */
-  readonly frontAction?: "exit";
+  readonly frontAction?: "exit" | "task";
   /**
    * Set when the command's single argument is the whole remainder of the line
    * rather than a whitespace-split token. Declared here, like `frontAction`, so
@@ -259,6 +260,22 @@ export const CONSOLE_COMMANDS: readonly ConsoleCommandDefinition[] = [
     description: "Interrupt only the current orchestrator turn; the session stays open.",
     args: [],
     example: "/interrupt",
+  },
+  {
+    name: "/task",
+    description:
+      "Dispatch a whole-file task as one turn; the file's content is prompt text, never controls.",
+    args: [
+      {
+        name: "<path>",
+        required: true,
+        description: "Path to a file holding the task text; multi-line content stays one message.",
+        label: "a task file path",
+      },
+    ],
+    example: "/task ../briefs/fix-the-editor.txt",
+    frontAction: "task",
+    argMode: "verbatim",
   },
   {
     name: "/exit",

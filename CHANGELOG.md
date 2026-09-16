@@ -6,6 +6,28 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.35.0] - 2026-09-16
+
+### Added
+- `ad-coder console` can receive a multi-line brief (#224, contract
+  `docs/contracts/cli.md`, 2026-09-16). A TTY paste is assembled: the console
+  requests bracketed paste, so the pasted lines join ONE message that dispatches
+  as a single turn. `/task <path>` dispatches a whole file as one turn; its
+  content is prompt text, never console controls. Both are declared in the
+  shared control registry, so `/help`, `consoleCommandUsage`, and every front
+  stay in one source of truth.
+
+### Changed
+- A piped (non-tty) console run is read whole until EOF and dispatched as ONE
+  turn with interior newlines preserved — a piped brief is one message, not one
+  turn per line (`#224`; the defect let a 30-line brief run as thirty turns).
+  Command-looking lines inside such a message are prompt text, never controls,
+  because the model is otherwise measured on a task it was never given.
+  `maxInputBytes` now bounds ONE message instead of one line; the failure
+  message says "input message exceeds the configured byte limit". A piped run
+  that is a sequence of newline-separated controls no longer executes them one
+  by one; drive the tty path for that.
+
 ## [0.34.0] - 2026-09-17
 
 ### Changed

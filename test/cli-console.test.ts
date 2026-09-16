@@ -1,4 +1,7 @@
 import { expect, test } from "bun:test";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { PassThrough, Readable, Writable } from "node:stream";
 import { createModels, fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 import { runConsole } from "../src/cli/console";
@@ -67,6 +70,19 @@ function rawInput(): PassThrough & {
   return input;
 }
 
+/**
+ * Piped stdin is ONE message since the multi-line fix; tests that need
+ * per-line dispatch drive the TTY path explicitly (docs/contracts/cli.md,
+ * 2026-09-16).
+ */
+function ttyFrom(chunks: string | Uint8Array | (string | Uint8Array)[]): NodeJS.ReadableStream {
+  const list = Array.isArray(chunks) ? chunks : [chunks];
+  const input = rawInput();
+  for (const chunk of list) input.write(chunk as string);
+  input.end();
+  return input;
+}
+
 function fakeSession(
   options: {
     result?: (input: string, turn: number) => ConversationTurnResult;
@@ -107,7 +123,7 @@ test("keeps one session across ordered turns, ignores blanks, and closes once on
   const error = new Capture();
   const result = await runConsole({
     session,
-    input: Readable.from([" first\n\n", "second\r\n/exit\nignored\n"]),
+    input: ttyFrom([" first\n\n", "second\r\n/exit\nignored\n"]),
     output,
     error,
   });
@@ -122,7 +138,184 @@ test("keeps one session across ordered turns, ignores blanks, and closes once on
   );
 });
 
-test("counts UTF-8 bytes across chunks and rejects an oversized line before step", async () => {
+test("a piped brief is read whole and dispatched as ONE turn, never as one turn per line", async () => {
+  const brief = [
+    "Skills must behave identically in every user-facing command.",
+    "Read src/skills/role-kit.ts and the contracts first.",
+    "Produce the plan and stop before writing code.",
+  ].join("\n");
+  const session = fakeSession();
+  const error = new Capture();
+  const result = await runConsole({
+    session,
+    input: Readable.from(`${brief}\n`),
+    output: new Capture(),
+    error,
+  });
+
+  // The whole brief arrives as one message; interior newlines are preserved.
+  expect(session.inputs).toEqual([brief]);
+  expect(result).toEqual({ reason: "eof", completedTurns: 1 });
+  expect(error.text()).toBe("ad-coder: console turn started (0s)\n");
+});
+
+test("console-command-looking lines inside a piped brief or /task file are prompt text, not controls", async () => {
+  const session = fakeSession();
+  const output = new Capture();
+  const result = await runConsole({
+    session,
+    input: Readable.from("step one\n/help\n/exit\nstep two\n"),
+    output,
+    error: new Capture(),
+  });
+
+  expect(session.inputs).toEqual(["step one\n/help\n/exit\nstep two"]);
+  expect(result).toEqual({ reason: "eof", completedTurns: 1 });
+});
+
+test("a piped run that is a single control command still executes it", async () => {
+  const session = fakeSession();
+  const result = await runConsole({
+    session,
+    input: Readable.from("/exit\n"),
+    output: new Capture(),
+    error: new Capture(),
+  });
+
+  expect(result).toEqual({ reason: "exit", completedTurns: 0 });
+  expect(session.closes).toBe(1);
+});
+
+test("mid-line CRLF boundaries collapse across chunk edges in a piped brief", async () => {
+  const session = fakeSession();
+  await runConsole({
+    session,
+    input: Readable.from([Buffer.from("one\r"), Buffer.from("\ntwo\r\n")]),
+    output: new Capture(),
+    error: new Capture(),
+  });
+
+  expect(session.inputs).toEqual(["one\ntwo"]);
+});
+
+test("a piped message over the byte ceiling is rejected whole, before step", async () => {
+  const session = fakeSession();
+  const error = new Capture();
+  const result = await runConsole({
+    session,
+    input: Readable.from("line one\nline two\n"),
+    output: new Capture(),
+    error,
+    maxInputBytes: 10,
+  });
+
+  expect(result).toEqual({ reason: "input_too_large", completedTurns: 0 });
+  expect(session.inputs).toEqual([]);
+  expect(session.closes).toBe(1);
+  expect(error.text()).toContain("input message exceeds the configured byte limit");
+});
+
+test("a bracketed paste joins pasted lines into ONE message and does not execute command-looking lines", async () => {
+  const session = fakeSession();
+  const input = rawInput();
+  const output = new Capture();
+  const error = new Capture();
+  const running = runConsole({ session, input, output, error });
+
+  input.write("\u001b[200~task intro\n/help\nfinish\u001b[201~\r");
+  input.end();
+  const result = await running;
+
+  expect(session.inputs).toEqual(["task intro\n/help\nfinish"]);
+  expect(result).toEqual({ reason: "eof", completedTurns: 1 });
+});
+
+test("an unterminated pasted brief still dispatches as ONE message at EOF", async () => {
+  const session = fakeSession();
+  const input = rawInput();
+  const running = runConsole({
+    session,
+    input,
+    output: new Capture(),
+    error: new Capture(),
+  });
+
+  input.write("\u001b[200~line a\nline b");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  input.end();
+  await running;
+  expect(session.inputs).toEqual(["line a\nline b"]);
+});
+
+test("the paste-end frame cannot dispatch or interrupt, and a lone ESC still interrupts", async () => {
+  const session = fakeSession();
+  const input = rawInput();
+  const error = new Capture();
+  const running = runConsole({ session, input, output: new Capture(), error });
+
+  input.write("\u001b[201~/help\n");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  // A bare ESC (inside paste framing already closed) interrupts, not inputs.
+  input.write("\u001b");
+  input.end();
+  const result = await running;
+  expect(result).toEqual({ reason: "eof", completedTurns: 0 });
+});
+
+test("/task <path> dispatches a whole file as ONE turn and never as controls", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-task-"));
+  const file = path.join(dir, "brief.txt");
+  fs.writeFileSync(file, "intro\n/help\n/outro\n");
+  const session = fakeSession();
+  const output = new Capture();
+  const result = await runConsole({
+    session,
+    input: ttyFrom(`/task ${file}\n/exit\n`),
+    output,
+    error: new Capture(),
+  });
+
+  expect(session.inputs).toEqual(["intro\n/help\n/outro"]);
+  expect(result).toEqual({ reason: "exit", completedTurns: 1 });
+  expect(output.text()).toContain(`dispatching task read from ${file}`);
+});
+
+test("/task names an unreadable path with a typed failure and keeps the console open", async () => {
+  const session = fakeSession();
+  const error = new Capture();
+  const result = await runConsole({
+    session,
+    input: ttyFrom("/task /nonexistent-brief-file.txt\n/exit\n"),
+    output: new Capture(),
+    error,
+  });
+
+  expect(session.inputs).toEqual([]);
+  expect(result).toEqual({ reason: "exit", completedTurns: 0 });
+  expect(error.text()).toContain("/task cannot read /nonexistent-brief-file.txt");
+  expect(error.text()).toContain("check the path and retry with: /task <path>");
+});
+
+test("/task rejects a file larger than the message ceiling before dispatch", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-task-"));
+  const file = path.join(dir, "big.txt");
+  fs.writeFileSync(file, `\n${"x".repeat(300)}`);
+  const session = fakeSession();
+  const error = new Capture();
+  const result = await runConsole({
+    session,
+    input: ttyFrom(`/task ${file}\n/exit\n`),
+    output: new Capture(),
+    error,
+    maxInputBytes: 256,
+  });
+
+  expect(session.inputs).toEqual([]);
+  expect(result).toEqual({ reason: "exit", completedTurns: 0 });
+  expect(error.text()).toContain("/task file exceeds the configured input byte limit");
+});
+
+test("counts UTF-8 bytes across chunks and rejects an oversized piped message before step", async () => {
   const bytes = Buffer.from("éé\nnext\n");
   const session = fakeSession();
   const error = new Capture();
@@ -137,7 +330,7 @@ test("counts UTF-8 bytes across chunks and rejects an oversized line before step
   expect(result).toEqual({ reason: "input_too_large", completedTurns: 0 });
   expect(session.inputs).toEqual([]);
   expect(session.closes).toBe(1);
-  expect(error.text()).toContain("input line exceeds the configured byte limit");
+  expect(error.text()).toContain("input message exceeds the configured byte limit");
   expect(error.text()).toContain("send a shorter line");
 });
 
@@ -146,7 +339,7 @@ test("reports a cooperative interruption separately from a provider failure", as
   const error = new Capture();
   const result = await runConsole({
     session,
-    input: Readable.from(["work\n"]),
+    input: ttyFrom(["work\n"]),
     output: new Capture(),
     error,
     interrupted: () => true,
@@ -162,7 +355,7 @@ test("empty provider turns show an actionable authentication command", async () 
   const error = new Capture();
   await runConsole({
     session: fakeSession({ stepError: new EmptyTurnError("run") }),
-    input: Readable.from("hello\n"),
+    input: ttyFrom("hello\n"),
     output: new Capture(),
     error,
     authenticationCommand: "ad-coder auth login --provider openrouter --target-dir '/tmp/project'",
@@ -176,7 +369,7 @@ test("a provider rejection points at the request, never at authentication", asyn
   const error = new Capture();
   await runConsole({
     session: fakeSession({ stepError: new ProviderRejectionError("run", 400) }),
-    input: Readable.from("hello\n"),
+    input: ttyFrom("hello\n"),
     output: new Capture(),
     error,
     authenticationCommand: "ad-coder auth login --provider openrouter --target-dir '/tmp/project'",
@@ -203,7 +396,7 @@ test("JSON mode emits narrowed parseable sanitized records without prompts", asy
   const output = new Capture();
   await runConsole({
     session,
-    input: Readable.from("hello\n"),
+    input: ttyFrom("hello\n"),
     output,
     error: new Capture(),
     mode: "json",
@@ -251,13 +444,20 @@ test("incomplete terminal sequences are removed from formatted output", async ()
   const output = new Capture();
   await runConsole({
     session,
-    input: Readable.from("hello\n"),
+    input: ttyFrom("hello\n"),
     output,
     error: new Capture(),
   });
   expect(output.text()).toContain("visible");
   expect(output.text()).not.toContain("unfinished secret");
-  expect(output.text()).not.toContain("\u001b");
+  // The front itself now emits trusted terminal sequences (bracketed-paste
+  // framing), so the guarantee tested here is narrower: no ESC reaches the
+  // terminal from the session's turn output.
+  const visibleLine = output
+    .text()
+    .split("\n")
+    .find((line) => line.includes("visible"));
+  expect(visibleLine).not.toContain("\u001b");
 });
 
 test("turn and close failures use fixed messages and close once", async () => {
@@ -266,7 +466,7 @@ test("turn and close failures use fixed messages and close once", async () => {
   const error = new Capture();
   const result = await runConsole({
     session,
-    input: Readable.from("hello\nnext\n"),
+    input: ttyFrom("hello\nnext\n"),
     output: new Capture(),
     error,
     mode: "json",
@@ -285,7 +485,7 @@ test("typed session exhaustion stops input with no fabricated JSON record", asyn
   const error = new Capture();
   const result = await runConsole({
     session,
-    input: Readable.from("first\nsecond\n"),
+    input: ttyFrom("first\nsecond\n"),
     output,
     error,
     mode: "json",
@@ -311,7 +511,7 @@ test("rejects invalid programmatic byte limits and still closes EOF exactly once
   await expect(
     runConsole({
       session: invalidSession,
-      input: Readable.from(""),
+      input: ttyFrom(""),
       output: new Capture(),
       error: new Capture(),
       maxInputBytes: 0,
@@ -322,7 +522,7 @@ test("rejects invalid programmatic byte limits and still closes EOF exactly once
   const eofSession = fakeSession();
   const result = await runConsole({
     session: eofSession,
-    input: Readable.from(""),
+    input: ttyFrom(""),
     output: new Capture(),
     error: new Capture(),
   });
@@ -340,7 +540,7 @@ test("an in-flight console turn reports structured progress on stderr", async ()
   const error = new Capture();
   await runConsole({
     session,
-    input: Readable.from("hello\n/exit\n"),
+    input: ttyFrom("hello\n/exit\n"),
     output: new Capture(),
     error,
     mode: "json",
@@ -397,7 +597,7 @@ test("semantic activity resets heartbeat inactivity", async () => {
   const error = new Capture();
   await runConsole({
     session,
-    input: Readable.from("hello\n/exit\n"),
+    input: ttyFrom("hello\n/exit\n"),
     output: new Capture(),
     error,
     mode: "json",
@@ -413,7 +613,7 @@ test("semantic activity resets heartbeat inactivity", async () => {
 });
 
 test("background notices render on stderr while input queues without starting model turns", async () => {
-  const input = new PassThrough();
+  const input = rawInput();
   const session = fakeSession();
   const originalStep = session.step.bind(session);
   let releaseFirst!: () => void;
@@ -533,7 +733,7 @@ test("formatted background notices are content-free and do not call step", async
   const error = new Capture();
   await runConsole({
     session,
-    input: Readable.from("/exit\n"),
+    input: ttyFrom("/exit\n"),
     output: new Capture(),
     error,
   });
@@ -574,7 +774,7 @@ test("formatted background notices enum-project hostile fields and remove termin
   const error = new Capture();
   await runConsole({
     session,
-    input: Readable.from("/exit\n"),
+    input: ttyFrom("/exit\n"),
     output: new Capture(),
     error,
   });
@@ -719,7 +919,7 @@ test("console-local background controls use headless APIs without model turns", 
   const output = new Capture();
   await runConsole({
     session,
-    input: Readable.from(
+    input: ttyFrom(
       `/list\n/events ${runId}\n/status ${runId}\n/result ${runId}\n/cancel ${runId}\n/exit\n`,
     ),
     output,
@@ -748,7 +948,7 @@ test("console-local background controls use headless APIs without model turns", 
 });
 
 test("local status runs while a foreground turn is pending", async () => {
-  const input = new PassThrough();
+  const input = rawInput();
   const turnStarted = deferred();
   const statusCalled = deferred();
   const session = fakeSession() as ConversationSession & {
@@ -920,7 +1120,7 @@ test("a malformed local control reports an error without blocking a later contro
   const error = new Capture();
   await runConsole({
     session,
-    input: Readable.from("/status\n/list\n/exit\n"),
+    input: ttyFrom("/status\n/list\n/exit\n"),
     output: new Capture(),
     error,
     mode: "json",
@@ -1034,7 +1234,7 @@ test("zero heartbeat keeps the immediate stage event and disables only periodic 
   const error = new Capture();
   await runConsole({
     session: fakeSession(),
-    input: Readable.from("hello\n/exit\n"),
+    input: ttyFrom("hello\n/exit\n"),
     output: new Capture(),
     error,
     mode: "json",
@@ -1055,7 +1255,7 @@ test("/help lists every console command with usage and an example from the regis
   const output = new Capture();
   await runConsole({
     session,
-    input: Readable.from("/help\n/exit\n"),
+    input: ttyFrom("/help\n/exit\n"),
     output,
     error: new Capture(),
     mode: "json",
@@ -1098,7 +1298,7 @@ test("/help marks background commands available once the session enables them", 
   const output = new Capture();
   await runConsole({
     session,
-    input: Readable.from("/help\n/exit\n"),
+    input: ttyFrom("/help\n/exit\n"),
     output,
     error: new Capture(),
     mode: "json",
@@ -1117,7 +1317,7 @@ test("a formatted /help renders one usage and example line per command", async (
   const output = new Capture();
   await runConsole({
     session,
-    input: Readable.from("/help\n/exit\n"),
+    input: ttyFrom("/help\n/exit\n"),
     output,
     error: new Capture(),
     mode: "formatted",
@@ -1138,7 +1338,7 @@ test("a missing run identifier names the command, the cause, and its usage", asy
   const error = new Capture();
   await runConsole({
     session,
-    input: Readable.from("/status\n/exit\n"),
+    input: ttyFrom("/status\n/exit\n"),
     output: new Capture(),
     error,
     mode: "json",
@@ -1166,7 +1366,7 @@ test("an unavailable background command names the flag that enables it", async (
   const error = new Capture();
   await runConsole({
     session,
-    input: Readable.from("/list\n/exit\n"),
+    input: ttyFrom("/list\n/exit\n"),
     output: new Capture(),
     error,
     mode: "json",
@@ -1190,7 +1390,7 @@ test("an unknown console command points at /help instead of a hardcoded list", a
   const error = new Capture();
   await runConsole({
     session,
-    input: Readable.from("/nope\n/exit\n"),
+    input: ttyFrom("/nope\n/exit\n"),
     output: new Capture(),
     error,
     mode: "json",
@@ -1215,7 +1415,7 @@ test("a formatted console failure states the cause and the next action", async (
   const error = new Capture();
   await runConsole({
     session,
-    input: Readable.from("/list\n/exit\n"),
+    input: ttyFrom("/list\n/exit\n"),
     output: new Capture(),
     error,
     mode: "formatted",
@@ -1233,7 +1433,7 @@ test("a terminal control sequence in an unknown command cannot reach the termina
   const error = new Capture();
   await runConsole({
     session,
-    input: Readable.from("/\u001b[31mnope\n/exit\n"),
+    input: ttyFrom("/\u001b[31mnope\n/exit\n"),
     output: new Capture(),
     error,
     mode: "formatted",
@@ -1254,7 +1454,7 @@ test("a run the manager does not know reports not_found with a recovery action",
   const error = new Capture();
   await runConsole({
     session,
-    input: Readable.from("/status 123e4567-e89b-12d3-a456-426614174000\n/exit\n"),
+    input: ttyFrom("/status 123e4567-e89b-12d3-a456-426614174000\n/exit\n"),
     output: new Capture(),
     error,
     mode: "json",
@@ -1284,7 +1484,7 @@ test("a result requested before termination stays retryable with a wait action",
   const error = new Capture();
   await runConsole({
     session,
-    input: Readable.from("/result 123e4567-e89b-12d3-a456-426614174000\n/exit\n"),
+    input: ttyFrom("/result 123e4567-e89b-12d3-a456-426614174000\n/exit\n"),
     output: new Capture(),
     error,
     mode: "json",
@@ -1319,7 +1519,7 @@ test("a C1 control sequence cannot reach a terminal through the JSON failure rec
   const error = new Capture();
   await runConsole({
     session,
-    input: Readable.from("/\u009b31mnope\n/exit\n"),
+    input: ttyFrom("/\u009b31mnope\n/exit\n"),
     output: new Capture(),
     error,
     mode: "json",
@@ -1354,7 +1554,7 @@ test("every console failure projection carries a code, action, and retryability"
     const error = new Capture();
     await runConsole({
       session,
-      input: Readable.from("hello\n"),
+      input: ttyFrom("hello\n"),
       output: new Capture(),
       error,
       mode: "json",
@@ -1388,7 +1588,7 @@ test("the console front dispatches every registered exit command, not one litera
     const session = fakeSession();
     const result = await runConsole({
       session,
-      input: Readable.from(`${command.name}\n`),
+      input: ttyFrom(`${command.name}\n`),
       output: new Capture(),
       error: new Capture(),
       mode: "json",
@@ -1429,7 +1629,7 @@ test("every declared registry field reaches an operator, so none can quietly rot
   const output = new Capture();
   await runConsole({
     session,
-    input: Readable.from("/help\n/exit\n"),
+    input: ttyFrom("/help\n/exit\n"),
     output,
     error: new Capture(),
     mode: "json",
@@ -1460,7 +1660,7 @@ test("a formatted /help explains each argument, not just the usage line", async 
   const output = new Capture();
   await runConsole({
     session,
-    input: Readable.from("/help\n/exit\n"),
+    input: ttyFrom("/help\n/exit\n"),
     output,
     error: new Capture(),
     mode: "formatted",
@@ -1479,7 +1679,7 @@ test("an over-arity failure counts arguments grammatically", async () => {
   const error = new Capture();
   await runConsole({
     session,
-    input: Readable.from(
+    input: ttyFrom(
       "/status 123e4567-e89b-12d3-a456-426614174000 123e4567-e89b-12d3-a456-426614174000\n/exit\n",
     ),
     output: new Capture(),
@@ -1527,7 +1727,7 @@ test("/start admits a detached run and passes the whole line as one task", async
   const output = new Capture();
   await runConsole({
     session,
-    input: Readable.from("/start add a regression test for the retry path\n/exit\n"),
+    input: ttyFrom("/start add a regression test for the retry path\n/exit\n"),
     output,
     error: new Capture(),
     mode: "json",
@@ -1619,7 +1819,7 @@ test("controls render in the order they were typed even when one of them awaits"
   const output = new Capture();
   await runConsole({
     session,
-    input: Readable.from("/start ship it\n/list\n/exit\n"),
+    input: ttyFrom("/start ship it\n/list\n/exit\n"),
     output,
     error: new Capture(),
     mode: "json",
@@ -1649,7 +1849,7 @@ test("/start without a task names the missing argument instead of starting a run
   const error = new Capture();
   await runConsole({
     session,
-    input: Readable.from("/start\n/exit\n"),
+    input: ttyFrom("/start\n/exit\n"),
     output: new Capture(),
     error,
     mode: "json",
@@ -1680,7 +1880,7 @@ test("a failed detached launch is retryable and points at the failed record", as
   const error = new Capture();
   await runConsole({
     session,
-    input: Readable.from("/start ship it\n/exit\n"),
+    input: ttyFrom("/start ship it\n/exit\n"),
     output: new Capture(),
     error,
     mode: "json",
@@ -1710,7 +1910,7 @@ test("a refused admission reports the limit rather than an opaque rejection", as
   const error = new Capture();
   await runConsole({
     session,
-    input: Readable.from("/start ship it\n/exit\n"),
+    input: ttyFrom("/start ship it\n/exit\n"),
     output: new Capture(),
     error,
     mode: "json",
@@ -1777,7 +1977,7 @@ test("a price-blocked turn names both amounts and the console command that accep
   const error = new Capture();
   const result = await runConsole({
     session,
-    input: Readable.from("first\nsecond\n"),
+    input: ttyFrom("first\nsecond\n"),
     output: new Capture(),
     error,
     mode: "json",
@@ -1817,7 +2017,7 @@ test("/cost lists blocked scopes and /cost release accepts one price without lea
   const output = new Capture();
   await runConsole({
     session,
-    input: Readable.from("/cost\n/cost release openrouter/@preset/deepseekflash\n/exit\n"),
+    input: ttyFrom("/cost\n/cost release openrouter/@preset/deepseekflash\n/exit\n"),
     output,
     error: new Capture(),
     mode: "json",
@@ -1860,7 +2060,7 @@ test("a formatted /cost renders the amounts, the overcharge, and the release com
   const output = new Capture();
   await runConsole({
     session: fakeSession(),
-    input: Readable.from("/cost\n/exit\n"),
+    input: ttyFrom("/cost\n/exit\n"),
     output,
     error: new Capture(),
     mode: "formatted",
@@ -1880,7 +2080,7 @@ test("/cost release reports an unblocked scope instead of reading as success", a
   const error = new Capture();
   await runConsole({
     session: fakeSession(),
-    input: Readable.from("/cost release openrouter/other\n/exit\n"),
+    input: ttyFrom("/cost release openrouter/other\n/exit\n"),
     output: new Capture(),
     error,
     mode: "json",
@@ -1902,7 +2102,7 @@ test("/cost is unavailable with the action that enables it when the session carr
   const error = new Capture();
   await runConsole({
     session: fakeSession(),
-    input: Readable.from("/help\n/cost\n/exit\n"),
+    input: ttyFrom("/help\n/cost\n/exit\n"),
     output,
     error,
     mode: "json",
