@@ -232,6 +232,21 @@ four vendors on `coder-retention-v1`, 2026-09-16:
 | glm-5.3-flash | 0.88, 0.88, 0.78 | 38s |
 | longcat-2.0 | 0.88 | 223s |
 
+Three candidates were then taken to five runs each, which is the field's
+convergent minimum:
+
+| model | five runs | worst |
+| --- | --- | --- |
+| qwen3.8-max | 1.00, 1.00, 1.00, 1.00, 1.00 | **1.00** |
+| glm-5.2 | 1.00, 1.00, 1.00, 1.00, 0.94 | 0.94 |
+| kimi-k3 | 1.00, 1.00, 1.00, 1.00, 0.88 | 0.88 |
+
+`qwen3.8-max` is the only model measured that never dropped a run -- and it is
+also the slowest, at roughly 6.5 minutes per run against 2.5 for `glm-5.2`. Those
+are the two halves of one routing decision: it belongs where correctness matters
+more than latency, and nowhere a person is waiting. The single-run numbers above
+would have ranked all three as identical.
+
 Three things follow. The dearest model is not the best: `deepseek-v4-pro` scores
 0.88 in five minutes where `kimi-k3` and `glm-5.2` reach 1.00, and both of those
 are inside the subscription. `glm-5.2` beats `glm-5.3-flash` on quality while
