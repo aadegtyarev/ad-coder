@@ -6,6 +6,20 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.21.1] - 2026-09-16
+
+### Fixed
+- A symlink to a DIRECTORY was invisible to the scope check, whatever the task's
+  allow-list said. Reading one throws `EISDIR`, and the snapshot skipped any path
+  it could not read, so the path left both snapshots and nothing could compare
+  it. An unreadable path is now recorded by its error code instead of dropped:
+  present, and unequal to any readable version of itself, so appearing,
+  disappearing and changing kind all count as changes. Found by review.
+- `extractJsonArtifact` rescanned to the end of the output from every unclosed
+  bracket, so an answer carrying many of them cost 38 seconds at 288KB and would
+  have stalled a sweep. A bracket that closes nowhere now resumes the scan at the
+  next line, which leaves a multi-line answer reachable: 10ms on the same input.
+
 ## [0.21.0] - 2026-09-16
 
 ### Added
