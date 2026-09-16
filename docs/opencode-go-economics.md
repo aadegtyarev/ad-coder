@@ -54,15 +54,38 @@ middle tier despite its smaller allowance.
 
 ## Starting grid
 
-Provisional, to be moved by measurement rather than defended:
+Written from the price list on 2026-09-15, marked "to be moved by measurement
+rather than defended", and moved by measurement on 2026-09-16. What follows is
+what eleven models on `coder-retention-v1` actually showed; the superseded
+guesses are named so the change is auditable rather than silent.
 
-- **cheap** (summarizer, trivial planner/auditor) — `glm-5.3-flash`: the best
-  rate available and already accepted 3/3 as a trivial Coder.
-- **middle** (medium coder/security) — `deepseek-v4.1-flash` while the promotion
-  lasts, `deepseek-v4-flash` after 2026-09-20.
-- **strong** (complex coder) — `minimax-m3`: same price and allowance as
-  `minimax-m2.7`, newer model.
-- **quality-first** (complex reviewer and security) — `kimi-k2.7-code`.
+- **cheap** (summarizer, trivial planner/auditor) — `glm-5.3-flash`. Unchanged
+  for the summarizer, and now for a measured reason rather than a rate: holding
+  the role fixed and varying the summarizer across three models left the score
+  identical, so the summarizer slot should hold the cheapest acceptable model,
+  and it is exercised on every context overflow.
+- **middle** (medium coder) — **`glm-5.2`**, replacing `glm-5.3-flash`. Five
+  runs: 1.00, 1.00, 1.00, 1.00, 0.94, against 0.88/0.88/0.78 for
+  `glm-5.3-flash`. It is also four times the better buy under the allowance
+  arithmetic above, at the same token price. Two independent reasons, and the
+  price list showed neither.
+- **strong** — **not `minimax-m3`**. It is the fastest model measured by a wide
+  margin, 25 seconds against 95 for the next, and it scored 1.00, 0.94, 0.94,
+  0.41 and 0.25 across five runs on one task. That spread is the whole argument
+  for repeats: any single one of those numbers decides the cell differently.
+  Place it where a bad run is cheap to absorb, not where it is not.
+- **quality-first** — `kimi-k2.7-code` stands, and `kimi-k3` is the candidate to
+  displace it: 1.00 on the coder task at 143 seconds.
+
+Two findings that change how the list is read. **The dearest model is not the
+best**: `deepseek-v4-pro` scored 0.88 in five minutes where free-by-subscription
+`kimi-k3` and `glm-5.2` reached 1.00. And **three models the list advertises
+cannot be reached at all** — `grok-4.6` answers 401 not-supported,
+`minimax-m2.7` and `gpt-5.6-luna` answer 500. Listed and available are different
+facts.
+
+Full per-model numbers are in `model-calibration.md`; the raw measurements, with
+provider and harness outcome, are in `calibration-evidence.jsonl`.
 
 ## What ad-coder cannot yet represent
 
