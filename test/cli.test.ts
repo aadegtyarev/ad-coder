@@ -1306,13 +1306,23 @@ test("profile.capabilities.skills=false is the persistent off, and explicit flag
 
   // The setting alone is the persistent off: every command that runs a role
   // resolves no skill capability without any launch parameter.
-  const unset = show();
-  expect(unset.code).toBe(0);
+  const unset = JSON.parse(show().stdout).skills as {
+    value: { enabled: boolean; skills: unknown[] };
+    source: string;
+  };
+  expect(unset.source).toBe("profile");
+  // The row says the capability is OFF, not merely that the set is empty.
+  expect(unset.value).toEqual({ enabled: false, skills: [] });
 
   // An explicit `--skills` pin beats the setting in its own direction...
-  expect(show("--skills", "repository-navigation").code).toBe(0);
+  const pinned = JSON.parse(show("--skills", "repository-navigation").stdout).skills as {
+    value: { enabled: boolean; skills: { id: string }[] };
+    source: string;
+  };
+  expect(pinned.value.enabled).toBe(true);
   // ...and the explicit `--no-skills` mirrors the setting (same off).
   expect(show("--no-skills").code).toBe(0);
+  expect(pinned.value.skills.map((entry) => entry.id)).toEqual(["repository-navigation"]);
 
   // Mode permission sanity: an unreadable profile is not silently default.
   const broken = path.join(root, "broken-home");
@@ -1324,4 +1334,47 @@ test("profile.capabilities.skills=false is the persistent off, and explicit flag
   });
   expect(brokenResult.code).toBe(1);
   expect(brokenResult.stderr).toContain("profile");
+});
+
+test("config show reports the resolved skill set with version, source tier, and digest", () => {
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-skills-show-"));
+  const show = (...args: string[]) =>
+    runCli(["config", "show", "--target-dir", target, "--json", ...args]);
+
+  // Unset: the built-in default says ON and enumerates the reach set with digests.
+  const unset = JSON.parse(show().stdout).skills as {
+    value: {
+      enabled: boolean;
+      skills: { id: string; version: string; source: string; sha256: string }[];
+    };
+    source: string;
+  };
+  expect(unset.source).toBe("built-in-default");
+  expect(unset.value.enabled).toBe(true);
+  expect(unset.value.skills.length).toBeGreaterThan(0);
+  for (const entry of unset.value.skills) {
+    expect(entry).toMatchObject({ id: expect.any(String), version: expect.any(String) });
+    expect(entry.source).toMatch(/^(builtin|project)$/);
+    expect(entry.sha256).toMatch(/^[0-9a-f]{64}$/);
+  }
+  const ids = unset.value.skills.map((entry) => entry.id);
+  expect(new Set(ids).size).toBe(ids.length);
+
+  // A pin reports exactly those ids, resolved, flagged as operator-set.
+  const pinned = JSON.parse(show("--skills", "repository-navigation").stdout).skills as {
+    value: { enabled: boolean; skills: { id: string }[] };
+    source: string;
+  };
+  expect(pinned.source).toBe("cli");
+  expect(pinned.value.enabled).toBe(true);
+  expect(pinned.value.skills.map((entry) => entry.id)).toEqual(["repository-navigation"]);
+
+  // The explicit off says OFF, not just an empty list: an empty pin would
+  // otherwise be indistinguishable from a switched capability.
+  const off = JSON.parse(show("--no-skills").stdout).skills as {
+    value: { enabled: boolean; skills: unknown[] };
+    source: string;
+  };
+  expect(off.value).toEqual({ enabled: false, skills: [] });
+  expect(off.source).toBe("cli");
 });

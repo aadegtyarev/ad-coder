@@ -109,6 +109,7 @@ import type { Tool } from "./runner/tool";
 import type { SessionLimits } from "./session-limits";
 import { SessionLimitController } from "./session-limits";
 import { buildLoadSkillTool, LOAD_SKILL_TOOL_NAME } from "./skills/load-tool";
+import { resolveSkills, skillInventory } from "./skills/resolver";
 import { SkillResolutionError } from "./skills/resolver";
 import { UpdateError, updateAdCoder } from "./update/updater";
 import {
@@ -2036,6 +2037,19 @@ function buildConfigOptions(
     skillsDisabled = capabilities.skills === false;
   }
   const workflows = resolveWorkflowsFlag(flags["--workflows"]);
+  const skillSet = skillsDisabled
+    ? []
+    : selectedSkills !== undefined
+      ? resolveSkills(selectedSkills, { projectDir: targetDir })
+      : skillInventory({ projectDir: targetDir });
+  // Source names the layer that decided the set, so profile-off cannot hide
+  // behind a flag default and a flag cannot pose as the built-in default.
+  const skillsSource: "cli" | "profile" | "built-in-default" =
+    flags["--no-skills"] !== undefined || skillsFlag !== undefined
+      ? "cli"
+      : skillsDisabled
+        ? "profile"
+        : "built-in-default";
   return {
     targetDir,
     // Set-valued capability with the one shared resolution: unset = built-in
@@ -2044,6 +2058,13 @@ function buildConfigOptions(
     // is never silent (docs/contracts/config.md, 2026-09-16).
     selectedWorkflows: workflows.names,
     workflowsSource: workflows.source,
+    skillInventory: skillSet.map(({ id, version, source, sha256 }) => ({
+      id,
+      version,
+      source,
+      sha256,
+    })),
+    skillsSource,
     // A machine front parses stderr as JSON: the resolver's operator-facing
     // banner must never mix into it (docs/contracts/cli.md).
     warn: (message: string) => {

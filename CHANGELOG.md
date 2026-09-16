@@ -28,6 +28,9 @@ All notable changes to ad-coder are recorded here. The format follows
   A missing profile is the enabled default, not an error; an unsafe or invalid
   profile store fails the command with the store's usual error codes. Skills
   remain catalogue-by-default otherwise; `--skills a,b` pins an exact set.
+- `config show` now reports a `skills` row: every skill a run can reach with
+  id, version, source tier (`builtin`/`project`), SHA-256 digest, and the
+  winning layer (`cli`, `profile`, or `built-in-default`).
 
 ## [0.33.0] - 2026-09-16
 

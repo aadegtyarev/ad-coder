@@ -57,6 +57,14 @@ unbounded prompt directory.
   when unset. Layer order: explicit launch parameter beats the setting beats
   the default. `--no-skills` and `--skills` are both explicit, so a `--skills`
   pin disables the setting in its own direction too.
+- 2026-09-16: The resolved skill set is visible in `config show`: a `skills`
+  row carries every skill a run can reach as id, version, source tier
+  (`builtin`/`project`), and the SHA-256 digest of the loaded content, plus the
+  winning layer (`cli`, `profile`, or `built-in-default`). A pin reports
+  exactly the pinned ids; the default enumerates the catalogue across all
+  roles and, like a per-role catalogue, skips an entry that fails to resolve
+  rather than failing the default path -- the count an operator sees is the
+  count a role can load.
 - 2026-09-16: Loading obeys every constraint selection obeyed: the id pattern,
   the manifest's role scope, per-turn count and byte ceilings, and a typed
   content-free error carrying its reason. A refusal for a skill outside the

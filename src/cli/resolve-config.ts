@@ -263,6 +263,12 @@ export interface ResolvePipelineConfigOptions {
   selectedSkills?: readonly string[] | undefined;
   /** Explicit off: no catalogue, no loader, no appendix (the `--no-skills` flag resolves to this). */
   skillsDisabled?: boolean | undefined;
+  /** The skill set a run can reach, resolved with digests, for the visibility row. */
+  skillInventory?:
+    | readonly { id: string; version: string; source: string; sha256: string }[]
+    | undefined;
+  /** Where that skill set came from: flag, profile setting, or the default. */
+  skillsSource?: "cli" | "profile" | "built-in-default" | undefined;
   /** Resolved enabled workflow-module names; absent means the built-in default, empty means off. */
   selectedWorkflows?: readonly string[] | undefined;
   /** Where that selection came from, so enabled-by-default is never silent. */
@@ -994,6 +1000,29 @@ function resolveConfig(
       // Set-valued capability visibility (docs/contracts/config.md): the
       // resolved names and where the selection came from. `none` names the
       // explicit off, never a silent absence.
+      skills: {
+        // The capability state plus the reach set, the way "enabled by default
+        // is never silent" reads in `config show`: it says ON/OFF explicitly,
+        // then lists id, version, source tier, and digest of what a role can
+        // load. An empty list alone cannot say off -- an empty pin -- so
+        // `enabled` carries the switch and the layer names who set it.
+        value: {
+          enabled: options.skillsDisabled !== true,
+          skills:
+            options.skillInventory === undefined
+              ? null
+              : options.skillInventory.map((skill) => ({
+                  id: skill.id,
+                  version: skill.version,
+                  source: skill.source,
+                  sha256: skill.sha256,
+                })),
+        },
+        // A caller that supplies the resolved set without naming a source is the source.
+        source:
+          options.skillsSource ??
+          (options.skillInventory === undefined ? "built-in-default" : "caller"),
+      },
       workflows: {
         // Absent selection means the built-in default (every shipped module
         // ON), but the resolver does not own the list of shipped names, so it
