@@ -6,6 +6,26 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-09-16
+
+### Fixed
+- The complexity rubric now tiers a change by what it *requires* rather than by
+  how many lines it spans, and reaches every path that decides a tier: the
+  pipeline's plan stage, a planner invoked through `run_role`, and the
+  orchestrator classifying in its own turn. It previously said "trivial for a
+  one-liner, complex for a cross-cutting or high-risk one" and lived only in the
+  planner instruction, which reaches a model from the plan stage alone -- so two
+  of the three paths decided tiers with no definition at all. Asked to rate
+  "make `Pool.reserve` linearizable under concurrent calls", two model families
+  answered `trivial`: one file, a few lines, and by the rubric we shipped that
+  was the defensible reading. The same sweep measured a seeded race at 0.07 on
+  one model and 1.00 on another, so concurrency is exactly where the choice of
+  model decides the outcome, and a rubric priced by diff size routed that work
+  to the cheapest cell. After the fix the cheapest model in the inventory
+  answers `complex`, its planner agrees, and the task's score goes from 0.30 to
+  0.80 -- the capability was there and the definition was not. One constant,
+  quoted in one vocabulary shared with `docs/benchmark-method.md`. (#188)
+
 ## [0.28.0] - 2026-09-16
 
 ### Added
