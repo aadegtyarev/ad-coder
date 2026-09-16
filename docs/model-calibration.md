@@ -215,6 +215,38 @@ them into the measurement as `compactions`. A task declaring
 `requiresCompaction: true` is answering a different question when that count is
 zero, and the measurement says so rather than being quietly scored.
 
+**The first breadth sweep, and what it says about buying.** Eleven models across
+four vendors on `coder-retention-v1`, 2026-09-16:
+
+| model | quality | fastest run |
+| --- | --- | --- |
+| gpt-5.6-terra | 1.00, 1.00 | 95s |
+| kimi-k3 | 1.00 | 143s |
+| glm-5.2 | 1.00 | 260s |
+| qwen3.8-max | 1.00 | 395s |
+| gpt-5.6-sol | 1.00, 1.00 | 129s |
+| deepseek-v4-flash | 1.00, 0.78 | 198s |
+| minimax-m3 | 1.00, 0.94, 0.94, 0.41, 0.25 | 25s |
+| minimax-m2.5 | 0.88 | 107s |
+| deepseek-v4-pro | 0.88 | 314s |
+| glm-5.3-flash | 0.88, 0.88, 0.78 | 38s |
+| longcat-2.0 | 0.88 | 223s |
+
+Three things follow. The dearest model is not the best: `deepseek-v4-pro` scores
+0.88 in five minutes where `kimi-k3` and `glm-5.2` reach 1.00, and both of those
+are inside the subscription. `glm-5.2` beats `glm-5.3-flash` on quality while
+being four times the better buy under the subscription's allowance arithmetic
+(`opencode-go-economics.md`), which is two independent reasons to move it in the
+grid. And `minimax-m3` is the fastest model measured by a wide margin -- 25
+seconds against 95 for the next -- while spanning 0.25 to 1.00 across five runs,
+which is the `risky` band in one row: placeable where a bad run is cheap, not
+where it is not.
+
+Three models in the subscription's list could not be reached at all:
+`grok-4.6` answers 401 not-supported, `minimax-m2.7` and `gpt-5.6-luna` answer
+500. Recorded because "listed" and "available" are different facts and the
+difference cost an afternoon to discover twice.
+
 **What the field already knows, and what we were reinventing.** A research brief
 commissioned on 2026-09-16 (`benchmark-scoring-research.md`) settled several
 things this document had been asserting from taste. Three matter enough to state

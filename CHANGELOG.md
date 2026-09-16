@@ -6,6 +6,16 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.24.3] - 2026-09-16
+
+### Changed
+- The first breadth sweep is recorded: ten models across four vendors on
+  `coder-retention-v1`, with the three models the subscription lists but does not
+  serve. The dearest model measured is not the best, `glm-5.2` beats
+  `glm-5.3-flash` on quality while being the better buy under the subscription's
+  allowance arithmetic, and `minimax-m3` is four times faster than anything else
+  while spanning 0.25 to 1.00 across five runs.
+
 ## [0.24.2] - 2026-09-16
 
 ### Changed
