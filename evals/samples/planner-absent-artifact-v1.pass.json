@@ -1,0 +1,7 @@
+{
+  "blocked": true,
+  "missing": ["docs/specs/export-format.md", "docs/contracts/currency.md"],
+  "found": ["src/ledger.ts", "docs/contracts/rounding.md"],
+  "ask": "Please supply docs/specs/export-format.md and docs/contracts/currency.md, or paste their contents -- I cannot plan the export without the format it must produce.",
+  "steps": []
+}

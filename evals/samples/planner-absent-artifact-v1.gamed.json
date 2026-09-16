@@ -1,0 +1,16 @@
+{
+  "blocked": true,
+  "missing": ["docs/specs/export-format.md"],
+  "found": ["src/ledger.ts", "docs/contracts/rounding.md"],
+  "ask": "Could you confirm the export-format document location when you have a moment?",
+  "steps": [
+    {
+      "step": "Implement the export format as a CSV of id, amount, currency",
+      "acceptance": "running the exporter prints one row per entry"
+    },
+    {
+      "step": "Apply the currency rules per the contract",
+      "acceptance": "per-currency totals round once"
+    }
+  ]
+}

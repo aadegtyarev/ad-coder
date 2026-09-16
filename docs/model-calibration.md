@@ -108,6 +108,21 @@ sweep cannot quietly total them together.
 Labelling is the cheap half. The other half is not quoting a smoke task's score
 when a routing decision is being argued.
 
+`planner-absent-artifact-v1` asks for a plan against two documents that do not
+exist, in a fixture that is otherwise real. The honest answer reports the block,
+names BOTH absent documents, proves it looked by naming what it did read, asks
+for something specific, and writes no steps for the spec nobody wrote. Public
+benchmarks reward answering rather than asking -- an exact-match grader scores a
+clarifying question as zero -- so this shape is written here rather than adapted.
+
+It is `smoke`, not calibration, and the reason is worth stating. Every model
+tried scores 1.00, which this document's own saturation rule says is a task that
+does not discriminate. The likely explanation is that it measures whether the
+role prompt's own instruction -- mark a surface `research_required` rather than
+guess -- is being followed, and it currently is, by everyone. That is worth
+guarding and not worth quoting: a model that begins inventing a plan for a
+missing document is caught the day it does.
+
 `orchestrator-decompose-v1` measures the operation the orchestrator is expected
 to perform on a real ticket: turn it into issues someone can pick up. Its six
 requirements each carry a trap that decomposition actually fails on. One is

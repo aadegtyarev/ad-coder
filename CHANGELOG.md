@@ -6,6 +6,18 @@ All notable changes to ad-coder are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-09-16
+
+### Added
+- `planner-absent-artifact-v1`: a plan is requested against two documents that do
+  not exist, in a fixture that is otherwise real. The honest answer reports the
+  block, names both absent documents, proves it looked by naming what it did
+  read, asks for something specific, and writes no steps for the spec nobody
+  wrote. Public benchmarks reward answering rather than asking, so the shape is
+  written here rather than adapted. Marked `smoke`: every model tried scores
+  1.00, so it guards a behaviour the role prompt already secures rather than
+  telling models apart.
+
 ## [0.19.0] - 2026-09-16
 
 ### Added

@@ -1,0 +1,16 @@
+{
+  "blocked": false,
+  "missing": [],
+  "found": [],
+  "ask": "",
+  "steps": [
+    {
+      "step": "Implement the export format described in the spec",
+      "acceptance": "the exported file matches the export-format schema"
+    },
+    {
+      "step": "Apply the currency rules",
+      "acceptance": "per-currency totals round once at render"
+    }
+  ]
+}
