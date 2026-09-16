@@ -1,5 +1,7 @@
+import { readFileSync } from "node:fs";
 import {
   ConsoleControlError,
+  type ConsoleControlFailure,
   type CostAnomalyControl,
   DEFAULT_CONSOLE_CONTROL_PAGE_SIZE,
   executeConsoleControl,
@@ -76,7 +78,7 @@ export interface ConsoleRunResult {
 
 const INPUT_TOO_LARGE_FAILURE = {
   code: "input_too_large",
-  message: "input line exceeds the configured byte limit",
+  message: "input message exceeds the configured byte limit",
   // The byte ceiling is a programmatic runConsole parameter; the CLI exposes no
   // flag for it, so the action must not name one.
   action: "send a shorter line, or raise maxInputBytes when embedding runConsole",
@@ -557,6 +559,12 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
   let rawModeEnabled = false;
   let escapeTimer: ReturnType<typeof setTimeout> | undefined;
   let escapeState: "text" | "escape" | "csi" | "ss3" = "text";
+  // Bracketed paste (requested with ESC[?2004h) frames a pasted brief, so the
+  // newlines the terminal replays inside it join the current message instead
+  // of dispatching one turn per pasted line (docs/contracts/cli.md).
+  let pasteMode = false;
+  let csiParams = "";
+  let pendingCr = false;
   const interruptForeground = (): void => {
     // This calls the session-scoped abort only; detached runs have their own
     // explicit /cancel control and must survive foreground shutdown.
@@ -567,6 +575,10 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
   const handleLine = async (
     rawLine: string,
     lane: { prompt?: number; control?: number } = {},
+    // An untrusted multi-line message (piped brief, pasted brief, /task file)
+    // is PROMPT text: console-command-looking lines inside it must never
+    // execute as controls (docs/contracts/cli.md, 2026-09-16).
+    forcePrompt = false,
   ): Promise<void> => {
     // A line queued before `/exit` still runs; one queued after it does not.
     // Prompts and controls are counted separately because they drain in two
@@ -592,12 +604,14 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
           backgroundRuns?: BackgroundRunManager;
         }
       ).backgroundRuns;
-      const managed = executeConsoleControl(line.trim(), {
-        ...(backgroundRuns === undefined ? {} : { backgroundRuns }),
-        ...(params.costAnomaly === undefined ? {} : { costAnomaly: params.costAnomaly }),
-        interrupt: params.session.interrupt ?? (async () => false),
-        maxPageSize: controlPageSize,
-      });
+      const managed = forcePrompt
+        ? undefined
+        : executeConsoleControl(line.trim(), {
+            ...(backgroundRuns === undefined ? {} : { backgroundRuns }),
+            ...(params.costAnomaly === undefined ? {} : { costAnomaly: params.costAnomaly }),
+            interrupt: params.session.interrupt ?? (async () => false),
+            maxPageSize: controlPageSize,
+          });
       if (managed !== undefined) {
         params.output.write(renderControl(await managed, mode, controlPageSize));
         if (mode === "formatted") params.output.write("ad-coder> ");
@@ -794,16 +808,98 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
     if (!drained) params.error.write(renderFailure(CONTROL_DRAIN_TIMEOUT_FAILURE, mode));
   };
 
-  const queueLine = (): void => {
-    const line = Buffer.from(lineBytes).toString("utf8");
-    lineBytes = [];
-    // Controls own no model-turn state, so dispatch them outside the serialized
-    // prompt lane. This keeps list/status/cancel and exit available while a turn waits.
+  /**
+   * Read the task file and dispatch its content as ONE prompt. The path is
+   * verbatim from the registry, so it may contain spaces; the read is
+   * synchronous because the operator's line was just read and the file is
+   * local — this keeps the task's position in the prompt queue exactly where
+   * it was typed.
+   */
+  const dispatchTaskFailure = (failure: ConsoleControlFailure): void => {
+    params.error.write(renderFailure(failure, mode));
+    if (mode === "formatted") params.output.write("ad-coder> ");
+  };
+  const dispatchTask = (line: string): void => {
+    const taskPath = line.slice("/task".length).trim();
+    if (taskPath === "") {
+      dispatchTaskFailure({
+        code: "invalid_command",
+        command: "/task",
+        message: "/task requires a task file path",
+        action: "use: /task <path> (example: /task ../briefs/fix-the-editor.txt)",
+        // A different, valid path can succeed.
+        retryable: true,
+      });
+      return;
+    }
+    let contentBytes: Buffer;
+    try {
+      contentBytes = readFileSync(taskPath);
+    } catch (_cause) {
+      dispatchTaskFailure({
+        code: "task_file_unreadable",
+        command: "/task",
+        // The system code (ENOENT, EACCES, ...) names the unreadable case
+        // without carrying file contents or any path text the operator did
+        // not already type.
+        message: `/task cannot read ${taskPath.slice(0, 256)}`,
+        action: "check the path and retry with: /task <path>",
+        // Re-sending the identical /task cannot succeed; a corrected path can.
+        retryable: true,
+      });
+      return;
+    }
+    if (Buffer.byteLength(contentBytes) > maxInputBytes) {
+      dispatchTaskFailure({
+        // A file bigger than the configured message ceiling is the same
+        // resource limit the read path enforces, so it shares that code.
+        code: "resource_limit",
+        command: "/task",
+        message: "/task file exceeds the configured input byte limit",
+        action: "send a shorter message, or raise maxInputBytes when embedding runConsole",
+        // The identical file cannot fit again.
+        retryable: false,
+      });
+      return;
+    }
+    // The informational note every other front-side action carries: the
+    // operator must be able to tell that a whole file, not one line, was sent.
+    if (mode === "formatted")
+      params.output.write(
+        sanitizeTerminalText(`ad-coder: dispatching task read from ${taskPath}\n`),
+      );
+    // Normalise line endings and strip the file's trailing newline terminator:
+    // a /task file is ONE message whose interior newlines arrive exactly as
+    // written.
+    queueLine(contentBytes.toString("utf8").replace(/\r\n?/g, "\n").replace(/\n+$/, ""), true);
+  };
+  /**
+   * Queue one dispatchable unit of input. `forcePrompt` marks content that is
+   * a message by construction — a pasted brief or a /task file — so even a
+   * leading slashes line inside it reaches the model as prompt text.
+   */
+  const queueLine = (line: string, forcePrompt = false): void => {
+    if (line.trim() === "") {
+      if (mode === "formatted") params.output.write("ad-coder> ");
+      return;
+    }
+    // A message with an interior newline is a whole brief by construction:
+    // command-looking lines inside it are prompt text, never controls.
+    if (!forcePrompt && line.includes("\n")) forcePrompt = true;
     if (line.trim().startsWith("/")) {
+      // Only the command token selects in the registry; the argument is
+      // verbatim below.
+      const command = forcePrompt
+        ? undefined
+        : findConsoleCommand(line.trim().split(/\s+/)[0] as string);
+      if (command?.frontAction === "task") {
+        dispatchTask(line.trim());
+        return;
+      }
       // Exit takes effect when it is READ, not when the control lane reaches
       // it: the counts it freezes are what separates already-queued work from
       // input typed after the operator asked to leave.
-      if (findConsoleCommand(line.trim())?.frontAction === "exit") {
+      if (command?.frontAction === "exit") {
         reason = "exit";
         exitPromptCount = queuedPromptCount;
         exitControlCount = queuedControlCount;
@@ -811,12 +907,47 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
         interruptForeground();
         return;
       }
-      const controlNumber = ++queuedControlCount;
-      controlQueue = controlQueue.then(() => handleLine(line, { control: controlNumber }));
-      return;
+      if (forcePrompt) {
+        // Fall through: the whole message is one prompt.
+      } else {
+        // Controls own no model-turn state, so dispatch them outside the
+        // serialized prompt lane. This keeps list/status/cancel and exit
+        // available while a turn waits.
+        const controlNumber = ++queuedControlCount;
+        controlQueue = controlQueue.then(() => handleLine(line, { control: controlNumber }));
+        return;
+      }
     }
     const promptNumber = ++queuedPromptCount;
-    lineQueue = lineQueue.then(() => handleLine(line, { prompt: promptNumber }));
+    lineQueue = lineQueue.then(() => handleLine(line, { prompt: promptNumber }, forcePrompt));
+  };
+  /**
+   * EOF is the only message boundary for non-tty stdin: a piped brief is ONE
+   * message (docs/contracts/cli.md, 2026-09-16). The accumulated buffer, with
+   * its trailing newline terminator stripped, is queued as one dispatch — as a
+   * prompt whenever it has an interior newline, so a brief's command-looking
+   * lines do not execute as controls. A tty leaving bytes mid-line (paste
+   * without a closing newline) dispatches by the same rule.
+   */
+  const queueBufferedMessage = (): void => {
+    if (lineBytes.length === 0) return;
+    let end = lineBytes.length;
+    while (end > 0 && (lineBytes[end - 1] === 0x0a || lineBytes[end - 1] === 0x0d)) end--;
+    lineBytes.length = end;
+    if (lineBytes.length === 0) return;
+    const text = Buffer.from(lineBytes).toString("utf8").replace(/\r\n?/g, "\n");
+    lineBytes = [];
+    if (text.trim() === "") {
+      if (mode === "formatted") params.output.write("ad-coder> ");
+      return;
+    }
+    if (Buffer.byteLength(text, "utf8") > maxInputBytes) {
+      params.error.write(renderFailure(INPUT_TOO_LARGE_FAILURE, mode));
+      reason = "input_too_large";
+      stopped = true;
+      return;
+    }
+    queueLine(text, text.trim().includes("\n"));
   };
   const requestEscapeInterrupt = (): void => {
     escapeTimer = undefined;
@@ -841,10 +972,16 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
     if (rawTty) {
       ttyInput.setRawMode?.(true);
       rawModeEnabled = true;
+      // Request bracketed paste so a pasted brief arrives framed between
+      // ESC[200~ and ESC[201~ instead of as one newline per line. Formatted
+      // mode only: a machine JSON front must keep its stdout free of terminal
+      // control sequences — there /task is the way to send a whole brief.
+      if (mode === "formatted") params.output.write("\u001b[?2004h");
     }
     if (mode === "formatted") {
       params.output.write(
-        "ad-coder console — Escape interrupts the current turn; /exit or EOF to close\nad-coder> ",
+        "ad-coder console — Escape interrupts the current turn; a newline ends the line.\nad-coder" +
+          ": bracketed paste or /task <path> sends a whole brief as one turn; /exit or EOF to close\nad-coder> ",
       );
     }
     for await (const rawChunk of params.input as AsyncIterable<Buffer | string>) {
@@ -866,6 +1003,7 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
               if (escapeTimer !== undefined) clearTimeout(escapeTimer);
               escapeTimer = undefined;
               escapeState = "csi";
+              csiParams = "";
               continue;
             }
             if (byte === 0x4f) {
@@ -877,7 +1015,16 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
             if (escapeTimer !== undefined) clearTimeout(escapeTimer);
             requestEscapeInterrupt();
           } else if (escapeState === "csi") {
-            if (byte >= 0x40 && byte <= 0x7e) escapeState = "text";
+            if (byte >= 0x40 && byte <= 0x7e) {
+              // In a csi, only an exact `200~` or `201~` is a paste frame; a
+              // lone deadline is already cleared when csi was entered, so the
+              // paste brackets cannot fire the escape interrupt.
+              if (byte === 0x7e && csiParams === "200") pasteMode = true;
+              if (byte === 0x7e && csiParams === "201") pasteMode = false;
+              escapeState = "text";
+            } else {
+              csiParams += String.fromCharCode(byte);
+            }
             continue;
           } else {
             if (byte >= 0x30 && byte <= 0x7e) escapeState = "text";
@@ -886,38 +1033,82 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
         }
         if (rawTty && byte === 0x1b) {
           escapeState = "escape";
+          csiParams = "";
           escapeTimer = setTimeout(requestEscapeInterrupt, escapeSequenceTimeoutMs);
           continue;
         }
-        if (byte === 0x0a || (rawTty && byte === 0x0d)) {
-          if (rawTty && mode === "formatted") params.output.write("\n");
-          queueLine();
-          if (stopped) break;
-        } else if (rawTty && (byte === 0x08 || byte === 0x7f)) {
-          if (lineBytes.length > 0) {
-            let removed = lineBytes.pop() as number;
-            while (lineBytes.length > 0 && removed >= 0x80 && removed <= 0xbf)
-              removed = lineBytes.pop() as number;
-            if (mode === "formatted") params.output.write("\b \b");
+        if (rawTty && pasteMode) {
+          // Inside a pasted brief the terminator characters are message text:
+          // a pasted paragraph is ONE message, not one turn per line.
+          if (byte === 0x0d) {
+            pendingCr = true;
+            lineBytes.push(0x0a);
+            if (rawTty && mode === "formatted") params.output.write("\n");
+            continue;
           }
-        } else {
-          if (
-            lineBytes.length >= maxInputBytes &&
-            !(lineBytes.length === maxInputBytes && byte === 0x0d)
-          ) {
+          if (byte === 0x0a) {
+            if (pendingCr) {
+              pendingCr = false;
+              continue;
+            }
+            lineBytes.push(byte);
+            if (rawTty && mode === "formatted") params.output.write("\n");
+            continue;
+          }
+          pendingCr = false;
+          // A paste never dispatches lines, so the message ceiling is applied
+          // to the accumulated message rather than to one pasted line.
+          if (lineBytes.length >= maxInputBytes) {
             params.error.write(renderFailure(INPUT_TOO_LARGE_FAILURE, mode));
             reason = "input_too_large";
             stopped = true;
             break;
           }
-          lineBytes.push(byte);
-          if (rawTty && mode === "formatted" && (byte === 0x09 || byte >= 0x20))
-            params.output.write(Buffer.from([byte]));
         }
+        if (rawTty) {
+          // TTY: enter or return dispatches the current line; a paragraph is
+          // assembled before this point when inside a bracketed paste.
+          if (byte === 0x0a || byte === 0x0d) {
+            if (mode === "formatted") params.output.write("\n");
+            queueLine(Buffer.from(lineBytes).toString("utf8"));
+            lineBytes = [];
+            if (stopped) break;
+          } else if (byte === 0x08 || byte === 0x7f) {
+            if (lineBytes.length > 0) {
+              let removed = lineBytes.pop() as number;
+              while (lineBytes.length > 0 && removed >= 0x80 && removed <= 0xbf)
+                removed = lineBytes.pop() as number;
+              if (mode === "formatted") params.output.write("\b \b");
+            }
+          } else {
+            if (lineBytes.length >= maxInputBytes) {
+              params.error.write(renderFailure(INPUT_TOO_LARGE_FAILURE, mode));
+              reason = "input_too_large";
+              stopped = true;
+              break;
+            }
+            lineBytes.push(byte);
+            if (mode === "formatted" && (byte === 0x09 || byte >= 0x20))
+              params.output.write(Buffer.from([byte]));
+          }
+          continue;
+        }
+        // Non-tty: no terminator dispatch at all — the pipe ends when it ends,
+        // and queueBufferedMessage dispatches the whole brief once.
+        if (
+          lineBytes.length >= maxInputBytes &&
+          !(lineBytes.length === maxInputBytes && (byte === 0x0a || byte === 0x0d))
+        ) {
+          params.error.write(renderFailure(INPUT_TOO_LARGE_FAILURE, mode));
+          reason = "input_too_large";
+          stopped = true;
+          break;
+        }
+        lineBytes.push(byte);
       }
       if (stopped) break;
     }
-    if (!stopped && lineBytes.length > 0) queueLine();
+    if (!stopped) queueBufferedMessage();
     await drainControls();
     await lineQueue;
   } catch {
@@ -932,7 +1123,13 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
       params.error.write(renderFailure(CLOSE_FAILED_FAILURE, mode));
       if (isSuccessfulExit(reason)) reason = "close_failed";
     } finally {
-      if (rawModeEnabled) ttyInput.setRawMode?.(false);
+      if (rawModeEnabled) {
+        // Leave the terminal mode exactly as it was found: paste framing off
+        // (in formatted mode, which is the only mode that turned it on), raw
+        // off, on every exit path (docs/contracts/ui-responsiveness.md).
+        if (mode === "formatted") params.output.write("\u001b[?2004l");
+        ttyInput.setRawMode?.(false);
+      }
     }
   }
   return { reason, completedTurns };

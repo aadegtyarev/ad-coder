@@ -37,6 +37,20 @@ Rules for ad-coder's command-line front. A violation is always blocking.
   lives in shared headless code (a control registry, a structural control
   interface) that each front renders. A capability available only on one front, or
   a front holding its own copy of state another front mutates, is a violation.
+- 2026-09-16: An operator can send a multi-line message through every console
+  entry path, and a message boundary is NOT the newline. A piped (non-tty)
+  stdin run is read whole until EOF and dispatched as ONE turn, with interior
+  newlines preserved; console-command-looking lines inside such a message are
+  prompt text, never controls. In a TTY the same paragraph is assembled by a
+  paste-aware read: bracketed paste (`ESC[200~` … `ESC[201~`) joins pasted
+  lines into the current message, and `/task <path>` dispatches a whole file
+  as one turn whose content is also never executed as controls. The formatted
+  console requests bracketed paste; the machine JSON front emits no terminal
+  control sequences on stdout, so there `/task` is the way to send a whole
+  brief. `maxInputBytes` bounds ONE message, not one line.
+- 2026-09-16: A piped stdin run that consists of a sequence of newline-separated
+  console controls no longer executes them one by one: piped stdin is a brief,
+  not a control script (see the entry above).
 - 2026-09-15: A front that runs model turns leaves the same durable audit trail
   regardless of which front it is: it writes the run's ledger under
   `.ad-coder/ledger/<runId>.jsonl` and names that path, with the run id, on
