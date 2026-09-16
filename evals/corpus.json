@@ -13,6 +13,7 @@
     "tasks/security-plan-threats.json",
     "tasks/auditor-contract-status.json",
     "tasks/researcher-absence-claim.json",
-    "tasks/orchestrator-decompose.json"
+    "tasks/orchestrator-decompose.json",
+    "tasks/planner-absent-artifact.json"
   ]
 }
