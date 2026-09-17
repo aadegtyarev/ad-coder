@@ -13,6 +13,25 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.61.0] - 2026-09-17
+
+### Added
+- **`models.yaml` converts into the registry and profile the resolver already
+  consumes** (issue #280): `toRegistryAndProfile` is a pure function from the
+  validated document to `{ registry, profile, name }`.
+
+  This is the seam that keeps the rewrite from becoming a fifth layer. The
+  resolver turns an inventory into exactly those two structures and then proceeds
+  uniformly, so the new format plugs in at that point rather than threading
+  through 1259 lines of `resolve-config.ts`.
+
+  The format's core rule lives here: a bare role row fills every complexity tier,
+  and a `role@complexity` row **replaces** its own tier rather than merging.
+  A disabled provider contributes nothing to the registry — `enabled: false` is
+  the operator's manual counterpart to the fallback ladder, so its models must be
+  unreachable, not merely deprioritised. A ladder contributes its first rung;
+  the rest wait for the failover runtime.
+
 ## [0.60.0] - 2026-09-17
 
 ### Added

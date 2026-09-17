@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { ConfigError } from "../src/config/errors";
 import { defaultModelsPath, loadModelsConfig, saveModelsConfig } from "../src/config/store";
+import { toRegistryAndProfile } from "../src/config/to-registry";
 import { parseModelsConfig } from "../src/config/validate";
 
 const SAMPLE = `providers:
@@ -110,4 +111,58 @@ test("a role row naming an undeclared provider or model is refused", () => {
       profiles: { daily: { coder: "opencode-go:not-a-model" } },
     }),
   ).toThrow(ConfigError);
+});
+
+test("a role row becomes one entry per tier, and a qualified row replaces its own", () => {
+  // The format's core rule (#280): a bare row is every tier, `role@complexity`
+  // REPLACES that tier rather than merging with it. Getting this backwards would
+  // be invisible in the file and wrong at run time, which is the class of defect
+  // the rewrite exists to remove.
+  const config = parseModelsConfig({
+    providers: {
+      "opencode-go": {
+        enabled: true,
+        models: {
+          "glm-5.3-flash": { input: 0.15, output: 0.5 },
+          "minimax-m3": { input: 0.3, output: 1.2 },
+        },
+      },
+      openrouter: {
+        enabled: false,
+        models: { "deepseek/deepseek-v4.1": { input: 0.2, output: 0.6 } },
+      },
+    },
+    default: "daily",
+    profiles: {
+      daily: {
+        coder: "opencode-go:glm-5.3-flash",
+        "coder@complex": ["opencode-go:minimax-m3", "openrouter:deepseek/deepseek-v4.1"],
+      },
+    },
+  });
+  const { registry, profile, name } = toRegistryAndProfile(config);
+  expect(name).toBe("daily");
+  // A disabled provider is absent from the registry entirely: `enabled: false`
+  // is the operator's manual counterpart to the fallback ladder, so its models
+  // must not be reachable at all.
+  expect(registry.providers.map((p) => p.id)).toEqual(["opencode-go"]);
+  const cells = Object.fromEntries(
+    profile.entries.map((e) => [`${e.role}@${e.complexity}`, e.model]),
+  );
+  expect(cells["coder@trivial"]).toBe("glm-5.3-flash");
+  expect(cells["coder@medium"]).toBe("glm-5.3-flash");
+  // Replaced, not merged, and taken from the ladder's first rung.
+  expect(cells["coder@complex"]).toBe("minimax-m3");
+});
+
+test("a profile that does not exist is refused by name", () => {
+  const config = parseModelsConfig({
+    providers: {
+      "opencode-go": { enabled: true, models: { "glm-5.3-flash": { input: 0.15, output: 0.5 } } },
+    },
+    profiles: { daily: { coder: "opencode-go:glm-5.3-flash" } },
+  });
+  expect(() => toRegistryAndProfile(config, "nocturnal")).toThrow(ConfigError);
+  // And a config with neither a named profile nor a default cannot silently pick one.
+  expect(() => toRegistryAndProfile(config)).toThrow(ConfigError);
 });
