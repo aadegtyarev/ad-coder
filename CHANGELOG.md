@@ -11,6 +11,43 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [Unreleased]
+
+## [0.49.0] - 2026-09-17
+
+### Fixed
+- The parser performance test no longer fails on unchanged code. It compared two
+  timings and required the larger to be under 8x the smaller, which divides by a
+  ~13ms sample: a single scheduling hiccup there swung the ratio, and the test
+  failed roughly one run in six on healthy code -- teaching whoever saw it red to
+  re-run rather than look. Measured on the spread it used, linear work costs
+  14-24x, not the 8x the threshold assumed, so it was set below what passing code
+  actually does. Replaced with one wall-clock ceiling: 40k objects in under 3s,
+  against ~350ms measured for the `Set` dedup and ~8500ms for the array scan the
+  test exists to prevent. Verified by restoring that scan, which fails the test
+  three times in three. (#281)
+
+## [0.48.0] - 2026-09-17
+
+### Fixed
+- A review round now asks once more when the reviewer ended its turn without
+  calling `submit_verdict`. Measured on a flash reviewer, roughly two attempts
+  in three ended in prose after ten to twelve turns of real inspection, and each
+  one paused the run at `review_not_run` with the review discarded -- a change
+  could pass every gate and never settle, leaving the pre-merge stamp stale
+  because its only writer is a settled review. The retry re-states the
+  submission requirement and nothing else, so the inspection is not paid for
+  twice, and a rejected submission still fails immediately rather than
+  repeating a malformed call. Two attempts, matching the planner's handoff,
+  which has carried this same retry since it was written -- the existing answer
+  applied to the other required-tool stage rather than a new mechanism. (#278)
+- `.gitignore` matched `node_modules/` with a trailing slash, which ignores a
+  directory but not a symlink of that name. A worktree that symlinks its
+  dependencies had the link tracked by `git add -A`, and CI then failed at the
+  first gate with `ENOENT: could not open the "node_modules" directory` -- green
+  locally, where the link resolves, and nowhere else.
+
+
 ## [0.47.0] - 2026-09-17
 
 ### Added
@@ -391,29 +428,6 @@ enforces that dated release headings go in non-increasing date order
 - The reader tolerates a ledger opened mid-write by a live run: a malformed,
   truncated, or blank line is a skipped line counted in per-file stats, never a
   crash; a file that cannot be opened fails with its path named.
-
-## [Unreleased]
-
-## [0.48.0] - 2026-09-17
-
-### Fixed
-- A review round now asks once more when the reviewer ended its turn without
-  calling `submit_verdict`. Measured on a flash reviewer, roughly two attempts
-  in three ended in prose after ten to twelve turns of real inspection, and each
-  one paused the run at `review_not_run` with the review discarded -- a change
-  could pass every gate and never settle, leaving the pre-merge stamp stale
-  because its only writer is a settled review. The retry re-states the
-  submission requirement and nothing else, so the inspection is not paid for
-  twice, and a rejected submission still fails immediately rather than
-  repeating a malformed call. Two attempts, matching the planner's handoff,
-  which has carried this same retry since it was written -- the existing answer
-  applied to the other required-tool stage rather than a new mechanism. (#278)
-- `.gitignore` matched `node_modules/` with a trailing slash, which ignores a
-  directory but not a symlink of that name. A worktree that symlinks its
-  dependencies had the link tracked by `git add -A`, and CI then failed at the
-  first gate with `ENOENT: could not open the "node_modules" directory` -- green
-  locally, where the link resolves, and nowhere else.
-
 
 ## [0.46.0] - 2026-09-17
 

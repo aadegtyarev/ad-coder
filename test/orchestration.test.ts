@@ -2183,13 +2183,16 @@ test("scanning the whole planner response stays linear, not quadratic, in its ob
     return performance.now() - started;
   };
 
-  // Ratio, not wall-clock: the absolute number moves with the machine, the
-  // growth rate is the property under test. Quadratic would be ~16x for 4x the
-  // input; linear work plus noise stays far below the 8x allowed here.
-  timeFor(2000); // warm up, so JIT compilation is not charged to the first sample
-  const small = Math.max(timeFor(5000), 1);
-  const large = timeFor(20000);
-  expect(large / small).toBeLessThan(8);
+  // One wall-clock ceiling, not a ratio between two sizes. A ratio looks
+  // machine-independent but divides by a small number: the 5k sample is ~13ms
+  // here, so a single scheduling hiccup swings it, and the earlier form failed
+  // about one run in six on unchanged code. Measured on this machine, 40k
+  // objects cost ~350ms with the Set and ~8500ms with the array scan this test
+  // exists to prevent -- a 24x gap, and the ceiling sits inside it with room
+  // for a much slower CI box to stay under while any quadratic regression, on
+  // any hardware, lands far above.
+  timeFor(2000); // warm up, so JIT compilation is not charged to the measured run
+  expect(timeFor(40000)).toBeLessThan(3000);
 });
 
 test("a nested fragment never becomes the reported plan rejection", () => {
