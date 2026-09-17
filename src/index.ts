@@ -581,13 +581,18 @@ export type {
   ResolveSkillsOptions,
   SkillCatalogueEntry,
   SkillManifest,
+  SkillRequires,
   SkillResolutionErrorCode,
 } from "./skills/resolver";
 export {
+  dependenciesMet,
   listSkillIds,
+  pluginNamesFromToolNames,
   resolveSkills,
   SkillResolutionError,
   skillCatalogue,
+  skillInventory,
+  unconditionalSkills,
 } from "./skills/resolver";
 export type { RoleSkillKit, RoleSkillKitOptions } from "./skills/role-kit";
 export { roleSkillKit } from "./skills/role-kit";

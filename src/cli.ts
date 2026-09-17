@@ -117,7 +117,12 @@ import type { Tool } from "./runner/tool";
 import type { SessionLimits } from "./session-limits";
 import { SessionLimitController } from "./session-limits";
 import { buildLoadSkillTool, LOAD_SKILL_TOOL_NAME } from "./skills/load-tool";
-import { resolveSkills, SkillResolutionError, skillInventory } from "./skills/resolver";
+import {
+  pluginNamesFromToolNames,
+  resolveSkills,
+  SkillResolutionError,
+  skillInventory,
+} from "./skills/resolver";
 import { stampCheckErrors, stampDeliveryText } from "./stamp/cli";
 import { UpdateError, updateAdCoder } from "./update/updater";
 import {
@@ -2154,7 +2159,14 @@ function buildConfigOptions(
     ? []
     : selectedSkills !== undefined
       ? resolveSkills(selectedSkills, { projectDir: targetDir })
-      : skillInventory({ projectDir: targetDir });
+      : skillInventory({
+          projectDir: targetDir,
+          availableWorkflows: workflows.names,
+          // The flag's own resolution decides plugin availability here, so the
+          // skill row reports what this launch actually registers: `--plugins
+          // none` proves nothing, an unset flag is the built-in default set.
+          availablePlugins: enabledPlugins ?? ["explore", "web", "vision"],
+        });
   // Source names the layer that decided the set, so profile-off cannot hide
   // behind a flag default and a flag cannot pose as the built-in default.
   const skillsSource: "cli" | "profile" | "built-in-default" =
@@ -2274,7 +2286,17 @@ async function roleCommand(
   // prompt lists skills, alongside the same plugin tools the runner receives.
   const rolePluginTools = config.pluginToolsForModel?.(spec.model) ?? config.pluginTools;
   const roleSkillTools = spec.role.activeToolNames?.includes(LOAD_SKILL_TOOL_NAME)
-    ? [buildLoadSkillTool({ role: name, projectDir: configOptions.targetDir })]
+    ? [
+        buildLoadSkillTool({
+          role: name,
+          projectDir: configOptions.targetDir,
+          availableWorkflows: configOptions.selectedWorkflows ?? ["pipeline"],
+          availablePlugins: pluginNamesFromToolNames([
+            ...(spec.role.activeToolNames ?? []),
+            ...(rolePluginTools ?? []).map((tool) => tool.name),
+          ]),
+        }),
+      ]
     : [];
   const standaloneTools =
     rolePluginTools === undefined && roleSkillTools.length === 0

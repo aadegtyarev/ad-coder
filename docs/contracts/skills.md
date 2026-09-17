@@ -80,6 +80,27 @@ unbounded prompt directory.
   roles and, like a per-role catalogue, skips an entry that fails to resolve
   rather than failing the default path -- the count an operator sees is the
   count a role can load.
+- 2026-09-17: A manifest may declare two optional fields beyond the catalogue.
+  `always` is a boolean, default false, and `requires` is
+  `{workflows: [names]}` and/or `{plugins: [names]}`. `always: true` pastes the
+  skill's instructions into the prompt of every role in its `roles` list, in
+  catalogue AND pin mode, without the role asking -- so it is justified only
+  where a role cannot understand its own situation without the text, never
+  where the text is merely useful. The cost rule is beside it: pasting what is
+  merely useful is how the orchestrator reached 2106 words of appendix
+  regardless of task, and the session measurements behind the catalogue found
+  93% of input tokens served from cache precisely because a prompt is re-read
+  every turn. `--no-skills` -- and a profile with `capabilities.skills: false`
+  -- still suppresses an always skill entirely: off is off. `requires` names
+  what the session must actually have for the skill to exist at all: plugins
+  are matched against really registered tool names (`explore_project`,
+  `search_project`, `read_project`; `web_search`, `web_read`; `inspect_image`),
+  workflows against the workflow modules the run resolved. A skill whose
+  dependency the session does not satisfy appears in neither the catalogue, nor
+  the paste, nor `config show`'s skill row; an undefined composition is treated
+  as having nothing and fails closed. Because an always skill's text is already
+  in the prompt, it is never listed in the catalogue -- `load_skill` for it
+  answers `skill_not_available`.
 - 2026-09-16: Loading obeys every constraint selection obeyed: the id pattern,
   the manifest's role scope, per-turn count and byte ceilings, and a typed
   content-free error carrying its reason. A refusal for a skill outside the

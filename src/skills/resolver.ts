@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { EXPLORE_PROJECT_TOOL_NAME } from "../project-tools/explore";
+import { READ_PROJECT_TOOL_NAME } from "../project-tools/read";
+import { SEARCH_PROJECT_TOOL_NAME } from "../project-tools/search";
+import { INSPECT_IMAGE_TOOL_NAME, WEB_READ_TOOL_NAME, WEB_SEARCH_TOOL_NAME } from "../web/tools";
 
 const ID = /^[a-z][a-z0-9-]{0,63}$/;
 const ROLES = new Set([
@@ -17,11 +21,35 @@ const DEFAULT_MAX_MANIFEST_BYTES = 4_096;
 const DEFAULT_MAX_REQUESTED_SKILLS = 16;
 const BUILTIN_DIR = path.join(import.meta.dir, "..", "..", "prompts", "skills");
 
+/**
+ * What a skill needs from the session it is being loaded into.
+ *
+ * `workflows` names workflow modules the run actually resolved; `plugins` names
+ * built-in plugin groups whose tools are really registered. Both are checked
+ * against the caller's composition -- never against a claim in the manifest,
+ * because a skill is data and the composition is what is true at this dispatch.
+ */
+export interface SkillRequires {
+  workflows?: string[];
+  plugins?: string[];
+}
+
+/**
+ * The manifest a skill's `skill.json` declares.
+ *
+ * `always` and `requires` are optional and additive: a manifest without them
+ * behaves exactly as every shipped skill did before they existed (opt-in
+ * through the catalogue, reachable in every role in its `roles` list).
+ */
 export interface SkillManifest {
   id: string;
   version: string;
   description: string;
   roles: string[];
+  /** Paste the instructions into every role prompt in `roles`, unprompted. */
+  always?: boolean;
+  /** Loadable only where the session's composition satisfies every entry. */
+  requires?: SkillRequires;
 }
 export interface ResolvedSkill extends SkillManifest {
   source: "builtin" | "project";
@@ -34,6 +62,10 @@ export interface ResolveSkillsOptions {
   maxInstructionBytes?: number;
   maxManifestBytes?: number;
   maxRequestedSkills?: number;
+  /** Workflow modules this session resolved. Absent means NOTHING is available. */
+  availableWorkflows?: readonly string[];
+  /** Plugin groups whose tools are really registered. Absent means NONE. */
+  availablePlugins?: readonly string[];
 }
 
 export type SkillResolutionErrorCode = "missing" | "malformed" | "escaping" | "oversized";
@@ -132,6 +164,38 @@ function readDescriptorPinnedFile(directoryFd: number, filename: string, maxByte
   }
 }
 
+const MANIFEST_KEYS = ["id", "version", "description", "roles", "always", "requires"];
+const REQUIRES_KEYS = ["workflows", "plugins"];
+
+/**
+ * Validates the optional `requires` object, or fails the skill's manifest.
+ *
+ * A key outside the two known ones is refused rather than ignored: a typo
+ * (`require`, `workflow`, `plugin`) would otherwise silently disable the gate
+ * the manifest author believed they had written.
+ */
+function parseRequires(value: unknown): SkillRequires | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) fail("malformed");
+  const record = value as Record<string, unknown>;
+  if (Object.keys(record).some((key) => !REQUIRES_KEYS.includes(key))) fail("malformed");
+  const requires: SkillRequires = {};
+  for (const key of REQUIRES_KEYS) {
+    const names = record[key];
+    if (names === undefined) continue;
+    // An empty list is vacuously satisfied, and kept as written so the manifest
+    // round-trips; only a non-array or a non-string element is malformed.
+    if (
+      !Array.isArray(names) ||
+      names.some((name) => typeof name !== "string" || name.length === 0)
+    )
+      fail("malformed");
+    if (key === "workflows") requires.workflows = [...names] as string[];
+    else requires.plugins = [...names] as string[];
+  }
+  return requires;
+}
+
 function readSkill(
   root: string,
   id: string,
@@ -182,8 +246,9 @@ function readSkill(
   }
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) fail("malformed");
   const value = raw as Record<string, unknown>;
-  if (Object.keys(value).some((key) => !["id", "version", "description", "roles"].includes(key)))
-    fail("malformed");
+  if (Object.keys(value).some((key) => !MANIFEST_KEYS.includes(key))) fail("malformed");
+  if (value.always !== undefined && typeof value.always !== "boolean") fail("malformed");
+  const requires = parseRequires(value.requires);
   if (value.id !== id || !ID.test(id)) fail("escaping");
   if (
     typeof value.version !== "string" ||
@@ -208,15 +273,39 @@ function readSkill(
     digest.update(frame);
     digest.update(bytes);
   }
+  const always = value.always;
   return {
     id,
     version: value.version,
     description: value.description,
     roles: [...value.roles] as string[],
+    ...(typeof always === "boolean" ? { always } : {}),
+    ...(requires === undefined ? {} : { requires }),
     source,
     instructions,
     sha256: digest.digest("hex"),
   };
+}
+
+/**
+ * Whether a session's actual composition satisfies a skill's `requires`.
+ *
+ * Fail-closed by construction: an ABSENT composition is not an unknown that
+ * might hold -- a caller that did not state what this session has is treated as
+ * having nothing, so a composition left unwired can never silently enable a
+ * skill the run cannot honour. An undefined `requires` constrains nothing.
+ */
+export function dependenciesMet(
+  requires: SkillRequires | undefined,
+  options: ResolveSkillsOptions = {},
+): boolean {
+  if (requires === undefined) return true;
+  const workflows = options.availableWorkflows ?? [];
+  const plugins = options.availablePlugins ?? [];
+  return (
+    (requires.workflows ?? []).every((name) => workflows.includes(name)) &&
+    (requires.plugins ?? []).every((name) => plugins.includes(name))
+  );
 }
 
 /**
@@ -282,6 +371,11 @@ export interface SkillCatalogueEntry {
  * all-in or all-out. A manifest that fails to parse is skipped rather than
  * taking the catalogue down -- a broken skill must not stop a run that was
  * never going to use it.
+ *
+ * Two kinds of skill never reach a row: an `always` skill, whose instructions
+ * are already in the prompt (listing it would invite a `load_skill` call for
+ * text the role is reading), and a skill whose `requires` this session's
+ * composition does not satisfy.
  */
 export function skillCatalogue(
   role: string,
@@ -298,6 +392,8 @@ export function skillCatalogue(
       continue;
     }
     if (!skill.roles.includes(role)) continue;
+    if (skill.always === true) continue;
+    if (!dependenciesMet(skill.requires, options)) continue;
     rows.push({
       id: skill.id,
       version: skill.version,
@@ -310,18 +406,84 @@ export function skillCatalogue(
 }
 
 /**
+ * The skills a role receives WITHOUT asking: those declaring `always: true`.
+ *
+ * The operator's reason is that the role cannot understand its own situation
+ * without the text -- not that the text is useful. `docs/contracts/skills.md`
+ * carries the cost rule beside it: pasting what is merely useful is how the
+ * orchestrator reached 2106 words of appendix, and the session measurements
+ * behind the catalogue (docs/reviews/2026-09-17-a-capable-model-on-real-work.md)
+ * found 93% of input tokens came from cache precisely because a prompt is
+ * re-read every turn, so an unconditional word is paid for on every turn.
+ *
+ * Composition is honoured exactly as in the catalogue: a skill whose `requires`
+ * this session cannot satisfy is pasted nowhere. A skill that fails to resolve
+ * is skipped, like a broken catalogue row, rather than taking the role down.
+ */
+export function unconditionalSkills(
+  role: string,
+  options: ResolveSkillsOptions = {},
+): ResolvedSkill[] {
+  const selected: ResolvedSkill[] = [];
+  for (const id of listSkillIds(options)) {
+    let skill: ResolvedSkill;
+    try {
+      const resolved = resolveSkills([id], options)[0];
+      if (resolved === undefined) continue;
+      skill = resolved;
+    } catch {
+      continue;
+    }
+    if (!skill.roles.includes(role)) continue;
+    if (skill.always !== true) continue;
+    if (!dependenciesMet(skill.requires, options)) continue;
+    selected.push(skill);
+  }
+  return selected;
+}
+
+/**
+ * Which built-in plugin groups a set of registered tool names proves present.
+ *
+ * Skills gate on plugins through real tool names rather than through a
+ * configured group name: `--plugins web` with the web tools absent from this
+ * model's surface must not satisfy a `requires: {plugins: ["web"]}` skill, and
+ * a plugin group named in configuration is exactly the claim a skill must not
+ * trust. Returns sorted unique names actually found.
+ */
+export function pluginNamesFromToolNames(names: readonly string[]): string[] {
+  const found = new Set<string>();
+  for (const name of names) {
+    if (
+      name === EXPLORE_PROJECT_TOOL_NAME ||
+      name === SEARCH_PROJECT_TOOL_NAME ||
+      name === READ_PROJECT_TOOL_NAME
+    )
+      found.add("explore");
+    else if (name === WEB_SEARCH_TOOL_NAME || name === WEB_READ_TOOL_NAME) found.add("web");
+    else if (name === INSPECT_IMAGE_TOOL_NAME) found.add("vision");
+  }
+  return [...found].sort();
+}
+
+/**
  * Every skill a run can reach, resolved: the visibility source for `config
  * show` (id, version, source tier, SHA-256 digest of the loaded content).
  * Catalogue semantics: an entry that fails to resolve is skipped, exactly as a
  * per-role catalogue skips it, because the default set never loads at dispatch
- * -- a pin still fails loudly through `resolveSkills` on the same paths.
+ * -- a pin still fails loudly through `resolveSkills` on the same paths. An
+ * entry whose `requires` this session's composition cannot satisfy is skipped
+ * too: `config show` must report what a run can reach, and an unreachable row
+ * would be a capability the operator cannot use.
  */
 export function skillInventory(options: ResolveSkillsOptions = {}): ResolvedSkill[] {
   const resolved: ResolvedSkill[] = [];
   for (const id of listSkillIds(options)) {
     try {
       const skill = resolveSkills([id], options)[0];
-      if (skill !== undefined) resolved.push(skill);
+      if (skill === undefined) continue;
+      if (!dependenciesMet(skill.requires, options)) continue;
+      resolved.push(skill);
     } catch {
       // Same per-role catalogue contract: inform the operator in config show
       // that a row is unavailable rather than aborting the enumeration.
