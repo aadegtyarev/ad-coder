@@ -115,6 +115,18 @@ export type {
   ResolveModelInventoryOptions,
 } from "./inventory/types";
 export { parseModelInventoryConfig } from "./inventory/validate";
+export type {
+  LedgerFileStats,
+  LedgerReport,
+  LedgerScopeStats,
+  ToolCount,
+} from "./ledger/analytics";
+export {
+  aggregateLedgerRecords,
+  parseLedgerLine,
+  readLedgerFiles,
+  renderLedgerReport,
+} from "./ledger/analytics";
 export type { LedgerOptions, LedgerSink } from "./ledger/ledger";
 export { FileLedgerSink, LEDGER_BASE_DIR, Ledger, MemoryLedgerSink } from "./ledger/ledger";
 export type { LedgerRecord, UsageAmounts, UsageDelta } from "./ledger/types";

@@ -33,7 +33,7 @@ by `docs/BACKLOG.md`.
 | Roles and prompts | `src/role.ts`, `src/prompts/`, `prompts/` | Validate roles, resolve built-in or project prompts, and compose versioned model-inventory Researcher briefs without persisting content. |
 | Runner | `src/runner/` | Execute one role turn with tools rooted at the target directory. |
 | Context | `src/context/` | Enforce context budgets and optional ad-coder-owned compaction. |
-| Ledger | `src/ledger/` | Record usage, cost, role, step, and tool-call counts without content. |
+| Ledger | `src/ledger/` | Records and reports usage, cost, role, and tool counts. |
 | Activity observability | `src/observability/tool-activity.ts`, `src/cli/tool-activity.ts` | Project harness lifecycle into a bounded headless stream; group or transport it at the CLI boundary. |
 | Workflow core | `src/orchestration/` | Run the plan, research, security, code, and review graph. |
 | Durable coordination | `src/project-operations/`, `src/project-store/` | Checkpoint runs, coordinate resume, and manage follow-ups and publication. |
