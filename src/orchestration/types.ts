@@ -2,6 +2,7 @@ import type { Api, Model, Models } from "@earendil-works/pi-ai";
 import type { ContextBudgetPercents } from "../context/budget";
 import type { CompactionPolicy } from "../context/compactor";
 import type { CostAnomalyDetector } from "../economics/cost-anomaly";
+import type { CommandExecutor, GateReport, QualityGate } from "../gates/types";
 import type { LedgerSink } from "../ledger/ledger";
 import type {
   ToolActivityChannel,
@@ -241,6 +242,19 @@ export interface WorkflowDefaults {
 }
 
 /**
+ * Declared-gate wiring for a pipeline run. `gates` defaults to
+ * `DEFAULT_PROJECT_GATES`; `executor` defaults to the real spawn executor and
+ * tests inject a fake (the same seam `GateRunner` already documents);
+ * `maxOutputChars` overrides the report's per-gate capture ceiling
+ * (`DEFAULT_GATE_RUNNER_CONFIG`).
+ */
+export interface QualityGatesConfig {
+  gates?: readonly QualityGate[];
+  executor?: CommandExecutor;
+  maxOutputChars?: number;
+}
+
+/**
  * Everything `runPipeline` needs to drive one plan -> (code<->review) run.
  *
  * `planner` is the ONLY optional role: a run may skip planning, but it always
@@ -315,6 +329,16 @@ export interface PipelineConfig {
   sessionLimitController?: SessionLimitController;
   /** Shared cost-per-token anomaly tracking for every role in this session. */
   costAnomalyDetector?: CostAnomalyDetector;
+  /**
+   * The project's DECLARED quality gates (issue #227). Declared as data, once —
+   * `gates` defaults to the shipped declaration for this project and a different
+   * project substitutes its own list without touching a role or prompt. Absent
+   * entirely (legacy callers, tests) means NO gate phase: the pipeline runs
+   * byte-for-byte the prior loop. Present with `gates: []` is an explicit empty
+   * declaration — the phase still runs and passes trivially so the reviewer's
+   * evidence always names the declared source.
+   */
+  qualityGates?: QualityGatesConfig;
   /** Per-stage limits. Omitted/zero fields preserve unlimited historical behavior. */
   stageLimits?: StageLimits;
   /** Optional role-specific stage-limit overlays, resolved over `stageLimits`. */
@@ -387,6 +411,22 @@ export interface PipelineResult {
   contractRequirements?: string[];
   /** Safe per-stage resource observations in execution order. */
   stageMetrics: PipelineStageMetrics[];
+  /**
+   * The LAST declared-gate report (issue #227), when the gate phase ran: the
+   * settled run's gate evidence. A red report here explains a non-approved
+   * outcome that no verdict explains — the operator reads WHICH blocker
+   * fired, red gate versus review, off this field and the verdicts instead
+   * of guessing.
+   */
+  gateReport?: GateReport;
+  /**
+   * Whether a review actually ran to a settled verdict. `false` names a run
+   * that settled (max rounds, red gate, operator stop) WITHOUT any review
+   * round: deliberately NOT rendered like "reviewed, no findings" — a run
+   * cannot be approved without a review, and the absence is a first-class
+   * result here, not a missing verdict field.
+   */
+  reviewRan?: boolean;
 }
 
 export interface PipelineStageMetrics {
@@ -538,12 +578,15 @@ export class OrchestrationError extends Error {
  *
  * `plan` and `security` are conditional (a plan phase only when a planner role
  * is configured; a security phase only on an `elevated` surface WITH a security
- * role). `code` and `review` alternate for up to `maxRounds` rounds. `done` is
- * the terminal phase -- a state in `done` is never stepped again; its outcome is
+ * role). `gates` is conditional (only when `qualityGates` is configured, see
+ * `PipelineConfig.qualityGates`) and sits AFTER the coder and BEFORE the
+ * reviewer so a red gate returns to the coder with captured output instead of
+ * ever reaching review. `code` and `review` alternate for up to `maxRounds`
+ * rounds. `done` is the terminal phase -- a state in `done` is never stepped again; its outcome is
  * read via `toPipelineResult`. This enum is the single source of truth for the
  * step graph that used to live as inline control flow inside `runPipeline`.
  */
-export type WorkflowPhase = "plan" | "research" | "security" | "code" | "review" | "done";
+export type WorkflowPhase = "plan" | "research" | "security" | "code" | "gates" | "review" | "done";
 
 /**
  * The kind of edge a driver can take out of a completed step.
@@ -624,6 +667,13 @@ export interface WorkflowState {
   activeStage?: ActiveWorkflowStage;
   /** Most recent safe handoff decision, retained for deterministic resume. */
   pipelineContext?: PipelineContextSnapshot;
+  /**
+   * The most recent declared-gate report, in declaration order. Stored so a
+   * red report can be handed back to the coder with its captured output and so
+   * the settled result names gates as blocking evidence. Outputs are already
+   * bounded by the runner's ceiling, so this stays checkpoint-safe.
+   */
+  lastGateReport?: GateReport;
   /** True once a `stop` edge has settled the run; the driver loop stops stepping. */
   done: boolean;
   /** The settled approval outcome, set by `applyTransition` on a `stop` edge. */

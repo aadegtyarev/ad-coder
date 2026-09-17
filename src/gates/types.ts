@@ -13,18 +13,22 @@
  */
 
 /**
- * The four checks the runner understands. `format`, `lint` and `typecheck` are
+ * The checks the runner understands. `format`, `lint` and `typecheck` are
  * external — they run through the injected executor against a caller-declared
  * command. `size` is in-process: it reads files and counts lines itself, with no
  * executor call and no external tool, so a project gets a cheap structural gate
- * with zero setup.
+ * with zero setup. `project` is external like format/lint/typecheck but runs a
+ * WHOLE-PROJECT command over the declared file list (normally an EMPTY list,
+ * i.e. no path arguments appended) — the declared project gates (#227) all land
+ * here, because `bun run check` decides over the repository, not over files.
  */
-export type QualityGateKind = "format" | "lint" | "typecheck" | "size";
+export type QualityGateKind = "format" | "lint" | "typecheck" | "size" | "project";
 
 /**
  * One declared check. `command` is the argv (program plus flags) whose exit code
  * decides pass/fail; supplied file paths are appended to it as discrete trailing
- * elements. `autofix`, when present, is the argv run FIRST to mutate files into
+ * elements (for a `project` gate the caller passes none — the argv still decides
+ * over the whole working tree). `autofix`, when present, is the argv run FIRST to mutate files into
  * shape before the check (e.g. `prettier --write`) — its result never decides
  * pass/fail. `maxLinesPerFile` applies only to a `size` gate.
  *

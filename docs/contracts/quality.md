@@ -2,6 +2,19 @@
 
 Rules for the project's own code quality. A violation is always blocking.
 
+- 2026-09-17: The pipeline's checks are DECLARED as data, not left to a model's
+  own judgment (issue #227). A declared `QualityGate` list carries real argv and
+  is executed by the existing `GateRunner` after the coder and before any
+  reviewer round, with zero path arguments appended for `project` gates: the
+  argv decides over the whole working directory exactly as an operator would
+  type it. A RED gate returns to the coder with the captured output verbatim as
+  blocking evidence and is re-run before any review; a run never reaches review
+  -- and never settles `approved` -- while the gate report is red, even through
+  a driver rework that follows an earlier approval. The settled result names
+  WHICH blocker fired: the gate report versus the verdict, plus `reviewRan`, so
+  a run that settled without any review round is never rendered like "reviewed,
+  no findings". A review stage that could not run to a verdict is its own red
+  pause (`review_not_run`), resumable only by an explicit operator act.
 - 2026-09-11: Every change passes `bun run check` (Biome format + lint, config in
   `biome.json`) with zero errors before it is considered done; CI runs it on push
   and PR. The Coder runs `bun run check:fix` as part of finishing; the Reviewer

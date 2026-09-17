@@ -4,6 +4,44 @@ All notable changes to ad-coder are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project aims at
 [Semantic Versioning](https://semver.org/).
 
+## [0.37.0] - 2026-09-17
+
+### Added
+- **Declared project quality gates** (issue #227): the pipeline's checks are
+  now declared as data and executed, not left to any model's own judgment.
+  `runPipeline` gains a `qualityGates` config (`gates`, `executor`,
+  `maxOutputChars`) and a new `gates` phase after the coder and before review,
+  backed by the existing `GateRunner` over a `project` gate kind, plus the
+  shipped default declaration `DEFAULT_PROJECT_GATES` (the seven
+  `bun install --frozen-lockfile` / typecheck / test / check / check:release /
+  check:docs / smoke:artifact commands) lives in `src/gates/project-gates.ts`,
+  with `createSpawnCommandExecutor` as the real no-shell, capture-capped
+  executor. A red gate returns to the coder with the
+  captured output verbatim (bounded by a 64 KiB default ceiling with a
+  `[capture truncated]` marker) and re-runs the gates before any review; a run
+  never reaches review -- and never settles `approved` over red evidence, even
+  after a driver rework that followed an approval -- until the gates are green,
+  and at the round cap it settles not-approved BEFORE any review with the red
+  report as the settled result's gate evidence.
+- The pipeline result names the blocker and the absence explicitly: `gateReport`
+  carries the last gate report, and `reviewRan` distinguishes a run that settled
+  without any review round from "reviewed, no findings". Background run outcomes
+  report `verdict: "not_run"` for such runs, and pipeline tool summaries read
+  `review=` and `gates=` (with failing gate names) instead of an opaque verdict
+  count.
+- A review stage that could not run to a verdict is its own outcome
+  (`review_not_run`): it pauses red, with the failing reason (`missing_verdict`
+  or `malformed_verdict`) named in the action, and is resumable by an explicit
+  operator retry like any other red pause, so a silent unreviewed run is visible
+  the next morning (the #220 failure shape).
+- The runner accepts the new `project` gate kind over an EMPTY file list, so a
+  whole-project command decides over the working directory with zero path
+  arguments appended; a spawn-level failure marks THAT gate red rather than
+  rejecting the report.
+- Contract coverage is dated in `docs/contracts/quality.md` (declared gates,
+  blocker evidence, `reviewRan`) and `docs/contracts/config.md` (the
+  `qualityGates` option and its validation).
+
 ## [0.36.0] - 2026-09-17
 
 ### Added

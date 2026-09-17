@@ -1003,7 +1003,7 @@ test("a shared ledger sink carries distinct role/step records per round", async 
   }
 });
 
-test("a reviewer that never calls submit_verdict throws OrchestrationError missing_verdict", async () => {
+test("a reviewer that never calls submit_verdict blocks as a red review-not-run pause", async () => {
   const fx = fixture();
   const coder = fx.role("coder", "You code.");
   const reviewer = reviewerRole(fx);
@@ -1026,10 +1026,14 @@ test("a reviewer that never calls submit_verdict throws OrchestrationError missi
     caught = error;
   }
   expect(caught).toBeInstanceOf(OrchestrationError);
-  expect((caught as OrchestrationError).code).toBe("missing_verdict");
+  // Reviewer did not run is a RED result with its own code, not a silence:
+  // distinct from "reviewed, no findings" and blocked like a red gate.
+  expect((caught as OrchestrationError).code).toBe("requirements_unresolved");
+  expect((caught as OrchestrationError).message).toContain("review_not_run");
+  expect((caught as OrchestrationError).message).toContain("missing_verdict");
 });
 
-test("a malformed submission throws OrchestrationError malformed_verdict", async () => {
+test("a malformed submission blocks as a red review-not-run pause with the cause named", async () => {
   const fx = fixture();
   const coder = fx.role("coder", "You code.");
   const reviewer = reviewerRole(fx);
@@ -1052,7 +1056,8 @@ test("a malformed submission throws OrchestrationError malformed_verdict", async
     caught = error;
   }
   expect(caught).toBeInstanceOf(OrchestrationError);
-  expect((caught as OrchestrationError).code).toBe("malformed_verdict");
+  expect((caught as OrchestrationError).message).toContain("review_not_run");
+  expect((caught as OrchestrationError).message).toContain("malformed_verdict");
 });
 
 test("documentation-surface verdict guidance names exact contracts and validation self-corrects", () => {
@@ -2397,8 +2402,9 @@ test("an incomplete submit_verdict reaches parseVerdict and is named, not report
     caught = error;
   }
   expect(caught).toBeInstanceOf(OrchestrationError);
-  expect((caught as OrchestrationError).code).toBe("malformed_verdict");
-  expect((caught as OrchestrationError).message).toContain("issues[0].what");
+  // Not a schema pre-empt: the guidance reaches the reviewer in its tool
+  // result; the pipeline-level pause names the red review, not the field.
+  expect((caught as OrchestrationError).message).toContain("review_not_run");
 });
 
 test("no tool schema requires a nested field, so the harness never pre-empts the parser", () => {

@@ -92,6 +92,7 @@ export { startConversation } from "./conversation/conversation";
 export type { CalibrationCostSample, CostForecast } from "./economics/forecast";
 export { forecastCost, latestCreditBalance } from "./economics/forecast";
 export * from "./evaluation/calibration";
+export { DEFAULT_GATE_CAPTURE_BYTES, DEFAULT_PROJECT_GATES } from "./gates/project-gates";
 export type { GateRunnerConfig } from "./gates/runner";
 export { DEFAULT_GATE_RUNNER_CONFIG, GateRunner } from "./gates/runner";
 export type {

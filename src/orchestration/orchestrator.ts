@@ -562,9 +562,22 @@ function formatCost(
   return [`total cost: ${totalCost}`, ...lines].join("\n");
 }
 
-/** The last verdict's status, or `none` when a run settled without one. */
-function lastVerdictStatus(result: PipelineResult): string {
-  return result.verdicts[result.verdicts.length - 1]?.status ?? "none";
+/** The last verdict's status, or `not_run` when a settled run had no review. */
+function lastReviewStatus(result: PipelineResult): string {
+  if (result.reviewRan === false) return "not_run";
+  return result.verdicts[result.verdicts.length - 1]?.status ?? "not_run";
+}
+
+/** Gate summary for one settled run: the operator reads which blocker fired. */
+function lastGateStatus(result: PipelineResult): string {
+  const report = result.gateReport;
+  if (report === undefined) return "not_run";
+  return report.passed
+    ? "pass"
+    : `fail(${report.results
+        .filter((r) => !r.passed)
+        .map((r) => r.name)
+        .join(",")})`;
 }
 
 /** Compact provider-reported stage totals; no prompts, paths, or model text. */
@@ -679,7 +692,8 @@ export function buildBuiltInPipelineTools(core: Orchestrator): Tool[] {
         const run = await core.runPipeline(params.task);
         const summary =
           `pipeline complete: runId=${run.runId} approved=${run.result.approved} ` +
-          `rounds=${run.result.rounds} verdict=${lastVerdictStatus(run.result)}`;
+          `rounds=${run.result.rounds} review=${lastReviewStatus(run.result)} ` +
+          `gates=${lastGateStatus(run.result)}`;
         return {
           content: [
             {
@@ -798,7 +812,8 @@ export function buildBuiltInPipelineTools(core: Orchestrator): Tool[] {
         const run = await core.resumePipeline(params.task, params.runId);
         const summary =
           `pipeline complete: runId=${run.runId} approved=${run.result.approved} ` +
-          `rounds=${run.result.rounds} verdict=${lastVerdictStatus(run.result)}`;
+          `rounds=${run.result.rounds} review=${lastReviewStatus(run.result)} ` +
+          `gates=${lastGateStatus(run.result)}`;
         return {
           content: [
             {

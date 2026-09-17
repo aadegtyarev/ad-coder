@@ -357,7 +357,7 @@ export class BackgroundRunManager {
         lifecycle: "completed",
         approved: result.result.approved,
         rounds: result.result.rounds,
-        ...(lastVerdict === undefined ? {} : { verdict: lastVerdict.status }),
+        ...(lastVerdict === undefined ? { verdict: "not_run" } : { verdict: lastVerdict.status }),
       };
       this.append(entry, "completed", { metrics: { ...entry.metrics } });
     });
@@ -841,7 +841,9 @@ function parseOutcome(value: unknown, runId: string): BackgroundRunOutcome {
     ...(object.rounds === undefined ? {} : { rounds: safeInteger(object.rounds) }),
     ...(object.verdict === undefined
       ? {}
-      : { verdict: enumValue(object.verdict, ["approved", "changes_requested"] as const) }),
+      : {
+          verdict: enumValue(object.verdict, ["approved", "changes_requested", "not_run"] as const),
+        }),
   };
 }
 function copyOutcome(outcome: BackgroundRunOutcome): BackgroundRunOutcome {

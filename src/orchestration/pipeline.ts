@@ -54,10 +54,11 @@ export async function runPipeline(config: PipelineConfig): Promise<PipelineResul
   const coordinator = new RunCoordinator(session, session.projectStore, config.coordinator);
   const completed = await coordinator.run();
   if (completed.status === "paused" && completed.checkpoint.pause !== undefined) {
+    const pause = completed.checkpoint.pause;
     throw new OrchestrationError(
       "requirements_unresolved",
       completed.checkpoint.runId,
-      completed.checkpoint.pause.action,
+      `${pause.code}: ${pause.action}`,
     );
   }
   if (completed.result === undefined) {
