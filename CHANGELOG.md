@@ -11,6 +11,32 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.44.1] - 2026-09-17
+
+### Fixed
+
+- **The in-run stamp gate can no longer block a run on a fix only the run
+  itself can perform** (issue #271). `bun run stamp:check` leaves the
+  declared in-run gate set and becomes this repository's PRE-MERGE gate: the
+  review stamp's property only exists at settle -- the settle path in
+  `runPipeline` is the only stamp writer, and it runs after review -- so
+  inside a run the gate was stale-red on every first review of a moved tree
+  and handed the coder an unperformable fix. Either direction of the issue
+  was legitimate; the exclusion direction was chosen because making the
+  review round write its own verdict's stamp contradicts the #239 rule that
+  a model is never the stamp's author and would duplicate the settle
+  path's writer. No stamp, a malformed stamp, or a stale digest still fails
+  the merge exactly like any red gate.
+- **Coding is stated, at every surface the model reads, to be the delegate's
+  work** (issue #271). `prompts/orchestrator.md`, the `role-selection` skill,
+  and a dated entry in `docs/contracts/operation-modes.md` now say plainly:
+  the coder role writes the code; the orchestrator does not edit target files
+  outside a recorded `trivial` classification; a delegated coder returns
+  implemented edits, not advice. The rule is verified by the measurement the
+  #263/#264 criterion names: on comparable work,
+  `ad-coder ledger report` shows per-role `edits` under `coder` rather than
+  `orchestrator`, and `timeToFirstEdit` after dispatch.
+
 ## [0.44.0] - 2026-09-17
 
 ### Added
