@@ -4,20 +4,34 @@ import { Type } from "@earendil-works/pi-ai";
 import type { DelegatedRoute, ResolvePipelineConfigOptions } from "../cli/resolve-config";
 import { resolveOrchestratorSeed, resolvePipelineConfig } from "../cli/resolve-config";
 import type { ConversationSession } from "../conversation/conversation";
-import { startConversation as startConversationImpl } from "../conversation/conversation";
+import {
+  startConversation as startConversationImpl,
+  TurnInterruptedError,
+} from "../conversation/conversation";
 import type { CostAnomalyDetector } from "../economics/cost-anomaly";
+import { CostAnomalyBlockedError } from "../economics/cost-anomaly";
 import type { MemoryLedgerSink } from "../ledger/ledger";
 import { FileLedgerSink, MemoryLedgerSink as MemoryLedgerSinkImpl } from "../ledger/ledger";
 import type { ToolActivityConsumer, ToolActivitySnapshot } from "../observability/tool-activity";
 import { ToolActivityChannel } from "../observability/tool-activity";
+import { StageCloseoutError, StageLimitError } from "../orchestration/stage-limits";
 import { ProjectOperationsError } from "../project-operations/errors";
 import { RunCoordinator } from "../project-operations/run-coordinator";
 import type { Role } from "../role";
 import { defineRole } from "../role";
+import {
+  ConfiguredToolsUnavailableError,
+  EmptyTurnError,
+  ProviderLimitError,
+  ProviderRejectionError,
+  RunInterruptedError,
+  RunnerError,
+  SuspendedRunError,
+} from "../runner/errors";
 import type { Tool } from "../runner/tool";
 import { defineTool } from "../runner/tool";
 import type { SessionLimitSnapshot, SessionLimits } from "../session-limits";
-import { SessionLimitController } from "../session-limits";
+import { SessionLimitController, SessionLimitError } from "../session-limits";
 import { roleSkillKit } from "../skills/role-kit";
 import { buildWebTools } from "../web/tools";
 import { resolveWorkflowModules } from "../workflows/registry";
@@ -522,13 +536,29 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
 /**
  * Project any error into a transcript-safe one-line string.
  *
- * SECURITY (data_exposure): the tool handlers return text the model reads and
- * the ledger/transcript captures. Every house error (`DriveError`,
- * `OrchestratorError`, `OrchestrationError`, and the config-layer
- * `RegistryError`/`ProfileError` that `buildConfig` may throw) carries a
- * safe `code`+`detail`; this surfaces ONLY those two, never `String(error)`,
- * `error.message`, or a stack (which can hold absolute paths). An unrecognised
- * error collapses to a fixed generic string.
+ * SECURITY (data_exposure) + the errors contract (2026-09-16): the tool
+ * handlers return text the model reads and the ledger/transcript captures, and
+ * a rejection must CARRY ITS REASON, not collapse to a code. The two demands
+ * are resolved by three ordered projections, each safe by construction:
+ *
+ * 1. `code`+`detail` passthrough. The errors seen here with a safe `code` and
+ *    a names-only `detail` (`DriveError`, `OrchestratorError`,
+ *    `OrchestrationError`, and the config-layer `RegistryError`/`ProfileError`)
+ *    surface exactly those two. Unchanged shape (compat:
+ *    `error: code (detail)`).
+ * 2. Known house classes, matched BY CLASS, message included: classes whose
+ *    message is an AUTHORED string -- fixed wording, numbers, a validated run
+ *    id, or a harness-authored code token, never `String(error)` or an
+ *    uncontrolled field. Rendered `error: code (authored message)`. Every new
+ *    candidate must be audited field-by-field before entering the list;
+ *    `WorkflowStageFailureError` is deliberately EXCLUDED because its message
+ *    re-wraps an uncontrolled source error (a leaking member would poison the
+ *    whole projection).
+ * 3. Constructor-name fallback: an unrecognised error still names its
+ *    constructor (`(TypeError)`) -- a bounded inert token, never paths,
+ *    payloads, or a message. That is the "one word that ends the
+ *    investigation" the fixed string denied #236 and #237, while the fixed
+ *    generic text itself stays (compat).
  */
 function safeErrorText(error: unknown): string {
   if (
@@ -542,8 +572,48 @@ function safeErrorText(error: unknown): string {
     const e = error as { code: string; detail: string };
     return `error: ${e.code} (${e.detail})`;
   }
+  if (error instanceof Error) {
+    for (const house of SAFE_HOUSE_ERRORS) {
+      if (!(error instanceof house)) continue;
+      // The allow-list above guarantees: `code` is an authored literal or a
+      // validated token, `message` is authored-safe, and `runId` only exists on
+      // classes whose constructor validated it (`assertRunId`) before any
+      // projection.
+      const e = error as Error & { code?: unknown; message: string; runId?: unknown };
+      const code = typeof e.code === "string" ? e.code : undefined;
+      const runId = typeof e.runId === "string" ? e.runId : undefined;
+      const tail = runId !== undefined ? `; run ${runId}` : "";
+      return code === undefined
+        ? `error: ${house.name} (${e.message}${tail})`
+        : `error: ${code} (${e.message}${tail})`;
+    }
+    const unrecognised =
+      error.constructor === undefined || error.constructor.name === ""
+        ? error.name
+        : error.constructor.name;
+    if (typeof unrecognised === "string" && SAFE_NAME_PATTERN.test(unrecognised)) {
+      return `error: an unexpected internal error occurred (${unrecognised})`;
+    }
+  }
   return "error: an unexpected internal error occurred";
 }
+
+const SAFE_NAME_PATTERN = /^[\w$.-]{1,64}$/;
+
+const SAFE_HOUSE_ERRORS = [
+  EmptyTurnError,
+  ProviderRejectionError,
+  ConfiguredToolsUnavailableError,
+  ProviderLimitError,
+  RunInterruptedError,
+  SuspendedRunError,
+  RunnerError,
+  SessionLimitError,
+  TurnInterruptedError,
+  StageLimitError,
+  StageCloseoutError,
+  CostAnomalyBlockedError,
+] as const;
 
 /** Render a `StepCost[]` + total as a compact, safe cost summary. */
 function formatCost(

@@ -545,6 +545,7 @@ export {
   providerRejectionStatusFrom,
   RunnerError,
   resolveTargetDir,
+  SuspendedRunError,
 } from "./runner/errors";
 export type { RoleRunner, RoleRunnerConfig, RunRoleOptions } from "./runner/role-runner";
 export { createRoleRunner } from "./runner/role-runner";

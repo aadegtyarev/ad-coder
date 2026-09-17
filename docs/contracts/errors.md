@@ -67,3 +67,25 @@ for machines?
   contains, retry the EDIT. The evidence never includes file content, and it is skipped -- the unenriched upstream
   error passes through -- when the file cannot be read or exceeds the positive diagnostic read ceiling, because advice
   invented without evidence misdirects the retry more than no advice at all.
+- 2026-09-17 (issue #237): A translating boundary never answers an unrecognised
+  error with silence. The orchestration tool boundary collapsed every error not
+  carrying a `code`+`detail` pair into a fixed string
+  (`an unexpected internal error occurred`), so two independent diagnoses of
+  the same defect each had to patch the boundary by hand to learn its one-word
+  cause (`configured_tools_unavailable`, then `EmptyTurnError`) -- and after
+  #236's deterministic fix, two of five intermittent delegated `run_role`
+  failures remained undiagnosable behind the same line. Now the boundary
+  projects in three ordered shapes, each safe by construction: the
+  `code`+`detail` passthrough is unchanged; house classes whose message is an
+  AUTHORED string (fixed wording, numbers, a validated run id, a harness
+  failure-code token) are matched BY CLASS and keep it
+  (`error: code (message; run <id>)`); an unrecognised error still names its
+  inert constructor (`(TypeError)`) -- the one word that ends the
+  investigation -- while its message, stack, and payloads stay withheld. A new
+  class enters the allow-list only after a field-by-field audit of its message
+  sources; `WorkflowStageFailureError` is excluded because its message re-wraps
+  an uncontrolled source error. Deferral suspensions are typed
+  (`SuspendedRunError`, `run <id>`) instead of bare `Error`s, so an
+  intermittent empty read is now distinguishable -- by code, message, and the
+  run id that locates the ledger -- from a tool-availability failure, a
+  provider rejection, and a rate limit.

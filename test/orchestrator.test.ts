@@ -50,6 +50,7 @@ import type {
   TransitionKind,
   Verdict,
 } from "../src/orchestration/types";
+import { OrchestrationError } from "../src/orchestration/types";
 import { SUBMIT_VERDICT_TOOL_NAME } from "../src/orchestration/verdict";
 import { buildDefaultProfile } from "../src/profiles/default-profile";
 import { RunCoordinator } from "../src/project-operations/run-coordinator";
@@ -59,7 +60,7 @@ import { READ_PROJECT_TOOL_NAME } from "../src/project-tools/read";
 import { SEARCH_PROJECT_TOOL_NAME } from "../src/project-tools/search";
 import type { Role } from "../src/role";
 import { defineRole } from "../src/role";
-import { ProviderLimitError } from "../src/runner/errors";
+import { EmptyTurnError, ProviderLimitError } from "../src/runner/errors";
 import type { Tool } from "../src/runner/tool";
 import { SessionLimitController, SessionLimitError } from "../src/session-limits";
 import { LOAD_SKILL_TOOL_NAME } from "../src/skills/load-tool";
@@ -360,6 +361,31 @@ test("selected skills are delegated only to compatible roles and retain project 
   expect(planner?.systemPrompt).toContain("## task-slicing@2");
   expect(planner?.systemPrompt).toContain(orchestratorInstruction);
   expect(reviewer?.systemPrompt).not.toContain(instruction);
+});
+
+test("run_role projects its thrown errors with reason kept and leak withheld", async () => {
+  const tool = buildRunRoleTool(async () => {
+    throw new EmptyTurnError("run-abc", "assistant_error");
+  });
+  expect(await callTool(tool, { role: "auditor", task: "x" })).toBe(
+    "error: empty_turn (the provider returned a failed empty turn; verify authentication and retry (provider code assistant_error); run run-abc)",
+  );
+  // Nothing uncontrolled in an unrecognised error -- message, stack -- may
+  // reach the projection; the inert constructor name is the diagnosable part.
+  const leak = buildRunRoleTool(async () => {
+    throw new Error("boom: /absolute/path and bearer sk_live_123");
+  });
+  expect(await callTool(leak, { role: "auditor", task: "x" })).toBe(
+    "error: an unexpected internal error occurred (Error)",
+  );
+  // code+detail passthrough keeps its compat shape (also asserted above for
+  // invalid_role).
+  const typed = buildRunRoleTool(async () => {
+    throw new OrchestrationError("empty_task", "or_detail", "authored");
+  });
+  expect(await callTool(typed, { role: "auditor", task: "x" })).toBe(
+    "error: empty_task (or_detail)",
+  );
 });
 
 test("run_role delegates independently and rejects unknown role names safely", async () => {
