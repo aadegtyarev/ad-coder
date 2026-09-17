@@ -13,6 +13,16 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.54.1] - 2026-09-17
+
+### Fixed
+- The automatic dev publish failed on its first run: npm refuses to publish a
+  prerelease without an explicit dist-tag, rather than guess where an unlabelled
+  `0.54.0-dev.7` belongs. The dev publish now names `latest` explicitly, which
+  for this package is the wanted answer -- `ad-coder-dev` is the development
+  channel, so its newest build is what a bare install should resolve to, and
+  anyone wanting stability installs `ad-coder`. (#300)
+
 ## [0.54.0] - 2026-09-17
 
 ### Added
