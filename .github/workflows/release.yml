@@ -95,7 +95,16 @@ jobs:
       # `id-token: write` is what npm verifies. npm 11.5.1+ is required for
       # Trusted Publishing.
       - run: npm install -g npm@latest
+      # A prerelease must name its dist-tag -- npm refuses to guess, since an
+      # unlabelled `0.54.0-dev.7` would silently become whatever a bare install
+      # resolves to. For this package that IS what we want: `ad-coder-dev` is the
+      # development channel, so its newest build is its `latest`. Anyone wanting
+      # stability installs `ad-coder` instead; a second gradation inside the dev
+      # package would be a distinction nobody asked for.
+      - run: npm publish --tag latest
+        if: steps.channel.outputs.dev == 'true'
       - run: npm publish
+        if: steps.channel.outputs.dev == 'false'
 
       # The release notes are the CHANGELOG section for this version, so the
       # published notes and the committed history cannot drift apart. A dev
