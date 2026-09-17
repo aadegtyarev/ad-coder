@@ -3113,7 +3113,7 @@ const COMMANDS: readonly CommandDefinition[] = [
       process.stdout.write(
         booleans["--json"] === true
           ? `${JSON.stringify(info)}\n`
-          : `ad-coder ${info.version}\nrevision: ${info.revision ?? "unknown"}\nlinked development: ${info.linkedDevelopment ? "yes" : "no"}\n`,
+          : `${info.name} ${info.version}\nrevision: ${info.revision ?? "unknown"}\nlinked development: ${info.linkedDevelopment ? "yes" : "no"}\n`,
       );
       await Promise.resolve();
     },
