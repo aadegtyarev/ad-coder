@@ -4,6 +4,51 @@ All notable changes to ad-coder are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project aims at
 [Semantic Versioning](https://semver.org/).
 
+Release and contract dates are the operator's LOCAL calendar day -- the day the
+release shipped, in the operator's own timezone. Never date an entry by
+`date -u`; on an evening after 20:00 local (UTC+04) that is one day behind and
+makes "which rule is newer" unanswerable by reading. `bun run check:release`
+enforces that dated release headings go in non-increasing date order
+(docs/contracts/documentation.md, 2026-09-17).
+
+## [0.41.1] - 2026-09-17
+
+### Fixed
+- **The ledger names a tool call whose name never arrived** (issue #251):
+  `toolCallCounts` keyed the ledger straight off `block.name`, so a provider
+  quirk that emits a tool-call block with an empty name was recorded under the
+  empty string -- a nameless bucket that `ad-coder ledger report` rendered as
+  `=1` and nothing could interpret. The decision, recorded in
+  `src/ledger/usage.ts` and `docs/contracts/ledger-report.md`: an empty or
+  missing name is a provider anomaly, not a tool; the call is counted under the
+  explicit `<unnamed>` sentinel. The shape of the trouble was already on the
+  same record -- the row carries `stopReason`, so `<unnamed>` beside a
+  truncated or error stop is the read-back signature of the visible half of a
+  truncated provider response; the per-response hook cannot resolve a name
+  back from the call id without the earlier request, so attribution there is
+  deliberately not attempted.
+- **CHANGELOG and contract dates come from one clock** (issue #243, contract
+  `docs/contracts/documentation.md`, 2026-09-17): dated entries use the
+  operator's LOCAL calendar day -- the day it shipped, "the day I shipped it"
+  -- never `date -u`, which disagreed with local time for a slice of every
+  evening and is how 0.35.0 carried 2026-09-16 under 0.34.0's 2026-09-17.
+  0.35.0 is corrected to 2026-09-17. The rule is stated in the CHANGELOG
+  header, in the contract, and in `AGENTS.md`, and no longer depends on
+  remembering: `check:release` now fails when the CHANGELOG's dated release
+  headings are out of non-increasing date order, a property this commit's
+  history demonstrates by initially failing on the very disorder it fixes.
+- **`--target-dir` is declared a working directory, not a boundary for bash**
+  (issue #241, contract `docs/contracts/security.md`, 2026-09-17): the deliber
+  ate decision is to declare bash unbounded because bounding it honestly means
+  an OS-level sandbox -- `git -C`, absolute paths, `$(...)`, env vars, and any
+  tool taking a path defeat every textual or command-string gate, and the
+  project's real work needs `gh`, `git` outside the worktree, and system tooling
+  from bash. The contract now says plainly that bash carries the user's
+  full authority, `--target-dir` bounds only the file and project tools, two
+  worktree runs are not isolated from each other, and isolation that matters
+  happens in the shell layer (dedicated OS user or container); the bash tool's
+  own description was updated so it no longer reads as confined to the target.
+
 ## [0.41.0] - 2026-09-17
 
 ### Fixed
@@ -239,7 +284,7 @@ All notable changes to ad-coder are recorded here. The format follows
   `activeToolNames` must name a tool object the conversation registers. No gate
   exercised a live provider, so this is the check that can fail without one.
 
-## [0.35.0] - 2026-09-16
+## [0.35.0] - 2026-09-17
 
 ### Added
 - `ad-coder console` can receive a multi-line brief (#224, contract

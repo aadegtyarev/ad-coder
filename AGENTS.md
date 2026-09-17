@@ -58,6 +58,8 @@ durable store; the transcript is not.
 
 ## Everything configurable is configurable; defaults are maximally efficient
 
+## Everything configurable is configurable; defaults are maximally efficient
+
 If a behavior has a reasonable alternative someone might want, expose it as
 configuration rather than hardcoding one choice. The counterweight to a small
 config surface is not fewer knobs — it is good DEFAULTS: ship the most efficient
@@ -105,6 +107,10 @@ configurable), `architecture.md` (headless core + thin fronts, every capability
 reachable programmatically — the harness is friendly to humans AND machines),
 `quality.md` (every change passes `bun run check` — Biome format + lint — with the
 Reviewer blocking on a non-clean run).
+
+Dating clock for releases and contract entries: use the operator's LOCAL date,
+never `date -u` (`docs/contracts/documentation.md`, 2026-09-17; the CHANGELOG
+order it protects is enforced by `bun run check:release`).
 
 
 

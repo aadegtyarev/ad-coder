@@ -261,6 +261,22 @@ test("tool names colliding with Object.prototype members are counted, not corrup
   expect(sink.records()[0]?.toolCalls).toEqual(expected);
 });
 
+test("a tool call whose name did not arrive is recorded under the explicit <unnamed> sentinel, not the empty string (issue #251)", async () => {
+  const sink = new MemoryLedgerSink();
+  const { hooks, registered } = fakeHooks();
+  new Ledger({ runId: "run1", role: "r", step: "s", sink }).attach(hooks);
+  const handler = registered[0]?.handler;
+  if (handler === undefined) throw new Error("handler was not registered");
+
+  await handler(event(usage(100, 110, 0.01), 200, [fauxToolCall("", {})]), FAKE_CONTEXT);
+
+  expect(sink.records()[0]?.toolCalls).toEqual({ "<unnamed>": 1 });
+  // The shape of the trouble stays on the same record: a reader diagnosing an
+  // <unnamed> count reads this row's stopReason (error/truncated beside it is
+  // the truncated-response signature; stop means an isolated provider quirk).
+  expect(typeof sink.records()[0]?.stopReason).toBe("string");
+});
+
 test("no record key can hold prompt, message body or header data", async () => {
   const sink = new MemoryLedgerSink();
   const { hooks, registered } = fakeHooks();
