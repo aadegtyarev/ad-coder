@@ -1,4 +1,6 @@
 import type { AssistantMessage, Models, UserMessage } from "@earendil-works/pi-ai";
+import type { ProfileRole } from "../profiles/types";
+import type { WorkflowPhase } from "./types";
 
 export interface StageLimits {
   maxDurationMs?: number;
@@ -443,3 +445,19 @@ export class StageLimitController {
       throw new StageLimitError(reason, limit, observed, this.snapshot());
   }
 }
+
+/**
+ * Which role runs each workflow phase.
+ *
+ * A stage-limit pause records the phase, and a raise names a role, so the durable
+ * resume check needs the mapping between them to compare like with like
+ * (issue #208). Phases with no single owning role -- `gates` runs commands,
+ * `done` runs nothing -- are absent rather than guessed.
+ */
+export const ROLE_BY_PHASE: Readonly<Partial<Record<WorkflowPhase, ProfileRole>>> = Object.freeze({
+  plan: "planner",
+  research: "researcher",
+  security: "security",
+  code: "coder",
+  review: "reviewer",
+});

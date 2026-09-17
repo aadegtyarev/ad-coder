@@ -1,0 +1,128 @@
+name: release
+# Publishing happens here and nowhere else: from a tag, after the same gates a
+# pull request passes, with no stored credential. npm authenticates the run
+# itself through Trusted Publishing (issue #268) -- the repository holds no
+# publish token, so there is none to leak.
+#
+# Two channels, chosen by the tag: `v0.53.0` publishes `ad-coder`, and
+# `v0.53.0-dev.1` publishes `ad-coder-dev` -- a separate package rather than a
+# dist-tag, so an early-access install does not overwrite the stable command and
+# both can sit on one machine. Same gates either way: the dev channel is
+# published more often, not held to less.
+on:
+  push:
+    tags: ["v*"]
+    # Every merge to main publishes a dev version by itself. Without this the dev
+    # channel is useless -- its purpose is exercising the newest work, and that
+    # cannot wait for someone to tag. The consequence is different from stable:
+    # a dev version reaches only those who asked for `ad-coder-dev`, and its
+    # numbers are disposable, so the irreversibility that keeps stable behind a
+    # human tag does not apply here (issue #300).
+    branches: [main]
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      # `id-token` is what lets GitHub attest this run to npm; `contents` is for
+      # creating the release. Nothing else is granted.
+      id-token: write
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.13"
+      # npm does the publishing (bun has no Trusted Publishing support), so a
+      # node toolchain is set up even though the project runs on bun.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      # The gates, in CI's order. A tag is not a promise that they passed: a tag
+      # can be pushed at any commit, and a published version cannot be withdrawn
+      # from npm -- only deprecated. So they run again here rather than trusting
+      # that the branch was green.
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun run check
+      - run: bun run check:release
+      - run: bun run check:docs
+      - run: bun test
+      - run: bun run smoke:artifact
+
+      - name: Pick the channel
+        id: channel
+        run: |
+          # A branch push is always the dev channel; a tag chooses by its suffix.
+          # The dev version is composed from package.json plus the run number, so
+          # it always increases and never repeats without anyone choosing it.
+          if [ "$GITHUB_REF_TYPE" = "branch" ]; then
+            version="$(node -p "require('./package.json').version")"
+            echo "dev=true" >> "$GITHUB_OUTPUT"
+            echo "tag=v${version}-dev.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+          else
+            case "$GITHUB_REF_NAME" in
+              *-dev.*) echo "dev=true" >> "$GITHUB_OUTPUT" ;;
+              *)       echo "dev=false" >> "$GITHUB_OUTPUT" ;;
+            esac
+            echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Stable only: the tag must name the version being published. Without this,
+      # `v0.52.0` on a tree that still says 0.51.0 publishes a duplicate and fails
+      # confusingly, or -- worse -- silently ships something other than what the
+      # tag says. A dev tag carries the version itself, so nothing to compare.
+      - name: Tag matches package version
+        if: steps.channel.outputs.dev == 'false'
+        run: |
+          tagged="${GITHUB_REF_NAME#v}"
+          packaged="$(node -p "require('./package.json').version")"
+          if [ "$tagged" != "$packaged" ]; then
+            echo "tag $GITHUB_REF_NAME names $tagged, package.json says $packaged" >&2
+            exit 1
+          fi
+
+      # Dev only: rewrite name, version and bin for the second package. Generated
+      # from this tree rather than kept as a second committed manifest, which
+      # would drift; the checkout is discarded after the run.
+      - name: Build the dev manifest
+        if: steps.channel.outputs.dev == 'true'
+        run: bun run scripts/dev-package.ts "${{ steps.channel.outputs.tag }}"
+
+      # `npm publish` with no NODE_AUTH_TOKEN: the OIDC credential minted from
+      # `id-token: write` is what npm verifies. npm 11.5.1+ is required for
+      # Trusted Publishing.
+      - run: npm install -g npm@latest
+      # A prerelease must name its dist-tag -- npm refuses to guess, since an
+      # unlabelled `0.54.0-dev.7` would silently become whatever a bare install
+      # resolves to. For this package that IS what we want: `ad-coder-dev` is the
+      # development channel, so its newest build is its `latest`. Anyone wanting
+      # stability installs `ad-coder` instead; a second gradation inside the dev
+      # package would be a distinction nobody asked for.
+      - run: npm publish --tag latest
+        if: steps.channel.outputs.dev == 'true'
+      - run: npm publish
+        if: steps.channel.outputs.dev == 'false'
+
+      # The release notes are the CHANGELOG section for this version, so the
+      # published notes and the committed history cannot drift apart. A dev
+      # release has no CHANGELOG section of its own -- it is a preview of work in
+      # progress -- so it gets no GitHub release, only the npm package.
+      - name: Extract the changelog entry
+        if: steps.channel.outputs.dev == 'false'
+        run: |
+          awk -v ver="## [${GITHUB_REF_NAME#v}]" '
+            index($0, ver) == 1 { found = 1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "no CHANGELOG entry for $GITHUB_REF_NAME" >&2
+            exit 1
+          fi
+      - uses: softprops/action-gh-release@v2
+        if: steps.channel.outputs.dev == 'false'
+        with:
+          body_path: release-notes.md

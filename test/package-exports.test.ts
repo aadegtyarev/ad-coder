@@ -203,6 +203,7 @@ import {
   UsageDeltaTracker,
   validateFollowUp,
 } from "ad-coder";
+import { type DevManifest, devManifest, devVersionFromTag } from "../scripts/dev-package";
 
 // The README documents `from "ad-coder"` as the public surface, which only
 // works while package.json's `exports` self-reference resolves. A type-only
@@ -530,4 +531,30 @@ test("package-root project operations persist sessions and attachments", async (
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("a dev tag produces the second package, and a stable tag is refused", () => {
+  // The dev channel is a separate package rather than a dist-tag, so an
+  // early-access install does not overwrite the stable command (issue #268).
+  const manifest: DevManifest = {
+    name: "ad-coder",
+    version: "0.52.0",
+    bin: { "ad-coder": "./bin/ad-coder.mjs" },
+    description: "A harness.",
+  };
+  const dev = devManifest(manifest, devVersionFromTag("v0.53.0-dev.1"));
+  expect(dev.name).toBe("ad-coder-dev");
+  expect(dev.version).toBe("0.53.0-dev.1");
+  // The binary is renamed too: two packages installing `ad-coder` would fight
+  // over the same path, which is the thing this design exists to avoid.
+  expect(dev.bin).toEqual({ "ad-coder-dev": "./bin/ad-coder.mjs" });
+  // Everything else is identical -- a preview that behaves differently is not a
+  // preview of what ships.
+  expect(dev.version).not.toBe(manifest.version);
+  expect(Object.keys(dev).sort()).toEqual(Object.keys(manifest).sort());
+
+  // A stable-looking tag must not reach the dev package: publishing `0.53.0`
+  // there would claim a released version for a preview.
+  expect(() => devVersionFromTag("v0.53.0")).toThrow("v1.2.3-dev.4");
+  expect(() => devVersionFromTag("v0.53.0-dev")).toThrow("v1.2.3-dev.4");
 });

@@ -13,7 +13,7 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
-## [0.51.0] - 2026-09-17
+## [0.55.0] - 2026-09-17
 
 ### Fixed
 - The parser performance test no longer fails on unchanged code. It compared two
@@ -26,6 +26,151 @@ enforces that dated release headings go in non-increasing date order
   against ~350ms measured for the `Set` dedup and ~8500ms for the array scan the
   test exists to prevent. Verified by restoring that scan, which fails the test
   three times in three. (#281)
+
+## [0.54.3] - 2026-09-17
+
+### Changed
+- The quality contract states the rule against hidden defaults as a prohibition:
+  **a quantity that changes behavior is not a constant in the source.** If it is
+  needed it is a setting with a default, the exceptions being the safety ceilings
+  the contracts enumerate explicitly.
+
+  The existing rule ("any behavior a reasonable user may want to change is
+  configurable") states the obligation from the side of the user's wishes, and
+  the person judging what a user will want is the person writing the constant --
+  a compiled-in default is invisible, so nobody asks for it to become a setting,
+  and the rule cannot fire for exactly the values it most needs to catch. As a
+  prohibition the check is mechanical: is this number in the source? (#308)
+
+## [0.54.2] - 2026-09-17
+
+### Fixed
+- **A raised stage ceiling never reached the run it was raised for** (issue
+  #208). The durable resume check compared the new ceiling against the
+  session-wide `stageLimits`, while a raise lands on the role that ran the paused
+  stage -- the orchestrator raises `planner` when the plan stage exhausts its
+  budget. The session default was therefore unchanged, the check reported
+  "unchanged duration stage limit", and the run stayed paused however large the
+  new ceiling was.
+
+  Observed live: a pipeline paused on the planner's 180s ceiling, the
+  orchestrator correctly called `resume_pipeline` with `raiseRole: planner`,
+  `raiseReason: duration`, `raiseLimit: 900000`, and the run did not move.
+
+  The check now reads the ceiling of the role whose phase paused, falling back to
+  the session default for phases no single role owns (`gates` runs commands,
+  `done` runs nothing) and for checkpoints written before this fix.
+
+  The comment beside the original code said the field checked here and the field
+  written by the raise "must be the same one". They were -- `maxDurationMs` in
+  both places. The halves that differed were the *objects*, and the earlier test
+  proved the raise was validated rather than that it arrived.
+
+## [0.54.1] - 2026-09-17
+
+### Fixed
+- The automatic dev publish failed on its first run: npm refuses to publish a
+  prerelease without an explicit dist-tag, rather than guess where an unlabelled
+  `0.54.0-dev.7` belongs. The dev publish now names `latest` explicitly, which
+  for this package is the wanted answer -- `ad-coder-dev` is the development
+  channel, so its newest build is what a bare install should resolve to, and
+  anyone wanting stability installs `ad-coder`. (#300)
+
+## [0.54.0] - 2026-09-17
+
+### Added
+- **Every merge to `main` publishes a dev version by itself** (issue #300). The
+  version is composed from `package.json` plus the run number --
+  `0.54.0-dev.17` -- so it always increases and never repeats without anyone
+  choosing it, and the newest work is installable a minute after it lands.
+
+  Without this the dev channel has no purpose: exercising work in progress cannot
+  wait for someone to tag it. The asymmetry with stable is about consequence, not
+  trust -- a dev version reaches only those who asked for `ad-coder-dev` and its
+  numbers are disposable, while a stable version claims a number permanently and
+  reaches everyone. Stable therefore stays behind a tag a person pushes.
+
+### Changed
+- `ad-coder about` reports the installed package's own name, so a dev install
+  says `ad-coder-dev 0.53.0-dev.1` rather than `ad-coder`. Both channels install
+  side by side under different binaries, and a copy that names only its version
+  leaves "which one answered" to be inferred -- a session already lost a review
+  run to exactly that confusion.
+
+## [0.53.0] - 2026-09-17
+
+### Added
+- **A development channel, published as a second package** (issue #268). A tag
+  `v0.53.0-dev.1` publishes `ad-coder-dev`; a plain `v0.53.0` publishes
+  `ad-coder`, as before. Same gates either way -- the dev channel ships more
+  often, not held to less.
+
+  A second package rather than a dist-tag on the first: a dist-tag still installs
+  as `ad-coder` and overwrites the stable command, and the point is to keep a
+  working tool while updating the other twenty times a day. The dev package
+  renames its binary to `ad-coder-dev`, so both sit on one machine without
+  fighting over a path. It also gives early access to anyone who wants the newest
+  features without giving up a stable install.
+
+  The dev manifest is generated from the same tree at publish time, changing
+  three fields -- name, version, bin -- and nothing else, because a preview that
+  behaves differently is not a preview of what ships. A stable-looking tag is
+  refused for the dev package, so a released version number cannot be claimed by
+  a preview. A dev tag cuts no GitHub release: it has no CHANGELOG section of its
+  own, being work in progress.
+
+## [0.52.0] - 2026-09-17
+
+### Added
+- **Releases publish themselves from a tag** (issue #268).
+  `.github/workflows/release.yml` runs on `v*`, re-runs every gate, checks that
+  the tag names the version in `package.json`, publishes to npm, and cuts a
+  GitHub release whose notes are this file's section for that version.
+
+  No credential is stored. npm authenticates the run itself through Trusted
+  Publishing, so the repository holds no publish token and there is none to
+  leak; `id-token: write` is what lets GitHub attest the run. This replaced an
+  automation token on npm's own advice.
+
+  The gates run again here rather than trusting that the branch was green: a tag
+  can be pushed at any commit, and a published version cannot be withdrawn from
+  npm, only deprecated. The tag/version check exists for the same reason -- a
+  mismatch would either fail confusingly as a duplicate or ship something other
+  than what the tag says.
+
+## [0.51.0] - 2026-09-17
+
+### Added
+- **The package can be published, and installs with npm** (issue #268).
+  `private: true` is removed, `engines` declares the Bun requirement, and `bin`
+  points at `bin/ad-coder.mjs` rather than at TypeScript.
+
+  The launcher exists because `bin` reaching `src/cli.ts` directly means
+  `npm i -g` puts a `.ts` file on a PATH where `node` executes it, and the first
+  contact with the tool is a syntax error in a file the user did not write. The
+  launcher is plain ESM that node always runs: it hands over to Bun when present,
+  and otherwise prints how to install Bun and exits 127. stdio is inherited and
+  the child's exit code forwarded, so an interactive console, a piped JSON result
+  and a failing command all behave as though Bun had been invoked directly.
+
+  Verified by packing the tarball, installing it into an empty directory, and
+  running the installed binary -- `ad-coder about` and `ad-coder role --help` both
+  answer, and the Bun-less path was exercised with a stripped PATH.
+
+## [0.50.1] - 2026-09-17
+
+### Added
+- `architecture-recon` gains a third habit: **somebody has met this format before
+  you**. Anything involving a third-party tool, protocol or wire format has
+  almost certainly been handled elsewhere -- in a library, in a dependency
+  already present, or in the tracker about to be filed into. Written after one
+  session broke it twice within an hour: a fallback parser was started without
+  checking whether one existed, and an issue was filed that duplicated an
+  existing one. The search overturned the diagnosis -- what looked like a
+  corrupted transport was a model's documented tool-call format with parsers in
+  every major inference engine -- before code was written against the wrong
+  picture. The outcome may still be "write our own"; reading someone else's
+  first is what makes that a decision rather than an assumption.
 
 ## [0.50.0] - 2026-09-17
 
