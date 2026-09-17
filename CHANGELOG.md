@@ -13,6 +13,20 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.55.0] - 2026-09-17
+
+### Fixed
+- The parser performance test no longer fails on unchanged code. It compared two
+  timings and required the larger to be under 8x the smaller, which divides by a
+  ~13ms sample: a single scheduling hiccup there swung the ratio, and the test
+  failed roughly one run in six on healthy code -- teaching whoever saw it red to
+  re-run rather than look. Measured on the spread it used, linear work costs
+  14-24x, not the 8x the threshold assumed, so it was set below what passing code
+  actually does. Replaced with one wall-clock ceiling: 40k objects in under 3s,
+  against ~350ms measured for the `Set` dedup and ~8500ms for the array scan the
+  test exists to prevent. Verified by restoring that scan, which fails the test
+  three times in three. (#281)
+
 ## [0.54.3] - 2026-09-17
 
 ### Changed
@@ -181,20 +195,6 @@ enforces that dated release headings go in non-increasing date order
   The review retry from #278 moved beside the tool and now covers both callers --
   the standalone reviewer faced the same "ends in prose" failure, for the reason
   that it had nothing to submit with.
-
-## [0.49.0] - 2026-09-17
-
-### Fixed
-- The parser performance test no longer fails on unchanged code. It compared two
-  timings and required the larger to be under 8x the smaller, which divides by a
-  ~13ms sample: a single scheduling hiccup there swung the ratio, and the test
-  failed roughly one run in six on healthy code -- teaching whoever saw it red to
-  re-run rather than look. Measured on the spread it used, linear work costs
-  14-24x, not the 8x the threshold assumed, so it was set below what passing code
-  actually does. Replaced with one wall-clock ceiling: 40k objects in under 3s,
-  against ~350ms measured for the `Set` dedup and ~8500ms for the array scan the
-  test exists to prevent. Verified by restoring that scan, which fails the test
-  three times in three. (#281)
 
 ## [0.48.0] - 2026-09-17
 
