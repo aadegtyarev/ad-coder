@@ -25,6 +25,14 @@ What the map must contain: affected modules with paths, the governing contracts 
   A new test passing beside an existing mechanism looks identical to a new test
   passing because the mechanism is new. Check that the behaviour was absent
   before you added it.
+- **Somebody has met this format before you.** Anything involving a third-party
+  tool, protocol or wire format has almost certainly been handled elsewhere —
+  in a library, in the framework you already depend on, or in the tracker you
+  are about to file into. Look before building, and look inside the repository
+  too: a duplicate issue is the same failure as a duplicate implementation. The
+  outcome may well be "write our own" — reading someone else's first is what
+  makes that a decision rather than an assumption, and their edge cases are
+  worth having even when their code is not.
 
 Two failures to avoid:
 
