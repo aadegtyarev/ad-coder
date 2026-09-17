@@ -142,8 +142,13 @@ its project routing; API callers can set `useProjectCalibration: false`.
 Validate and smoke-test the calibration corpus with
 `bun run calibration:corpus -- smoke`.
 
-Then run the built-in reviewed pipeline. `--auto` takes default transitions and
-is the non-interactive/scripted mode:
+Then run the built-in reviewed pipeline. Its workflow module is enabled by
+default, and before any review round it runs the project's declared quality
+gates — the shipped set is seven whole-project commands such as `bun run
+typecheck` and `bun run check` — returning to the coder with captured output
+while a gate stays red. A project that needs different checks substitutes its
+own gate list through the pipeline configuration API. `--auto` takes default
+transitions and is the non-interactive/scripted mode:
 
 ```sh
 ad-coder drive "Make a small reviewed maintenance change" \
@@ -172,30 +177,32 @@ Start a persistent conversational orchestrator with:
 ad-coder console --provider openai-codex --target-dir ./my-project
 ```
 
-The built-in reviewed pipeline is an opt-in workflow module. Enable it in the
-conversation only when wanted:
-
-```sh
-ad-coder console --provider openai-codex --target-dir ./my-project --workflows pipeline
-```
+Every shipped capability is enabled at startup: the conversation carries the
+built-in pipeline module, its tools, and the skill catalogue without any flag.
+`/start <task>`, `/list`, `/events <run-id>`, `/status <run-id>`,
+`/result <run-id>`, or `/cancel <run-id>` manage detached work locally without
+a model request. `/start` takes the rest of the line verbatim as the task and
+detaches the run, so the dialogue stays yours while it proceeds. To turn a
+capability off for one session, pass `--workflows=false` (or select or exclude
+modules with `--workflows <names|^name>`); the background commands then report
+as unavailable and name the switch that enables them. `--skills <names>` pins
+an exact skill set in place of the catalogue, and `--no-skills` disables
+skills entirely; a persistent switch lives in the user profile under
+`capabilities` (see [Configuration](#configuration)). `ad-coder config show`
+reports each capability's resolved state and where it came from.
 
 Enter `/help` to list every console command with its arguments and an example.
 The listing is rendered from the same command registry the console dispatches
-from, and marks the background commands as unavailable, naming
-`--workflows pipeline`, whenever the session did not enable background runs.
+from, and marks the background commands as unavailable whenever the session
+was started with `--workflows=false`.
 
 In an interactive terminal, press `Escape` to interrupt only the current
 orchestrator turn. The conversation stays open and detached pipelines continue.
-Use `/start <task>`, `/list`, `/events <run-id>`, `/status <run-id>`,
-`/result <run-id>`, or `/cancel <run-id>` to manage detached work locally
-without a model request. `/start` takes the rest of the line verbatim as the
-task and detaches the run, so the dialogue stays yours while it proceeds. Those
-six need `--workflows pipeline`; `/help`, `/interrupt`, and `/exit` are
-always available. `/interrupt` provides the same turn-only interruption for
-scripted terminals.
+`/help`, `/interrupt`, and `/exit` are always available. `/interrupt` provides
+the same turn-only interruption for scripted terminals.
 
-Without `--workflows pipeline`, its `run_pipeline`, `decompose_task`, `run_step`,
-`choose_transition`, and `show_cost` tools are not registered. Standalone
+With `--workflows=false`, the pipeline's `run_pipeline`, `decompose_task`,
+`run_step`, `choose_transition`, and `show_cost` tools are not registered. Standalone
 `drive` still explicitly selects the built-in pipeline. The general `run_role`
 tool remains available either way and lets the Orchestrator invoke Planner,
 Researcher, Security, Coder, Reviewer, or Auditor independently.
@@ -261,9 +268,8 @@ private target-local record.
 ### Live background notices
 
 For an operator who keeps `console` open while a detached pipeline runs, use
-`console --workflows pipeline --owner-id <opaque-id>` (or its stable OS-identity
-default). `--workflows pipeline` is required: workflow authority stays disabled by
-default. The console supplies the detached host launcher, so `start_pipeline` works and lifecycle,
+`console --owner-id <opaque-id>` (or its stable OS-identity
+default). The console supplies the detached host launcher, so `start_pipeline` works and lifecycle,
 stage, dropped-event, and terminal notices arrive on stderr while input remains
 usable. In `--json` mode these are content-free
 `background_events` NDJSON records on stderr; final turn records remain on
@@ -422,6 +428,36 @@ limits use the registry-derived `--tool-activity-*` options and appear in
 heartbeat; mandatory safety ceilings stay positive. Progress never pollutes
 machine-result stdout.
 
+### Capabilities and their resolved state
+
+Every capability ad-coder ships is enabled at startup; a persistent switch, an
+explicit launch parameter, and the built-in default resolve in that layered
+order, and an explicit parameter beats the setting. It is reported in `config
+show`, never silent:
+
+```sh
+ad-coder config show --json
+```
+
+The `skills` row names the resolved catalogue — id, version, source tier, and
+digest per skill, plus an explicit `enabled` switch — and the `workflows` row
+names the selected modules. Each row carries the source layer that decided it:
+an explicit flag, the profile setting, or the built-in default.
+`--workflows false`, a selective `--workflows <names|^name>` list,
+`--skills <names>`, and `--no-skills` are per-run switches; their explicit
+words also cross into a detached background worker verbatim, so what you typed
+at the console is what the invisible process runs.
+
+To keep a capability off persistently instead of typing the flag every launch,
+set it in the private user profile at `~/.config/ad-coder/profile.json`:
+
+```json
+{ "capabilities": { "skills": false } }
+```
+
+An explicit flag on the command line always outruns this setting, and the
+resolved state stays visible in `config show`.
+
 Context compaction defaults to `auto`. `disabled-then-halt` refuses an
 over-budget turn rather than summarizing it. Every refusal measures the request
 against the effective ceiling `min(maxTokens, contextWindow)`, so a runtime model
@@ -478,6 +514,19 @@ run was refused. The block is per scope: other models keep running, and `cost
 release` names a scope exactly as the refusal spelled it. Releasing a scope that
 carries no block is reported as an error rather than silently succeeding, so a
 mistyped scope cannot read as released while the real block stays up.
+
+To read what a run actually cost — model calls, fresh, cached, and output
+tokens, provider-reported spend, tool mix, per role, per model, and totals —
+inspect its ledger from the project directory with:
+
+```sh
+cd <dir> && ad-coder ledger report
+```
+
+With no file arguments it reads every `.ad-coder/ledger/*.jsonl`
+file, skipping malformed or still-being-written lines with a per-file count
+instead of crashing or returning a silently empty total. The report carries
+identifiers and numbers only: never task text, prompts, or tool arguments.
 
 ## Development checks
 
