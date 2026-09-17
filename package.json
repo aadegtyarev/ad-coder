@@ -1,7 +1,6 @@
 {
   "name": "ad-coder",
-  "version": "0.50.1",
-  "private": true,
+  "version": "0.51.0",
   "description": "A small, explicit multi-provider agent harness: roles over pi-agent-core, per-role/step cost ledger, in-house context management, and a plan->[security]->code<->review pipeline.",
   "license": "MIT",
   "author": "Alexander Degtyarev <adegtyarev.ap@gmail.com>",
@@ -14,9 +13,10 @@
     ".": "./src/index.ts"
   },
   "bin": {
-    "ad-coder": "./src/cli.ts"
+    "ad-coder": "./bin/ad-coder.mjs"
   },
   "files": [
+    "bin",
     "src",
     "prompts",
     "examples",
@@ -51,5 +51,8 @@
     "@types/bun": "^1.3.0",
     "typescript": "^7.0.2"
   },
-  "trustedDependencies": []
+  "trustedDependencies": [],
+  "engines": {
+    "bun": ">=1.3.13"
+  }
 }

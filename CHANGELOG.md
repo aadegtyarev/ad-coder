@@ -13,6 +13,25 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.51.0] - 2026-09-17
+
+### Added
+- **The package can be published, and installs with npm** (issue #268).
+  `private: true` is removed, `engines` declares the Bun requirement, and `bin`
+  points at `bin/ad-coder.mjs` rather than at TypeScript.
+
+  The launcher exists because `bin` reaching `src/cli.ts` directly means
+  `npm i -g` puts a `.ts` file on a PATH where `node` executes it, and the first
+  contact with the tool is a syntax error in a file the user did not write. The
+  launcher is plain ESM that node always runs: it hands over to Bun when present,
+  and otherwise prints how to install Bun and exits 127. stdio is inherited and
+  the child's exit code forwarded, so an interactive console, a piped JSON result
+  and a failing command all behave as though Bun had been invoked directly.
+
+  Verified by packing the tarball, installing it into an empty directory, and
+  running the installed binary -- `ad-coder about` and `ad-coder role --help` both
+  answer, and the Bun-less path was exercised with a stripped PATH.
+
 ## [0.50.1] - 2026-09-17
 
 ### Added
