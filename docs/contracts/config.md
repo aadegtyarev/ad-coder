@@ -55,6 +55,12 @@ Rules the operator declared for ad-coder. A violation is always blocking.
   rewriting it. Current values retain source, observation date, units, and
   confidence. Projects may commit a bounded anonymous snapshot plus calibrated
   overrides; user history remains the cross-project source of truth.
+- 2026-09-17: `defaultComplexity` is a declared ROUTING FALLBACK, not an
+  assessment (issue #264): it picks the cell for pre-plan roles and any run
+  that never reaches a Planner, and nothing validated it against a task, so
+  `config show` and the banner may not present it as one. A real tier arrives
+  per dispatch from the orchestrator's own recorded classification, which
+  replaces the fallback at the routing sink.
 - 2026-09-13: Model research and calibration evidence that influences routing is
   durable and portable. Projects retain source-linked research notes and bounded
   anonymous aggregate samples, never raw provider content or account activity.

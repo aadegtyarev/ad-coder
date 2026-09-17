@@ -45,6 +45,7 @@ import { isSubmissionToolName } from "./submission-tools";
 import { assertTransitionOffered, DriveError } from "./transition-guard";
 import type {
   AvailableTransition,
+  Complexity,
   PipelineConfig,
   PipelineResult,
   Plan,
@@ -187,7 +188,7 @@ export interface CostReport {
  * models and no `startConversation`.
  */
 export interface OrchestratorDeps {
-  buildConfig: (task: string) => PipelineConfig;
+  buildConfig: (task: string, complexity?: Complexity) => PipelineConfig;
   ledgerSink: MemoryLedgerSink;
   sessionLimitController?: SessionLimitController;
   backgroundRuns?: Partial<BackgroundRunLimits>;
@@ -215,10 +216,16 @@ export interface OrchestratorDeps {
  * graph (e.g. jumped straight to `done`).
  */
 export interface Orchestrator {
-  runPipeline(task: string): Promise<RunPipelineResult>;
+  /**
+   * `complexity` is the orchestrator's own pre-read classification (issue
+   * #264): it overrides the constant default so the tier the run starts at is
+   * an assessment, not the fallback. Resume intentionally does not take it --
+   * the checkpoint already recorded what the run routed on.
+   */
+  runPipeline(task: string, complexity?: Complexity): Promise<RunPipelineResult>;
   resumePipeline(task: string, runId: string): Promise<RunPipelineResult>;
-  decomposeTask(task: string): Promise<DecompositionResult>;
-  beginStepping(task: string): void;
+  decomposeTask(task: string, complexity?: Complexity): Promise<DecompositionResult>;
+  beginStepping(task: string, complexity?: Complexity): void;
   stepOnce(): Promise<StepView>;
   chooseTransition(kind: TransitionKind, rationale?: string): WorkflowPhase;
   showCost(): CostReport;
@@ -251,8 +258,8 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
   let coordinator: RunCoordinator | undefined;
 
   /** Enforce the shared sink on every config the core builds. */
-  const buildConfig = (task: string): PipelineConfig => ({
-    ...deps.buildConfig(task),
+  const buildConfig = (task: string, complexity?: Complexity): PipelineConfig => ({
+    ...deps.buildConfig(task, complexity),
     ledgerSink: sink,
     ...(deps.sessionLimitController !== undefined && {
       sessionLimitController: deps.sessionLimitController,
@@ -277,8 +284,9 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     resumeRunId?: string,
     control?: { cancelled: () => boolean; onStage: (step: StepCost) => void },
     createWithRunId = false,
+    complexity?: Complexity,
   ): Promise<RunPipelineResult> => {
-    const config = buildConfig(task);
+    const config = buildConfig(task, complexity);
     const wf = createWorkflowSession(config);
     const runCoordinator = new RunCoordinator(wf, wf.projectStore, {
       ...config.coordinator,
@@ -319,7 +327,8 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     return { runId: completed.checkpoint.runId, result: completed.result, perStep, totalCost };
   };
 
-  const runPipeline = (task: string): Promise<RunPipelineResult> => executePipeline(task);
+  const runPipeline = (task: string, complexity?: Complexity): Promise<RunPipelineResult> =>
+    executePipeline(task, undefined, undefined, false, complexity);
   const resumePipeline = (task: string, runId: string): Promise<RunPipelineResult> =>
     executePipeline(task, runId);
   const executeBackgroundPipeline = async (
@@ -400,8 +409,11 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     deps.backgroundHostLauncher,
   );
 
-  const decomposeTask = async (task: string): Promise<DecompositionResult> => {
-    const config = buildConfig(task);
+  const decomposeTask = async (
+    task: string,
+    complexity?: Complexity,
+  ): Promise<DecompositionResult> => {
+    const config = buildConfig(task, complexity);
     if (config.roles.planner === undefined) {
       throw new OrchestratorError(
         "no_active_session",
@@ -428,8 +440,8 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     return { plan: prepared.result.plan, text: prepared.result.text, cost };
   };
 
-  const beginStepping = (task: string): void => {
-    const config = buildConfig(task);
+  const beginStepping = (task: string, complexity?: Complexity): void => {
+    const config = buildConfig(task, complexity);
     session = createWorkflowSession(config);
     coordinator = new RunCoordinator(session, session.projectStore, config.coordinator);
     state = session.initialState();
@@ -694,7 +706,11 @@ export function formatDelegatedRoute(route: DelegatedRoute): string {
 
 /** Build general role delegation; unlike workflow tools this remains available with no module. */
 export function buildRunRoleTool(
-  runRole: (role: DelegatableRoleName, task: string) => Promise<DelegatedRoleResult>,
+  runRole: (
+    role: DelegatableRoleName,
+    task: string,
+    complexity?: Complexity,
+  ) => Promise<DelegatedRoleResult>,
   sessionFacts?: RunRoleSessionFacts,
 ): Tool {
   // With session facts the description carries the live routing; the fallback
@@ -702,7 +718,7 @@ export function buildRunRoleTool(
   // session. Static role knowledge lives in the role-selection skill either way.
   const description =
     sessionFacts === undefined
-      ? "Run one shipped worker role independently and get its result as assistant text. Available roles: planner, researcher, security, coder, reviewer, auditor. This does not start or advance a workflow."
+      ? "Run one shipped worker role independently and get its result as assistant text. Available roles: planner, researcher, security, coder, reviewer, auditor. This does not start or advance a workflow. Pass the complexity you classified this task at as the optional complexity parameter so the delegate routes on your assessment, not the default."
       : `Run one shipped worker role independently and get its result as assistant text. This does not start or advance a workflow. This session runs in ${
           sessionFacts.workflows.length > 0
             ? `roles plus workflow mode (${sessionFacts.workflows.join(", ")})`
@@ -711,12 +727,22 @@ export function buildRunRoleTool(
 
 ${formatDelegatedRoute(sessionFacts.route)}
 
-Only the roles named above are callable; calling a "not configured" role fails with invalid_role. Load the role-selection skill for what each role does, returns, and when delegation is the wrong call.`;
+Only the roles named above are callable; calling a "not configured" role fails with invalid_role. Load the role-selection skill for what each role does, returns, and when delegation is the wrong call. Pass the complexity you classified this task at as the optional complexity parameter (issues #263/#264) so the delegate routes on your assessment, not the default.`;
   return defineTool({
     name: RUN_ROLE_TOOL_NAME,
     description,
     label: "run role",
-    parameters: Type.Object({ role: Type.String(), task: Type.String() }),
+    parameters: Type.Object({
+      role: Type.String(),
+      task: Type.String(),
+      // The orchestrator's own pre-read classification (issues #263/#264):
+      // optional so a host that never classifies keeps today's behavior, but
+      // present so an assessment can replace the constant default at the
+      // routing sink instead of dying in prose.
+      complexity: Type.Optional(
+        Type.Union([Type.Literal("trivial"), Type.Literal("medium"), Type.Literal("complex")]),
+      ),
+    }),
     async execute(_toolCallId, params) {
       try {
         if (!(DELEGATABLE_ROLE_NAMES as readonly string[]).includes(params.role)) {
@@ -726,7 +752,11 @@ Only the roles named above are callable; calling a "not configured" role fails w
             `unknown delegated role; expected one of ${DELEGATABLE_ROLE_NAMES.join(", ")}`,
           );
         }
-        const result = await runRole(params.role as DelegatableRoleName, params.task);
+        const result = await runRole(
+          params.role as DelegatableRoleName,
+          params.task,
+          params.complexity,
+        );
         return {
           content: [
             {
@@ -762,10 +792,17 @@ export function buildBuiltInPipelineTools(core: Orchestrator): Tool[] {
     description:
       "Run only the Planner and return a structured decomposition with affected surfaces and contract coverage. Does not dispatch Coder or alter a manual workflow.",
     label: "decompose task",
-    parameters: Type.Object({ task: Type.String() }),
+    parameters: Type.Object({
+      task: Type.String(),
+      // Pre-read classification (issues #263/#264): replaces the default-
+      // complexity fallback so pre-plan routing is an assessment.
+      complexity: Type.Optional(
+        Type.Union([Type.Literal("trivial"), Type.Literal("medium"), Type.Literal("complex")]),
+      ),
+    }),
     async execute(_toolCallId, params) {
       try {
-        const result = await core.decomposeTask(params.task);
+        const result = await core.decomposeTask(params.task, params.complexity);
         return {
           content: [
             {
@@ -792,10 +829,17 @@ export function buildBuiltInPipelineTools(core: Orchestrator): Tool[] {
     description:
       "Run a full autonomous pipeline (plan -> [security] -> code <-> review) for a task and report the outcome and cost. Executes code within the fixed working directory.",
     label: "run pipeline",
-    parameters: Type.Object({ task: Type.String() }),
+    parameters: Type.Object({
+      task: Type.String(),
+      // Pre-read classification (issues #263/#264): replaces the default-
+      // complexity fallback so pre-plan routing is an assessment.
+      complexity: Type.Optional(
+        Type.Union([Type.Literal("trivial"), Type.Literal("medium"), Type.Literal("complex")]),
+      ),
+    }),
     async execute(_toolCallId, params) {
       try {
-        const run = await core.runPipeline(params.task);
+        const run = await core.runPipeline(params.task, params.complexity);
         const summary =
           `pipeline complete: runId=${run.runId} approved=${run.result.approved} ` +
           `rounds=${run.result.rounds} review=${lastReviewStatus(run.result)} ` +
@@ -940,7 +984,14 @@ export function buildBuiltInPipelineTools(core: Orchestrator): Tool[] {
     description:
       "Run the next single workflow step. Provide a task to begin a new stepping run; omit it to continue the run in progress. Returns the step result and the transition kinds now on offer.",
     label: "run step",
-    parameters: Type.Object({ task: Type.Optional(Type.String()) }),
+    parameters: Type.Object({
+      task: Type.Optional(Type.String()),
+      // Pre-read classification (issues #263/#264), applied only when a task
+      // starts a new stepping run.
+      complexity: Type.Optional(
+        Type.Union([Type.Literal("trivial"), Type.Literal("medium"), Type.Literal("complex")]),
+      ),
+    }),
     async execute(_toolCallId, params) {
       try {
         if (!core.isStepping()) {
@@ -951,7 +1002,7 @@ export function buildBuiltInPipelineTools(core: Orchestrator): Tool[] {
               "no stepping run in progress; provide a task to begin one",
             );
           }
-          core.beginStepping(params.task);
+          core.beginStepping(params.task, params.complexity);
         }
         const view = await core.stepOnce();
         const lines = [
@@ -1136,8 +1187,14 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
       : activityChannel.subscribe(config.activityConsumer);
   const sharedConfig: OrchestratorConfig = { ...config, activityChannel };
   delete sharedConfig.activityConsumer;
-  const buildConfig = (task: string): PipelineConfig =>
-    resolvePipelineConfig({ ...sharedConfig, task });
+  const buildConfig = (task: string, complexity?: Complexity): PipelineConfig =>
+    // An explicitly classified tier (issues #263/#264) replaces the built-in
+    // default at routing; validated at the routing sink like every other one.
+    resolvePipelineConfig({
+      ...sharedConfig,
+      task,
+      ...(complexity !== undefined && { defaultComplexity: complexity }),
+    });
   // One source for skill behaviour, shared with `resolve-config`, the pipeline
   // stages, and the standalone role command: an explicit `--skills` list is a
   // PIN pasted into the prompt; no pin means the CATALOGUE a role loads from
@@ -1186,10 +1243,17 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
           route: seed.delegatedRoute,
           workflows: enabledModules.map((module) => module.name),
         };
-  const delegatedRoleTool = buildRunRoleTool(async (name, task) => {
+  const delegatedRoleTool = buildRunRoleTool(async (name, task, complexity) => {
     // Resolve worker roles lazily: disabling the pipeline does not construct its
     // graph, yet every role remains independently callable by the Orchestrator.
-    const resolved = resolvePipelineConfig({ ...sharedConfig, task });
+    // A classified tier rides with the call (issues #263/#264): the tool schema
+    // is the validation point, and the tier replaces the built-in default at
+    // resolveProfile's sink, so the delegate routes on the assessment.
+    const resolved = resolvePipelineConfig({
+      ...sharedConfig,
+      task,
+      ...(complexity !== undefined && { defaultComplexity: complexity }),
+    });
     const base =
       name === "planner"
         ? resolved.roles.planner

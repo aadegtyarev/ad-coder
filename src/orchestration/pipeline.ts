@@ -45,11 +45,15 @@ import { PipelinePauseError } from "./types";
  * MODEL SELECTION is complexity-aware when `config.routing` is present: the
  * planner routes on `routing.defaultComplexity` (default `'medium'`) BEFORE its
  * plan is known, and every later role routes on the effective complexity (the
- * planner's submitted tier, else that same default). Absent routing, each turn
- * runs on its `RoleSpec.model` -- byte-for-byte the prior behavior. A caller
- * config error thrown by `resolveProfile` (`missing_mapping` / `unknown_model`)
- * is the caller's `ProfileError` and propagates UNWRAPPED, distinct from the
- * pipeline's own `OrchestrationError` surface.
+ * planner's submitted tier, else that same default). That default is a DECLARED
+ * fallback, not an assessment (issue #264): it is the constant nothing looked
+ * at the task before it. The assessment happens one level up -- the
+ * orchestrator classifies on `COMPLEXITY_RUBRIC` and passes the tier with the
+ * dispatch, which overrides this fallback per dispatch. Absent routing, each
+ * turn runs on its `RoleSpec.model` -- byte-for-byte the prior behavior. A
+ * caller config error thrown by `resolveProfile` (`missing_mapping` /
+ * `unknown_model`) is the caller's `ProfileError` and propagates UNWRAPPED,
+ * distinct from the pipeline's own `OrchestrationError` surface.
  */
 /**
  * The one pause builder for every background lane (issue #261).

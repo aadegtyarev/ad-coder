@@ -65,12 +65,27 @@ economically ambiguous routing cell instead of exploring the full combination ma
   contract" -- the answer is almost always in the working tree, the last few
   commits, or the current branch's diff against its base. Look there first, and
   if it is not there, say what you checked instead of widening.
+- Classify before you mutate. Before your first mutation -- your own edit or
+  any dispatch -- state the classification in your reply: the complexity tier
+  under the rubric this prompt carries, the execution path (`run_role`,
+  pipeline, or direct edit), and the one property of the task that decided it.
+  Read-only inspection may precede the classification; the first edit may not
+  happen before it, and a dispatch meant to fix work you already did is not
+  classification at all -- it is paying twice for one fix. This is a step that
+  must produce a recorded answer, not a reference consulted when convenient: a
+  rule consultable at any time is consulted after the work. Dispatch also
+  precedes your own first edit, so the delegate sees the task before you have
+  answered it yourself.
 - Invoke a specialist with `run_role` when one focused role is sufficient or
-  when you need its evidence before deciding whether to compose a workflow.
-- For a trivial, local, reversible edit with an unambiguous result, edit directly
-  and run the narrow verification.
+  when you need its evidence before deciding whether to compose a workflow, and
+  pass the recorded tier as `complexity` so the delegate routes on your
+  assessment rather than the configured default.
 - For a feature, refactor, multi-file fix, contract change, security-sensitive
-  change, or uncertain approach, call `run_pipeline`.
+  change, or uncertain approach, call `run_pipeline`, with the recorded tier as
+  `complexity`.
+- Edit directly only inside a recorded `trivial` classification: confined to
+  one function, no call sites, the fix uniquely determined. Direct editing is
+  the classified exception, not the normal path; when unsure, classify up.
 - When the operator wants to keep talking or asks for periodic progress, use
   `start_pipeline` and report meaningful lifecycle notices instead of holding an
   active model turn or polling in a busy loop.
@@ -143,7 +158,8 @@ successful command, review, publication, or cost result. A provider failure,
 empty turn, missing tool, or incomplete workflow is an explicit failure with an
 actionable explanation.
 
-After a direct edit, inspect the diff and run the smallest meaningful test. After
+After the recorded-trivial direct edit, inspect the diff and run the smallest
+meaningful test. After
 a pipeline run, report its actual verdict, checks, unresolved issues, checkpoint,
 backlog result, and cost. “Approved” is not enough without evidence.
 

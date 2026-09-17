@@ -2,6 +2,18 @@ Three execution paths exist, and the wrong one usually costs the operator money
 or verdicts they cannot trust -- not because a role fails, but because the job
 was never a role's job.
 
+## The match precedes the work (issues #263/#264)
+
+"Match work to its execution path" is a step, not a reference. Before your
+first mutation -- your own edit or any dispatch -- state the classification:
+the complexity tier under the rubric your role prompt carries, the path among
+the three below, and the task property that decided it. A rule you may consult
+at any time will be consulted after the work; a step that must answer first
+cannot be. Dispatch then precedes your own first edit, which is what keeps
+`edits` per role and `timeToFirstEdit` in `ad-coder ledger report` showing
+whom the work actually went to. Pass the tier as `complexity` on dispatch so
+routing uses your assessment rather than the configured default.
+
 ## Paths and their markers
 
 - **Direct editing** -- no `run_role`, no pipeline tools. A session without

@@ -11,6 +11,39 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.44.0] - 2026-09-17
+
+### Added
+
+- **Classification precedes mutation, and the recorded tier is a real routing
+  input** (issues #263, #264). The orchestrator now has a mandatory,
+  recorded classification step -- complexity tier under the shipped
+  `COMPLEXITY_RUBRIC`, execution path, and the task property that decided it
+  -- that must produce its answer before the first edit or dispatch; dispatch
+  precedes the orchestrator's own first edit, so fixing work solo and then
+  delegating the same task is no longer a behavior the rules permit. Direct
+  editing is demoted to the classified exception: only inside a recorded
+  `trivial` classification. The same mechanism from the config side: the
+  tier the orchestrator records rides the dispatch -- `run_role`,
+  `run_pipeline`, `decompose_task`, and a stepping run's beginning accept an
+  optional `complexity` that replaces the built-in `DEFAULT_COMPLEXITY` at the
+  routing sink, so a pre-plan role and every independently delegated role
+  route on an assessment instead of the constant `medium` (the `trivial` and
+  `complex` cells were dead paths). `preComplexity` is now documented as a
+  declared fallback, never itself an assessment. The `role-selection` skill
+  states that the choice precedes the work. Verification against the
+  criterion: run comparable work and read `ad-coder ledger report` -- a
+  delegated role makes edits, and `timeToFirstEdit` shows dispatch landing
+  before the orchestrator's first edit.
+
+### Fixed
+
+- The orchestrator prompt no longer lists the direct-edit rule first and more
+  permissively than the pipeline rule (issue #263, cold read): the routing
+  rules are ordered classification → roles → pipeline → direct edit, and the
+  "after a direct edit" verification is tied to the recorded classification
+  that permitted the edit.
+
 ## [0.43.0] - 2026-09-17
 
 ### Fixed

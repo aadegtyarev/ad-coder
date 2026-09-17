@@ -27,6 +27,20 @@ Rules for operator authority in ad-coder. A violation is always blocking.
   a session under another inventory renamed or remapped in the profile changes
   the description with it. The static knowledge about when each path and role
   is the right call is the `role-selection` skill, not prompt text.
+- 2026-09-17: The execution path is decided BEFORE the work and the decision is
+  recorded, then routed on (issues #263/#264). Before its first mutation the
+  orchestrator must classify the task on the shipped `COMPLEXITY_RUBRIC` --
+  complexity tier, execution path, the deciding property -- and state that
+  answer; read-only inspection may precede it, the first edit or dispatch may
+  not. Dispatch precedes the orchestrator's own first edit, and the recorded
+  tier rides the dispatch: `run_role`, `run_pipeline`, `decompose_task`, and a
+  stepping run's beginning take an optional `complexity` that replaces the
+  declared default at the routing sink, so a pre-plan role routes on an
+  assessment instead of a constant. The unclassified default is a fallback,
+  never itself evidence of judgment. Measurable: on comparable work a
+  delegated role makes edits, and per-role `edits` plus `timeToFirstEdit` in
+  `ad-coder ledger report` show dispatch landing before the orchestrator's
+  first edit.
 
 ## Sources
 
