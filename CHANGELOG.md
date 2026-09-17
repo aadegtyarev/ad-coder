@@ -13,6 +13,27 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.54.0] - 2026-09-17
+
+### Added
+- **Every merge to `main` publishes a dev version by itself** (issue #300). The
+  version is composed from `package.json` plus the run number --
+  `0.54.0-dev.17` -- so it always increases and never repeats without anyone
+  choosing it, and the newest work is installable a minute after it lands.
+
+  Without this the dev channel has no purpose: exercising work in progress cannot
+  wait for someone to tag it. The asymmetry with stable is about consequence, not
+  trust -- a dev version reaches only those who asked for `ad-coder-dev` and its
+  numbers are disposable, while a stable version claims a number permanently and
+  reaches everyone. Stable therefore stays behind a tag a person pushes.
+
+### Changed
+- `ad-coder about` reports the installed package's own name, so a dev install
+  says `ad-coder-dev 0.53.0-dev.1` rather than `ad-coder`. Both channels install
+  side by side under different binaries, and a copy that names only its version
+  leaves "which one answered" to be inferred -- a session already lost a review
+  run to exactly that confusion.
+
 ## [0.53.0] - 2026-09-17
 
 ### Added
