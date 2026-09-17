@@ -9,7 +9,11 @@ import {
   fauxProvider,
   fauxToolCall,
 } from "@earendil-works/pi-ai";
-import { runRoleStandalone, standaloneSystemPrompt } from "../src/cli";
+import {
+  runReviewWithSubmissionRetry,
+  runRoleStandalone,
+  standaloneSystemPrompt,
+} from "../src/cli";
 import { MemoryLedgerSink } from "../src/ledger/ledger";
 import { StageLimitError } from "../src/orchestration/stage-limits";
 import { ProjectStore } from "../src/project-store/project-store";
@@ -382,4 +386,81 @@ test("the standalone override keeps a registered submission tool instead of deny
   expect(amended).not.toContain("are NOT available here");
   // The roles whose tool really is absent keep the original override.
   expect(standaloneSystemPrompt(reviewer)).toContain("are NOT available here");
+});
+
+test("the standalone review retry keeps the first attempt's review and charges both", async () => {
+  // The first attempt holds the review; the retry is asked only to submit
+  // (issue #283). Returning the retry alone would drop the findings the
+  // operator reads, and charging one attempt would understate what the run cost.
+  let submitted = false;
+  const tasks: string[] = [];
+  const runIds: string[] = [];
+  const result = await runReviewWithSubmissionRetry({
+    run: async (runId, task) => {
+      runIds.push(runId);
+      tasks.push(task);
+      if (runIds.length === 1) return { text: "the review itself", cost: 0.02 };
+      submitted = true;
+      return { text: "submitted", cost: 0.005 };
+    },
+    firstRunId: "first",
+    task: "review it",
+    retries: true,
+    submitted: () => submitted,
+    newRunId: () => "second",
+  });
+  expect(result.text).toBe("the review itself\n\nsubmitted");
+  expect(result.cost).toBeCloseTo(0.025, 10);
+  // A fresh run id per attempt: a turn is keyed by run id in the session store,
+  // so re-asking under the first is rejected as an existing session.
+  expect(runIds).toEqual(["first", "second"]);
+  expect(tasks[1]).toContain("did not call submit_verdict");
+});
+
+test("the standalone review retry does not run when the verdict already arrived", async () => {
+  let calls = 0;
+  const result = await runReviewWithSubmissionRetry({
+    run: async () => {
+      calls += 1;
+      return { text: "done", cost: 0.01 };
+    },
+    firstRunId: "only",
+    task: "review it",
+    retries: true,
+    submitted: () => true,
+  });
+  expect(calls).toBe(1);
+  expect(result.cost).toBeCloseTo(0.01, 10);
+  // And a role with no verdict tool registered never retries at all.
+  let bare = 0;
+  await runReviewWithSubmissionRetry({
+    run: async () => {
+      bare += 1;
+      return { text: "prose", cost: 0.01 };
+    },
+    firstRunId: "only",
+    task: "summarise it",
+    retries: false,
+    submitted: () => false,
+  });
+  expect(bare).toBe(1);
+});
+
+test("every attempt ending in prose still charges every attempt", async () => {
+  // The caller reports the missing verdict and writes no stamp; the cost of
+  // having asked twice is still the cost of this run.
+  let calls = 0;
+  const result = await runReviewWithSubmissionRetry({
+    run: async () => {
+      calls += 1;
+      return { text: `attempt ${calls}`, cost: 0.01 };
+    },
+    firstRunId: "first",
+    task: "review it",
+    retries: true,
+    submitted: () => false,
+  });
+  expect(calls).toBe(2);
+  expect(result.cost).toBeCloseTo(0.02, 10);
+  expect(result.text).toBe("attempt 1");
 });

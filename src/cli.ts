@@ -350,6 +350,48 @@ async function extractFinalText(session: Session, context: Context): Promise<str
  * contradiction -- the model obeys whichever of the two it weighs higher. The
  * override now names the rule it displaces.
  */
+/**
+ * Ask once more when a review ends without its verdict -- the same retry the
+ * pipeline round runs, for the same failure (issue #278), on the standalone path
+ * that can now submit one at all (issue #283).
+ *
+ * Extracted from `roleCommand` so the accumulation is reachable by a test
+ * without a provider: what it decides -- which text survives, what the run cost
+ * -- is behaviour, and behaviour buried in a CLI handler is behaviour nothing
+ * pins.
+ */
+export async function runReviewWithSubmissionRetry<
+  T extends { text: string; cost: number },
+>(params: {
+  run: (runId: string, task: string) => Promise<T>;
+  firstRunId: string;
+  task: string;
+  /** False for a role whose verdict tool is not registered: one attempt, no retry. */
+  retries: boolean;
+  submitted: () => boolean;
+  newRunId?: () => string;
+}): Promise<T> {
+  const first = await params.run(params.firstRunId, params.task);
+  if (!params.retries || params.submitted()) return first;
+  const newRunId = params.newRunId ?? (() => crypto.randomUUID());
+  let spent = first.cost;
+  for (let attempt = 1; attempt < REVIEW_SUBMISSION_ATTEMPTS; attempt += 1) {
+    // A FRESH run id per attempt: a turn is keyed by run id in the session
+    // store, so re-asking under the first one is rejected as an existing
+    // session rather than reaching the model.
+    const retry = await params.run(newRunId(), `${params.task}\n\n${REVIEW_SUBMISSION_RETRY}`);
+    spent += retry.cost;
+    // Both texts, not just the retry's: the first attempt holds the review
+    // itself, and the retry is asked to submit rather than to restate it --
+    // keeping only the second would drop the reasoning the operator reads.
+    const text = retry.text === "" ? first.text : `${first.text}\n\n${retry.text}`;
+    if (params.submitted()) return { ...retry, text, cost: spent };
+  }
+  // Every attempt ended in prose. The caller reports the missing verdict; the
+  // cost of asking twice is still the cost of this run.
+  return { ...first, cost: spent };
+}
+
 export function standaloneSystemPrompt(rolePrompt: string, keptTool?: string): string {
   // A role whose submission tool IS registered here keeps the pipeline's rule
   // intact: a reviewer is a reviewer wherever it runs (issue #283), and its
@@ -2413,32 +2455,13 @@ async function roleCommand(
     });
   const standaloneResult = await (async () => {
     try {
-      const first = await runOnce(standaloneRunId, task, standaloneRole);
-      // Ask once more when a review ended without its verdict -- the same retry
-      // the pipeline round runs, for the same failure (issue #278). A fresh run
-      // id per attempt, because a turn is keyed by run id in the session store.
-      if (
-        !keepsVerdictTool ||
-        verdictCapture.verdict !== undefined ||
-        verdictCapture.error !== undefined
-      )
-        return first;
-      let spent = first.cost;
-      for (let attempt = 1; attempt < REVIEW_SUBMISSION_ATTEMPTS; attempt += 1) {
-        const retry = await runOnce(
-          crypto.randomUUID(),
-          `${task}\n\n${REVIEW_SUBMISSION_RETRY}`,
-          standaloneRole,
-        );
-        spent += retry.cost;
-        // Both texts, not just the retry's: the first attempt holds the review
-        // itself, and the retry is asked to submit rather than to restate it --
-        // keeping only the second would drop the reasoning the operator reads.
-        const text = retry.text === "" ? first.text : `${first.text}\n\n${retry.text}`;
-        if (verdictCapture.verdict !== undefined || verdictCapture.error !== undefined)
-          return { ...retry, text, cost: spent };
-      }
-      return { ...first, cost: spent };
+      return await runReviewWithSubmissionRetry({
+        run: (attemptRunId, attemptTask) => runOnce(attemptRunId, attemptTask, standaloneRole),
+        firstRunId: standaloneRunId,
+        task,
+        retries: keepsVerdictTool,
+        submitted: () => verdictCapture.verdict !== undefined || verdictCapture.error !== undefined,
+      });
     } catch (error) {
       process.stderr.write(`ad-coder: partial usage ledger=${expectedLedgerPath}\n`);
       process.stderr.write(
