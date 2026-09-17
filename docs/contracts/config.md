@@ -96,13 +96,15 @@ Rules the operator declared for ad-coder. A violation is always blocking.
   still naming `recorder` is a blocking `unknown_role`, like any other unknown
   role.
 
-- 2026-09-17: A run's quality checks are configurable data, not a role's
-  behavior (issue #227). `resolvePipelineConfig` accepts a `qualityGates`
-  option: `gates` replaces the shipped seven-gate declaration wholesale (each
+- 2026-09-17: **A run's quality checks are configurable data, not a role's
+  behavior (issue #227).** `resolvePipelineConfig` accepts a `qualityGates`
+  option: `gates` replaces the shipped gate declaration wholesale (each
   gate needs a non-empty `name` and a non-empty `command` argv),
   `maxOutputChars` overrides the report's per-gate capture ceiling, and both
   validate fail-loud before any provider dispatch. Omitting the option ships
-  the project's own declared seven gates; per-gate output capture has a
+  the project's own declared gates -- eight since 2026-09-17, when the
+  review-stamp gate joined (`bun run stamp:check`, issue #239); per-gate
+  output capture has a
   positive mandatory default (64 KiB) that cannot be set to zero.
 - 2026-09-16: Every capability ad-coder ships is enabled at startup. A capability
   is a switchable feature a run does not need to survive: a workflow module,

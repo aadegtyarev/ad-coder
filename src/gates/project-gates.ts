@@ -39,6 +39,13 @@ export const DEFAULT_PROJECT_GATES: readonly QualityGate[] = Object.freeze([
   { name: "bun run check:release", kind: "project", command: ["bun", "run", "check:release"] },
   { name: "bun run check:docs", kind: "project", command: ["bun", "run", "check:docs"] },
   { name: "bun run smoke:artifact", kind: "project", command: ["bun", "run", "smoke:artifact"] },
+  // The review-stamp gate (issue #239): no stamp, a malformed stamp, or a
+  // stamp whose tree digest no longer matches fails like any red gate. It
+  // closes the loop with the run-finish stamp writer -- a reviewer round that
+  // wrote no stamp leaves THIS red, which is where "the orchestrator cannot
+  // forget" is enforced. This is ad-coder's own repo's gate; a different
+  // project substitutes its own gate list and never sees it.
+  { name: "bun run stamp:check", kind: "project", command: ["bun", "run", "stamp:check"] },
 ]);
 
 /**

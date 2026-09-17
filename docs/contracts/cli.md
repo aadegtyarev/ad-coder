@@ -59,3 +59,14 @@ Rules for ad-coder's command-line front. A violation is always blocking.
   file; replacing the durable sink with the readable one is a violation. Ledger
   rows stay identifiers and numbers only — never prompts, payloads, or tool
   arguments.
+- 2026-09-17: `ad-coder stamp delivery [files...]` renders the delivery
+  signature (issue #240) from the named ledger files, or every
+  `.ad-coder/ledger/*.jsonl` when none are named; `--target-dir` selects the
+  project whose ledger is read (defaults to the current directory), matching
+  `cost status`. The command is a READ: it refuses (usage error, path named)
+  when no ledger exists, and never writes anything. `ad-coder stamp check`
+  is the review-stamp gate (issue #239): the newest stamp in the marker-
+  configured log must parse, carry an approved verdict, and name the current
+  working-tree digest — anything else fails loudly with the reason. Both
+  surfaces are read-only by construction; the stamp WRITER is the run-finish
+  hook (`src/stamp/record-review-stamp.ts`), not a CLI hand-write path.

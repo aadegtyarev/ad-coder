@@ -11,6 +11,56 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.42.0] - 2026-09-17
+
+### Added
+- **Every PR records what built it: model, tokens, cost, and a per-role
+  breakdown** (issue #240, built with #239): `ad-coder stamp delivery` renders
+  the compact signature block as a PROJECTION of the ledger
+  (`src/stamp/delivery-signature.ts`) -- run ids, total model calls,
+  provider-reported cost, fresh/cached/output tokens, then one row per
+  declared role (planner, researcher, security, coder, reviewer) naming its
+  dominant provider/model, its call count, and its cost. A role that never ran
+  renders its own "did not run" line, because a missing planner or reviewer
+  is part of the run's story, not a blank to paper over. Restraint is the
+  design: one block, readable at a glance; per-call detail stays in the
+  ledger report. The numbers are never retyped by a model -- a model
+  summarising its own cost can be wrong about it (`quality.md`, 2026-09-17).
+- **A review stamp the gate can check: no stamp, no merge** (issue #239):
+  every pipeline run that settles a reviewer verdict APPENDS one
+  `review-stamp-v1` line to `docs/reviews/stamps.log` -- the reviewed tree's
+  digest, base, verdict, reviewer's provider/model, local ISO time, run ids,
+  and where findings live. The writer is the mechanism that already knows the
+  run finished (the settle path in `runPipeline`), never the orchestrator
+  rote-remembering; and the new eighth declared gate `bun run stamp:check`
+  fails loudly when the newest stamp is missing, malformed, refuses because
+  the verdict is `changes_requested`, or is STALE -- a stamp whose digest no
+  longer matches the working tree must not pass, and the recovery is exactly
+  what the issue asks for: a fresh review, which appends a fresh stamp.
+  `test/stamp.test.ts` covers the round-trip, the staleness rule, the
+  changes-requested blocker, and the append-without-game behavior (appending
+  one stamp line does not itself count as the tree moving). Where the stamp
+  lives, and why: a COMMITTED FILE (`docs/reviews/stamps.log`), over the
+  durable run record and a git note -- it must be reachable by whatever runs
+  the gate, and this project's gates run both locally and in GitHub CI, which
+  can only see the repository. The log is append-only so history is kept, and
+  "last line wins" is the freshness rule.
+
+### Not carried
+- **Deliberately scoped to THIS repository** (the operator's strict
+  constraint on both issues): the stamp machinery is OFF by default for any
+  other target -- the on-switch is the committed marker `ad-coder.stamps.json`
+  in the repository root, and without it the hook is a documented no-op. A
+  cost signature or review stamp written into a TARGET project's tree or PR
+  would be ad-coder's bookkeeping leaking into other people's work; the rule
+  is dated in `docs/contracts/product-change.md` so that nobody later
+  "generalises" it as an improvement.
+
+### Fixed
+- The delivery signature treats "reviewer absent" as a fact, closing #239's
+  tie-in: an approved-or-changed review and no review at all no longer look
+  identical from outside (the same silence that merged `3d9bf13` unreviewed).
+
 ## [0.41.1] - 2026-09-17
 
 ### Fixed
