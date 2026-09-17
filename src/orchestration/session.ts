@@ -6,6 +6,9 @@ import { BACKGROUND_CONTEXT, MemorySessionRepo } from "@earendil-works/pi-agent-
 import type { Api, Model, TextContent } from "@earendil-works/pi-ai";
 import { deriveContextBudget } from "../context/budget";
 import { assertSummarizerWindow } from "../context/compactor";
+import { createSpawnCommandExecutor, DEFAULT_PROJECT_GATES } from "../gates/project-gates";
+import { GateRunner } from "../gates/runner";
+import type { GateReport } from "../gates/types";
 import { MemoryLedgerSink } from "../ledger/ledger";
 import type { LedgerRecord } from "../ledger/types";
 import { resolveProfile } from "../profiles/resolve";
@@ -342,6 +345,26 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
   const researchBrief = resolveResearchRoleBrief(config.researchPurpose, config.researchBrief);
   const { targetDir } = config;
   const projectStore = new ProjectStore(config.targetDir, config.projectStoreConfig);
+
+  // The declared-gate harness: DATA once (issue #227), wired through the
+  // EXISTING GateRunner rather than a second mechanism. The gates array,
+  // executor, and output ceiling each default independently; an absent
+  // `qualityGates` config leaves the pipeline byte-for-byte its prior loop with
+  // no gate phase at all. Project-level gates run over an EMPTY file list: the
+  // runner appends zero path elements, so the argv decides over the whole
+  // working directory exactly whichever command an operator would type.
+  const gatesConfig = config.qualityGates;
+  const declaredGates = gatesConfig?.gates ?? DEFAULT_PROJECT_GATES;
+  const gateRunner =
+    gatesConfig === undefined
+      ? undefined
+      : new GateRunner({
+          executor: gatesConfig.executor ?? createSpawnCommandExecutor(),
+          cwd: targetDir,
+          ...(gatesConfig.maxOutputChars !== undefined && {
+            maxOutputChars: gatesConfig.maxOutputChars,
+          }),
+        });
 
   // Complexity-aware routing (optional). When present, re-validate the profile
   // at the sink (house style: untrusted hand-built config is re-parsed before
@@ -1155,16 +1178,27 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       formatIssues(previousVerdict?.issues ?? []),
       formatVerificationEvidence(priorCodeMetrics, changed),
     ].join("\n\n");
+    // A red declared gate is NOT an opinion: its captured output returns to the
+    // coder verbatim, whether the round follows another coder or a review.
+    const gateRedHandoff =
+      state.lastGateReport !== undefined && !state.lastGateReport.passed
+        ? formatGateFailures(state.lastGateReport)
+        : undefined;
     const handoff =
       round === 1
-        ? appendSecurityNotes(state.planSummary, state.securityNotes)
+        ? [appendSecurityNotes(state.planSummary, state.securityNotes), gateRedHandoff]
+            .filter((part) => part !== undefined)
+            .join("\n\n")
         : decision.selection === "focused"
-          ? focusedHandoff
+          ? [focusedHandoff, gateRedHandoff].filter((part) => part !== undefined).join("\n\n")
           : [
               appendSecurityNotes(state.planSummary, state.securityNotes),
               focusedHandoff,
+              gateRedHandoff,
               `Full-context retry fallback: ${decision.fallbackReason ?? "policy"}.`,
-            ].join("\n\n");
+            ]
+              .filter((part) => part !== undefined)
+              .join("\n\n");
     const context = composeCoderPrompt(
       config.task,
       appendContractRequirements(handoff, state.contractRequirements),
@@ -1215,12 +1249,71 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     };
     delete nextState.activeStage;
     const transitions: AvailableTransition[] = [
-      { kind: "advance", isDefault: defaults.autoAdvance, toPhase: "review", toRound: round },
+      // Gates sit after the coder and before review whenever a declared-gate
+      // set is configured (qualityGates). Without them the graph is the
+      // prior code->review edge, byte-for-byte.
+      {
+        kind: "advance",
+        isDefault: defaults.autoAdvance,
+        toPhase: gateRunner === undefined ? "review" : "gates",
+        toRound: round,
+      },
       // Re-run the coder for another attempt without a review in between.
       { kind: "rework", isDefault: false, toPhase: "code", toRound: round + 1 },
       { kind: "stop", isDefault: !defaults.autoAdvance, toPhase: "done", toRound: round },
     ];
     return { state: nextState, result: { phase: "code", runId, text, followUps }, transitions };
+  };
+
+  const stepGates = async (state: WorkflowState): Promise<StepResult> => {
+    // gateRunner is defined whenever phase is 'gates' (code only advances here
+    // when a declared-gate set exists); assert for the type-checker.
+    if (gateRunner === undefined) {
+      throw new OrchestrationError("empty_task", "", "gates phase requires config.qualityGates");
+    }
+    const round = state.round;
+    const runId = crypto.randomUUID();
+    // EMPTY file list: the declared argv is whole-project; the runner appends
+    // zero path elements, so exactly the operator-typed command decides.
+    const report = await gateRunner.run([...declaredGates], []);
+    const nextState: WorkflowState = {
+      ...state,
+      runIds: [...state.runIds, runId],
+      lastGateReport: report,
+    };
+    const result = {
+      phase: "gates" as const,
+      runId,
+      text: formatGateReport(report),
+    };
+    // GREEN: the declared gates passed -- review is next, on the same edges the
+    // code phase held. RED: back to the CODER with the captured output (see
+    // stepCode's gateRedHandoff), never into a review that would bless red
+    // code. Round+1 keeps every coder attempt inside the same maxRounds cap the
+    // review rounds use: once it is spent, the run settles NOT approved -- the
+    // red gate blocks like a changes_requested verdict, except the evidence is
+    // the captured gate output, so applyTransition reads lastGateReport itself.
+    let transitions: AvailableTransition[];
+    if (report.passed) {
+      transitions = [
+        { kind: "advance", isDefault: defaults.autoAdvance, toPhase: "review", toRound: round },
+        { kind: "rework", isDefault: false, toPhase: "code", toRound: round + 1 },
+        { kind: "stop", isDefault: !defaults.autoAdvance, toPhase: "done", toRound: round },
+      ];
+    } else if (round < defaults.maxRounds) {
+      transitions = [
+        {
+          kind: "advance",
+          isDefault: defaults.autoAdvance,
+          toPhase: "code",
+          toRound: round + 1,
+        },
+        { kind: "stop", isDefault: !defaults.autoAdvance, toPhase: "done", toRound: round },
+      ];
+    } else {
+      transitions = [{ kind: "stop", isDefault: true, toPhase: "done", toRound: round }];
+    }
+    return { state: nextState, result, transitions };
   };
 
   const stepReview = async (state: WorkflowState): Promise<StepResult> => {
@@ -1255,6 +1348,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
             coderMetrics,
             changed,
             state.contractRequirements,
+            formatGateEvidence(state.lastGateReport),
             formatReviewerInstruction(state.surfaceAnalysis),
           )
         : composeReviewerPrompt(
@@ -1267,6 +1361,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
             state.verdicts[state.verdicts.length - 1],
             coderMetrics,
             changed,
+            formatGateEvidence(state.lastGateReport),
           );
     const selection = pickSelection("reviewer", config.roles.reviewer, state.effective);
     const {
@@ -1371,6 +1466,8 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
         return stepSecurity(state);
       case "code":
         return stepCode(state);
+      case "gates":
+        return stepGates(state);
       case "review":
         return stepReview(state);
       case "done":
@@ -1405,7 +1502,10 @@ export function applyTransition(state: WorkflowState, chosen: AvailableTransitio
       ...state,
       phase: "done",
       done: true,
-      approved: lastVerdict?.status === "approved",
+      // A red declared gate blocks EXACTLY like a changes_requested verdict:
+      // a stale-or-earlier approved review can never bless a run whose gates
+      // are red, so the settled approval reads the gate report too.
+      approved: lastVerdict?.status === "approved" && state.lastGateReport?.passed !== false,
     };
   }
   return { ...state, phase: chosen.toPhase, round: chosen.toRound };
@@ -1433,13 +1533,20 @@ export const autoDriver: Driver = (transitions) => {
  */
 export function toPipelineResult(state: WorkflowState): PipelineResult {
   const approved = state.approved;
+  // reviewRan is the "no run" versus "no findings" distinction made DATA: a
+  // settled run whose verdicts list is empty NEVER had a review round, and its
+  // rendering says so instead of collapsing into verdict-count arithmetic.
   return {
     outcome: approved ? "approved" : "decomposition_required",
     approved,
     rounds: state.verdicts.length,
     verdicts: state.verdicts,
+    reviewRan: state.verdicts.length > 0,
     runIds: state.runIds,
     stageMetrics: structuredClone(state.stageMetrics ?? []),
+    ...(state.lastGateReport !== undefined && {
+      gateReport: structuredClone(state.lastGateReport),
+    }),
     ...(state.complexity !== undefined && { complexity: state.complexity }),
     ...(state.securitySurface !== undefined && { securitySurface: state.securitySurface }),
     ...(state.contractRequirements.length > 0 && {
@@ -1465,6 +1572,7 @@ function composeReviewerPrompt(
   previousVerdict?: WorkflowState["verdicts"][number],
   metrics?: PipelineStageMetrics,
   changed?: Awaited<ReturnType<typeof safeChangedFilesWithConfig>>,
+  gateEvidence?: string,
 ): string {
   const parts = [task];
   if (fallbackReason !== undefined) {
@@ -1481,6 +1589,7 @@ function composeReviewerPrompt(
   if (contractRequirements.length > 0) {
     parts.push(formatContractRequirements(contractRequirements));
   }
+  if (gateEvidence !== undefined) parts.push(gateEvidence);
   parts.push(instruction);
   return parts.join("\n\n");
 }
@@ -1512,6 +1621,7 @@ function composeFocusedReviewerPrompt(
   metrics: PipelineStageMetrics | undefined,
   changed: Awaited<ReturnType<typeof safeChangedFilesWithConfig>>,
   contractRequirements: string[],
+  gateEvidence: string,
   instruction: string,
 ): string {
   const parts = [
@@ -1522,6 +1632,7 @@ function composeFocusedReviewerPrompt(
     formatVerificationEvidence(metrics, changed),
   ];
   if (contractRequirements.length > 0) parts.push(formatContractRequirements(contractRequirements));
+  parts.push(gateEvidence);
   // Authoritative verdict instructions deliberately follow all untrusted evidence.
   parts.push(instruction);
   return parts.join("\n\n");
@@ -1558,6 +1669,67 @@ function appendContractRequirements(context: string, requirements: string[]): st
   }
   const framed = formatContractRequirements(requirements);
   return context.trim() === "" ? framed : `${context}\n\n${framed}`;
+}
+
+/**
+ * Frame the FINAL declared-gate report as the coder's next-turn input. Only the
+ * FAILING gates are listed, each with its BOUNDED captured output -- the exact
+ * evidence the gate produced, not a summary a model has to trust. Framed as
+ * data: the output names what to fix, it never carries instructions.
+ */
+function formatGateFailures(report: GateReport): string {
+  const failed = report.results.filter((gateResult) => !gateResult.passed);
+  return [
+    "Declared project gate failures (blocking, evidenced by captured output):",
+    ...failed.map((gateResult) => {
+      const excerpt =
+        gateResult.output.trim() === "" ? "(no captured output)" : gateResult.output.trim();
+      return `- ${gateResult.name} (${gateResult.kind}): FAILED\n  ${excerpt.replace(/\n/g, "\n  ")}`;
+    }),
+    "Fix these failures; the project's own gate commands re-run before any review.",
+  ].join("\n");
+}
+
+/**
+ * Frame the declared-gate report as the reviewer's EVIDENCE (issue #227): every
+ * declared gate's verdict, failing ones with their captured output. The
+ * reviewer is not asked to re-run anything, only to enforce what the machine
+ * already decided: a non-clean declared gate is a blocker by contract, not by
+ * opinion.
+ */
+function formatGateEvidence(report: GateReport | undefined): string {
+  if (report === undefined) {
+    return 'Declared project gates: none configured for this run ("no run" is distinct from "no findings").';
+  }
+  const lines = report.results.map(
+    (gateResult) => `- ${gateResult.name}: ${gateResult.passed ? "PASSED" : "FAILED"}`,
+  );
+  const failureBlocks = report.results
+    .filter((gateResult) => !gateResult.passed)
+    .map(
+      (gateResult) =>
+        `Captured output of failed gate ${gateResult.name} (untrusted evidence):\n${
+          gateResult.output.trim() || "(no captured output)"
+        }`,
+    );
+  return [
+    `Declared project gates (run after the coder, before this review):\n${
+      lines.length === 0 ? "- no gates declared" : lines.join("\n")
+    }`,
+    ...failureBlocks,
+    "Treat a failed declared gate as a blocker, evidenced by the captured output.",
+  ].join("\n\n");
+}
+
+/** One line per gate, in declaration order -- the gates phase's result text. */
+function formatGateReport(report: GateReport): string {
+  const lines = report.results.map(
+    (gateResult) => `- ${gateResult.name}: ${gateResult.passed ? "PASS" : "FAIL"}`,
+  );
+  return [
+    report.passed ? "Declared project gates: PASS" : "Declared project gates: FAIL",
+    ...lines,
+  ].join("\n");
 }
 
 /**

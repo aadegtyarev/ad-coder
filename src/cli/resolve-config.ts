@@ -5,6 +5,8 @@ import { type ContextBudgetPercents, deriveContextBudget } from "../context/budg
 import type { CompactionMode } from "../context/compactor";
 import { assertSummarizerWindow } from "../context/compactor";
 import { CostAnomalyDetector, FileCostAnomalyStore } from "../economics/cost-anomaly";
+import { DEFAULT_PROJECT_GATES } from "../gates/project-gates";
+import type { QualityGate } from "../gates/types";
 import { resolveModelInventory } from "../inventory/resolve";
 import type { ModelInventoryConfig } from "../inventory/types";
 import { MemoryLedgerSink } from "../ledger/ledger";
@@ -242,6 +244,17 @@ export interface ResolvePipelineConfigOptions {
   surfaceAnalysisLimits?: Partial<SurfaceAnalysisLimits>;
   defaultComplexity?: Complexity;
   plannerHandoffAttempts?: 1 | 2;
+  /**
+   * Replace the shipped declared-gate set for the pipeline (issue #227). Omit
+   * it and the pipeline runs the project's own seven gates; a caller or project
+   * hands its own argv data (e.g. `cargo clippy`) instead. `maxCaptureBytes`
+   * overrides the executor's per-gate inbound capture ceiling.
+   */
+  qualityGates?: {
+    gates?: QualityGate[];
+    maxOutputChars?: number;
+    maxCaptureBytes?: number;
+  };
   budgetPercents?: BudgetPercents;
   roleBudgetPercents?: Partial<Record<ConfigurableRole, BudgetPercents>>;
   warn?: (message: string) => void;
@@ -385,6 +398,23 @@ function resolveConfig(
     ...DEFAULT_SURFACE_ANALYSIS_LIMITS,
     ...options.surfaceAnalysisLimits,
   };
+  // The project's DECLARED gates (issue #227): shipped seven by default or a
+  // caller-supplied substitute — plain argv data, never a prompt.
+  const gateOverride = options.qualityGates?.gates;
+  const resolvedGates = gateOverride !== undefined ? [...gateOverride] : [...DEFAULT_PROJECT_GATES];
+  for (const gate of resolvedGates) {
+    if (typeof gate.name !== "string" || gate.name.trim() === "")
+      throw new Error("qualityGates.gates[].name must be a non-empty string");
+    if (!Array.isArray(gate.command) || gate.command.length === 0)
+      throw new Error(`qualityGates.gates ${gate.name} must declare a command argv`);
+  }
+  if (options.qualityGates?.maxOutputChars !== undefined) {
+    if (
+      !Number.isSafeInteger(options.qualityGates.maxOutputChars) ||
+      options.qualityGates.maxOutputChars <= 0
+    )
+      throw new Error("qualityGates.maxOutputChars must be a positive safe integer");
+  }
   for (const [name, value] of Object.entries(surfaceAnalysisLimits)) {
     if (!Number.isSafeInteger(value) || value < 0)
       throw new Error(`surfaceAnalysisLimits.${name} must be a non-negative safe integer`);
@@ -957,6 +987,15 @@ function resolveConfig(
     ...(options.monotonicNow !== undefined && { monotonicNow: options.monotonicNow }),
     ...(options.researchPurpose !== undefined && { researchPurpose: options.researchPurpose }),
     ...(options.researchBrief !== undefined && { researchBrief: options.researchBrief }),
+    // The project's DECLARED gates, run after the coder and before review
+    // (issue #227). Shipped seven by default; a caller replaces the whole
+    // array with its own argv data. Gates are config, never a role.
+    qualityGates: {
+      gates: resolvedGates,
+      ...(options.qualityGates?.maxOutputChars !== undefined && {
+        maxOutputChars: options.qualityGates.maxOutputChars,
+      }),
+    },
     roles,
     ledgerSink: new MemoryLedgerSink(),
     compaction:

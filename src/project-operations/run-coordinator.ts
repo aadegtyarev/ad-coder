@@ -16,6 +16,7 @@ import type {
   StepResult,
   WorkflowState,
 } from "../orchestration/types";
+import { OrchestrationError } from "../orchestration/types";
 import type { ProjectStore } from "../project-store/project-store";
 import type { VersionedState } from "../project-store/types";
 import { ProjectStoreError } from "../project-store/types";
@@ -99,6 +100,19 @@ function stageFailurePause(
   phase: WorkflowState["phase"],
   sourceError: unknown,
 ): { phase: WorkflowState["phase"]; code: string; action: string } {
+  // The REVIEW stage failing to run is its OWN outcome (issue #227): an
+  // operator skimming a generic stage_failed line is exactly how PR #220's
+  // unreviewed branch went quiet. Naming it here is what makes a review that
+  // did not happen render differently from any other stage failure.
+  if (phase === "review") {
+    return {
+      phase,
+      code: "review_not_run",
+      action:
+        "the review stage did not run to a verdict; inspect the reviewer's registration and " +
+        "configuration, then resume the review explicitly",
+    };
+  }
   if (sourceError instanceof ProviderRejectionError) {
     return {
       phase,
@@ -285,7 +299,10 @@ export class RunCoordinator {
         // it is that pause with the cause named -- so it must stay resumable by
         // the same operator act, or naming the cause would cost recoverability.
         pauseCode !== "provider_rejected" &&
-        pauseCode !== "interrupted")
+        pauseCode !== "interrupted" &&
+        // A review that never ran is a red pause like a red gate: the same
+        // explicit operator act is what lets the review be attempted again.
+        pauseCode !== "review_not_run")
     )
       throw new ProjectOperationsError("unauthorized_resolution", checkpoint.runId);
     if (pauseCode !== "stage_limit") {
@@ -490,6 +507,25 @@ export class RunCoordinator {
             stageMetrics: [...(checkpoint.workflowState.stageMetrics ?? []), error.metrics],
           },
           pause: stageFailurePause(checkpoint.workflowState.phase, error.sourceError),
+        });
+        return undefined;
+      }
+      if (
+        error instanceof OrchestrationError &&
+        (error.code === "missing_verdict" || error.code === "malformed_verdict") &&
+        checkpoint.workflowState.phase === "review"
+      ) {
+        // A verdict the Reviewer could not produce is a RED review, not a
+        // missing one: the run pauses with its own code so "review did not
+        // happen" never renders like "review ran, no findings", and the
+        // explicit operator resume is what re-attempts the review.
+        this.save({
+          ...checkpoint,
+          pause: {
+            phase: "review",
+            code: "review_not_run",
+            action: `the review stage did not run (${error.code}); inspect the reviewer's registration and configuration, then resume the review explicitly`,
+          },
         });
         return undefined;
       }
