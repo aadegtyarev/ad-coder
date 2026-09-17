@@ -2423,16 +2423,22 @@ async function roleCommand(
         verdictCapture.error !== undefined
       )
         return first;
+      let spent = first.cost;
       for (let attempt = 1; attempt < REVIEW_SUBMISSION_ATTEMPTS; attempt += 1) {
         const retry = await runOnce(
           crypto.randomUUID(),
           `${task}\n\n${REVIEW_SUBMISSION_RETRY}`,
           standaloneRole,
         );
+        spent += retry.cost;
+        // Both texts, not just the retry's: the first attempt holds the review
+        // itself, and the retry is asked to submit rather than to restate it --
+        // keeping only the second would drop the reasoning the operator reads.
+        const text = retry.text === "" ? first.text : `${first.text}\n\n${retry.text}`;
         if (verdictCapture.verdict !== undefined || verdictCapture.error !== undefined)
-          return { ...retry, cost: first.cost + retry.cost };
+          return { ...retry, text, cost: spent };
       }
-      return first;
+      return { ...first, cost: spent };
     } catch (error) {
       process.stderr.write(`ad-coder: partial usage ledger=${expectedLedgerPath}\n`);
       process.stderr.write(
