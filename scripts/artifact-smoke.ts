@@ -30,6 +30,7 @@ const TRACKED_ROOTS = new Set([
   ".ad-coder", // bounded anonymous project calibration; intentionally excluded from package files
   ".claude", // reviewed developer-only LDO harness; intentionally excluded from package files
   ".github",
+  "bin", // the node launcher `bin` points at; shipped, so also tracked
   "docs",
   "evals", // development-only calibration corpus; intentionally excluded from package files
   "examples",
