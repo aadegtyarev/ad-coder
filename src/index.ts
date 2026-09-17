@@ -223,6 +223,7 @@ export type {
   OrchestratorConfig,
   OrchestratorDeps,
   OrchestratorErrorCode,
+  RaisedStageLimits,
   RunPipelineResult,
   StepCost,
   StepView,
@@ -274,6 +275,7 @@ export type {
 } from "./orchestration/stage-limits";
 export {
   DEFAULT_STAGE_LIMITS,
+  STAGE_LIMIT_KEY,
   StageCloseoutError,
   StageLimitController,
   StageLimitError,

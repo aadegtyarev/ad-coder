@@ -372,6 +372,39 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.45.0] - 2026-09-17
+
+### Fixed
+- The orchestrator can now raise a stage ceiling and resume, which is what
+  `docs/contracts/operator-flow.md` has required since 2026-09-16 and what no
+  code could do. The coordinator already refused to resume a stage-limit pause
+  at an unchanged ceiling (`unchanged <reason> stage limit`) -- a correct guard
+  that, with no way to carry a larger number back in, blocked the very
+  correction it was written to enforce. `resume_pipeline` now takes
+  `raiseRole`, `raiseReason` and `raiseLimit`; the raise lands as a role
+  overlay through the same path the classified tier already travels, and each
+  field is validated against the shipped unions with a refusal that names what
+  was wrong. Measured cause: a coder stage exhausted 400k input tokens on
+  reconnaissance and reported "I ran out of budget during reconnaissance and
+  made zero edits" -- honest, caught by review, and unrecoverable until now.
+  (#208)
+- Review of the first version of this fix (`changes_requested`) caught two
+  blockers, both now closed and pinned by tests. A `raiseLimit` of `0` passed a
+  `>= 0` check while `0` DISABLES a limit, and the coordinator's guard
+  short-circuits on a resolved zero -- so a zero raise would have slipped past
+  the protection it exists to satisfy and removed the ceiling. And validation
+  sat only inside the tool, so a library caller of the exported
+  `resumePipeline` got a silently unmatched overlay and then failed on the
+  "unchanged ceiling" guard, reporting the wrong cause; `assertRaisedLimits` now
+  guards the core boundary every entry point crosses. A malformed raise also
+  gets its own `invalid_raise` code rather than reusing `invalid_role`.
+- `STAGE_LIMIT_KEY` maps each exhaustion reason to the `StageLimits` field it
+  is measured against, shared by the coordinator's guard and the raise path.
+  Two copies of that mapping would drift the moment a reason is added, and a
+  raise that wrote a different field than the guard checks would satisfy the
+  guard while changing nothing.
+
+
 ## [0.35.2] - 2026-09-17
 
 ### Fixed

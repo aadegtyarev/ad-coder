@@ -89,6 +89,14 @@ cannot.
   completion reports the pause -- it cannot raise a ceiling it never hears
   about.
 
+- 2026-09-17 (issue #208): A stage that exhausts a ceiling on progressing work
+  is resumed at a LARGER ceiling, by the orchestrator, without the operator.
+  The coordinator refuses a resume at an unchanged number, so the raise is not
+  optional politeness -- it is the only legal way to continue, and
+  `resume_pipeline` carries the role, the exhausted reason and the new value.
+  A raise names one role and one reason: raising every ceiling because one was
+  hit discards the evidence the pause produced.
+
 ## What the system learns without being told
 
 - 2026-09-16: Stage budgets, like model choice, are corrected by what actually

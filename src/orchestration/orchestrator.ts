@@ -15,6 +15,8 @@ import { FileLedgerSink, MemoryLedgerSink as MemoryLedgerSinkImpl } from "../led
 import type { ToolActivityConsumer, ToolActivitySnapshot } from "../observability/tool-activity";
 import { ToolActivityChannel } from "../observability/tool-activity";
 import { StageCloseoutError, StageLimitError } from "../orchestration/stage-limits";
+import type { ProfileRole } from "../profiles/types";
+import { PROFILE_ROLES } from "../profiles/validate";
 import { ProjectOperationsError } from "../project-operations/errors";
 import { RunCoordinator } from "../project-operations/run-coordinator";
 import type { Role } from "../role";
@@ -41,6 +43,7 @@ import { pipelinePauseFromCheckpoint } from "./pipeline";
 import { COMPLEXITY_RUBRIC } from "./plan";
 import type { WorkflowSession } from "./session";
 import { autoDriver, createWorkflowSession } from "./session";
+import { STAGE_LIMIT_KEY, type StageLimitReason } from "./stage-limits";
 import { isSubmissionToolName } from "./submission-tools";
 import { assertTransitionOffered, DriveError } from "./transition-guard";
 import type {
@@ -98,7 +101,10 @@ export type OrchestratorErrorCode =
   | "no_active_session"
   | "awaiting_transition"
   | "no_pending_transition"
-  | "invalid_role";
+  | "invalid_role"
+  // A malformed ceiling raise is not a bad role: errors.md requires invalid
+  // input to stay distinguishable rather than collapsing into one code.
+  | "invalid_raise";
 
 /**
  * Raised on an orchestrator-core precondition failure. Carries a `code`
@@ -187,8 +193,65 @@ export interface CostReport {
  * "capability reachable without the chat front" test drive the core with faux
  * models and no `startConversation`.
  */
+/**
+ * A ceiling the orchestrator raised after a stage exhausted it.
+ *
+ * `docs/contracts/operator-flow.md` requires an underestimate on progressing
+ * work to be raised and recorded rather than to kill the run. The coordinator
+ * already refuses to resume a stage-limit pause at an unchanged ceiling
+ * (`unchanged <reason> stage limit`), so without a way to carry a larger number
+ * back in, that refusal blocked the very correction it was written to require.
+ */
+export interface RaisedStageLimits {
+  role: ProfileRole;
+  reason: StageLimitReason;
+  limit: number;
+}
+
+/**
+ * Check a raise against the shipped unions, or refuse it by name.
+ *
+ * Module scope, not inside a factory: every entry point -- the `resume_pipeline`
+ * tool, the exported `resumePipeline`, a library caller building the object
+ * itself -- must clear the same gate. Validating only at the tool would leave a
+ * programmatic raise silently unmatched by the overlay, and the run would then
+ * fail on the coordinator's "unchanged ceiling" guard, reporting the wrong
+ * cause (docs/contracts/errors.md: an expected boundary failure has a stable
+ * typed code, and invalid input stays distinguishable).
+ */
+export function assertRaisedLimits(raised: RaisedStageLimits): RaisedStageLimits {
+  if (!PROFILE_ROLES.includes(raised.role))
+    throw new OrchestratorError(
+      "invalid_raise",
+      `unknown raiseRole ${raised.role}; expected one of ${PROFILE_ROLES.join(", ")}`,
+      "the raised ceiling must name a configured role",
+    );
+  if (!(raised.reason in STAGE_LIMIT_KEY))
+    throw new OrchestratorError(
+      "invalid_raise",
+      `unknown raiseReason ${raised.reason}; expected one of ${Object.keys(STAGE_LIMIT_KEY).join(", ")}`,
+      "the raised ceiling must name the exhausted limit",
+    );
+  // NOT `>= 0`. Zero DISABLES a limit (docs/contracts/config.md), and the
+  // coordinator's unchanged-ceiling guard short-circuits on a resolved zero
+  // (`resumedLimit !== 0 && ...`), so a zero raise would slip past the very
+  // protection this path exists to satisfy and remove the ceiling instead of
+  // enlarging it. Raising is not disabling.
+  if (!Number.isFinite(raised.limit) || raised.limit <= 0)
+    throw new OrchestratorError(
+      "invalid_raise",
+      `raiseLimit ${raised.limit} must be a finite number greater than 0`,
+      "a raise enlarges a ceiling; zero would disable it",
+    );
+  return raised;
+}
+
 export interface OrchestratorDeps {
-  buildConfig: (task: string, complexity?: Complexity) => PipelineConfig;
+  buildConfig: (
+    task: string,
+    complexity?: Complexity,
+    raisedLimits?: RaisedStageLimits,
+  ) => PipelineConfig;
   ledgerSink: MemoryLedgerSink;
   sessionLimitController?: SessionLimitController;
   backgroundRuns?: Partial<BackgroundRunLimits>;
@@ -223,7 +286,11 @@ export interface Orchestrator {
    * the checkpoint already recorded what the run routed on.
    */
   runPipeline(task: string, complexity?: Complexity): Promise<RunPipelineResult>;
-  resumePipeline(task: string, runId: string): Promise<RunPipelineResult>;
+  resumePipeline(
+    task: string,
+    runId: string,
+    raisedLimits?: RaisedStageLimits,
+  ): Promise<RunPipelineResult>;
   decomposeTask(task: string, complexity?: Complexity): Promise<DecompositionResult>;
   beginStepping(task: string, complexity?: Complexity): void;
   stepOnce(): Promise<StepView>;
@@ -258,8 +325,12 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
   let coordinator: RunCoordinator | undefined;
 
   /** Enforce the shared sink on every config the core builds. */
-  const buildConfig = (task: string, complexity?: Complexity): PipelineConfig => ({
-    ...deps.buildConfig(task, complexity),
+  const buildConfig = (
+    task: string,
+    complexity?: Complexity,
+    raisedLimits?: RaisedStageLimits,
+  ): PipelineConfig => ({
+    ...deps.buildConfig(task, complexity, raisedLimits),
     ledgerSink: sink,
     ...(deps.sessionLimitController !== undefined && {
       sessionLimitController: deps.sessionLimitController,
@@ -285,8 +356,15 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     control?: { cancelled: () => boolean; onStage: (step: StepCost) => void },
     createWithRunId = false,
     complexity?: Complexity,
+    raisedLimits?: RaisedStageLimits,
   ): Promise<RunPipelineResult> => {
-    const config = buildConfig(task, complexity);
+    // Validated HERE, not at the tool: `resumePipeline` is exported, so a
+    // library caller reaches this path without passing the tool's parameter
+    // parsing. An unvalidated raise would never match the overlay and the run
+    // would then fail on the coordinator's "unchanged ceiling" guard -- a
+    // message about the wrong thing entirely.
+    const raised = raisedLimits === undefined ? undefined : assertRaisedLimits(raisedLimits);
+    const config = buildConfig(task, complexity, raised);
     const wf = createWorkflowSession(config);
     const runCoordinator = new RunCoordinator(wf, wf.projectStore, {
       ...config.coordinator,
@@ -329,8 +407,12 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
 
   const runPipeline = (task: string, complexity?: Complexity): Promise<RunPipelineResult> =>
     executePipeline(task, undefined, undefined, false, complexity);
-  const resumePipeline = (task: string, runId: string): Promise<RunPipelineResult> =>
-    executePipeline(task, runId);
+  const resumePipeline = (
+    task: string,
+    runId: string,
+    raisedLimits?: RaisedStageLimits,
+  ): Promise<RunPipelineResult> =>
+    executePipeline(task, runId, undefined, false, undefined, raisedLimits);
   const executeBackgroundPipeline = async (
     task: string,
     runId: string,
@@ -824,6 +906,33 @@ export function buildBuiltInPipelineTools(core: Orchestrator): Tool[] {
     },
   });
 
+  /**
+   * Parse the tool's three loose fields into a raise, or refuse by name.
+   *
+   * The fields arrive as free strings from a model, so "all three or none" is
+   * checked here where the shape is still three parameters; the resulting
+   * object is validated by `assertRaisedLimits` at the core boundary like any
+   * other caller's.
+   */
+  const raisedLimitsFrom = (
+    role: string | undefined,
+    reason: string | undefined,
+    limit: number | undefined,
+  ): RaisedStageLimits | undefined => {
+    if (role === undefined && reason === undefined && limit === undefined) return undefined;
+    if (role === undefined || reason === undefined || limit === undefined)
+      throw new OrchestratorError(
+        "invalid_raise",
+        "raiseRole, raiseReason and raiseLimit are supplied together or not at all",
+        "a partial raise cannot name a ceiling",
+      );
+    return assertRaisedLimits({
+      role: role as ProfileRole,
+      reason: reason as StageLimitReason,
+      limit,
+    });
+  };
+
   const runPipelineTool = defineTool({
     name: RUN_PIPELINE_TOOL_NAME,
     description:
@@ -954,12 +1063,19 @@ export function buildBuiltInPipelineTools(core: Orchestrator): Tool[] {
   const resumePipelineTool = defineTool({
     name: RESUME_PIPELINE_TOOL_NAME,
     description:
-      "Resume an interrupted built-in pipeline from its durable run ID using the original task. Completed stages are reused; host-configured budgets still apply.",
+      "Resume an interrupted built-in pipeline from its durable run ID using the original task. Completed stages are reused. A run paused on a stage ceiling CANNOT resume at the same ceiling -- pass raiseRole (the role whose stage paused), raiseReason and raiseLimit (the pause reports the reason and the exhausted value) to resume with a larger one, which is the correction the operator-flow contract requires for an underestimate on progressing work.",
     label: "resume pipeline",
-    parameters: Type.Object({ task: Type.String(), runId: Type.String() }),
+    parameters: Type.Object({
+      task: Type.String(),
+      runId: Type.String(),
+      raiseRole: Type.Optional(Type.String()),
+      raiseReason: Type.Optional(Type.String()),
+      raiseLimit: Type.Optional(Type.Number()),
+    }),
     async execute(_toolCallId, params) {
       try {
-        const run = await core.resumePipeline(params.task, params.runId);
+        const raised = raisedLimitsFrom(params.raiseRole, params.raiseReason, params.raiseLimit);
+        const run = await core.resumePipeline(params.task, params.runId, raised);
         const summary =
           `pipeline complete: runId=${run.runId} approved=${run.result.approved} ` +
           `rounds=${run.result.rounds} review=${lastReviewStatus(run.result)} ` +
@@ -1187,13 +1303,31 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
       : activityChannel.subscribe(config.activityConsumer);
   const sharedConfig: OrchestratorConfig = { ...config, activityChannel };
   delete sharedConfig.activityConsumer;
-  const buildConfig = (task: string, complexity?: Complexity): PipelineConfig =>
+  const buildConfig = (
+    task: string,
+    complexity?: Complexity,
+    raisedLimits?: RaisedStageLimits,
+  ): PipelineConfig =>
     // An explicitly classified tier (issues #263/#264) replaces the built-in
     // default at routing; validated at the routing sink like every other one.
     resolvePipelineConfig({
       ...sharedConfig,
       task,
       ...(complexity !== undefined && { defaultComplexity: complexity }),
+      // A raised ceiling lands as a role overlay over the shipped defaults, the
+      // one place `resolvePipelineConfig` already merges per-role limits. The
+      // coordinator compares the pause's prior limit against the resolved one
+      // and refuses an unchanged number, so this overlay is what makes a
+      // resume legal at all.
+      ...(raisedLimits !== undefined && {
+        roleStageLimits: {
+          ...sharedConfig.roleStageLimits,
+          [raisedLimits.role]: {
+            ...sharedConfig.roleStageLimits?.[raisedLimits.role],
+            [STAGE_LIMIT_KEY[raisedLimits.reason]]: raisedLimits.limit,
+          },
+        },
+      }),
     });
   // One source for skill behaviour, shared with `resolve-config`, the pipeline
   // stages, and the standalone role command: an explicit `--skills` list is a
