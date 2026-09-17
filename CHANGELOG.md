@@ -13,6 +13,28 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.53.0] - 2026-09-17
+
+### Added
+- **A development channel, published as a second package** (issue #268). A tag
+  `v0.53.0-dev.1` publishes `ad-coder-dev`; a plain `v0.53.0` publishes
+  `ad-coder`, as before. Same gates either way -- the dev channel ships more
+  often, not held to less.
+
+  A second package rather than a dist-tag on the first: a dist-tag still installs
+  as `ad-coder` and overwrites the stable command, and the point is to keep a
+  working tool while updating the other twenty times a day. The dev package
+  renames its binary to `ad-coder-dev`, so both sit on one machine without
+  fighting over a path. It also gives early access to anyone who wants the newest
+  features without giving up a stable install.
+
+  The dev manifest is generated from the same tree at publish time, changing
+  three fields -- name, version, bin -- and nothing else, because a preview that
+  behaves differently is not a preview of what ships. A stable-looking tag is
+  refused for the dev package, so a released version number cannot be claimed by
+  a preview. A dev tag cuts no GitHub release: it has no CHANGELOG section of its
+  own, being work in progress.
+
 ## [0.52.0] - 2026-09-17
 
 ### Added
