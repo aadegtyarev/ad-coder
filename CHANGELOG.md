@@ -13,6 +13,25 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.52.0] - 2026-09-17
+
+### Added
+- **Releases publish themselves from a tag** (issue #268).
+  `.github/workflows/release.yml` runs on `v*`, re-runs every gate, checks that
+  the tag names the version in `package.json`, publishes to npm, and cuts a
+  GitHub release whose notes are this file's section for that version.
+
+  No credential is stored. npm authenticates the run itself through Trusted
+  Publishing, so the repository holds no publish token and there is none to
+  leak; `id-token: write` is what lets GitHub attest the run. This replaced an
+  automation token on npm's own advice.
+
+  The gates run again here rather than trusting that the branch was green: a tag
+  can be pushed at any commit, and a published version cannot be withdrawn from
+  npm, only deprecated. The tag/version check exists for the same reason -- a
+  mismatch would either fail confusingly as a duplicate or ship something other
+  than what the tag says.
+
 ## [0.51.0] - 2026-09-17
 
 ### Added
