@@ -27,7 +27,7 @@ import type {
   RoleSpec,
   Verdict,
 } from "../src/orchestration/types";
-import { OrchestrationError } from "../src/orchestration/types";
+import { PipelinePauseError } from "../src/orchestration/types";
 import { SUBMIT_VERDICT_TOOL_NAME } from "../src/orchestration/verdict";
 import { RunCoordinator } from "../src/project-operations/run-coordinator";
 import type { Role } from "../src/role";
@@ -172,10 +172,10 @@ test("a stage-limit pause is reported as recovery guidance, not a pending decisi
   } catch (error) {
     caught = error;
   }
-  expect(caught).toBeInstanceOf(OrchestrationError);
-  expect(caught).toMatchObject({ code: "requirements_unresolved" });
+  expect(caught).toBeInstanceOf(PipelinePauseError);
+  expect(caught).toMatchObject({ code: "pipeline_paused" });
   expect((caught as Error).message).toBe(
-    "increase or disable the model_turns stage limit, then resume explicitly",
+    "stage_limit: increase or disable the model_turns stage limit, then resume explicitly",
   );
 });
 
@@ -206,7 +206,7 @@ test("a paused drive resumes its incomplete stage from the coordinator checkpoin
       error: new Capture(),
       coordinator: first,
     }),
-  ).rejects.toMatchObject({ code: "requirements_unresolved" });
+  ).rejects.toMatchObject({ code: "pipeline_paused" });
   expect(first.checkpoint.workflowState.phase).toBe("code");
   const pausedRunId = first.checkpoint.workflowState.activeStage?.runId;
   expect(pausedRunId).toBeDefined();

@@ -432,6 +432,7 @@ const BACKGROUND_LIFECYCLES = new Set([
   "requested",
   "started",
   "stage_changed",
+  "paused",
   "operator_attention",
   "failed",
   "cancelled",
@@ -450,13 +451,32 @@ function safeNoticeInteger(value: unknown): number {
   return Number.isSafeInteger(value) && (value as number) >= 0 ? (value as number) : 0;
 }
 
-function projectBackgroundEvent(event: unknown): Record<string, unknown> | undefined {
+/** A validated background event projected at the console boundary. */
+interface ProjectedBackgroundEvent {
+  sequence: number;
+  runId: string;
+  lifecycle: string;
+  timestamp: number;
+  stage?: string;
+  pause?: {
+    phase: string;
+    code: string;
+    action: string;
+    limitReason?: string;
+    limit?: number;
+  };
+  errorCode?: string;
+  metrics?: { steps: number; totalCost: number };
+}
+
+function projectBackgroundEvent(event: unknown): ProjectedBackgroundEvent | undefined {
   if (typeof event !== "object" || event === null) return undefined;
   const value = event as {
     lifecycle?: unknown;
     stage?: unknown;
     errorCode?: unknown;
     metrics?: { steps?: unknown; totalCost?: unknown };
+    pause?: unknown;
     sequence?: unknown;
     runId?: unknown;
     timestamp?: unknown;
@@ -469,6 +489,34 @@ function projectBackgroundEvent(event: unknown): Record<string, unknown> | undef
     new Set(["internal_failure", "operator_attention", "deadline_exceeded"]),
   );
   const metrics = value.metrics;
+  // Pause payloads are the coordinator's own record (issue #261): fixed safe
+  // phrases and numbers only, re-validated field by field like every other
+  // projected event field -- never trusted sight unseen across the boundary.
+  const rawPause = value.pause as
+    | {
+        phase?: unknown;
+        code?: unknown;
+        action?: unknown;
+        limitReason?: unknown;
+        limit?: unknown;
+      }
+    | undefined;
+  const pauseCode = rawPause === undefined ? undefined : safeNoticeText(rawPause.code);
+  const pauseAction = rawPause === undefined ? undefined : safeNoticeText(rawPause.action);
+  const pause =
+    rawPause === undefined || typeof rawPause !== "object" || pauseCode === undefined
+      ? undefined
+      : {
+          phase: safeNoticeText(rawPause.phase),
+          code: pauseCode,
+          action: pauseAction ?? "unknown",
+          ...(typeof rawPause.limitReason === "string"
+            ? { limitReason: safeNoticeText(rawPause.limitReason) }
+            : {}),
+          ...(typeof rawPause.limit === "number" && Number.isFinite(rawPause.limit)
+            ? { limit: rawPause.limit }
+            : {}),
+        };
   return {
     sequence: safeNoticeInteger(value.sequence),
     runId: safeNoticeText(value.runId),
@@ -476,6 +524,7 @@ function projectBackgroundEvent(event: unknown): Record<string, unknown> | undef
     timestamp: safeNoticeInteger(value.timestamp),
     ...(stage === undefined ? {} : { stage }),
     ...(errorCode === undefined ? {} : { errorCode }),
+    ...(pause !== undefined ? { pause } : {}),
     ...(metrics !== undefined &&
     typeof metrics.steps === "number" &&
     Number.isSafeInteger(metrics.steps) &&
@@ -509,8 +558,15 @@ function renderBackgroundNotice(notice: BackgroundRunNotice, mode: ConsoleOutput
       pending,
     })}\n`;
   }
-  const lines = events.map(({ lifecycle, stage }) => {
+  const lines = events.map(({ lifecycle, stage, pause }) => {
     const renderedStage = stage === undefined ? "" : ` (${stage})`;
+    if (lifecycle === "paused" && pause !== undefined) {
+      const limit = pause.limitReason !== undefined ? `, limit ${pause.limitReason}` : "";
+      return (
+        `ad-coder: background pipeline ${runId} paused${renderedStage}: ${pause.code}${limit} -- ` +
+        "the run is resumable, not failed"
+      );
+    }
     return `ad-coder: background pipeline ${runId} ${lifecycle}${renderedStage}`;
   });
   if (droppedEvents > 0)

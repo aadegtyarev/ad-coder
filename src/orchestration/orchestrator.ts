@@ -37,6 +37,7 @@ import { buildWebTools } from "../web/tools";
 import { resolveWorkflowModules } from "../workflows/registry";
 import type { OrchestratorWorkflowModule } from "../workflows/types";
 import { type BackgroundRunLimits, BackgroundRunManager } from "./background-runs";
+import { pipelinePauseFromCheckpoint } from "./pipeline";
 import { COMPLEXITY_RUBRIC } from "./plan";
 import type { WorkflowSession } from "./session";
 import { autoDriver, createWorkflowSession } from "./session";
@@ -52,7 +53,6 @@ import type {
   WorkflowPhase,
   WorkflowState,
 } from "./types";
-import { OrchestrationError } from "./types";
 
 /** The four tool names the orchestrator model drives the workflow through. */
 export const RUN_PIPELINE_TOOL_NAME = "run_pipeline";
@@ -304,12 +304,11 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       control?.onStage(step);
     });
     if (completed.result === undefined) {
-      if (completed.status === "paused" && completed.checkpoint.pause !== undefined)
-        throw new OrchestrationError(
-          "requirements_unresolved",
-          completed.checkpoint.runId,
-          completed.checkpoint.pause.action,
-        );
+      // The pause outranks a pending decision ON PURPOSE (issue #261): the
+      // coordinator deletes the pause when a decision resolves, so a pause
+      // present here is the live state and must be projected as one.
+      const pause = pipelinePauseFromCheckpoint(completed.checkpoint);
+      if (pause !== undefined) throw pause;
       const decision = completed.checkpoint.decisions.find((item) => item.status === "pending");
       throw new ProjectOperationsError(
         "pending_decision",
@@ -374,12 +373,12 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       }
     })();
     if (completed.result === undefined) {
-      if (completed.status === "paused" && completed.checkpoint.pause !== undefined)
-        throw new OrchestrationError(
-          "requirements_unresolved",
-          completed.checkpoint.runId,
-          completed.checkpoint.pause.action,
-        );
+      // The pause outranks a pending decision ON PURPOSE (issue #261): the
+      // coordinator deletes the pause when a decision resolves; a background
+      // worker has no decision-resolver, so a co-present pause is the live
+      // state and must be projected as one.
+      const pause = pipelinePauseFromCheckpoint(completed.checkpoint);
+      if (pause !== undefined) throw pause;
       const decision = completed.checkpoint.decisions.find((item) => item.status === "pending");
       throw new ProjectOperationsError(
         "pending_decision",
@@ -838,7 +837,7 @@ export function buildBuiltInPipelineTools(core: Orchestrator): Tool[] {
   const pipelineStatusTool = defineTool({
     name: PIPELINE_STATUS_TOOL_NAME,
     description:
-      "Read safe lifecycle and aggregate metrics for a background pipeline owned by this conversation.",
+      "Read safe lifecycle and aggregate metrics for a background pipeline owned by this conversation. A paused run is reported as lifecycle 'paused' with the pause record (phase, code, action) and the limiting stage reason -- it is resumable, not failed -- and the metrics already name what the run spent.",
     label: "pipeline status",
     parameters: Type.Object({ runId: Type.String() }),
     async execute(_toolCallId, params) {
@@ -873,7 +872,7 @@ export function buildBuiltInPipelineTools(core: Orchestrator): Tool[] {
   const pipelineResultTool = defineTool({
     name: PIPELINE_RESULT_TOOL_NAME,
     description:
-      "Read terminal outcome and aggregate usage for a background pipeline owned by this conversation.",
+      "Read terminal outcome and aggregate usage for a background pipeline owned by this conversation. A run paused on a stage limit is also reported here: lifecycle 'paused', the pause record, and real spent metrics -- the pause reaches this surface exactly like a completed run's outcome does.",
     label: "pipeline result",
     parameters: Type.Object({ runId: Type.String() }),
     async execute(_toolCallId, params) {

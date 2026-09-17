@@ -2200,3 +2200,84 @@ test("/cost is unavailable with the action that enables it when the session carr
   expect(record.code).toBe("not_available");
   expect(record.retryable).toBe(false);
 });
+
+test("a paused pipeline notice carries the pause record and says resumable, not failed (issue #261)", async () => {
+  const session = fakeSession();
+  session.subscribeBackgroundRuns = (consumer) => {
+    consumer({
+      type: "background_events",
+      runId: "pause-run",
+      events: [
+        {
+          sequence: 1,
+          runId: "pause-run",
+          lifecycle: "paused",
+          stage: "plan",
+          timestamp: 1,
+          pause: {
+            phase: "plan",
+            code: "stage_limit",
+            action: "increase or disable the duration stage limit, then resume explicitly",
+            limitReason: "duration",
+            limit: 180000,
+          },
+          metrics: { steps: 1, totalCost: 0.0064 },
+        },
+      ],
+      nextCursor: 1,
+      gap: false,
+      droppedEvents: 0,
+      pending: false,
+    } as unknown as BackgroundRunNotice);
+    return () => undefined;
+  };
+  const error = new Capture();
+  await runConsole({
+    session,
+    input: ttyFrom("/exit\n"),
+    output: new Capture(),
+    error,
+  });
+  expect(session.inputs).toEqual([]);
+  expect(error.text()).toContain("background pipeline pause-run paused (plan)");
+  expect(error.text()).toContain("stage_limit");
+  expect(error.text()).toContain("limit duration");
+  expect(error.text()).toContain("the run is resumable, not failed");
+});
+
+test("a paused notice whose pause payload fails validation still projects the lifecycle, degraded", async () => {
+  const session = fakeSession();
+  session.subscribeBackgroundRuns = (consumer) => {
+    consumer({
+      type: "background_events",
+      runId: "pause-run",
+      events: [
+        {
+          sequence: 1,
+          runId: "pause-run",
+          lifecycle: "paused",
+          timestamp: 1,
+          pause: { phase: "plan", code: 42, action: "increase it" },
+        },
+      ],
+      nextCursor: 1,
+      gap: false,
+      droppedEvents: 0,
+      pending: false,
+    } as unknown as BackgroundRunNotice);
+    return () => undefined;
+  };
+  const error = new Capture();
+  await runConsole({
+    session,
+    input: ttyFrom("/exit\n"),
+    output: new Capture(),
+    error,
+  });
+  expect(session.inputs).toEqual([]);
+  // A payload that cannot be validated never renders one: a pause without its
+  // record must not invent confidence about the limit.
+  expect(error.text()).toContain("background pipeline pause-run paused");
+  expect(error.text()).not.toContain("stage_limit");
+  expect(error.text()).not.toContain("increase it");
+});

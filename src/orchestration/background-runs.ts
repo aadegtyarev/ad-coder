@@ -4,11 +4,14 @@ import * as path from "node:path";
 import { ProjectStore } from "../project-store/project-store";
 import { ProjectStoreError } from "../project-store/types";
 import type { RunPipelineResult, StepCost } from "./orchestrator";
+import type { PipelinePause } from "./types";
+import { PipelinePauseError } from "./types";
 
 export type BackgroundLifecycle =
   | "requested"
   | "started"
   | "stage_changed"
+  | "paused"
   | "operator_attention"
   | "failed"
   | "cancelled"
@@ -22,6 +25,7 @@ export interface BackgroundRunEvent {
   lifecycle: BackgroundLifecycle;
   timestamp: number;
   stage?: StepCost["phase"];
+  pause?: BackgroundRunPause;
   errorCode?: "internal_failure" | "operator_attention" | "deadline_exceeded";
   metrics?: { steps: number; totalCost: number };
 }
@@ -44,14 +48,31 @@ export interface BackgroundRunStatus {
   runId: string;
   lifecycle: BackgroundLifecycle;
   metrics: { steps: number; totalCost: number };
+  pause?: BackgroundRunPause;
   recovery?: "wait" | "inspect_events" | "resume_pipeline" | "none";
 }
-export interface BackgroundRunOutcome extends BackgroundRunStatus {
+/**
+ * The pause payload a background event carries (issue #261): the coordinator's
+ * own record verbatim -- fixed phrases built in code, never model content --
+ * so a consumer reports the limit and the recovery action without reading the
+ * run coordinator's record by hand.
+ */
+/** Same record verbatim; the alias documents the projection seam. */
+export type BackgroundRunPause = PipelinePause;
+
+/** The terminal outcome a completed/failed/cancelled/timed-out run reports. */
+export interface BackgroundTerminalOutcome extends BackgroundRunStatus {
   lifecycle: BackgroundTerminalLifecycle;
   approved?: boolean;
   rounds?: number;
   verdict?: string;
 }
+/** A paused run reports through the same surface, with the same shape. */
+export interface BackgroundPausedOutcome extends BackgroundRunStatus {
+  lifecycle: "paused";
+  pause: BackgroundRunPause;
+}
+export type BackgroundRunOutcome = BackgroundTerminalOutcome | BackgroundPausedOutcome;
 export type BackgroundRunErrorCode =
   | "not_found"
   | "resource_limit"
@@ -109,6 +130,7 @@ interface PersistedEntry {
   events: BackgroundRunEvent[];
   nextSequence: number;
   metrics: { steps: number; totalCost: number };
+  pause?: BackgroundRunPause | undefined;
   lease?: { workerId: string; heartbeatAt: number } | undefined;
   outcome?: BackgroundRunOutcome | undefined;
 }
@@ -124,6 +146,7 @@ interface Entry extends PersistedEntry {
   cancelled: boolean;
   promise: Promise<void>;
   timer?: ReturnType<typeof setTimeout>;
+  pause?: BackgroundRunPause | undefined;
   lease?: { workerId: string; heartbeatAt: number } | undefined;
   leaseTimer?: ReturnType<typeof setInterval>;
 }
@@ -143,6 +166,13 @@ const MAX_BACKGROUND_EVENT_PAGE_EVENT: BackgroundRunEvent = {
   stage: "security",
   errorCode: "deadline_exceeded",
   metrics: { steps: Number.MAX_SAFE_INTEGER, totalCost: Number.MAX_VALUE },
+  pause: {
+    phase: "security",
+    code: "provider_rejected",
+    action: "a".repeat(256),
+    limitReason: "cost_unknown",
+    limit: Number.MAX_VALUE,
+  },
 };
 /** Enough room for every schema-valid event, so cursor polling always advances. */
 export const MIN_BACKGROUND_EVENT_PAGE_BYTES =
@@ -329,6 +359,7 @@ export class BackgroundRunManager {
   }
   private launch(entry: Entry, task: string, preceding?: Promise<void>): void {
     processActive += 1;
+    entry.pause = undefined;
     entry.lease ??= { workerId: crypto.randomUUID(), heartbeatAt: Date.now() };
     this.persist(entry);
     const execute = Promise.resolve(preceding).then(async () => {
@@ -364,6 +395,23 @@ export class BackgroundRunManager {
     entry.promise = execute
       .catch((error: unknown) => {
         if (entry.cancelled) return;
+        // A pause is not a failure (issue #261): the coordinator recorded a
+        // resumable state with the recovery action in words, so the report
+        // carries the same identification -- name, limit, action -- and the
+        // metrics include what the run had already spent.
+        if (error instanceof PipelinePauseError) {
+          entry.lifecycle = "paused";
+          entry.metrics = { ...error.metrics };
+          entry.pause = { ...error.pause };
+          this.append(entry, "paused", {
+            ...((PHASES as readonly string[]).includes(error.pause.phase)
+              ? { stage: error.pause.phase as StepCost["phase"] }
+              : {}),
+            pause: { ...error.pause },
+            metrics: { ...entry.metrics },
+          });
+          return;
+        }
         const attention = isOperatorAttention(error);
         entry.lifecycle = attention ? "operator_attention" : "failed";
         this.append(entry, entry.lifecycle, {
@@ -449,8 +497,13 @@ export class BackgroundRunManager {
   }
   result(runId: string): BackgroundRunOutcome {
     const entry = this.owned(runId);
-    if (entry.outcome === undefined) throw new BackgroundRunError("not_terminal");
-    return copyOutcome(entry.outcome);
+    if (entry.outcome !== undefined) return copyOutcome(entry.outcome);
+    // A pause is reportable on the same surface a completed run is (issue
+    // #261): it is durable and resumable, so `not_terminal` would silently
+    // hide it from exactly the consumer that must react to the limit.
+    if (entry.lifecycle === "paused" && entry.pause !== undefined)
+      return { ...this.statusOf(entry), lifecycle: "paused", pause: { ...entry.pause } };
+    throw new BackgroundRunError("not_terminal");
   }
   cancel(runId: string): BackgroundRunStatus {
     const entry = this.owned(runId);
@@ -493,9 +546,10 @@ export class BackgroundRunManager {
       runId: e.runId,
       lifecycle: e.lifecycle,
       metrics: { ...e.metrics },
+      ...(e.pause === undefined ? {} : { pause: { ...e.pause } }),
       recovery: isTerminal(e.lifecycle)
         ? "none"
-        : e.lifecycle === "operator_attention"
+        : e.lifecycle === "operator_attention" || e.lifecycle === "paused"
           ? "resume_pipeline"
           : "wait",
     };
@@ -535,6 +589,7 @@ export class BackgroundRunManager {
       events: e.events,
       nextSequence: e.nextSequence,
       metrics: e.metrics,
+      ...(e.pause && { pause: { ...e.pause } }),
       ...(e.lease && { lease: e.lease }),
       ...(e.outcome && { outcome: e.outcome }),
     };
@@ -565,6 +620,7 @@ export class BackgroundRunManager {
     entry.events = persisted.events.map(copyEvent);
     entry.nextSequence = persisted.nextSequence;
     entry.metrics = copyMetrics(persisted.metrics);
+    entry.pause = persisted.pause === undefined ? undefined : { ...persisted.pause };
     entry.lease = persisted.lease;
     entry.outcome = persisted.outcome === undefined ? undefined : copyOutcome(persisted.outcome);
     if (changed) this.notify(entry);
@@ -680,8 +736,12 @@ export class BackgroundRunManager {
         const persisted = parsePersistedEntry(raw.value ?? raw);
         if (persisted.ownerId !== this.ownerId) continue;
         const interrupted = !isTerminal(persisted.lifecycle);
+        // A recorded pause survives worker exit BY DESIGN (issue #261): the
+        // pause record carries its own recovery action, so a stale lease
+        // makes it abandoned no more than a completed run's terminal record.
         const abandoned =
           interrupted &&
+          persisted.lifecycle !== "paused" &&
           persisted.lifecycle !== "requested" &&
           !hasFreshLease(persisted.lease, this.limits.leaseMs);
         const entry: Entry = {
@@ -692,6 +752,7 @@ export class BackgroundRunManager {
           events: persisted.events.map(copyEvent),
           nextSequence: persisted.nextSequence,
           metrics: copyMetrics(persisted.metrics),
+          ...(persisted.pause === undefined ? {} : { pause: { ...persisted.pause } }),
           ...(persisted.outcome !== undefined
             ? { outcome: copyOutcome(persisted.outcome) }
             : abandoned
@@ -734,6 +795,7 @@ const LIFECYCLES = [
   "requested",
   "started",
   "stage_changed",
+  "paused",
   "operator_attention",
   "failed",
   "cancelled",
@@ -742,6 +804,21 @@ const LIFECYCLES = [
 ] as const;
 const TERMINAL_LIFECYCLES = ["failed", "cancelled", "timed_out", "completed"] as const;
 const PHASES = ["plan", "research", "security", "code", "review", "done"] as const;
+/**
+ * Phases a durable pause can name. A pause can in principle stop on every
+ * workflow phase, so the widest `WorkflowPhase` spelling is accepted where a
+ * pause payload is parsed; stage-change events stay on the narrower set.
+ */
+const PAUSE_PHASES = ["plan", "research", "security", "code", "gates", "review", "done"] as const;
+const STAGE_LIMIT_REASONS = [
+  "duration",
+  "model_turns",
+  "tool_turns",
+  "input",
+  "cost",
+  "cost_in_flight",
+  "cost_unknown",
+] as const;
 const ERROR_CODES = ["internal_failure", "operator_attention", "deadline_exceeded"] as const;
 const RECOVERIES = ["wait", "inspect_events", "resume_pipeline", "none"] as const;
 
@@ -783,6 +860,21 @@ function copyMetrics(value: { steps: number; totalCost: number }): {
 } {
   return { steps: value.steps, totalCost: value.totalCost };
 }
+function parsePause(value: unknown): BackgroundRunPause {
+  const object = strictObject(value, ["phase", "code", "action", "limitReason", "limit"]);
+  const pause = enumValue(object.phase, PAUSE_PHASES);
+  const limitReason =
+    object.limitReason === undefined
+      ? undefined
+      : enumValue(object.limitReason, STAGE_LIMIT_REASONS);
+  return {
+    phase: pause,
+    code: requiredString(object.code),
+    action: requiredString(object.action),
+    ...(limitReason === undefined ? {} : { limitReason }),
+    ...(object.limit === undefined ? {} : { limit: finiteNumber(object.limit) }),
+  };
+}
 function parseEvent(value: unknown, runId: string): BackgroundRunEvent {
   const object = strictObject(value, [
     "sequence",
@@ -790,17 +882,20 @@ function parseEvent(value: unknown, runId: string): BackgroundRunEvent {
     "lifecycle",
     "timestamp",
     "stage",
+    "pause",
     "errorCode",
     "metrics",
   ]);
   if (object.runId !== runId) throw new TypeError("event run does not match record");
   const lifecycle = enumValue(object.lifecycle, LIFECYCLES);
+  const stage = object.stage === undefined ? undefined : enumValue(object.stage, PHASES);
   return {
     sequence: safeInteger(object.sequence, 1),
     runId,
     lifecycle,
     timestamp: safeInteger(object.timestamp),
-    ...(object.stage === undefined ? {} : { stage: enumValue(object.stage, PHASES) }),
+    ...(stage === undefined ? {} : { stage }),
+    ...(object.pause === undefined ? {} : { pause: parsePause(object.pause) }),
     ...(object.errorCode === undefined
       ? {}
       : { errorCode: enumValue(object.errorCode, ERROR_CODES) }),
@@ -814,11 +909,12 @@ function copyEvent(event: BackgroundRunEvent): BackgroundRunEvent {
     lifecycle: event.lifecycle,
     timestamp: event.timestamp,
     ...(event.stage === undefined ? {} : { stage: event.stage }),
+    ...(event.pause === undefined ? {} : { pause: { ...event.pause } }),
     ...(event.errorCode === undefined ? {} : { errorCode: event.errorCode }),
     ...(event.metrics === undefined ? {} : { metrics: copyMetrics(event.metrics) }),
   };
 }
-function parseOutcome(value: unknown, runId: string): BackgroundRunOutcome {
+function parseOutcome(value: unknown, runId: string): BackgroundTerminalOutcome {
   const object = strictObject(value, [
     "runId",
     "lifecycle",
@@ -846,7 +942,10 @@ function parseOutcome(value: unknown, runId: string): BackgroundRunOutcome {
         }),
   };
 }
-function copyOutcome(outcome: BackgroundRunOutcome): BackgroundRunOutcome {
+function copyOutcome(outcome: BackgroundRunOutcome): BackgroundTerminalOutcome {
+  // A paused run reports through status/result synthesis, never as a terminal
+  // outcome; this guard is unreachable at runtime and exists to narrow.
+  if (outcome.lifecycle === "paused") throw new TypeError("paused runs have no terminal outcome");
   return {
     runId: outcome.runId,
     lifecycle: outcome.lifecycle,
@@ -869,6 +968,7 @@ function parsePersistedEntry(value: unknown): PersistedEntry {
     "events",
     "nextSequence",
     "metrics",
+    "pause",
     "lease",
     "outcome",
   ]);
@@ -897,6 +997,7 @@ function parsePersistedEntry(value: unknown): PersistedEntry {
             heartbeatAt: safeInteger(leaseObject.heartbeatAt),
           };
         })();
+  const pause = object.pause === undefined ? undefined : parsePause(object.pause);
   const outcome = object.outcome === undefined ? undefined : parseOutcome(object.outcome, runId);
   if (outcome !== undefined && outcome.lifecycle !== lifecycle)
     throw new TypeError("outcome lifecycle does not match record");
@@ -910,6 +1011,7 @@ function parsePersistedEntry(value: unknown): PersistedEntry {
     events,
     nextSequence,
     metrics: parseMetrics(object.metrics),
+    ...(pause === undefined ? {} : { pause }),
     ...(lease === undefined ? {} : { lease }),
     ...(outcome === undefined ? {} : { outcome }),
   };

@@ -1,10 +1,10 @@
 import * as readline from "node:readline";
 import type { MemoryLedgerSink } from "../ledger/ledger";
+import { pipelinePauseFromCheckpoint } from "../orchestration/pipeline";
 import type { WorkflowSession } from "../orchestration/session";
 import { autoDriver } from "../orchestration/session";
 import { assertTransitionOffered } from "../orchestration/transition-guard";
 import type { AvailableTransition, PipelineResult } from "../orchestration/types";
-import { OrchestrationError } from "../orchestration/types";
 import { ProjectOperationsError } from "../project-operations/errors";
 import { RunCoordinator, type RunCoordinatorOptions } from "../project-operations/run-coordinator";
 import { EmptyTurnError } from "../runner/errors";
@@ -239,11 +239,11 @@ export async function driveWorkflow(params: DriveWorkflowParams): Promise<Pipeli
             `checkpoint=${coordinator.checkpointFile}\n` +
             `resume: ad-coder drive <same-task> --resume-run ${completed.checkpoint.runId} <same-options>\n`,
         );
-        throw new OrchestrationError(
-          "requirements_unresolved",
-          completed.checkpoint.runId,
-          completed.checkpoint.pause.action,
-        );
+        // A pause is reported as a resumable pause, not a failure (issue #261);
+        // the thrown error carries the coordinator's own pause record and the
+        // metrics of what the run had already spent.
+        const pause = pipelinePauseFromCheckpoint(completed.checkpoint);
+        if (pause !== undefined) throw pause;
       }
       const pending = completed.checkpoint.decisions.find(
         (decision) => decision.status === "pending",

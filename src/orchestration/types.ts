@@ -19,7 +19,7 @@ import type { ResolvedRegistry } from "../registry/types";
 import type { Role } from "../role";
 import type { Tool } from "../runner/tool";
 import type { SessionLimitController } from "../session-limits";
-import type { StageLimits } from "./stage-limits";
+import type { StageLimitReason, StageLimits } from "./stage-limits";
 
 /**
  * The two verdicts a reviewer round can settle on.
@@ -547,6 +547,48 @@ export type PipelineOutcome = "approved" | "decomposition_required";
  * - `invalid_max_rounds` / `empty_task`: a caller precondition failed before any
  *   role ran.
  */
+/**
+ * The durable pause a coordinator stops on, carried to a background boundary.
+ * `phase`/`code`/`action` are the checkpoint's own pause record -- fixed
+ * phrases built in code, never model or provider content. `limitReason` and
+ * `limit` are present exactly when the coordinator recorded limit evidence.
+ */
+export interface PipelinePause {
+  phase: WorkflowPhase;
+  code: string;
+  action: string;
+  limitReason?: StageLimitReason;
+  limit?: number;
+}
+
+/**
+ * A stage pause reported as a resumable outcome, not a failure (issue #261).
+ *
+ * WHY A SEPARATE CLASS. A pause had surfaced as `OrchestrationError`
+ * (`requirements_unresolved`): the background record then read `failed` /
+ * `internal_failure` / `recovery: none` for a state the coordinator itself
+ * called `paused`, and the orchestrator could not react -- it could not raise
+ * a ceiling it never learned about. Carrying the pause identification plus
+ * what the run had already spent (`metrics`, summed from durable stage
+ * metrics, paused attempt included) lets every consumer report the pause
+ * accurately without re-reading the coordinator record by hand.
+ */
+export class PipelinePauseError extends Error {
+  override readonly name = "PipelinePauseError";
+  readonly code = "pipeline_paused" as const;
+  /** The coordinator runId; never content. */
+  readonly detail: string;
+
+  constructor(
+    detail: string,
+    readonly pause: PipelinePause,
+    readonly metrics: { steps: number; totalCost: number },
+  ) {
+    super(`${pause.code}: ${pause.action}`);
+    this.detail = detail;
+  }
+}
+
 export type OrchestrationErrorCode =
   | "missing_plan"
   | "requirements_unresolved"

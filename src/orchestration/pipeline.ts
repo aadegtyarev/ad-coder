@@ -1,9 +1,10 @@
 import { ProjectOperationsError } from "../project-operations/errors";
+import type { RunCheckpoint } from "../project-operations/run-coordinator";
 import { RunCoordinator } from "../project-operations/run-coordinator";
 import { recordReviewStampFromResult } from "../stamp/record-review-stamp";
 import { createWorkflowSession } from "./session";
 import type { PipelineConfig, PipelineResult } from "./types";
-import { OrchestrationError } from "./types";
+import { PipelinePauseError } from "./types";
 
 /**
  * Compose the EXISTING single-turn `runRole` into a plan -> [security] ->
@@ -50,18 +51,42 @@ import { OrchestrationError } from "./types";
  * is the caller's `ProfileError` and propagates UNWRAPPED, distinct from the
  * pipeline's own `OrchestrationError` surface.
  */
+/**
+ * The one pause builder for every background lane (issue #261).
+ *
+ * The pause record persists in the checkpoint and includes the PAUSED
+ * attempt, so durable stage metrics are also what the run had actually spent
+ * -- the paused stage's partial spend is a row like any other. An empty
+ * return means the coordinator did not pause.
+ */
+export function pipelinePauseFromCheckpoint(
+  checkpoint: RunCheckpoint,
+): PipelinePauseError | undefined {
+  const pause = checkpoint.pause;
+  if (pause === undefined) return undefined;
+  const stageMetrics = checkpoint.workflowState.stageMetrics ?? [];
+  return new PipelinePauseError(
+    checkpoint.runId,
+    {
+      phase: pause.phase,
+      code: pause.code,
+      action: pause.action,
+      ...(pause.limitReason === undefined ? {} : { limitReason: pause.limitReason }),
+      ...(pause.limit === undefined ? {} : { limit: pause.limit }),
+    },
+    {
+      steps: stageMetrics.length,
+      totalCost: stageMetrics.reduce((sum, metric) => sum + (metric.costUsd ?? 0), 0),
+    },
+  );
+}
+
 export async function runPipeline(config: PipelineConfig): Promise<PipelineResult> {
   const session = createWorkflowSession(config);
   const coordinator = new RunCoordinator(session, session.projectStore, config.coordinator);
   const completed = await coordinator.run();
-  if (completed.status === "paused" && completed.checkpoint.pause !== undefined) {
-    const pause = completed.checkpoint.pause;
-    throw new OrchestrationError(
-      "requirements_unresolved",
-      completed.checkpoint.runId,
-      `${pause.code}: ${pause.action}`,
-    );
-  }
+  const pause = pipelinePauseFromCheckpoint(completed.checkpoint);
+  if (pause !== undefined) throw pause;
   if (completed.result === undefined) {
     const decision = completed.checkpoint.decisions.find((item) => item.status === "pending");
     throw new ProjectOperationsError(

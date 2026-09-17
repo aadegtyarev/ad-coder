@@ -8,6 +8,7 @@ import {
   MIN_BACKGROUND_EVENT_PAGE_BYTES,
 } from "../src/orchestration/background-runs";
 import type { RunPipelineResult } from "../src/orchestration/orchestrator";
+import { PipelinePauseError } from "../src/orchestration/types";
 
 function deferred<T>(): {
   promise: Promise<T>;
@@ -123,6 +124,7 @@ const EVENT_KEYS = new Set<string>([
   "lifecycle",
   "timestamp",
   "stage",
+  "pause",
   "errorCode",
   "metrics",
 ]);
@@ -159,7 +161,9 @@ test("terminal result includes verdict and aggregate usage and survives owner re
     targetDir,
     ownerId,
   );
-  expect(reconnected.result(runId).verdict).toBe("approved");
+  const reconnectedOutcome = reconnected.result(runId);
+  if (reconnectedOutcome.lifecycle !== "completed") throw new Error("expected terminal outcome");
+  expect(reconnectedOutcome.verdict).toBe("approved");
 
   const otherSession = new BackgroundRunManager(
     async () => {
@@ -539,4 +543,102 @@ test("active-run admission rejects excess work and close is finite for a stuck w
   expect(manager.status(runId).lifecycle).toBe("cancelled");
   expect(manager.result(runId).lifecycle).toBe("cancelled");
   expect(() => manager.start("after close")).toThrow(new BackgroundRunError("closed"));
+});
+
+import * as crypto from "node:crypto";
+
+test("a stage pause is reported as paused with real metrics, the limit, and a recovery action (issue #261)", async () => {
+  const targetDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-pause-")));
+  const manager = new BackgroundRunManager(
+    async (_task, runId, control) => {
+      control.onStage({ phase: "plan", step: 1, cost: 0.0 });
+      // The coordinator threw a stage-limit pause: no completed stage paid
+      // onStage, so the pause itself must carry the real spend.
+      throw new PipelinePauseError(
+        runId,
+        {
+          phase: "plan",
+          code: "stage_limit",
+          action: "increase or disable the duration stage limit, then resume explicitly",
+          limitReason: "duration",
+          limit: 180000,
+        },
+        { steps: 1, totalCost: 0.0064 },
+      );
+    },
+    {},
+    targetDir,
+  );
+  const { runId } = manager.start("implement two coupled features");
+  await manager.wait(runId);
+
+  // A pause is not a failure: the lifecycle, recovery, and metrics all say so.
+  const status = manager.status(runId);
+  expect(status.lifecycle).toBe("paused");
+  expect(status.recovery).toBe("resume_pipeline");
+  expect(status.metrics).toEqual({ steps: 1, totalCost: 0.0064 });
+  expect(status.pause).toMatchObject({
+    phase: "plan",
+    code: "stage_limit",
+    limitReason: "duration",
+    limit: 180000,
+  });
+
+  // The pause reaches the event stream like any other stage outcome, with the
+  // coordinator's own words intact (a paragraph, not five commands).
+  const page = manager.events(runId, 0, 20);
+  const paused = page.events.find((event) => event.lifecycle === "paused");
+  expect(paused?.stage).toBe("plan");
+  expect(paused?.pause?.action).toBe(
+    "increase or disable the duration stage limit, then resume explicitly",
+  );
+
+  // The same surface a completed run reports: a pause is readable there too.
+  const outcome = manager.result(runId);
+  expect(outcome.lifecycle).toBe("paused");
+  expect(outcome.metrics).toEqual({ steps: 1, totalCost: 0.0064 });
+  await manager.close();
+});
+
+test("a durable pause survives a worker exit as a resumable record, not an abandonment", async () => {
+  const targetDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-pause-")));
+  const ownerId = crypto.randomUUID();
+  const manager = new BackgroundRunManager(
+    async (_task, runId) => {
+      throw new PipelinePauseError(
+        runId,
+        {
+          phase: "plan",
+          code: "stage_limit",
+          action: "increase or disable the cost stage limit, then resume explicitly",
+          limitReason: "cost",
+          limit: 0.1,
+        },
+        { steps: 1, totalCost: 0.1 },
+      );
+    },
+    {},
+    targetDir,
+    ownerId,
+  );
+  const { runId } = manager.start("pause durably");
+  await settle();
+  await manager.wait(runId);
+  // The worker's promise has settled and the lease is gone; the durable record
+  // must still read as the pause the coordinator recorded.
+  const reconnected = new BackgroundRunManager(
+    async () => {
+      throw new Error("paused runs must not execute again on reconnect");
+    },
+    {},
+    targetDir,
+    ownerId,
+  );
+  expect(reconnected.status(runId).lifecycle).toBe("paused");
+  expect(reconnected.status(runId).pause?.limitReason).toBe("cost");
+  const outcome = reconnected.result(runId);
+  if (outcome.lifecycle !== "paused") throw new Error("expected paused outcome");
+  expect(outcome.metrics).toEqual({ steps: 1, totalCost: 0.1 });
+  await reconnected.close();
+  await manager.close();
 });

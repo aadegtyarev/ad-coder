@@ -45,7 +45,7 @@ import type {
   Verdict,
   WorkflowState,
 } from "../src/orchestration/types";
-import { OrchestrationError } from "../src/orchestration/types";
+import { OrchestrationError, PipelinePauseError } from "../src/orchestration/types";
 import {
   buildSubmitVerdictTool,
   formatReviewerInstruction,
@@ -1025,12 +1025,12 @@ test("a reviewer that never calls submit_verdict blocks as a red review-not-run 
   } catch (error) {
     caught = error;
   }
-  expect(caught).toBeInstanceOf(OrchestrationError);
+  expect(caught).toBeInstanceOf(PipelinePauseError);
   // Reviewer did not run is a RED result with its own code, not a silence:
   // distinct from "reviewed, no findings" and blocked like a red gate.
-  expect((caught as OrchestrationError).code).toBe("requirements_unresolved");
-  expect((caught as OrchestrationError).message).toContain("review_not_run");
-  expect((caught as OrchestrationError).message).toContain("missing_verdict");
+  expect((caught as PipelinePauseError).code).toBe("pipeline_paused");
+  expect((caught as PipelinePauseError).message).toContain("review_not_run");
+  expect((caught as PipelinePauseError).message).toContain("missing_verdict");
 });
 
 test("a malformed submission blocks as a red review-not-run pause with the cause named", async () => {
@@ -1055,9 +1055,9 @@ test("a malformed submission blocks as a red review-not-run pause with the cause
   } catch (error) {
     caught = error;
   }
-  expect(caught).toBeInstanceOf(OrchestrationError);
-  expect((caught as OrchestrationError).message).toContain("review_not_run");
-  expect((caught as OrchestrationError).message).toContain("malformed_verdict");
+  expect(caught).toBeInstanceOf(PipelinePauseError);
+  expect((caught as PipelinePauseError).message).toContain("review_not_run");
+  expect((caught as PipelinePauseError).message).toContain("malformed_verdict");
 });
 
 test("documentation-surface verdict guidance names exact contracts and validation self-corrects", () => {
@@ -1534,7 +1534,7 @@ test("research-required surface cannot reach a coder turn", async () => {
         reviewer: reviewerRole(fx),
       },
     }),
-  ).rejects.toMatchObject({ code: "requirements_unresolved" });
+  ).rejects.toMatchObject({ code: "pipeline_paused" });
 });
 
 test("research is checkpointed before dispatch and persists only normalized provenance", async () => {
@@ -2401,10 +2401,10 @@ test("an incomplete submit_verdict reaches parseVerdict and is named, not report
   } catch (error) {
     caught = error;
   }
-  expect(caught).toBeInstanceOf(OrchestrationError);
+  expect(caught).toBeInstanceOf(PipelinePauseError);
   // Not a schema pre-empt: the guidance reaches the reviewer in its tool
   // result; the pipeline-level pause names the red review, not the field.
-  expect((caught as OrchestrationError).message).toContain("review_not_run");
+  expect((caught as PipelinePauseError).message).toContain("review_not_run");
 });
 
 test("no tool schema requires a nested field, so the harness never pre-empts the parser", () => {
