@@ -4,6 +4,33 @@ All notable changes to ad-coder are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project aims at
 [Semantic Versioning](https://semver.org/).
 
+## [0.38.2] - 2026-09-17
+
+### Fixed
+- **`/task` refuses an over-ceiling file before reading it and keeps the
+  unreadable errno class** (issue #247): the console read the whole task file
+  synchronously and only then applied `maxInputBytes`, so the ceiling that
+  exists to bound the read acted after the read it bounds. A file whose stat
+  reports more than the ceiling is now refused without one byte read, and the
+  single remaining read is bounded by that same ceiling.
+  `task_file_unreadable` no longer collapses every cause into one code whose
+  action was "check the path and retry" -- wrong for a permissions failure
+  and indistinguishable from a missing file. The errno class survives as its
+  own stable code with advice that follows from it: `task_file_not_found`,
+  `task_file_denied` (permission advice, never path advice),
+  `task_file_is_directory`, and `task_file_unreadable` with the errno token
+  in the message for anything else (docs/contracts/errors.md).
+
+### Refactored
+- The `/task` filesystem policy -- stat, byte ceiling, and errno
+  classification -- moved out of `runConsole` into a narrow
+  `src/cli/task-file.ts` boundary with an injected test seam
+  (docs/contracts/decomposition.md). The paste-CSI state machine and the
+  dispatch/queue closures deliberately stay in `runConsole` for a dedicated
+  decomposition pass; the boundary extraction is the part fix #247 required,
+  and moving more was not shown to reduce a second diagnosed problem within
+  this change's review scope.
+
 ## [0.38.1] - 2026-09-17
 
 ### Fixed

@@ -1,10 +1,12 @@
 import { expect, test } from "bun:test";
+import type { Stats } from "node:fs";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { PassThrough, Readable, Writable } from "node:stream";
 import { createModels, fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 import { runConsole } from "../src/cli/console";
+import { loadTaskFile } from "../src/cli/task-file";
 import {
   CONSOLE_COMMANDS,
   ConsoleControlError,
@@ -292,8 +294,38 @@ test("/task names an unreadable path with a typed failure and keeps the console 
 
   expect(session.inputs).toEqual([]);
   expect(result).toEqual({ reason: "exit", completedTurns: 0 });
-  expect(error.text()).toContain("/task cannot read /nonexistent-brief-file.txt");
+  expect(error.text()).toContain("/task cannot read /nonexistent-brief-file.txt (no such file)");
   expect(error.text()).toContain("check the path and retry with: /task <path>");
+});
+
+test("/task names a permissions failure as denied, with advice that does not blame the path", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-task-"));
+  const file = path.join(dir, "secret.txt");
+  fs.writeFileSync(file, "closed brief\n");
+  fs.chmodSync(file, 0o000);
+  const session = fakeSession();
+  const error = new Capture();
+  try {
+    const result = await runConsole({
+      session,
+      input: ttyFrom(`/task ${file}\n/exit\n`),
+      output: new Capture(),
+      error,
+      maxInputBytes: 65536,
+    });
+
+    expect(session.inputs).toEqual([]);
+    expect(result).toEqual({ reason: "exit", completedTurns: 0 });
+    expect(error.text()).toContain("/task cannot read");
+    expect(error.text()).toContain("(permission denied)");
+    // The one action a permission failure deserves: a missing path check
+    // cannot fix EACCES (docs/contracts/errors.md).
+    expect(error.text()).toContain("check read permissions on");
+    expect(error.text()).not.toContain("check the path and retry");
+  } finally {
+    fs.chmodSync(file, 0o644); // tmpdir cleanup needs the directory empty.
+    fs.rmSync(file);
+  }
 });
 
 test("/task rejects a file larger than the message ceiling before dispatch", async () => {
@@ -313,6 +345,56 @@ test("/task rejects a file larger than the message ceiling before dispatch", asy
   expect(session.inputs).toEqual([]);
   expect(result).toEqual({ reason: "exit", completedTurns: 0 });
   expect(error.text()).toContain("/task file exceeds the configured input byte limit");
+});
+
+test("an over-ceiling task file is refused at the boundary without one byte read", () => {
+  // The injected stat lies about a big file while the injected read is a
+  // tripwire: if the boundary read before the ceiling check, this fails.
+  const loaded = loadTaskFile("/briefs/huge.txt", 16, {
+    stat: () => ({ size: 4_096 }) as unknown as Stats,
+    readFile: () => {
+      throw new Error("boundary must not read an over-ceiling file");
+    },
+  });
+
+  expect(loaded).toEqual({
+    ok: false,
+    code: "resource_limit",
+    message: "/task file exceeds the configured input byte limit",
+    action: "send a shorter message, or raise maxInputBytes when embedding runConsole",
+    retryable: false,
+  });
+});
+
+test("task-file failures keep the errno class so the action can follow from it", () => {
+  const boom =
+    (errno: string): (() => Stats) =>
+    () => {
+      throw Object.assign(new Error("stat failed"), { code: errno });
+    };
+
+  expect(loadTaskFile("/briefs/never-there.txt", 16, { stat: boom("ENOENT") })).toMatchObject({
+    code: "task_file_not_found",
+    message: "/task cannot read /briefs/never-there.txt (no such file)",
+    action: "check the path and retry with: /task <path>",
+  });
+  expect(loadTaskFile("/briefs/locked.txt", 16, { stat: boom("EACCES") })).toMatchObject({
+    code: "task_file_denied",
+    message: "/task cannot read /briefs/locked.txt (permission denied)",
+  });
+  expect(loadTaskFile("/briefs/locked.txt", 16, { stat: boom("EPERM") })).toMatchObject({
+    code: "task_file_denied",
+  });
+  expect(loadTaskFile("/briefs/dir", 16, { stat: boom("EISDIR") })).toMatchObject({
+    code: "task_file_is_directory",
+    message: "/task cannot read /briefs/dir (it is a directory)",
+    action: "name a file, not a directory, with: /task <path>",
+  });
+  expect(loadTaskFile("/briefs/broken.txt", 16, { stat: boom("EIO") })).toMatchObject({
+    code: "task_file_unreadable",
+    message: "/task cannot read /briefs/broken.txt (EIO)",
+    action: "check the path and retry with: /task <path>",
+  });
 });
 
 test("counts UTF-8 bytes across chunks and rejects an oversized piped message before step", async () => {
