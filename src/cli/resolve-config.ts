@@ -201,6 +201,31 @@ function validateRoleBudgetPercents(
  * is being sent to, and a multi-key precedence warning) on stderr by default;
  * injectable so tests capture it instead of writing to the real stderr.
  */
+/** The six worker roles the conversational orchestrator can delegate independently. */
+export const DELEGATABLE_ROLES = [
+  "planner",
+  "researcher",
+  "security",
+  "coder",
+  "reviewer",
+  "auditor",
+] as const;
+
+/**
+ * The resolved, machine-readable counterpart of the startup banner: which
+ * worker roles this session can delegate and the model each dispatches on at
+ * the default complexity. Assembled by the resolver from the same layout the
+ * banner prints, so a delegation tool's description never restates role names
+ * as prose that can go stale.
+ */
+export interface DelegatedRoute {
+  source: string;
+  complexity: string;
+  groups: readonly { model: string; roles: readonly string[] }[];
+  /** Delegatable roles that resolved to no model at this complexity. */
+  unreachable: readonly string[];
+}
+
 export interface ResolvePipelineConfigOptions {
   task: string;
   targetDir: string;
@@ -668,6 +693,24 @@ function resolveConfig(
     .map(([modelName, roles]) => `${modelName}: ${roles.join(", ")}`)
     .join(" | ");
   warn(`ad-coder: ${source} | complexity "${defaultComplexity}" | ${routing}\n`);
+  // The same resolved facts, projected onto the roles general delegation can
+  // reach, so a delegation tool's description reuses the banner's data instead
+  // of restating role names. A role that stays unwritten in the profile is
+  // `unrouted` in the banner and null here: the run may not reach it, and a
+  // `run_role` call for it raises the real typed error.
+  const delegatedRoute: DelegatedRoute = {
+    source,
+    complexity: defaultComplexity,
+    groups: [...layout]
+      .map(([modelName, roles]) => ({
+        model: modelName,
+        roles: roles.filter((role) => (DELEGATABLE_ROLES as readonly ProfileRole[]).includes(role)),
+      }))
+      .filter((group) => group.roles.length > 0),
+    unreachable: DELEGATABLE_ROLES.filter(
+      (role) => ![...layout.values()].some((roles) => roles.includes(role)),
+    ),
+  };
 
   const buildRole = (name: ProfileRole, tools: string[]): RoleSpec => {
     // The role's live model is whatever the default profile routes it to at
@@ -997,6 +1040,7 @@ function resolveConfig(
       }),
     },
     roles,
+    delegatedRoute,
     ledgerSink: new MemoryLedgerSink(),
     compaction:
       compactionMode === "disabled-then-halt"

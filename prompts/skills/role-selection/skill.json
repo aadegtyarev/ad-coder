@@ -1,0 +1,6 @@
+{
+  "id": "role-selection",
+  "version": "1",
+  "description": "Match work to its execution path: what each worker role does, returns, and when delegated work beats doing or editing it yourself.",
+  "roles": ["orchestrator"]
+}

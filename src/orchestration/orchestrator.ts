@@ -1,7 +1,7 @@
 import * as crypto from "node:crypto";
 import * as path from "node:path";
 import { Type } from "@earendil-works/pi-ai";
-import type { ResolvePipelineConfigOptions } from "../cli/resolve-config";
+import type { DelegatedRoute, ResolvePipelineConfigOptions } from "../cli/resolve-config";
 import { resolveOrchestratorSeed, resolvePipelineConfig } from "../cli/resolve-config";
 import type { ConversationSession } from "../conversation/conversation";
 import { startConversation as startConversationImpl } from "../conversation/conversation";
@@ -601,14 +601,51 @@ function formatStageMetrics(result: PipelineResult): string {
   );
 }
 
+/**
+ * Live execution facts the orchestrator model must not have to infer: which
+ * worker roles this session actually has and on which models, plus which
+ * workflow modules are enabled. Assembled from the resolved config -- the same
+ * facts the startup banner prints -- so a session's world is stated, not
+ * inferred from which tools happen to appear.
+ */
+export interface RunRoleSessionFacts {
+  route: DelegatedRoute;
+  workflows: readonly string[];
+}
+
+/** One line per reachable delegate target; absent names collapse into one clause. */
+export function formatDelegatedRoute(route: DelegatedRoute): string {
+  const groups = route.groups
+    .map((group) => `${group.model}: ${group.roles.join(", ")}`)
+    .join(" | ");
+  const unreachable =
+    route.unreachable.length > 0 ? ` | not configured: ${route.unreachable.join(", ")}` : "";
+  return `${route.source} | complexity "${route.complexity}" | ${groups}${unreachable}`;
+}
+
 /** Build general role delegation; unlike workflow tools this remains available with no module. */
 export function buildRunRoleTool(
   runRole: (role: DelegatableRoleName, task: string) => Promise<DelegatedRoleResult>,
+  sessionFacts?: RunRoleSessionFacts,
 ): Tool {
+  // With session facts the description carries the live routing; the fallback
+  // keeps the plain role list for hosts that build the tool outside a resolved
+  // session. Static role knowledge lives in the role-selection skill either way.
+  const description =
+    sessionFacts === undefined
+      ? "Run one shipped worker role independently and get its result as assistant text. Available roles: planner, researcher, security, coder, reviewer, auditor. This does not start or advance a workflow."
+      : `Run one shipped worker role independently and get its result as assistant text. This does not start or advance a workflow. This session runs in ${
+          sessionFacts.workflows.length > 0
+            ? `roles plus workflow mode (${sessionFacts.workflows.join(", ")})`
+            : "roles-only mode (no workflow module is enabled; there is no pipeline to start)"
+        }. Reachable delegates and their resolved models -- the same facts the startup banner prints -- are:
+
+${formatDelegatedRoute(sessionFacts.route)}
+
+Only the roles named above are callable; calling a "not configured" role fails with invalid_role. Load the role-selection skill for what each role does, returns, and when delegation is the wrong call.`;
   return defineTool({
     name: RUN_ROLE_TOOL_NAME,
-    description:
-      "Run one shipped worker role independently. Available roles: planner, researcher, security, coder, reviewer, auditor. This does not start or advance a workflow.",
+    description,
     label: "run role",
     parameters: Type.Object({ role: Type.String(), task: Type.String() }),
     async execute(_toolCallId, params) {
@@ -1069,6 +1106,17 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
             backgroundHostLauncher: config.backgroundHostLauncher,
           }),
         });
+  // The session's resolved delegation surface rides on the tool description:
+  // which roles exist, on which models, and which world the tools describe
+  // (roles only vs roles plus workflow). Assembled from the seed's resolved
+  // facts -- the same source the startup banner prints -- never authored prose.
+  const sessionFacts: RunRoleSessionFacts | undefined =
+    seed.delegatedRoute === undefined
+      ? undefined
+      : {
+          route: seed.delegatedRoute,
+          workflows: enabledModules.map((module) => module.name),
+        };
   const delegatedRoleTool = buildRunRoleTool(async (name, task) => {
     // Resolve worker roles lazily: disabling the pipeline does not construct its
     // graph, yet every role remains independently callable by the Orchestrator.
@@ -1163,7 +1211,7 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
     } finally {
       await conversation.close();
     }
-  });
+  }, sessionFacts);
   const seedKit = roleKit("orchestrator");
   const tools = buildOrchestratorTools(
     core,

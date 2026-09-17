@@ -19,8 +19,11 @@ All tools registered by the host are available by default. The built-in set is:
   page links, and content-image links while filtering decorative images.
 - `inspect_image` reads a target-local or public image. A text-only role is
   routed through the configured vision model.
-- `run_role` invokes Planner, Researcher, Security, Coder, Reviewer, or Auditor
-  independently. It remains available when every workflow module is disabled.
+- `run_role` invokes a shipped worker role independently and returns its result
+  as text. It remains available when every workflow module is disabled. The tool's
+  own description states which roles this session actually has, on which models,
+  and which execution world the session is in (roles only vs roles plus
+  workflow); load the `role-selection` skill before choosing to delegate.
 - When the `pipeline` workflow module is enabled, `run_pipeline` runs its complete
   plan → research/security → code ⇄ review flow; `decompose_task` runs its Planner
   only; `run_step` and `choose_transition` drive it manually; `show_cost` reports

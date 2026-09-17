@@ -63,6 +63,15 @@ unbounded prompt directory.
   when unset. Layer order: explicit launch parameter beats the setting beats
   the default. `--no-skills` and `--skills` are both explicit, so a `--skills`
   pin disables the setting in its own direction too.
+- 2026-09-17: `role-selection` is a shipped skill, scoped to the orchestrator: the
+  three execution paths (direct editing, roles only, roles plus pipeline) with
+  their tool markers, what each delegable worker role does and returns, and the
+  conditions under which delegation is the wrong call. The orchestrator prompt
+  keeps only one line per delegation surface and points at this skill and at the
+  `run_role` tool description for the live half; duplicating either in the
+  unconditional prompt is the defect issue #232 diagnosed, and a role
+  description that restates the role's own prompt teaches nothing by the
+  2026-09-16 rule.
 - 2026-09-17: The resolved skill set is visible in `config show`: a `skills`
   row carries every skill a run can reach as id, version, source tier
   (`builtin`/`project`), and the SHA-256 digest of the loaded content, plus the
