@@ -40,6 +40,16 @@ enforces that dated release headings go in non-increasing date order
   requirements in the terms they were asked, carried contract requirements,
   identifiers exactly as written, and numbers with their units and source.
 
+### Changed
+- **Every default stage ceiling tripled**, for all six roles and the shared
+  defaults, closeout reserves included. The old numbers were calibrated against
+  smaller tasks and different models, and two runs the same day ended with a
+  stage out of room and nothing to show: a coder stage reading 270548 tokens and
+  editing no files, and a reviewer reading 145893 and submitting no verdict
+  (issue #322). A reserve left at its old size while the ceiling grows only
+  moves where the stage starts winding down, so both moved together. Ceilings
+  are data, not a verdict on the work — they come back down on evidence.
+
 ### Fixed
 - **Prompts no longer contradict what the harness grants or what the code
   reads.** The planner was told `submit_plan` is the sole handoff and that plan

@@ -960,18 +960,18 @@ test("stage budgets have finite defaults, expose provenance, and are zero-disabl
   } as const;
   const defaults = resolvePipelineConfig(base);
   expect(defaults.stageLimits).toEqual({
-    maxDurationMs: 600_000,
-    maxModelTurns: 32,
-    maxToolTurns: 128,
-    maxInputTokens: 500_000,
-    maxCostUsd: 2,
-    finalResponseReserveModelTurns: 4,
-    finalResponseReserveDurationMs: 30_000,
-    finalResponseReserveToolTurns: 8,
-    finalResponseReserveInputTokens: 100_000,
+    maxDurationMs: 1_800_000,
+    maxModelTurns: 96,
+    maxToolTurns: 384,
+    maxInputTokens: 1_500_000,
+    maxCostUsd: 6,
+    finalResponseReserveModelTurns: 12,
+    finalResponseReserveDurationMs: 90_000,
+    finalResponseReserveToolTurns: 24,
+    finalResponseReserveInputTokens: 300_000,
   });
   expect(defaults.effectiveConfig?.["stageLimits.maxDurationMs"]).toEqual({
-    value: 600_000,
+    value: 1_800_000,
     source: "built-in-default",
   });
   const disabled = resolvePipelineConfig({
@@ -1017,7 +1017,7 @@ test("role stage-budget overlays inherit global limits and preserve explicit zer
   expect(config.roleStageLimits?.reviewer).toMatchObject({
     maxModelTurns: 3,
     maxToolTurns: 0,
-    maxDurationMs: 300_000,
+    maxDurationMs: 900_000,
   });
   expect(config.roleStageLimits?.planner?.maxToolTurns).toBe(10);
 });
