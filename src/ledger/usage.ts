@@ -121,11 +121,34 @@ export function usageAmounts(usage: Usage): UsageAmounts {
  * creating an entry, silently dropping the call from the count. `Object.fromEntries`
  * materialises every name -- `__proto__` included -- as an own property.
  */
+/**
+ * What a MISSING or empty tool name means (issue #251, decided 2026-09-17): it
+ * is a provider anomaly, not a tool the project knows -- no such tool can be
+ * invoked, and a call block whose name did not arrive is the visible half of a
+ * malformed or truncated provider response. The plain empty string recorded
+ * nothing that could be read back (`=1` in every name-keyed projection). The
+ * call is counted under the sentinel below, which the reader sees as exactly
+ * that anomaly; the shape of the trouble is on the same record, because the
+ * ledger row carries `stopReason` -- an `<unnamed>` count beside a truncated
+ * or error stop reason is the read-back signature of a lost response tail,
+ * and beside `stop` it is an isolated provider quirk. Nothing can be
+ * attributed from the block's call id here: resolving a name back from the id
+ * would need the earlier request that registered the tool, which this
+ * per-response hook does not have.
+ */
+export const UNNAMED_TOOL_CALL = "<unnamed>";
+
+/** Map a reported tool name to its ledger key, reserving the sentinel for a name that did not arrive. */
+function toolCallNameKey(name: string): string {
+  return name && name.trim().length > 0 ? name : UNNAMED_TOOL_CALL;
+}
+
 export function toolCallCounts(message: SettledAssistantMessage): Record<string, number> {
   const counts = new Map<string, number>();
   for (const block of message.content) {
     if (block.type === "toolCall") {
-      counts.set(block.name, (counts.get(block.name) ?? 0) + 1);
+      const name = toolCallNameKey(block.name);
+      counts.set(name, (counts.get(name) ?? 0) + 1);
     }
   }
   return Object.fromEntries(counts);

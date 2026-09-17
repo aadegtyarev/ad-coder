@@ -29,6 +29,13 @@ question without shelling out (`cli.md`, `architecture.md`).
   test-outcome event. Reporting either without adding that source would be an
   invented number. They are named follow-ons here and in `src/ledger/types.ts`,
   and absent from the report until the ledger can carry them.
+- 2026-09-17: **An unnamed tool call is a named anomaly (issue #251).** A call
+  block whose name did not arrive from the provider is counted under the
+  explicit `<unnamed>` sentinel, never the empty string, so every name-keyed
+  projection reads it as exactly that: a provider anomaly, not a tool. It is
+  often the visible half of a truncated provider response -- diagnose it
+  against the same record's `stopReason` (`error`/`truncated` beside it) or
+  treat a lone one as an isolated quirk.
 - 2026-09-17: Report is per role, per provider/model, and totals, each carrying
   the same numeric shape; tool-name keys and provider/model strings are
   attacker-influenced data and are handled as data only.

@@ -23,6 +23,14 @@ technically true but costly for its intended reader to understand.
   task. The Reviewer performs a cold-reader pass before consulting implementation
   detail and blocks unclear ordering, unexplained jargon, contradictory sources,
   and prose that hides the action or system map.
+- Dated entries carry ONE clock: the operator's LOCAL calendar day (2026-09-17,
+  issue #243). CHANGELOG releases and `docs/contracts/` entries must be dated
+  from the operator's local date, never `date -u` -- the two clocks disagree by
+  one day in four of every evening's hours, which is how 0.35.0 was dated a day
+  before 0.34.0. Local is chosen because releases and decisions are cut and
+  read by the operator; "the day I shipped it" is the meaning intended. The
+  rule does not depend on remembering: `bun run check:release` fails when the
+  CHANGELOG's dated release headings are out of non-increasing date order.
 - Documentation participates in the whole-project audit defined by the quality
   contract. Also run a whole-document audit when the readability gate reports a
   canonical document near or beyond its budget. A per-diff review is not a
