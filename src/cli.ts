@@ -72,6 +72,13 @@ import {
 } from "./orchestration/stage-limits";
 import { isSubmissionToolName } from "./orchestration/submission-tools";
 import type { Complexity, PipelineConfig, RoleSpec, WorkflowPhase } from "./orchestration/types";
+import {
+  buildSubmitVerdictTool,
+  REVIEW_SUBMISSION_ATTEMPTS,
+  REVIEW_SUBMISSION_RETRY,
+  SUBMIT_VERDICT_TOOL_NAME,
+  type VerdictCapture,
+} from "./orchestration/verdict";
 import { parseProfile } from "./profiles/validate";
 import {
   createProjectCalibrationSnapshot,
@@ -125,6 +132,7 @@ import {
   skillInventory,
 } from "./skills/resolver";
 import { stampCheckErrors, stampDeliveryText } from "./stamp/cli";
+import { recordReviewStampFromResult } from "./stamp/record-review-stamp";
 import { UpdateError, updateAdCoder } from "./update/updater";
 import {
   createDefaultUserProfileStore,
@@ -342,7 +350,13 @@ async function extractFinalText(session: Session, context: Context): Promise<str
  * contradiction -- the model obeys whichever of the two it weighs higher. The
  * override now names the rule it displaces.
  */
-export function standaloneSystemPrompt(rolePrompt: string): string {
+export function standaloneSystemPrompt(rolePrompt: string, keptTool?: string): string {
+  // A role whose submission tool IS registered here keeps the pipeline's rule
+  // intact: a reviewer is a reviewer wherever it runs (issue #283), and its
+  // verdict is the structured object, not prose about one. Only the roles whose
+  // tool is genuinely absent get the override.
+  if (keptTool !== undefined)
+    return `${rolePrompt}\n\nThis is a standalone role invocation. ${keptTool} IS available and remains the way to submit your result, exactly as the instructions above describe; any OTHER structured submission tool named above is not registered here. Assistant text accompanying the submission is read by the operator, so explain your reasoning there as well.`;
   return `${rolePrompt}\n\nThis is a standalone role invocation. The structured submission tools this prompt refers to are NOT available here, and any instruction above to submit through one -- or to withhold the result from assistant text because a submission tool owns it -- does not apply to this run. Return the complete result as assistant text instead, carrying the same shape and detail the submission would have. When the task asks for a specific output format, that format governs.`;
 }
 
@@ -2292,6 +2306,10 @@ async function roleCommand(
   });
 
   const spec = roleSpecFor(config, name as RoleName);
+  const resumeRunId = flags["--resume-run"];
+  // Resolved before the tools, because `submit_verdict` threads this run id onto
+  // any rejection it reports.
+  const standaloneRunId = resumeRunId ?? crypto.randomUUID();
   // Identical skill behaviour in every command: the role's prompt (pinned or
   // catalogue) comes from the resolver; the loader ships exactly when the
   // prompt lists skills, alongside the same plugin tools the runner receives.
@@ -2309,16 +2327,32 @@ async function roleCommand(
         }),
       ]
     : [];
+  // A standalone reviewer keeps `submit_verdict`. The tool is not pipeline
+  // machinery -- it is how a review states its result as an object rather than
+  // as prose about one, and the review stamp is derived from that object and
+  // never from text (src/stamp/record-review-stamp.ts). Stripping it made the
+  // single-role path unable to produce the paperwork its own gate demands, and
+  // pushed the reviewer toward the prose ending #278 had to retry around.
+  const verdictCapture: VerdictCapture = {};
+  const keepsVerdictTool =
+    name === "reviewer" && (spec.role.activeToolNames ?? []).includes(SUBMIT_VERDICT_TOOL_NAME);
+  const standaloneSubmissionTools = keepsVerdictTool
+    ? [buildSubmitVerdictTool(verdictCapture, standaloneRunId)]
+    : [];
   const standaloneTools =
-    rolePluginTools === undefined && roleSkillTools.length === 0
+    rolePluginTools === undefined &&
+    roleSkillTools.length === 0 &&
+    standaloneSubmissionTools.length === 0
       ? undefined
-      : [...roleSkillTools, ...(rolePluginTools ?? [])];
+      : [...standaloneSubmissionTools, ...roleSkillTools, ...(rolePluginTools ?? [])];
   const standaloneRole = defineRole(
     {
       ...spec.role,
-      systemPrompt: standaloneSystemPrompt(spec.role.systemPrompt),
-      activeToolNames: (spec.role.activeToolNames ?? []).filter(
-        (tool) => !isSubmissionToolName(tool),
+      systemPrompt: keepsVerdictTool
+        ? standaloneSystemPrompt(spec.role.systemPrompt, SUBMIT_VERDICT_TOOL_NAME)
+        : standaloneSystemPrompt(spec.role.systemPrompt),
+      activeToolNames: (spec.role.activeToolNames ?? []).filter((tool) =>
+        keepsVerdictTool && tool === SUBMIT_VERDICT_TOOL_NAME ? true : !isSubmissionToolName(tool),
       ),
     },
     spec.model,
@@ -2327,8 +2361,6 @@ async function roleCommand(
     config.roleStageLimits?.[name as keyof NonNullable<typeof config.roleStageLimits>] ??
     config.stageLimits;
   const renderer = new ToolActivityRenderer(process.stderr, "human", config.toolActivity);
-  const resumeRunId = flags["--resume-run"];
-  const standaloneRunId = resumeRunId ?? crypto.randomUUID();
   const expectedLedgerPath = path.join(
     configOptions.targetDir,
     ".ad-coder",
@@ -2351,29 +2383,56 @@ async function roleCommand(
   const onSigterm = () => interrupt("SIGTERM");
   process.once("SIGINT", onSigint);
   process.once("SIGTERM", onSigterm);
+  const runOnce = async (
+    attemptRunId: string,
+    attemptTask: string,
+    attemptRole: typeof standaloneRole,
+  ) =>
+    await runRoleStandalone({
+      role: attemptRole,
+      model: spec.model,
+      models: config.models,
+      targetDir: configOptions.targetDir,
+      task: attemptTask,
+      runId: attemptRunId,
+      ...(resumeRunId !== undefined && attemptRunId === standaloneRunId
+        ? { resumeExisting: true }
+        : {}),
+      ...(standaloneTools !== undefined && { tools: standaloneTools }),
+      activityConsumer: renderer.consume,
+      ...(config.compaction !== undefined && { compaction: config.compaction }),
+      ...(config.projectStoreConfig !== undefined && {
+        projectStoreConfig: config.projectStoreConfig,
+      }),
+      ...(config.toolActivity !== undefined && { toolActivity: config.toolActivity }),
+      ...(standaloneStageLimits !== undefined && { stageLimits: standaloneStageLimits }),
+      ...(config.costAnomalyDetector !== undefined && {
+        costAnomalyDetector: config.costAnomalyDetector,
+      }),
+      abortSignal: abortController.signal,
+    });
   const standaloneResult = await (async () => {
     try {
-      return await runRoleStandalone({
-        role: standaloneRole,
-        model: spec.model,
-        models: config.models,
-        targetDir: configOptions.targetDir,
-        task,
-        runId: standaloneRunId,
-        ...(resumeRunId !== undefined && { resumeExisting: true }),
-        ...(standaloneTools !== undefined && { tools: standaloneTools }),
-        activityConsumer: renderer.consume,
-        ...(config.compaction !== undefined && { compaction: config.compaction }),
-        ...(config.projectStoreConfig !== undefined && {
-          projectStoreConfig: config.projectStoreConfig,
-        }),
-        ...(config.toolActivity !== undefined && { toolActivity: config.toolActivity }),
-        ...(standaloneStageLimits !== undefined && { stageLimits: standaloneStageLimits }),
-        ...(config.costAnomalyDetector !== undefined && {
-          costAnomalyDetector: config.costAnomalyDetector,
-        }),
-        abortSignal: abortController.signal,
-      });
+      const first = await runOnce(standaloneRunId, task, standaloneRole);
+      // Ask once more when a review ended without its verdict -- the same retry
+      // the pipeline round runs, for the same failure (issue #278). A fresh run
+      // id per attempt, because a turn is keyed by run id in the session store.
+      if (
+        !keepsVerdictTool ||
+        verdictCapture.verdict !== undefined ||
+        verdictCapture.error !== undefined
+      )
+        return first;
+      for (let attempt = 1; attempt < REVIEW_SUBMISSION_ATTEMPTS; attempt += 1) {
+        const retry = await runOnce(
+          crypto.randomUUID(),
+          `${task}\n\n${REVIEW_SUBMISSION_RETRY}`,
+          standaloneRole,
+        );
+        if (verdictCapture.verdict !== undefined || verdictCapture.error !== undefined)
+          return { ...retry, cost: first.cost + retry.cost };
+      }
+      return first;
     } catch (error) {
       process.stderr.write(`ad-coder: partial usage ledger=${expectedLedgerPath}\n`);
       process.stderr.write(
@@ -2408,6 +2467,39 @@ async function roleCommand(
   const warning = silentNoopWarning(text, cost);
   if (warning !== undefined) {
     process.stderr.write(warning);
+  }
+  if (keepsVerdictTool) {
+    // The verdict object, not the prose, decides. A rejected submission reports
+    // why it was rejected -- the reviewer said something and it did not parse,
+    // which is a different failure from saying nothing.
+    if (verdictCapture.error !== undefined) {
+      process.stderr.write(`ad-coder: verdict rejected: ${verdictCapture.error.message}\n`);
+      process.exitCode = 1;
+      return;
+    }
+    if (verdictCapture.verdict === undefined) {
+      process.stderr.write(
+        `ad-coder: the reviewer ended without calling ${SUBMIT_VERDICT_TOOL_NAME}; no stamp written\n`,
+      );
+      process.exitCode = 1;
+      return;
+    }
+    const verdict = verdictCapture.verdict;
+    process.stderr.write(`ad-coder: verdict ${verdict.status} issues=${verdict.issues.length}\n`);
+    // Same writer the pipeline settles through, fed the same structured fields
+    // (issue #283): a review is a review wherever it ran, and no path transcribes
+    // a verdict out of prose.
+    const outcome = recordReviewStampFromResult(configOptions.targetDir, {
+      approved: verdict.status === "approved",
+      runIds: [standaloneRunId],
+      stageMetrics: [{ stage: "review:1", provider: spec.model.provider, model: spec.model.id }],
+      reviewRan: true,
+    });
+    process.stderr.write(
+      outcome.recorded
+        ? `ad-coder: review stamp appended to ${outcome.filePath}\n`
+        : `ad-coder: no review stamp: ${outcome.skippedBecause}\n`,
+    );
   }
 }
 

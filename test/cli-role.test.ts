@@ -367,3 +367,19 @@ test("standalone prompt overrides a role rule that reserves the result for a sub
   // artifact-scored role task would be fighting this paragraph instead.
   expect(amended).toContain("that format governs");
 });
+
+test("the standalone override keeps a registered submission tool instead of denying it", () => {
+  // The reviewer's prompt tells it to submit through `submit_verdict`, and the
+  // standalone path now registers that tool (issue #283). Telling the model the
+  // tool is absent while handing it the tool is the same contradiction the
+  // planner override exists to prevent, pointed the other way -- and a reviewer
+  // that believes it cannot submit answers in prose, which no stamp can be
+  // derived from.
+  const reviewer = "When your review is complete, submit your verdict by calling submit_verdict.";
+  const amended = standaloneSystemPrompt(reviewer, "submit_verdict");
+  expect(amended.startsWith(`${reviewer}\n\n`)).toBe(true);
+  expect(amended).toContain("submit_verdict IS available");
+  expect(amended).not.toContain("are NOT available here");
+  // The roles whose tool really is absent keep the original override.
+  expect(standaloneSystemPrompt(reviewer)).toContain("are NOT available here");
+});
