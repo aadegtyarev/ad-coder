@@ -5,7 +5,10 @@ import { ToolActivityRenderer } from "../src/cli/tool-activity";
 import {
   attachToolActivity,
   boundToolActivityText,
+  boundVisible,
+  firstMeaningfulCommand,
   markTrustedToolOutcome,
+  projectToolArguments,
   resolveToolActivityConfig,
   ToolActivityChannel,
   type ToolActivityRecord,
@@ -242,6 +245,32 @@ describe("tool activity core", () => {
     expect(serialized).not.toContain('"newText"');
   });
 
+  test("a compound command is named by its first meaningful command, not its first 120 characters", () => {
+    // The observed failure: the line ended `grep -rln ... src/ |`, mid-pipe,
+    // and what the call was FOR was unknowable. The subject is the first
+    // meaningful command of the compound line, and a lost tail is marked.
+    expect(
+      firstMeaningfulCommand('git status && grep -rln "settings.json" src/ | head -50', 160),
+    ).toBe("git status …");
+    expect(firstMeaningfulCommand("echo hi; ls -la", 160)).toBe("echo hi …");
+    expect(firstMeaningfulCommand('FOO=1 BAR="x y" bun run typecheck', 160)).toBe(
+      "bun run typecheck",
+    );
+    expect(firstMeaningfulCommand("bun run check", 160)).toBe("bun run check");
+    expect(firstMeaningfulCommand('grep "a|b" src/', 160)).toBe('grep "a|b" src/');
+    // A subject cut by the byte ceiling ends in an ellipsis, not in a raw cut.
+    const long = projectToolArguments("bash", { command: `x${" y".repeat(200)}` }, 160);
+    expect(long?.command).toBeDefined();
+    expect(Buffer.byteLength(long?.command as string)).toBeLessThanOrEqual(160);
+    expect(long?.command?.endsWith("\u2026")).toBe(true);
+  });
+
+  test("bounding of subjects is visible as truncation", () => {
+    expect(boundVisible("abcdef", 4)).toBe("a\u2026");
+    expect(boundVisible("ab", 4)).toBe("ab");
+    expect(Buffer.byteLength(boundVisible("x".repeat(400), 60))).toBe(60);
+  });
+
   test("every line of a call's lifecycle names its subject, not just the first", () => {
     // Arguments arrive only on the REQUEST event; tool_start and tool_end carry
     // none. Reading them per-event gave one line with the command and the next
@@ -400,6 +429,68 @@ describe("tool activity renderer", () => {
     json.consume(event);
     json.close();
     expect(JSON.parse(jsonOutput.text())).toEqual(event);
+  });
+
+  test("one slow call stays one line, carrying role, model, tokens, and cost", () => {
+    const output = new MemoryWritable();
+    const renderer = new ToolActivityRenderer(output, "human", { groupingRefreshMs: 1 });
+    renderer.consume(
+      lifecycleEvent({
+        role: "orchestrator",
+        model: "flash",
+        activity: "Run" as const,
+        toolName: "bash",
+        projection: { command: "git status" },
+        lifecycle: "requested",
+      }),
+    );
+    renderer.consume(lifecycleEvent({ lifecycle: "started", sequence: 2 }));
+    const promise = new Promise<void>((resolve) => setTimeout(resolve, 25));
+    return promise.then(() => {
+      renderer.consume(
+        lifecycleEvent({
+          lifecycle: "completed",
+          sequence: 3,
+          durationMs: 42_000,
+          budget: { usedTokens: 12_345, usedCostUsd: 0.0146 },
+        }),
+      );
+      renderer.close();
+      const rendered = output.text();
+      // ONE call is ONE line: a single newline-terminated logical line exists.
+      expect(rendered.split("\n").filter((line) => line.trim() !== "")).toHaveLength(1);
+      expect(rendered).toContain("42.0s");
+      expect(rendered).toContain("12.3k tok");
+      expect(rendered).toContain("$0.015");
+      expect(rendered).toContain("orchestrator\u00b7flash");
+      expect(rendered).toContain("git status");
+      expect(rendered).not.toContain("started");
+      expect(rendered).not.toContain("completed");
+    });
+  });
+
+  test("a second role is named, a single role is hidden, and 'activity' never prints", () => {
+    const output = new MemoryWritable();
+    const renderer = new ToolActivityRenderer(output, "human", { groupingRefreshMs: 0 });
+    renderer.consume(
+      lifecycleEvent({ role: "coder", activity: "Read" as const, lifecycle: "completed" }),
+    );
+    renderer.consume(
+      lifecycleEvent({
+        role: "orchestrator",
+        model: "flash",
+        activity: "Search" as const,
+        toolName: "search_project",
+        projection: { query: "tool activity" },
+        sequence: 2,
+      }),
+    );
+    renderer.close();
+    const rendered = output.text();
+    expect(rendered).toContain("Search");
+    expect(rendered).toContain("tool activity");
+    expect(rendered).toContain("orchestrator\u00b7flash");
+    expect(rendered).not.toMatch(/^\d{2}:\d{2}:\d{2}\s+activity(\s|$)/m);
   });
 
   test("reports renderer backpressure loss as valid JSON instead of prose", () => {

@@ -65,6 +65,14 @@ export interface ToolActivityBudget {
   inputTokens?: number;
   costUsd?: number;
   toolTurnsBeforeCloseout?: number;
+  /**
+   * Stage SPEND so far, cumulative across the stage: tokens and cost. Remaining
+   * capacity answers "when does this stop", not "what is it costing", and the
+   * operator's observation was that neither number ever reached the rendered
+   * line even though the ledger recorded them.
+   */
+  usedTokens?: number;
+  usedCostUsd?: number;
 }
 
 export interface ToolActivityEvent {
@@ -278,12 +286,81 @@ function redactInlineSecrets(value: string): string {
     .replace(/(bearer\s+)(\S+)/giu, (_match, name: string) => `${name}***`);
 }
 
+/**
+ * Bounding that SHOWS it bounded: a silent cut at a byte ceiling reads as a
+ * complete value, which is how a compound subject lost its tail and the operator
+ * could not even tell they were reading half a command.
+ */
+export function boundVisible(value: string, maxBytes: number): string {
+  const clean = boundToolActivityText(value, maxBytes);
+  if (Buffer.byteLength(value) <= maxBytes) return clean;
+  return `${boundToolActivityText(value, Math.max(1, maxBytes - 3))}\u2026`;
+}
+
+/** Strips leading environment assignments so `FOO=1 bar` names itself `bar`. */
+function stripEnvAssignments(segment: string): string {
+  let text = segment.trim();
+  for (;;) {
+    const next = /^[A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|'[^']*'|\S+)\s+/.exec(text);
+    if (next === null) break;
+    const rest = text.slice(next[0].length).trim();
+    if (rest === "") break;
+    text = rest;
+  }
+  return text;
+}
+
+/** Splits a shell line on separators that sit OUTSIDE single or double quotes. */
+function splitShellSegments(raw: string): { head: string; more: boolean } {
+  let depth = ""; // active quote character, empty when outside any quote
+  for (let i = 0; i < raw.length; i++) {
+    const character = raw[i];
+    if (depth !== "") {
+      if (character === depth) depth = "";
+      else if (character === "\\") i++;
+      continue;
+    }
+    if (character === "'" || character === '"') {
+      depth = character;
+      continue;
+    }
+    if (character === "\\") {
+      i++;
+      continue;
+    }
+    if (
+      character === ";" ||
+      character === "|" ||
+      raw.startsWith("&&", i) ||
+      raw.startsWith("||", i)
+    ) {
+      const head = raw.slice(0, i);
+      const rest = raw.slice(i).replace(/^&&|^\|\|/, "");
+      return { head, more: rest.trim() !== "" };
+    }
+  }
+  return { head: raw, more: false };
+}
+
+/**
+ * The subject of a shell call is its FIRST MEANINGFUL command -- the thing the
+ * call was FOR -- not a fixed-width prefix of a compound line. A tail cut by a
+ * byte ceiling additionally ends in `\u2026` so truncation is visible.
+ */
+export function firstMeaningfulCommand(raw: string, maxBytes: number): string | undefined {
+  const { head, more } = splitShellSegments(raw);
+  const meaningful = stripEnvAssignments(head);
+  if (meaningful === "") return undefined;
+  if (!more && Buffer.byteLength(meaningful) <= maxBytes) return meaningful;
+  return `${boundToolActivityText(meaningful, Math.max(1, maxBytes - 4))} \u2026`;
+}
+
 function boundProjection(
   projection: ToolActivityProjection,
   maxBytes: number,
 ): ToolActivityProjection {
   const bound = (value: string | undefined) =>
-    value === undefined ? undefined : boundToolActivityText(value, maxBytes);
+    value === undefined ? undefined : boundVisible(value, maxBytes);
   const out: ToolActivityProjection = {};
   const path = bound(projection.path);
   if (path) out.path = path;
@@ -313,13 +390,23 @@ const SUBJECT_KEYS: Readonly<Record<string, readonly string[]>> = {
   path: ["path", "file", "filePath", "file_path", "target"],
   command: ["command", "cmd", "script"],
   url: ["url", "href"],
-  query: ["query", "pattern", "q", "search"],
+  // `terms` is `search_project`'s argument name; missing it is how Search printed
+  // a subjectless line for one whole session while every other tool named its
+  // subject (issue #218 fixed the others, Search slipped through).
+  query: ["query", "pattern", "q", "search", "terms"],
 };
 
 function pickString(args: Record<string, unknown>, keys: readonly string[]): string | undefined {
   for (const key of keys) {
     const value = args[key];
     if (typeof value === "string" && value.trim() !== "") return value;
+    // Array arguments such as `search_project`'s `terms` are still one search:
+    // the operator asked WHAT was searched for, and a list of terms joined is
+    // that subject whether the tool modelled it as a string or not.
+    if (Array.isArray(value) && value.every((item) => typeof item === "string")) {
+      const joined = value.join(" ").trim();
+      if (joined !== "") return joined;
+    }
   }
   return undefined;
 }
@@ -348,8 +435,11 @@ export function projectToolArguments(
   const projection: ToolActivityProjection = {};
   const path = bound(pickString(record, SUBJECT_KEYS.path ?? []));
   if (path !== undefined && path !== "") projection.path = path;
-  const command = bound(pickString(record, SUBJECT_KEYS.command ?? []));
-  if (command !== undefined && command !== "") projection.command = command;
+  const rawCommand = pickString(record, SUBJECT_KEYS.command ?? []);
+  if (rawCommand !== undefined && rawCommand.trim() !== "") {
+    const command = firstMeaningfulCommand(rawCommand, maxBytes);
+    if (command !== undefined) projection.command = command;
+  }
   const url = bound(pickString(record, SUBJECT_KEYS.url ?? []));
   if (url !== undefined && url !== "") projection.url = url;
   const query = bound(pickString(record, SUBJECT_KEYS.query ?? []));
