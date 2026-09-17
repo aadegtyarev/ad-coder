@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import {
   ConsoleControlError,
   type ConsoleControlFailure,
@@ -18,6 +17,7 @@ import type { ToolActivityConfig } from "../observability/tool-activity";
 import type { BackgroundRunManager, BackgroundRunNotice } from "../orchestration/background-runs";
 import { EmptyTurnError, ProviderRejectionError } from "../runner/errors";
 import { SessionLimitError } from "../session-limits";
+import { loadTaskFile } from "./task-file";
 import { ToolActivityRenderer } from "./tool-activity";
 
 export const DEFAULT_CONSOLE_MAX_INPUT_BYTES = 65_536;
@@ -810,10 +810,14 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
 
   /**
    * Read the task file and dispatch its content as ONE prompt. The path is
-   * verbatim from the registry, so it may contain spaces; the read is
-   * synchronous because the operator's line was just read and the file is
-   * local — this keeps the task's position in the prompt queue exactly where
-   * it was typed.
+   * verbatim from the registry, so it may contain spaces. Loading happens at
+   * the task-file boundary (./task-file): it stats BEFORE reading, so an
+   * over-ceiling file is refused without a read, and it keeps the errno
+   * class, so a missing file and a denied root are different failures with
+   * different advice (issue #247). The dispatch stays synchronous because the
+   * operator's line was just read and the stat has already bounded the read
+   * to `maxInputBytes` -- the task's position in the prompt queue is exactly
+   * where it was typed.
    */
   const dispatchTaskFailure = (failure: ConsoleControlFailure): void => {
     params.error.write(renderFailure(failure, mode));
@@ -832,34 +836,9 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
       });
       return;
     }
-    let contentBytes: Buffer;
-    try {
-      contentBytes = readFileSync(taskPath);
-    } catch (_cause) {
-      dispatchTaskFailure({
-        code: "task_file_unreadable",
-        command: "/task",
-        // The system code (ENOENT, EACCES, ...) names the unreadable case
-        // without carrying file contents or any path text the operator did
-        // not already type.
-        message: `/task cannot read ${taskPath.slice(0, 256)}`,
-        action: "check the path and retry with: /task <path>",
-        // Re-sending the identical /task cannot succeed; a corrected path can.
-        retryable: true,
-      });
-      return;
-    }
-    if (Buffer.byteLength(contentBytes) > maxInputBytes) {
-      dispatchTaskFailure({
-        // A file bigger than the configured message ceiling is the same
-        // resource limit the read path enforces, so it shares that code.
-        code: "resource_limit",
-        command: "/task",
-        message: "/task file exceeds the configured input byte limit",
-        action: "send a shorter message, or raise maxInputBytes when embedding runConsole",
-        // The identical file cannot fit again.
-        retryable: false,
-      });
+    const load = loadTaskFile(taskPath, maxInputBytes);
+    if (!load.ok) {
+      dispatchTaskFailure({ command: "/task", ...load });
       return;
     }
     // The informational note every other front-side action carries: the
@@ -871,7 +850,7 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
     // Normalise line endings and strip the file's trailing newline terminator:
     // a /task file is ONE message whose interior newlines arrive exactly as
     // written.
-    queueLine(contentBytes.toString("utf8").replace(/\r\n?/g, "\n").replace(/\n+$/, ""), true);
+    queueLine(load.text.replace(/\r\n?/g, "\n").replace(/\n+$/, ""), true);
   };
   /**
    * Queue one dispatchable unit of input. `forcePrompt` marks content that is

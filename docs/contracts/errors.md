@@ -45,3 +45,16 @@ for machines?
   the actionable part and must reach the caller -- `code: message`, never `code`
   alone -- whether that caller is a model or a human. Re-wrapping a typed error
   in a vaguer one discards the only part worth having.
+- 2026-09-17: A permission failure gets permission advice, not path advice.
+  The `/task` boundary had collapsed every unreadable reason into one
+  `task_file_unreadable` code whose only action was "check the path and
+  retry" -- the same defect class as 2026-09-16's swallowed cause one boundary
+  up: a person whose file exists but denies read permission was told the one
+  action that cannot fix EACCES, and a missing file was indistinguishable
+  from a denied one. The errno class is kept as its own stable code
+  (`task_file_not_found`, `task_file_denied`, `task_file_is_directory`, and
+  `task_file_unreadable` with the errno token in the message for anything
+  else), and the action follows from the class: a permissions failure names
+  checking permissions, never re-checking the path. The file byte ceiling is
+  also applied against a stat BEFORE the read, so the limit that bounds the
+  read acts before the read instead of after an unbounded block.

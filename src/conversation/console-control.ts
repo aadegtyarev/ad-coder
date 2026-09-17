@@ -13,6 +13,9 @@ export type ConsoleControlCode =
   | "invalid_request"
   | "launch_failed"
   | "resource_limit"
+  | "task_file_not_found"
+  | "task_file_denied"
+  | "task_file_is_directory"
   | "task_file_unreadable"
   | "interrupted";
 
