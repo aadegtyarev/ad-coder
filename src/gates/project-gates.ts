@@ -39,13 +39,20 @@ export const DEFAULT_PROJECT_GATES: readonly QualityGate[] = Object.freeze([
   { name: "bun run check:release", kind: "project", command: ["bun", "run", "check:release"] },
   { name: "bun run check:docs", kind: "project", command: ["bun", "run", "check:docs"] },
   { name: "bun run smoke:artifact", kind: "project", command: ["bun", "run", "smoke:artifact"] },
-  // The review-stamp gate (issue #239): no stamp, a malformed stamp, or a
-  // stamp whose tree digest no longer matches fails like any red gate. It
-  // closes the loop with the run-finish stamp writer -- a reviewer round that
-  // wrote no stamp leaves THIS red, which is where "the orchestrator cannot
-  // forget" is enforced. This is ad-coder's own repo's gate; a different
-  // project substitutes its own gate list and never sees it.
-  { name: "bun run stamp:check", kind: "project", command: ["bun", "run", "stamp:check"] },
+  // NOT here, deliberately (issue #271): `bun run stamp:check` is this
+  // repository's PRE-MERGE gate, run by the operator or CI, not an in-run
+  // gate. Its property only exists at settle: the review stamp is derived from
+  // the settled result (verdict, run ids, per-stage reviewer, tree digest of
+  // the reviewed tree) by `runPipeline`'s settle path -- the ONLY writer, and
+  // deliberately not a model (issue #239). Inside a run the gate report is
+  // always stale-red on a moved tree, a red report returns to the coder with
+  // blocking evidence, and the code's assigned fix -- write the stamp -- is
+  // exactly what the run performs itself, later, only once the gate lets it
+  // reach review: the review-then-stamp loop is unresolvable from inside a
+  // run. No stamp, a malformed stamp, or a digest mismatch therefore fails the
+  // MERGE like any red gate, after the run that owns the write has settled. A
+  // different project substitutes its own gate list and never sees either
+  // layer.
 ]);
 
 /**

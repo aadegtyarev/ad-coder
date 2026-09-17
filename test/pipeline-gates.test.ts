@@ -9,7 +9,7 @@ import {
   fauxProvider,
   fauxToolCall,
 } from "@earendil-works/pi-ai";
-import { createSpawnCommandExecutor } from "../src/gates/project-gates";
+import { createSpawnCommandExecutor, DEFAULT_PROJECT_GATES } from "../src/gates/project-gates";
 import { GateRunner } from "../src/gates/runner";
 import { runPipeline } from "../src/orchestration/pipeline";
 import {
@@ -90,6 +90,21 @@ function lastUserText(context: Context): string {
 }
 
 const APPROVED: Verdict = { status: "approved", issues: [], summary: "ok" };
+
+test("the default declared set never contains the stamp gate, whose writer is the settle path (issue #271)", async () => {
+  // A run cannot reach review while any declared gate is red, and the only
+  // review-stamp writer is `runPipeline`'s settle path -- which runs after
+  // review. Declaring `bun run stamp:check` as an in-run gate therefore hands
+  // the coder a fix only the run itself can perform at settle: the
+  // review-then-stamp loop is unresolvable from inside a run. It is the
+  // PRE-MERGE gate, so this assertion pins the exclusion -- the mechanism is
+  // the list, which the existing `GateRunner` executes verbatim.
+  expect(DEFAULT_PROJECT_GATES.map((gate) => gate.name)).not.toContain("bun run stamp:check");
+  // When a project DOES want it in-run, it is the caller's explicit choice
+  // (issue #239's substitution surfaces stay intact).
+  expect(DEFAULT_PROJECT_GATES.length).toBeGreaterThan(0);
+  expect(DEFAULT_PROJECT_GATES.every((gate) => gate.kind === "project")).toBe(true);
+});
 
 test("the pipeline runs the declared gates after the coder and hands the reviewer the evidence", async () => {
   const fx = fixture();

@@ -83,6 +83,13 @@ economically ambiguous routing cell instead of exploring the full combination ma
 - For a feature, refactor, multi-file fix, contract change, security-sensitive
   change, or uncertain approach, call `run_pipeline`, with the recorded tier as
   `complexity`.
+- Editing files is a delegate's work, not yours (issue #271). The coder role
+  writes the code: in the pipeline, the `code` stage's coder rounds produce the
+  edits, and a delegated coder returns implemented edits, not advice about
+  what could be edited. Outside a recorded `trivial` classification you do
+  not call `write`/`edit` on target files at all, even after you classified
+  honestly and dispatched for judgement -- composing a plan and then writing
+  the files yourself is the failure this rule names.
 - Edit directly only inside a recorded `trivial` classification: confined to
   one function, no call sites, the fix uniquely determined. Direct editing is
   the classified exception, not the normal path; when unsure, classify up.

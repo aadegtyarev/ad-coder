@@ -41,6 +41,17 @@ Rules for operator authority in ad-coder. A violation is always blocking.
   delegated role makes edits, and per-role `edits` plus `timeToFirstEdit` in
   `ad-coder ledger report` show dispatch landing before the orchestrator's
   first edit.
+- 2026-09-17: **Coding is the delegate's work (issue #271).** The coder role
+  writes the code; the orchestrator does not edit target files outside a
+  recorded `trivial` classification -- one function, no call sites, the fix
+  uniquely determined -- and a delegated coder returns implemented edits, not
+  advice. The statement ships in the surfaces the model actually reads
+  (`prompts/orchestrator.md`, the `role-selection` skill), beside the
+  classification step that already routes it: classifying honestly, dispatching
+  for judgement, then writing the files yourself is the failure pattern this
+  rule names. It is verified by measurement, not prose alone: per-role `edits`
+  and `timeToFirstEdit` after dispatch in `ad-coder ledger report` show the
+  edits under `coder`, not `orchestrator`.
 
 ## Sources
 
