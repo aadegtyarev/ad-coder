@@ -12,6 +12,7 @@ import {
 import { createSpawnCommandExecutor, DEFAULT_PROJECT_GATES } from "../src/gates/project-gates";
 import { GateRunner } from "../src/gates/runner";
 import { runPipeline } from "../src/orchestration/pipeline";
+import { SUBMIT_PLAN_TOOL_NAME } from "../src/orchestration/plan";
 import {
   applyTransition,
   createWorkflowSession,
@@ -357,5 +358,38 @@ test("the coordinator renders a review that did not run as a red pause, resumabl
   expect(pause?.action).toContain("missing_verdict");
   // A review that did not happen blocks like a red gate: operator resume is
   // accepted (no unauthorized_resolution), unlike an unowned checkpoint.
+  expect(() => coordinator.resumeStage({ source: "operator", action: "retry" })).not.toThrow();
+});
+
+test("a plan that was never submitted is a red pause, not silence", async () => {
+  // Observed live (issue #315): the planner spent both handoff attempts writing
+  // prose without calling submit_plan, the coordinator had no branch for
+  // missing_plan, and the error escaped every handler -- the checkpoint kept its
+  // pre-stage value and the run_pipeline call that started it stayed pending for
+  // 48 minutes, indistinguishable from work in progress. Silence is the one
+  // outcome a caller cannot act on.
+  const fx = fixture();
+  const planner = fx.role("planner", "You plan.", ["read", SUBMIT_PLAN_TOOL_NAME]);
+  const coder = fx.role("coder", "You code.");
+  const reviewer = reviewerRole(fx);
+  fx.faux.setResponses([
+    fauxAssistantMessage("here is my plan in prose"),
+    fauxAssistantMessage("still prose, still no submit_plan"),
+  ]);
+  const session = createWorkflowSession({
+    targetDir: fx.targetDir,
+    models: fx.models,
+    task: "implement Z",
+    maxRounds: 1,
+    roles: { planner, coder, reviewer },
+  });
+  const coordinator = new RunCoordinator(session, session.projectStore, { runId: "plan-silent" });
+  await coordinator.run();
+  const pause = coordinator.checkpoint.pause;
+  expect(pause).toBeDefined();
+  expect(pause?.phase).toBe("plan");
+  expect(pause?.code).toBe("plan_not_submitted");
+  expect(pause?.action).toContain("missing_plan");
+  // Recoverable like the review pause: the stage can be attempted again.
   expect(() => coordinator.resumeStage({ source: "operator", action: "retry" })).not.toThrow();
 });
