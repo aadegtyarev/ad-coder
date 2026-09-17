@@ -63,4 +63,25 @@ export interface LedgerRecord {
    * so it preserves the safe-to-share invariant above.
    */
   toolCalls?: Record<string, number>;
+  /**
+   * Byte sizes of the three parts of the request this response answered.
+   *
+   * SIZES, never content: the same safe-to-share invariant as `toolCalls`. They
+   * are recorded because nothing else preserves them -- the stage metrics that
+   * carry `requestBytes` travel in the pipeline result, which a hung run never
+   * returns (issue #315), and a session transcript stores streamed assistant
+   * frames only. Without this row a role that received no system prompt, or a
+   * brief that arrived truncated, is indistinguishable after the fact from a
+   * role that simply behaved oddly (issue #317).
+   *
+   * Constant for every turn of one role run, and repeated per row anyway: a
+   * ledger is read row by row, and a value stored once in a header nobody reads
+   * with the row is a value that does not answer the question.
+   */
+  requestBytes?: {
+    systemPrompt: number;
+    prompt: number;
+    toolDefinitions: number;
+    total: number;
+  };
 }

@@ -147,6 +147,13 @@ export interface LedgerOptions {
   runId: string;
   role: string;
   step: string;
+  /**
+   * Request part sizes for this role run, written onto every row (issue #317).
+   * Absent for a caller that does not compute them; a row without it simply
+   * cannot answer "did the prompt arrive", which is the state before this field
+   * existed.
+   */
+  requestBytes?: LedgerRecord["requestBytes"];
   /** Must resolve inside LEDGER_BASE_DIR. Defaults to `<base>/<runId>.jsonl`. */
   filePath?: string;
   /** Replaces the file sink entirely; nothing touches disk when supplied. */
@@ -162,6 +169,7 @@ export class Ledger {
   readonly role: string;
   readonly step: string;
   readonly filePath: string | undefined;
+  private readonly requestBytes: LedgerRecord["requestBytes"];
 
   private readonly sink: LedgerSink;
   private drops = 0;
@@ -175,6 +183,7 @@ export class Ledger {
     this.runId = options.runId;
     this.role = options.role;
     this.step = options.step;
+    this.requestBytes = options.requestBytes;
 
     if (options.sink !== undefined) {
       if (options.filePath !== undefined) {
@@ -239,6 +248,7 @@ export class Ledger {
         ...(event.status !== undefined && { status: event.status }),
         usage: usageAmounts(this.perResponseUsageFrom(event.message)),
         ...(Object.keys(counts).length > 0 && { toolCalls: counts }),
+        ...(this.requestBytes !== undefined && { requestBytes: this.requestBytes }),
       };
       this.sink.write(record);
     } catch (error) {

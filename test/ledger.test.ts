@@ -560,3 +560,40 @@ test("a failing mirror does not cost the caller the records it reads back", () =
   expect(() => sink.write(record)).toThrow(/disk full/);
   expect(sink.records()).toHaveLength(1);
 });
+
+test("request part sizes are written onto every row, and omitted when not supplied", async () => {
+  // The stage metrics that carry requestBytes travel in the pipeline result,
+  // which a hung run never returns (#315), and a session transcript keeps only
+  // streamed assistant frames. So without this on the row, "the role received no
+  // system prompt" and "the role behaved oddly" are indistinguishable after the
+  // fact (#317).
+  const sink = new MemoryLedgerSink();
+  const { hooks, registered } = fakeHooks();
+  const ledger = new Ledger({
+    runId: "run-1",
+    role: "coder",
+    step: "code:1",
+    sink,
+    requestBytes: { systemPrompt: 4096, prompt: 128, toolDefinitions: 512, total: 4736 },
+  });
+  ledger.attach(hooks);
+  const handler = registered[0]?.handler;
+  if (handler === undefined) throw new Error("ledger did not register a handler");
+  await handler(event(usage(10, 20, 0.01)), FAKE_CONTEXT);
+  await handler(event(usage(11, 21, 0.01)), FAKE_CONTEXT);
+
+  // Every row, not just the first: a ledger is read row by row, so a size
+  // recorded once is a size that does not answer the question.
+  expect(sink.records().map((row) => row.requestBytes)).toEqual([
+    { systemPrompt: 4096, prompt: 128, toolDefinitions: 512, total: 4736 },
+    { systemPrompt: 4096, prompt: 128, toolDefinitions: 512, total: 4736 },
+  ]);
+
+  const bare = new MemoryLedgerSink();
+  const { hooks: hooks2, registered: registered2 } = fakeHooks();
+  new Ledger({ runId: "run-1", role: "coder", step: "code:1", sink: bare }).attach(hooks2);
+  const handler2 = registered2[0]?.handler;
+  if (handler2 === undefined) throw new Error("ledger did not register a handler");
+  await handler2(event(usage(10, 20, 0.01)), FAKE_CONTEXT);
+  expect(bare.records()[0]).not.toHaveProperty("requestBytes");
+});
