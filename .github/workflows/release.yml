@@ -3,6 +3,12 @@ name: release
 # pull request passes, with no stored credential. npm authenticates the run
 # itself through Trusted Publishing (issue #268) -- the repository holds no
 # publish token, so there is none to leak.
+#
+# Two channels, chosen by the tag: `v0.53.0` publishes `ad-coder`, and
+# `v0.53.0-dev.1` publishes `ad-coder-dev` -- a separate package rather than a
+# dist-tag, so an early-access install does not overwrite the stable command and
+# both can sit on one machine. Same gates either way: the dev channel is
+# published more often, not held to less.
 on:
   push:
     tags: ["v*"]
@@ -43,7 +49,20 @@ jobs:
       # on a tree that still says 0.51.0 publishes a duplicate and fails
       # confusingly, or -- worse -- silently ships something other than what the
       # tag says.
+      - name: Pick the channel
+        id: channel
+        run: |
+          case "$GITHUB_REF_NAME" in
+            *-dev.*) echo "dev=true" >> "$GITHUB_OUTPUT" ;;
+            *)       echo "dev=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      # Stable only: the tag must name the version being published. Without this,
+      # `v0.52.0` on a tree that still says 0.51.0 publishes a duplicate and fails
+      # confusingly, or -- worse -- silently ships something other than what the
+      # tag says. A dev tag carries the version itself, so nothing to compare.
       - name: Tag matches package version
+        if: steps.channel.outputs.dev == 'false'
         run: |
           tagged="${GITHUB_REF_NAME#v}"
           packaged="$(node -p "require('./package.json').version")"
@@ -52,6 +71,13 @@ jobs:
             exit 1
           fi
 
+      # Dev only: rewrite name, version and bin for the second package. Generated
+      # from this tree rather than kept as a second committed manifest, which
+      # would drift; the checkout is discarded after the run.
+      - name: Build the dev manifest
+        if: steps.channel.outputs.dev == 'true'
+        run: bun run scripts/dev-package.ts "$GITHUB_REF_NAME"
+
       # `npm publish` with no NODE_AUTH_TOKEN: the OIDC credential minted from
       # `id-token: write` is what npm verifies. npm 11.5.1+ is required for
       # Trusted Publishing.
@@ -59,8 +85,11 @@ jobs:
       - run: npm publish
 
       # The release notes are the CHANGELOG section for this version, so the
-      # published notes and the committed history cannot drift apart.
+      # published notes and the committed history cannot drift apart. A dev
+      # release has no CHANGELOG section of its own -- it is a preview of work in
+      # progress -- so it gets no GitHub release, only the npm package.
       - name: Extract the changelog entry
+        if: steps.channel.outputs.dev == 'false'
         run: |
           awk -v ver="## [${GITHUB_REF_NAME#v}]" '
             index($0, ver) == 1 { found = 1; next }
@@ -72,5 +101,6 @@ jobs:
             exit 1
           fi
       - uses: softprops/action-gh-release@v2
+        if: steps.channel.outputs.dev == 'false'
         with:
           body_path: release-notes.md
