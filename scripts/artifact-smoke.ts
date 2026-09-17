@@ -20,12 +20,17 @@ const environment = {
 
 const MAX_AUDITED_FILES = 2_000;
 const MAX_AUDITED_FILE_BYTES = 1_000_000;
-const PACKED_ROOTS = new Set(["src", "prompts", "examples"]);
+// `bin` holds the node launcher the published `bin` field points at: it is what
+// `npm i -g` puts on PATH, so it must ship (issue #268). Everything here is an
+// explicit declaration -- an entry is added when the package deliberately gains
+// a root, never to quiet the gate.
+const PACKED_ROOTS = new Set(["bin", "src", "prompts", "examples"]);
 const PACKED_FILES = new Set(["package.json", "README.md", "CHANGELOG.md", "LICENSE"]);
 const TRACKED_ROOTS = new Set([
   ".ad-coder", // bounded anonymous project calibration; intentionally excluded from package files
   ".claude", // reviewed developer-only LDO harness; intentionally excluded from package files
   ".github",
+  "bin", // the node launcher `bin` points at; shipped, so also tracked
   "docs",
   "evals", // development-only calibration corpus; intentionally excluded from package files
   "examples",
