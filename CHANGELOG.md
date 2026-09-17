@@ -11,7 +11,7 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
-## [0.44.2] - 2026-09-17
+## [0.47.0] - 2026-09-17
 
 ### Added
 
@@ -393,6 +393,59 @@ enforces that dated release headings go in non-increasing date order
   crash; a file that cannot be opened fails with its path named.
 
 ## [Unreleased]
+
+## [0.46.0] - 2026-09-17
+
+### Added
+- A `documentation-writing` skill, offered to every role. It carries what this
+  project keeps rediscovering: compactness is not word count (a ceiling is a
+  prompt to re-read the document, not a tax on the sentence being added);
+  verify each claim against the code rather than copying it from an issue;
+  a stale sentence is worse than a missing one; and a decision is recorded with
+  its date rather than by quietly rewriting the old one. Written after a README
+  rewrite compressed "read navigable pages" to "read pages" to fit a word
+  budget, losing the distinction the adjective carried. (#229)
+- `architecture-recon` gains two reconnaissance habits, as advice rather than
+  rule: print what actually arrives where you would add a mechanism, and treat a
+  green test as proof your code works, not that it was needed. Both come from a
+  session that set out to pass read paths between pipeline stages, printed the
+  prompt the second coder round really received, and found the handoff already
+  there -- the change it was about to write would have been a second path beside
+  a working one. (#274)
+
+
+## [0.45.0] - 2026-09-17
+
+### Fixed
+- The orchestrator can now raise a stage ceiling and resume, which is what
+  `docs/contracts/operator-flow.md` has required since 2026-09-16 and what no
+  code could do. The coordinator already refused to resume a stage-limit pause
+  at an unchanged ceiling (`unchanged <reason> stage limit`) -- a correct guard
+  that, with no way to carry a larger number back in, blocked the very
+  correction it was written to enforce. `resume_pipeline` now takes
+  `raiseRole`, `raiseReason` and `raiseLimit`; the raise lands as a role
+  overlay through the same path the classified tier already travels, and each
+  field is validated against the shipped unions with a refusal that names what
+  was wrong. Measured cause: a coder stage exhausted 400k input tokens on
+  reconnaissance and reported "I ran out of budget during reconnaissance and
+  made zero edits" -- honest, caught by review, and unrecoverable until now.
+  (#208)
+- Review of the first version of this fix (`changes_requested`) caught two
+  blockers, both now closed and pinned by tests. A `raiseLimit` of `0` passed a
+  `>= 0` check while `0` DISABLES a limit, and the coordinator's guard
+  short-circuits on a resolved zero -- so a zero raise would have slipped past
+  the protection it exists to satisfy and removed the ceiling. And validation
+  sat only inside the tool, so a library caller of the exported
+  `resumePipeline` got a silently unmatched overlay and then failed on the
+  "unchanged ceiling" guard, reporting the wrong cause; `assertRaisedLimits` now
+  guards the core boundary every entry point crosses. A malformed raise also
+  gets its own `invalid_raise` code rather than reusing `invalid_role`.
+- `STAGE_LIMIT_KEY` maps each exhaustion reason to the `StageLimits` field it
+  is measured against, shared by the coordinator's guard and the raise path.
+  Two copies of that mapping would drift the moment a reason is added, and a
+  raise that wrote a different field than the guard checks would satisfy the
+  guard while changing nothing.
+
 
 ## [0.35.2] - 2026-09-17
 

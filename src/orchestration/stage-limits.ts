@@ -21,6 +21,24 @@ export type StageLimitReason =
   | "cost_in_flight"
   | "cost_unknown";
 
+/**
+ * The `StageLimits` field each exhaustion reason is measured against.
+ *
+ * One table rather than two: the coordinator uses it to check that a resumed
+ * ceiling really grew, and the orchestrator uses it to place the raised number
+ * on the right field. Two copies would drift the moment a reason is added.
+ */
+export const STAGE_LIMIT_KEY: Readonly<Record<StageLimitReason, keyof Required<StageLimits>>> =
+  Object.freeze({
+    duration: "maxDurationMs",
+    model_turns: "maxModelTurns",
+    tool_turns: "maxToolTurns",
+    input: "maxInputTokens",
+    cost: "maxCostUsd",
+    cost_in_flight: "maxCostUsd",
+    cost_unknown: "maxCostUsd",
+  });
+
 export interface StageLimitSnapshot extends Required<StageLimits> {
   elapsedMs: number;
   modelTurns: number;

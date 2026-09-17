@@ -8,7 +8,11 @@ import {
   WorkflowStageFailureError,
   WorkflowStageLimitError,
 } from "../orchestration/session";
-import { StageLimitError, type StageLimitReason } from "../orchestration/stage-limits";
+import {
+  STAGE_LIMIT_KEY,
+  StageLimitError,
+  type StageLimitReason,
+} from "../orchestration/stage-limits";
 import type {
   Driver,
   PipelineResult,
@@ -315,16 +319,10 @@ export class RunCoordinator {
     const priorLimit = pause?.limit;
     if (reason === undefined || priorLimit === undefined)
       throw new ProjectOperationsError("invalid_config", "stage pause lacks limit evidence");
-    const key =
-      reason === "duration"
-        ? "maxDurationMs"
-        : reason === "model_turns"
-          ? "maxModelTurns"
-          : reason === "tool_turns"
-            ? "maxToolTurns"
-            : reason === "input"
-              ? "maxInputTokens"
-              : "maxCostUsd";
+    // One table shared with the orchestrator's raise path: the field checked
+    // here and the field written there must be the same one, or a raise would
+    // satisfy this check without changing what the stage actually measures.
+    const key = STAGE_LIMIT_KEY[reason];
     const resumedLimit = this.session.stageLimits?.[key] ?? 0;
     if (resumedLimit !== 0 && resumedLimit <= priorLimit)
       throw new ProjectOperationsError("invalid_config", `unchanged ${reason} stage limit`);
