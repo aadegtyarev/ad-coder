@@ -67,10 +67,13 @@ test("background start propagates an explicit owner to the detached worker", asy
     } catch {
       // The detached worker may be between its atomic record writes.
     }
-    if (["started", "failed", "cancelled", "timed_out", "completed"].includes(lifecycle)) break;
+    if (["started", "paused", "failed", "cancelled", "timed_out", "completed"].includes(lifecycle))
+      break;
   }
   expect(lifecycle).not.toBe("requested");
-  expect(["started", "failed", "cancelled", "timed_out", "completed"]).toContain(lifecycle);
+  expect(["started", "paused", "failed", "cancelled", "timed_out", "completed"]).toContain(
+    lifecycle,
+  );
   const status = runCli([
     "background",
     "status",
@@ -85,7 +88,7 @@ test("background start propagates an explicit owner to the detached worker", asy
   // A detached worker can settle between the sampled record and this separate
   // status process. Status is authoritative after reconciliation, so require a
   // valid observed lifecycle rather than a stale byte-for-byte snapshot.
-  expect(["started", "failed", "cancelled", "timed_out", "completed"]).toContain(
+  expect(["started", "paused", "failed", "cancelled", "timed_out", "completed"]).toContain(
     JSON.parse(status.stdout).lifecycle,
   );
 });

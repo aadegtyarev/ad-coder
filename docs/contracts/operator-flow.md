@@ -78,6 +78,16 @@ cannot.
   with a diagnosis. **Work too large for this model** (progress is real but scope
   keeps widening) is decomposed and dispatched as slices -- which keeps a cheaper
   model usable instead of escalating the whole task.
+- 2026-09-17: A stage pause is a resumable state everywhere it is projected, and
+  it reaches the orchestrator like a completed run does (issue #261). A run the
+  coordinator records as `paused` is never projected as `failed` with
+  `internal_failure` and `recovery: none`: the report carries the pause record
+  (phase, code, recovery action in words), the limiting reason and its limit
+  (`limitReason`, `limit`), and the metrics of what the run actually spent,
+  paused attempt included. The background-run status, event stream, and result
+  surface all carry it, so whichever surface the orchestrator already polls for
+  completion reports the pause -- it cannot raise a ceiling it never hears
+  about.
 
 ## What the system learns without being told
 

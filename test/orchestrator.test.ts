@@ -1052,8 +1052,9 @@ test("resume_pipeline reopens a durable stage pause and completes it", async () 
   const core = createOrchestrator({ buildConfig, ledgerSink: fx.sink });
   fx.faux.setResponses(governedPlanTurn());
   await expect(core.runPipeline("implement X")).rejects.toMatchObject({
-    code: "requirements_unresolved",
+    code: "pipeline_paused",
     detail: "orchestrator-resume",
+    pause: { code: "stage_limit", limitReason: "model_turns", limit: 1 },
   });
 
   stageMaxModelTurns = 8;

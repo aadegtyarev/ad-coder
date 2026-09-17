@@ -11,6 +11,29 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.43.0] - 2026-09-17
+
+### Fixed
+- **A resumable stage pause is reported as a pause, with its limit and real
+  spend, on the surfaces the orchestrator already polls** (issue #261). Two
+  runs the same night paused at the plan stage on stage-limit ceilings (one
+  `duration`, one `cost`); the coordinator recorded each pause exactly --
+  phase, code, the recovery action in words -- while `background status`
+  reported `lifecycle: failed`, `errorCode: internal_failure`, `recovery:
+  none`, and metrics of zero, and the orchestrator never learned that anything
+  had paused. The throw at a pause is now a typed `PipelinePauseError`
+  carrying the coordinator's pause record and the durable stage metrics (the
+  paused attempt included), so the background projection reports lifecycle
+  `paused`, recovery `resume_pipeline`, the `pause` payload (phase, code,
+  action, `limitReason`, `limit`), and what the run had actually spent. A
+  paused run is reportable through status, the event stream, and `result`
+  exactly like a completed one, and a durable pause survives a worker exit as
+  a resumable record instead of being mislabelled an abandonment. Console
+  notices identify the pause (`ad-coder: ... paused (plan): stage_limit,
+  limit duration -- the run is resumable, not failed`). This unblocks #208:
+  the orchestrator cannot correct its own underestimate while the pause is
+  invisible to it (`operator-flow.md`, 2026-09-17).
+
 ## [0.42.0] - 2026-09-17
 
 ### Added
