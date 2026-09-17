@@ -38,7 +38,8 @@ structural moves from behavior changes.
   per-stage model, and run ids. `ad-coder stamp delivery` prints the PR
   block. The stamp is written by the mechanism that already knows the run
   finished -- `runPipeline`'s settle path -- never by a model deciding to
-  mention it; the gate (`bun run stamp:check`) fails without a fresh stamp,
+  mention it; the gate (`bun run stamp:check`) is the operator's pre-merge
+  check and fails without a fresh stamp,
   which makes forgetting visible. Identifiers and numbers only; task text and
   payloads stay out (`errors.md`), and per-call detail stays in the ledger.
   A stamp whose tree digest no longer matches the working tree is STALE and

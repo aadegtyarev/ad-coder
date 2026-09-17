@@ -108,8 +108,11 @@ Rules the operator declared for ad-coder. A violation is always blocking.
   gate needs a non-empty `name` and a non-empty `command` argv),
   `maxOutputChars` overrides the report's per-gate capture ceiling, and both
   validate fail-loud before any provider dispatch. Omitting the option ships
-  the project's own declared gates -- eight since 2026-09-17, when the
-  review-stamp gate joined (`bun run stamp:check`, issue #239); per-gate
+  the project's own declared gates -- seven in-run commands since 2026-09-17,
+  when issue #271 moved the review-stamp check (`bun run stamp:check`, issue
+  #239) OUT of this set: its writer is `runPipeline`'s settle path and its
+  property only exists at settle, so it is the operator's pre-merge gate run
+  outside any run. Per-gate
   output capture has a
   positive mandatory default (64 KiB) that cannot be set to zero.
 - 2026-09-16: Every capability ad-coder ships is enabled at startup. A capability

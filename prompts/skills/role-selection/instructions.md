@@ -48,8 +48,13 @@ which also names the reachable roles and their models for this session.
   not write. Call it when the planned change touches credentials, network
   calls, the filesystem, subprocesses, or untrusted input; skip it for
   surfaceless text changes.
-- **Coder** is the only delegate that writes code. It returns an implemented
-  change and the verification it ran. Delegate when the edit is multi-file,
+- **Coder** is the only delegate that writes code -- and, with you inside a
+  recorded `trivial`, the only writer that should: an orchestrator that
+  classifies honestly and dispatches for judgement, then edits the files
+  itself, is following no rule that names coding as the delegate's job -- so
+  this one now does (issue #271). It returns an implemented change and the
+  verification it ran, never advice it did not apply. Delegate when the edit
+  is multi-file,
   carries a contract, or needs independent review anyway; a one-line fix with a
   single obvious answer is cheaper done directly.
 - **Reviewer** verifies an implemented change against declared criteria. It

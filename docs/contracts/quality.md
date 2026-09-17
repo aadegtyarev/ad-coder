@@ -11,13 +11,20 @@ Rules for the project's own code quality. A violation is always blocking.
   path -- not by a model deciding to mention it -- and it is a no-op unless
   the target carries the committed marker `ad-coder.stamps.json`, because
   stamp writing stays THIS repository's own bookkeeping (see
-  `product-change.md`, 2026-09-17). The gate `bun run stamp:check` runs after
-  every changed-files check in this project's declared set: no stamp,
+  `product-change.md`, 2026-09-17). The gate `bun run stamp:check` runs as
+  this project's PRE-MERGE gate, between a settled run and a merge -- never
+  as an in-run gate (issue #271): its property, "the newest stamp digests
+  this exact tree", only exists once the settle path has written the stamp,
+  so inside a run it is red by construction on a moved tree and its assigned
+  fix is work only the run itself can perform at settle. At the pre-merge
+  boundary the same failures block the merge:
+  no stamp,
   a malformed newest stamp, a `changes_requested` verdict, or a stamp whose
   digest no longer matches the current tree fails exactly like a red `bun run
   check`. Stale means the reviewed tree moved; the recovery is a fresh review
-  round, which appends a fresh stamp. The stamp log itself is excluded from
-  its own digest: appending one line cannot count as the tree moving.
+  round via a settled run, which appends a fresh stamp before the merge. The
+  stamp log itself is excluded from its own digest: appending one line cannot
+  count as the tree moving.
 - 2026-09-17: **The pipeline's checks are DECLARED as data, not left to a model's
   own judgment (issue #227).** A declared `QualityGate` list carries real argv and
   is executed by the existing `GateRunner` after the coder and before any
@@ -26,7 +33,10 @@ Rules for the project's own code quality. A violation is always blocking.
   type it. A RED gate returns to the coder with the captured output verbatim as
   blocking evidence and is re-run before any review; a run never reaches review
   -- and never settles `approved` -- while the gate report is red, even through
-  a driver rework that follows an earlier approval. The settled result names
+  a driver rework that follows an earlier approval. This is why a gate is
+  declared in-run only when the run can act on its red: a check whose writer
+  belongs to a LATER stage of the same run (the stamp's settle-path writer, issue
+  #271) is a pre-merge gate instead. The settled result names
   WHICH blocker fired: the gate report versus the verdict, plus `reviewRan`, so
   a run that settled without any review round is never rendered like "reviewed,
   no findings". A review stage that could not run to a verdict is its own red
