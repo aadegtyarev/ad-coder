@@ -372,6 +372,26 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.46.0] - 2026-09-17
+
+### Added
+- A `documentation-writing` skill, offered to every role. It carries what this
+  project keeps rediscovering: compactness is not word count (a ceiling is a
+  prompt to re-read the document, not a tax on the sentence being added);
+  verify each claim against the code rather than copying it from an issue;
+  a stale sentence is worse than a missing one; and a decision is recorded with
+  its date rather than by quietly rewriting the old one. Written after a README
+  rewrite compressed "read navigable pages" to "read pages" to fit a word
+  budget, losing the distinction the adjective carried. (#229)
+- `architecture-recon` gains two reconnaissance habits, as advice rather than
+  rule: print what actually arrives where you would add a mechanism, and treat a
+  green test as proof your code works, not that it was needed. Both come from a
+  session that set out to pass read paths between pipeline stages, printed the
+  prompt the second coder round really received, and found the handoff already
+  there -- the change it was about to write would have been a second path beside
+  a working one. (#274)
+
+
 ## [0.45.0] - 2026-09-17
 
 ### Fixed
