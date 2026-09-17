@@ -13,6 +13,21 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.54.3] - 2026-09-17
+
+### Changed
+- The quality contract states the rule against hidden defaults as a prohibition:
+  **a quantity that changes behavior is not a constant in the source.** If it is
+  needed it is a setting with a default, the exceptions being the safety ceilings
+  the contracts enumerate explicitly.
+
+  The existing rule ("any behavior a reasonable user may want to change is
+  configurable") states the obligation from the side of the user's wishes, and
+  the person judging what a user will want is the person writing the constant --
+  a compiled-in default is invisible, so nobody asks for it to become a setting,
+  and the rule cannot fire for exactly the values it most needs to catch. As a
+  prohibition the check is mechanical: is this number in the source? (#308)
+
 ## [0.54.2] - 2026-09-17
 
 ### Fixed
