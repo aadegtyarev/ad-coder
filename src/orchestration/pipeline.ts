@@ -1,5 +1,6 @@
 import { ProjectOperationsError } from "../project-operations/errors";
 import { RunCoordinator } from "../project-operations/run-coordinator";
+import { recordReviewStampFromResult } from "../stamp/record-review-stamp";
 import { createWorkflowSession } from "./session";
 import type { PipelineConfig, PipelineResult } from "./types";
 import { OrchestrationError } from "./types";
@@ -68,5 +69,12 @@ export async function runPipeline(config: PipelineConfig): Promise<PipelineResul
       decision?.id ?? completed.checkpoint.runId,
     );
   }
+  // The run is finished and its verdict is in hand, so THIS is where the review
+  // stamp is written (issue #239) -- the orchestrator cannot forget it, and the
+  // fields are the structured result, not a model's summary. The hook itself
+  // stays a no-op in any target that has no stamp marker: this is ad-coder's
+  // own repository's delivery paperwork, not harness behavior
+  // (src/stamp/record-review-stamp.ts holds the scope rule).
+  recordReviewStampFromResult(config.targetDir, completed.result);
   return completed.result;
 }

@@ -118,6 +118,7 @@ import type { SessionLimits } from "./session-limits";
 import { SessionLimitController } from "./session-limits";
 import { buildLoadSkillTool, LOAD_SKILL_TOOL_NAME } from "./skills/load-tool";
 import { resolveSkills, SkillResolutionError, skillInventory } from "./skills/resolver";
+import { stampCheckErrors, stampDeliveryText } from "./stamp/cli";
 import { UpdateError, updateAdCoder } from "./update/updater";
 import {
   createDefaultUserProfileStore,
@@ -1170,6 +1171,35 @@ function listDefaultLedgerFiles(): string[] {
     .map((entry) => path.join(base, entry.name));
   if (names.length === 0) fail(`no *.jsonl ledger files exist under ${LEDGER_BASE_DIR}/`);
   return names;
+}
+
+/**
+ * The delivery paperwork surfaces (issues #240 and #239).
+ *
+ * `stamp delivery` renders the compact signature block straight from the
+ * ledger the run wrote -- a projection, never a model's summary of its own
+ * cost. `stamp check` is the review-stamp gate: it fails loudly when the
+ * newest stamp is missing, malformed, or names a tree digest no longer
+ * matching the current tree (src/stamp/review-stamp.ts). Both are read-only;
+ * the stamp WRITER is the run-finish hook, not a CLI hand-write path.
+ *
+ * A missing ledger or a red stamp check is operator-relevant failure with the
+ * reason named, not an empty success.
+ */
+function stampCommand(positionals: string[], flags: Record<string, string | undefined>): void {
+  const action = positionals[1];
+  if (action !== "delivery" && action !== "check")
+    fail("the stamp command takes delivery or check");
+  const targetDir = resolveTargetDir(flags["--target-dir"] ?? process.cwd());
+  if (action === "delivery") {
+    const fileArgs = positionals.slice(2);
+    process.stdout.write(`${stampDeliveryText(targetDir, fileArgs)}\n`);
+    return;
+  }
+  if (positionals[2] !== undefined) fail("stamp check accepts no path arguments");
+  const errors = stampCheckErrors(targetDir);
+  if (errors.length > 0) fail(errors.join("\n"));
+  process.stdout.write("stamp check: the newest review stamp is fresh\n");
 }
 
 async function profileCommand(positionals: string[], flags: Record<string, string | undefined>) {
@@ -3100,6 +3130,33 @@ const COMMANDS: readonly CommandDefinition[] = [
     options: [{ name: "--json", description: "Emit stable JSON." }],
     run: ({ positionals, booleans }) => {
       ledgerCommand(positionals, booleans["--json"] === true);
+      return Promise.resolve();
+    },
+  },
+  {
+    name: "stamp",
+    description:
+      "Delivery paperwork: the ledger-derived signature, and the review-stamp gate check.",
+    positionals: [
+      {
+        name: "<delivery|check>",
+        description: "delivery renders the PR block; check is the gate.",
+      },
+      {
+        name: "[files...]",
+        description:
+          "Ledger .jsonl paths for delivery; with none, every .ad-coder/ledger/*.jsonl is read.",
+      },
+    ],
+    options: [
+      {
+        name: "--target-dir",
+        value: "<dir>",
+        description: "Project read; defaults to the current directory.",
+      },
+    ],
+    run: ({ positionals, flags }) => {
+      stampCommand(positionals, flags);
       return Promise.resolve();
     },
   },

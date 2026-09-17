@@ -30,6 +30,32 @@ Keep the smallest coherent change. Apply the decomposition contract when the wor
 crosses responsibilities or no longer fits one safely reviewable pass. Separate
 structural moves from behavior changes.
 
+- 2026-09-17: **The deliverable's signature and review stamp are generated,
+  not composed (issues #240, #239).** The delivery signature is derived from
+  the ledger `src/stamp/delivery-signature.ts` reads back (per-role calls,
+  tokens, provider-reported cost; a role that did not run renders "did not
+  run", never blank); the review stamp is derived from the settled verdict,
+  per-stage model, and run ids. `ad-coder stamp delivery` prints the PR
+  block. The stamp is written by the mechanism that already knows the run
+  finished -- `runPipeline`'s settle path -- never by a model deciding to
+  mention it; the gate (`bun run stamp:check`) fails without a fresh stamp,
+  which makes forgetting visible. Identifiers and numbers only; task text and
+  payloads stay out (`errors.md`), and per-call detail stays in the ledger.
+  A stamp whose tree digest no longer matches the working tree is STALE and
+  must not pass; a moved tree needs a fresh review, i.e. a fresh stamp.
+- 2026-09-17: **Delivery paperwork is a feature of THIS repository only,
+  strictly.** Ad-coder operates on other people's repositories; its stamps
+  and signatures must never be written into a target's tree or PR -- that
+  would be noise at best and a leak of how the operator works at worst. The
+  on-switch is the committed marker `ad-coder.stamps.json` in the repository
+  root; without it the run-finish hook and the gate surface are absent or
+  no-ops, and the default for any other target is OFF. Generalising this to
+  harness-wide behavior is NOT an improvement; treat it as a violation of
+  this paragraph.
+- 2026-09-17: The delivery signature and review stamp live in one compact
+  block; per-call detail, tool histograms, and timing belong to the ledger
+  report (`ledger-report.md`), not the PR comment.
+
 ## Close the loop
 
 A change is complete only when its applicable contracts pass, happy and failure

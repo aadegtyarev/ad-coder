@@ -2,8 +2,24 @@
 
 Rules for the project's own code quality. A violation is always blocking.
 
-- 2026-09-17: The pipeline's checks are DECLARED as data, not left to a model's
-  own judgment (issue #227). A declared `QualityGate` list carries real argv and
+- 2026-09-17: **A review stamp the gate checks: no stamp, no merge (issue
+  #239, closed with #240).** The stamp certifies that a review round happened
+  and names what it reviewed: the working-tree digest of the tree at review
+  time, the base, the studied verdict, the reviewer role's provider/model,
+  the local ISO time, the run ids, and where findings live. It is APPENDED to
+  `docs/reviews/stamps.log` by the run-finish hook in `runPipeline`'s settle
+  path -- not by a model deciding to mention it -- and it is a no-op unless
+  the target carries the committed marker `ad-coder.stamps.json`, because
+  stamp writing stays THIS repository's own bookkeeping (see
+  `product-change.md`, 2026-09-17). The gate `bun run stamp:check` runs after
+  every changed-files check in this project's declared set: no stamp,
+  a malformed newest stamp, a `changes_requested` verdict, or a stamp whose
+  digest no longer matches the current tree fails exactly like a red `bun run
+  check`. Stale means the reviewed tree moved; the recovery is a fresh review
+  round, which appends a fresh stamp. The stamp log itself is excluded from
+  its own digest: appending one line cannot count as the tree moving.
+- 2026-09-17: **The pipeline's checks are DECLARED as data, not left to a model's
+  own judgment (issue #227).** A declared `QualityGate` list carries real argv and
   is executed by the existing `GateRunner` after the coder and before any
   reviewer round, with zero path arguments appended for `project` gates: the
   argv decides over the whole working directory exactly as an operator would
@@ -31,6 +47,14 @@ Rules for the project's own code quality. A violation is always blocking.
   to Semantic Versioning; its exact version has a dated changelog heading, passes
   `bun run check:release`, and is the version reported by `ad-coder about`. A
   version already merged as an install target is never silently reused.
+- 2026-09-17: **The delivery signature is a ledger projection (issue #240,
+  closed with #239).** `ad-coder stamp delivery` renders the PR block straight
+  from `.ad-coder/ledger/*.jsonl` -- run ids, total calls, provider-reported
+  cost, fresh/cached/output tokens, then one compact row per declared role
+  (planner/researcher/security/coder/reviewer) with its dominant model, calls,
+  and cost; a role with no rows says "did not run" instead of vanishing. A
+  model summarising its own cost can be wrong about it, so the numbers are
+  never retyped by hand; re-run the command to refresh the block.
 - 2026-09-12: Project health is reviewed beyond the current diff. Before a public
   release, after a drift signal (oversized or high-churn module, repeated
   cross-boundary edits, or eight accumulated drift observations), and on an

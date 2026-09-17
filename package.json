@@ -1,6 +1,6 @@
 {
   "name": "ad-coder",
-  "version": "0.41.1",
+  "version": "0.42.0",
   "private": true,
   "description": "A small, explicit multi-provider agent harness: roles over pi-agent-core, per-role/step cost ledger, in-house context management, and a plan->[security]->code<->review pipeline.",
   "license": "MIT",
@@ -31,6 +31,7 @@
     "check:fix": "biome check --write src test scripts evals",
     "check:release": "bun run scripts/check-release.ts",
     "check:docs": "bun run scripts/check-docs.ts",
+    "stamp:check": "bun run src/cli.ts stamp check",
     "calibration:score": "bun run scripts/calibration-score.ts",
     "calibration:check-reviewer": "bun run evals/scorers/reviewer-hidden-regression.ts",
     "calibration:materialize": "bun run scripts/calibration-materialize.ts",
