@@ -13,6 +13,18 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.56.1] - 2026-09-17
+
+### Fixed
+- A paused background run named a recovery nobody could perform (issue #310).
+  The status reported `recovery: resume_pipeline`, but `background` has no resume
+  action and `control resume` reads `control-<id>.json` while a background run is
+  stored as `coordinator-<id>.json` -- so the only working route is the
+  orchestrator's tool, through a console. The status now carries a
+  `recoveryDetail` line saying exactly that, including which two commands are
+  *not* the answer: an instruction that does not work is worse than none, because
+  it is followed first and doubted later.
+
 ## [0.56.0] - 2026-09-17
 
 ### Fixed

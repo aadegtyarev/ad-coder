@@ -44,12 +44,37 @@ export interface BackgroundRunNotice extends BackgroundEventPage {
   pending: boolean;
 }
 export type BackgroundRunNoticeConsumer = (notice: BackgroundRunNotice) => void | Promise<void>;
+
+/**
+ * What an operator can actually do with a paused background run today.
+ *
+ * `background` has start/events/status/result/cancel and no resume; `control
+ * resume` reads `control-<id>.json` while a background run is stored as
+ * `coordinator-<id>.json`. So the only working route is the orchestrator's
+ * `resume_pipeline` tool, reached through a console (issue #310). Stated here
+ * once, in the record, rather than left for each reader to discover by trying
+ * the two commands that do not work.
+ */
+export const RESUME_PIPELINE_DETAIL =
+  "open `ad-coder console --target-dir <dir>` and ask the orchestrator to resume this run id with resume_pipeline, raising the exhausted ceiling; `background` has no resume action and `control resume` does not read background runs";
 export interface BackgroundRunStatus {
   runId: string;
   lifecycle: BackgroundLifecycle;
   metrics: { steps: number; totalCost: number };
   pause?: BackgroundRunPause;
+  /**
+   * What the reader should do next.
+   *
+   * `resume_pipeline` names the orchestrator's conversational tool, which is the
+   * ONLY thing that can currently resume a paused background run -- `background`
+   * has no resume action and `control resume` looks for a differently-named
+   * record (issue #310). Whoever renders this must say so rather than printing a
+   * bare verb the operator cannot type: an instruction that does not work is
+   * worse than none, because it is followed first and doubted later.
+   */
   recovery?: "wait" | "inspect_events" | "resume_pipeline" | "none";
+  /** One line naming what to actually do, when the recovery needs explaining. */
+  recoveryDetail?: string;
 }
 /**
  * The pause payload a background event carries (issue #261): the coordinator's
@@ -538,7 +563,12 @@ export class BackgroundRunManager {
     if (isTerminal(e.lifecycle)) return;
     e.cancelled = true;
     e.lifecycle = "timed_out";
-    e.outcome = { ...this.statusOf(e), lifecycle: "timed_out", recovery: "resume_pipeline" };
+    e.outcome = {
+      ...this.statusOf(e),
+      lifecycle: "timed_out",
+      recovery: "resume_pipeline",
+      recoveryDetail: RESUME_PIPELINE_DETAIL,
+    };
     this.append(e, "timed_out", { errorCode: "deadline_exceeded", metrics: { ...e.metrics } });
   }
   private statusOf(e: Entry): BackgroundRunStatus {
@@ -552,6 +582,10 @@ export class BackgroundRunManager {
         : e.lifecycle === "operator_attention" || e.lifecycle === "paused"
           ? "resume_pipeline"
           : "wait",
+      ...(!isTerminal(e.lifecycle) &&
+      (e.lifecycle === "operator_attention" || e.lifecycle === "paused")
+        ? { recoveryDetail: RESUME_PIPELINE_DETAIL }
+        : {}),
     };
   }
   private owned(runId: string): Entry {
@@ -762,6 +796,7 @@ export class BackgroundRunManager {
                     lifecycle: "failed" as const,
                     metrics: copyMetrics(persisted.metrics),
                     recovery: "resume_pipeline" as const,
+                    recoveryDetail: RESUME_PIPELINE_DETAIL,
                   },
                 }
               : {}),
@@ -779,6 +814,7 @@ export class BackgroundRunManager {
             lifecycle: "failed" as const,
             metrics: copyMetrics(persisted.metrics),
             recovery: "resume_pipeline" as const,
+            recoveryDetail: RESUME_PIPELINE_DETAIL,
           };
           this.append(entry, "failed", {
             errorCode: "internal_failure",

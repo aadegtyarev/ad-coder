@@ -6,6 +6,7 @@ import {
   BackgroundRunError,
   BackgroundRunManager,
   MIN_BACKGROUND_EVENT_PAGE_BYTES,
+  RESUME_PIPELINE_DETAIL,
 } from "../src/orchestration/background-runs";
 import type { RunPipelineResult } from "../src/orchestration/orchestrator";
 import { PipelinePauseError } from "../src/orchestration/types";
@@ -641,4 +642,19 @@ test("a durable pause survives a worker exit as a resumable record, not an aband
   expect(outcome.metrics).toEqual({ steps: 1, totalCost: 0.1 });
   await reconnected.close();
   await manager.close();
+});
+
+test("a paused run names a recovery the operator can actually perform", () => {
+  // The status said `recovery: resume_pipeline` and nothing else, but
+  // `background` has no resume action and `control resume` reads a
+  // differently-named record, so the only working route is the orchestrator's
+  // tool through a console (issue #310). An instruction that does not work is
+  // worse than none: it is followed first and doubted later.
+  const detail = RESUME_PIPELINE_DETAIL;
+  expect(detail).toContain("console");
+  expect(detail).toContain("resume_pipeline");
+  // It must say why the obvious commands are not the answer, or the reader
+  // tries them first -- which is exactly what happened when this was found.
+  expect(detail).toContain("background` has no resume action");
+  expect(detail).toContain("control resume` does not read background runs");
 });
