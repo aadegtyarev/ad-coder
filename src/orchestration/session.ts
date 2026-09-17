@@ -27,6 +27,7 @@ import {
 import type { Tool } from "../runner/tool";
 import { SessionLimitError } from "../session-limits";
 import { buildLoadSkillTool, LOAD_SKILL_TOOL_NAME } from "../skills/load-tool";
+import { pluginNamesFromToolNames } from "../skills/resolver";
 import {
   buildSubmitFollowUpTool,
   type FollowUpCapture,
@@ -318,7 +319,14 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
   // lacks the loader) get nothing extra here.
   const skillTools = (spec: { role: { name: string; activeToolNames?: string[] } }): Tool[] =>
     spec.role.activeToolNames?.includes(LOAD_SKILL_TOOL_NAME)
-      ? [buildLoadSkillTool({ role: spec.role.name, projectDir: config.targetDir })]
+      ? [
+          buildLoadSkillTool({
+            role: spec.role.name,
+            projectDir: config.targetDir,
+            availableWorkflows: ["pipeline"],
+            availablePlugins: pluginNamesFromToolNames(spec.role.activeToolNames ?? []),
+          }),
+        ]
       : [];
   const resolvedMaxRounds = config.defaults?.maxRounds ?? config.maxRounds;
   if (!Number.isInteger(resolvedMaxRounds) || resolvedMaxRounds < 1) {

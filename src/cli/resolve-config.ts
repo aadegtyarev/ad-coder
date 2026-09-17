@@ -51,8 +51,10 @@ import { parseRegistryConfig } from "../registry/validate";
 import type { Role } from "../role";
 import { defineRole } from "../role";
 import type { Tool } from "../runner/tool";
+import { pluginNamesFromToolNames } from "../skills/resolver";
 import { LOAD_SKILL_TOOL_NAME, roleSkillKit } from "../skills/role-kit";
 import { buildImageInspectionTool, buildWebTools } from "../web/tools";
+import { BUILT_IN_PIPELINE_WORKFLOW_NAME } from "../workflows/builtin-pipeline";
 
 /**
  * The three shipped providers this resolver can select from the environment.
@@ -409,6 +411,18 @@ function resolveConfig(
   }
   if (new Set(enabledPlugins).size !== enabledPlugins.length)
     throw new Error("enabledPlugins must not contain duplicates");
+  // What this session's skills may require, resolved ONCE and threaded into
+  // every role kit: workflow dependency from the workflows the run actually
+  // resolved, plugin dependency from the tool names actually registered (a
+  // group name in configuration is a claim, not a registered tool). Absent
+  // composition fails closed in the resolver.
+  const skillComposition = {
+    availableWorkflows: options.selectedWorkflows ?? [BUILT_IN_PIPELINE_WORKFLOW_NAME],
+    availablePlugins:
+      options.pluginTools !== undefined
+        ? pluginNamesFromToolNames(options.pluginTools.map((tool) => tool.name))
+        : [...(enabledPlugins as readonly string[])],
+  };
   validateRoleBudgetPercents(options.roleBudgetPercents);
   if (
     options.researchPurpose !== undefined &&
@@ -729,6 +743,7 @@ function resolveConfig(
       selectedSkills: options.selectedSkills,
       disabled: options.skillsDisabled,
       projectDir: options.targetDir,
+      ...skillComposition,
     });
     const activeTools =
       kit.includeLoadTool && !tools.includes(LOAD_SKILL_TOOL_NAME)
@@ -898,6 +913,7 @@ function resolveConfig(
       selectedSkills: options.selectedSkills,
       disabled: options.skillsDisabled,
       projectDir: options.targetDir,
+      ...skillComposition,
     });
     const activeTools =
       kit.includeLoadTool && !tools.includes(LOAD_SKILL_TOOL_NAME)

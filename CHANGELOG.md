@@ -11,6 +11,28 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.47.0] - 2026-09-17
+
+### Added
+
+- **Skills can declare `always: true` and a `requires` dependency** (issue
+  #233). A manifest may now carry `always` (boolean, default false) and
+  `requires` (`{workflows: [names]}` and/or `{plugins: [names]}`).
+  `always: true` pastes the skill's instructions into every role in its `roles`
+  list without the role asking, in catalogue AND pin mode: justified only when
+  a role cannot understand its own situation without the text, never when the
+  text is merely useful -- the 2106-word appendix incident and the 93%
+  input-tokens-from-cache measurement are why the catalogue exists at all.
+  `--no-skills` and a profile with `capabilities.skills: false` still suppress
+  it entirely.
+- **A dependency the session cannot satisfy hides the skill everywhere.**
+  Plugins are matched against really registered tool names, workflows against
+  the modules the run resolved; an undefined composition is treated as having
+  nothing and fails closed. An unmet skill appears in neither the catalogue,
+  nor the paste, nor `config show`'s skill row, and an `always` skill is never
+  a catalogue row -- its text is already in the prompt, so `load_skill` for it
+  answers `skill_not_available`.
+
 ## [0.44.1] - 2026-09-17
 
 ### Fixed

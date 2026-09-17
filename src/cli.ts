@@ -117,7 +117,13 @@ import type { Tool } from "./runner/tool";
 import type { SessionLimits } from "./session-limits";
 import { SessionLimitController } from "./session-limits";
 import { buildLoadSkillTool, LOAD_SKILL_TOOL_NAME } from "./skills/load-tool";
-import { resolveSkills, SkillResolutionError, skillInventory } from "./skills/resolver";
+import {
+  dependenciesMet,
+  pluginNamesFromToolNames,
+  resolveSkills,
+  SkillResolutionError,
+  skillInventory,
+} from "./skills/resolver";
 import { stampCheckErrors, stampDeliveryText } from "./stamp/cli";
 import { UpdateError, updateAdCoder } from "./update/updater";
 import {
@@ -2150,11 +2156,28 @@ function buildConfigOptions(
     skillsDisabled = capabilities.skills === false;
   }
   const workflows = resolveWorkflowsFlag(flags["--workflows"]);
+  // The composition a run's role kits are handed: the workflows this launch
+  // resolved and the plugin groups its flag registers. Both selection modes
+  // filter by it, because pin mode drops a skill whose `requires` is unmet
+  // (src/skills/role-kit.ts) -- a row that skipped the filter would advertise a
+  // capability no run reaches (docs/contracts/skills.md, 2026-09-17).
+  const skillComposition = {
+    availableWorkflows: workflows.names,
+    // The flag's own resolution decides plugin availability here, so the
+    // skill row reports what this launch actually registers: `--plugins
+    // none` proves nothing, an unset flag is the built-in default set.
+    availablePlugins: enabledPlugins ?? ["explore", "web", "vision"],
+  };
   const skillSet = skillsDisabled
     ? []
     : selectedSkills !== undefined
-      ? resolveSkills(selectedSkills, { projectDir: targetDir })
-      : skillInventory({ projectDir: targetDir });
+      ? // A pin still resolves loudly -- unknown, malformed, duplicate, and
+        // oversized ids fail through resolveSkills exactly as before -- and
+        // only the reported set is filtered, so the row names what a run pastes.
+        resolveSkills(selectedSkills, { projectDir: targetDir }).filter((skill) =>
+          dependenciesMet(skill.requires, skillComposition),
+        )
+      : skillInventory({ projectDir: targetDir, ...skillComposition });
   // Source names the layer that decided the set, so profile-off cannot hide
   // behind a flag default and a flag cannot pose as the built-in default.
   const skillsSource: "cli" | "profile" | "built-in-default" =
@@ -2274,7 +2297,17 @@ async function roleCommand(
   // prompt lists skills, alongside the same plugin tools the runner receives.
   const rolePluginTools = config.pluginToolsForModel?.(spec.model) ?? config.pluginTools;
   const roleSkillTools = spec.role.activeToolNames?.includes(LOAD_SKILL_TOOL_NAME)
-    ? [buildLoadSkillTool({ role: name, projectDir: configOptions.targetDir })]
+    ? [
+        buildLoadSkillTool({
+          role: name,
+          projectDir: configOptions.targetDir,
+          availableWorkflows: configOptions.selectedWorkflows ?? ["pipeline"],
+          availablePlugins: pluginNamesFromToolNames([
+            ...(spec.role.activeToolNames ?? []),
+            ...(rolePluginTools ?? []).map((tool) => tool.name),
+          ]),
+        }),
+      ]
     : [];
   const standaloneTools =
     rolePluginTools === undefined && roleSkillTools.length === 0

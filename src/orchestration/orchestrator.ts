@@ -34,6 +34,7 @@ import type { Tool } from "../runner/tool";
 import { defineTool } from "../runner/tool";
 import type { SessionLimitSnapshot, SessionLimits } from "../session-limits";
 import { SessionLimitController, SessionLimitError } from "../session-limits";
+import { pluginNamesFromToolNames } from "../skills/resolver";
 import { roleSkillKit } from "../skills/role-kit";
 import { buildWebTools } from "../web/tools";
 import { resolveWorkflowModules } from "../workflows/registry";
@@ -1329,6 +1330,13 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
         },
       }),
     });
+  // Which workflow modules this orchestrated session really resolved. Hoisted
+  // above the role kit so a skill's `requires.workflows` is judged against the
+  // run's actual composition rather than an assumed one.
+  const enabledModules = resolveWorkflowModules(
+    config.workflowModules ?? [],
+    config.enabledWorkflows ?? [],
+  );
   // One source for skill behaviour, shared with `resolve-config`, the pipeline
   // stages, and the standalone role command: an explicit `--skills` list is a
   // PIN pasted into the prompt; no pin means the CATALOGUE a role loads from
@@ -1341,6 +1349,10 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
       selectedSkills: config.selectedSkills,
       disabled: config.skillsDisabled,
       projectDir: config.targetDir,
+      availableWorkflows: enabledModules.map((module) => module.name),
+      availablePlugins: pluginNamesFromToolNames(
+        (config.pluginTools ?? []).map((tool) => tool.name),
+      ),
     });
 
   // A placeholder task only seeds the config that yields the orchestrator's own
@@ -1348,10 +1360,6 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
   // the tools. Its independent role selection still shares the registry and
   // credential boundary with the pipeline.
   const seed = resolveOrchestratorSeed({ ...sharedConfig, task: "orchestrate" });
-  const enabledModules = resolveWorkflowModules(
-    config.workflowModules ?? [],
-    config.enabledWorkflows ?? [],
-  );
   const core =
     enabledModules.length === 0
       ? undefined

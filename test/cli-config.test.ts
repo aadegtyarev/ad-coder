@@ -1256,6 +1256,79 @@ test("config show reports the resolved workflow capability and its source", () =
   });
 });
 
+test("a resolved pipeline threads the run's composition into every role kit", () => {
+  // The wiring, not just the units: an always skill must reach a role prompt and
+  // a dependency the run cannot satisfy must not, in BOTH role-definition paths
+  // (the named/plugin role builder and the pipeline role builder).
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "resolve-skills-"));
+  const skill = (id: string, manifest: Record<string, unknown>) => {
+    const at = path.join(dir, ".ad-coder", "skills", id);
+    fs.mkdirSync(at, { recursive: true });
+    fs.writeFileSync(
+      path.join(at, "skill.json"),
+      JSON.stringify({ id, version: "1", roles: ["orchestrator", "planner"], ...manifest }),
+    );
+    fs.writeFileSync(path.join(at, "instructions.md"), `${id} body`);
+  };
+  skill("always-pipeline", {
+    description: "unconditional for the pipeline",
+    always: true,
+    requires: { workflows: ["pipeline"] },
+  });
+  skill("needs-web", { description: "needs the web plugin", requires: { plugins: ["web"] } });
+
+  const resolved = resolvePipelineConfig({
+    task: "x",
+    targetDir: dir,
+    registryConfig: mixedRegistry(),
+    profile: buildDefaultProfile({ strong: "small", mid: "small", cheap: "small" }),
+    summarizerModel: "small",
+    // Built-in defaults: explore, web and vision are registered, and the
+    // pipeline workflow is the resolved composition.
+    env: fakeEnv({ LOCAL_KEY: "k" }),
+    warn: silent,
+  });
+  for (const role of ["orchestrator", "planner"] as const) {
+    const prompt = resolved.roles[role]?.role.systemPrompt ?? "";
+    expect(prompt).toContain("always-pipeline body");
+    expect(prompt).toContain("needs-web");
+  }
+
+  // The web plugin really off: the plugin-requiring skill leaves the prompt,
+  // while the always skill that requires only the pipeline workflow stays.
+  const withoutWeb = resolvePipelineConfig({
+    task: "x",
+    targetDir: dir,
+    registryConfig: mixedRegistry(),
+    profile: buildDefaultProfile({ strong: "small", mid: "small", cheap: "small" }),
+    summarizerModel: "small",
+    enabledPlugins: ["explore"],
+    env: fakeEnv({ LOCAL_KEY: "k" }),
+    warn: silent,
+  });
+  for (const role of ["orchestrator", "planner"] as const) {
+    const prompt = withoutWeb.roles[role]?.role.systemPrompt ?? "";
+    expect(prompt).toContain("always-pipeline body");
+    expect(prompt).not.toContain("needs-web");
+  }
+
+  // No workflow resolved: the workflow-requiring always skill is gone too, so a
+  // skill is never pasted into a run that cannot honour its dependencies.
+  const withoutPipeline = resolvePipelineConfig({
+    task: "x",
+    targetDir: dir,
+    registryConfig: mixedRegistry(),
+    profile: buildDefaultProfile({ strong: "small", mid: "small", cheap: "small" }),
+    summarizerModel: "small",
+    selectedWorkflows: [],
+    env: fakeEnv({ LOCAL_KEY: "k" }),
+    warn: silent,
+  });
+  expect(withoutPipeline.roles.planner?.role.systemPrompt ?? "").not.toContain(
+    "always-pipeline body",
+  );
+});
+
 test("--no-skills leaves a role with no catalogue, no loader, and no appendix", () => {
   // The explicit off beats the built-in default: nothing pasted, nothing to
   // load, and no loader registered -- a name-only tool list would advertise a
