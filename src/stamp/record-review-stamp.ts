@@ -19,7 +19,6 @@
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { PipelineResult } from "../orchestration/types";
 import {
   appendReviewStamp,
   computeTreeDigest,
@@ -65,6 +64,21 @@ export interface ReviewStampOutcome {
 }
 
 /**
+ * Everything a stamp is derived from.
+ *
+ * A `PipelineResult` satisfies this, and so does a standalone reviewer run: the
+ * stamp never needed a pipeline, only a review that produced a structured
+ * verdict. Narrowed to exactly these fields so the single-role path records its
+ * stamp through this same writer rather than growing a second one (issue #283).
+ */
+export interface ReviewStampSource {
+  approved: boolean;
+  runIds: string[];
+  stageMetrics: readonly { stage: string; provider?: string; model?: string }[];
+  reviewRan?: boolean;
+}
+
+/**
  * Derive and append the stamp, from the settled result only.
  *
  * A run with `reviewRan: false` writes NOTHING -- there was no review, and a
@@ -74,7 +88,7 @@ export interface ReviewStampOutcome {
  */
 export function recordReviewStampFromResult(
   repoRoot: string,
-  result: PipelineResult,
+  result: ReviewStampSource,
   now: Date = new Date(),
 ): ReviewStampOutcome {
   const marker = readStampsMarker(repoRoot);

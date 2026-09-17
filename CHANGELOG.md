@@ -13,7 +13,7 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
-## [0.49.0] - 2026-09-17
+## [0.51.0] - 2026-09-17
 
 ### Fixed
 - The parser performance test no longer fails on unchanged code. It compared two
@@ -26,6 +26,30 @@ enforces that dated release headings go in non-increasing date order
   against ~350ms measured for the `Set` dedup and ~8500ms for the array scan the
   test exists to prevent. Verified by restoring that scan, which fails the test
   three times in three. (#281)
+
+## [0.50.0] - 2026-09-17
+
+### Fixed
+- **A standalone reviewer is a reviewer**: `ad-coder role reviewer` keeps
+  `submit_verdict` and records its own review stamp (issue #283). The single-role
+  path stripped every `submit_*` tool as pipeline machinery and told the role so
+  in its prompt, which left a real review with no way to state its result as an
+  object -- and the stamp is derived from that object and never from prose, so
+  the cheap path could not produce the paperwork its own pre-merge gate demands.
+  The options left were to run a whole pipeline for a review that already
+  happened, append the stamp line by hand (forging the gate's evidence), or merge
+  with the gate red; a gate routinely stepped around stops being a gate. Found
+  while reviewing PR #282 with the shipped reviewer, which returned a genuine
+  verdict that nothing could record.
+
+  The stamp writer now takes the four fields it always read, rather than a whole
+  `PipelineResult`, so both paths settle through one writer with no second
+  implementation. The standalone prompt override no longer denies a tool that is
+  registered: it names `submit_verdict` as available and keeps the role's own
+  instruction to use it, where before it contradicted the tool it was handed.
+  The review retry from #278 moved beside the tool and now covers both callers --
+  the standalone reviewer faced the same "ends in prose" failure, for the reason
+  that it had nothing to submit with.
 
 ## [0.48.0] - 2026-09-17
 

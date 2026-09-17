@@ -7,6 +7,21 @@ import { OrchestrationError } from "./types";
 /** The tool name the reviewer calls to submit its verdict. */
 export const SUBMIT_VERDICT_TOOL_NAME = "submit_verdict";
 
+/**
+ * How many times a review asks for its verdict before giving up.
+ *
+ * Two, matching the planner's handoff attempts: one retry converts the common
+ * failure -- a thorough inspection that ends in prose -- into a settled review,
+ * while a reviewer that will not submit twice is a configuration problem to
+ * surface rather than a cost to keep paying. Shared by the pipeline round and
+ * the standalone reviewer, which face the same failure for the same reason
+ * (issue #278, issue #283).
+ */
+export const REVIEW_SUBMISSION_ATTEMPTS = 2;
+
+/** Re-states only the submission requirement; the inspection already happened. */
+export const REVIEW_SUBMISSION_RETRY = `Your preceding response did not call ${SUBMIT_VERDICT_TOOL_NAME}. Your review stands; submit it now by calling ${SUBMIT_VERDICT_TOOL_NAME} with the complete verdict object, then stop.`;
+
 const VERDICT_STATUSES: readonly VerdictStatus[] = ["approved", "changes_requested"];
 const ISSUE_SEVERITIES: readonly IssueSeverity[] = ["blocker", "major", "minor"];
 
