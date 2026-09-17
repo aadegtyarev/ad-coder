@@ -32,6 +32,7 @@ import {
   PIPELINE_EVENTS_TOOL_NAME,
   PIPELINE_RESULT_TOOL_NAME,
   PIPELINE_STATUS_TOOL_NAME,
+  type RaisedStageLimits,
   RESUME_PIPELINE_TOOL_NAME,
   RUN_PIPELINE_TOOL_NAME,
   RUN_ROLE_TOOL_NAME,
@@ -459,10 +460,14 @@ test("run_role routes the delegate on the orchestrator's classified tier (issues
 }, 20000);
 
 async function classificationFauxCore(fx: Fixture) {
-  const seen: Array<{ task: string; complexity?: Complexity | undefined }> = [];
+  const seen: Array<{
+    task: string;
+    complexity?: Complexity | undefined;
+    raised?: RaisedStageLimits | undefined;
+  }> = [];
   const core = createOrchestrator({
-    buildConfig: (task, complexity) => {
-      seen.push({ task, complexity });
+    buildConfig: (task, complexity, raised) => {
+      seen.push({ task, complexity, raised });
       return fx.buildConfig(task);
     },
     ledgerSink: fx.sink,
@@ -495,6 +500,58 @@ test("the run_pipeline tool carries the classified tier into the run (issues #26
 
   await callTool(runPipelineTool, { task: "implement X", complexity: "complex" });
   expect(seen).toEqual([{ task: "implement X", complexity: "complex" }]);
+});
+
+test("resume_pipeline carries a raised ceiling into the run, and refuses a malformed one (#208)", async () => {
+  const fx = fixture();
+  const verdict: Verdict = { status: "approved", issues: [], summary: "ok" };
+  approveScenario(fx, verdict);
+  const { core, seen } = await classificationFauxCore(fx);
+  const resumeTool = buildOrchestratorTools(core, [], [BUILT_IN_PIPELINE_WORKFLOW]).find(
+    ({ name }) => name === RESUME_PIPELINE_TOOL_NAME,
+  ) as Tool;
+
+  // The correction operator-flow.md requires: a stage that exhausted its
+  // ceiling on progressing work resumes at a LARGER one. The coordinator
+  // refuses an unchanged number ("unchanged <reason> stage limit"), so without
+  // this path the contract's own rule was unreachable from inside a run.
+  await callTool(resumeTool, {
+    task: "finish the work",
+    runId: "run-1",
+    raiseRole: "coder",
+    raiseReason: "input",
+    raiseLimit: 800_000,
+  });
+  expect(seen[0]?.raised).toEqual({ role: "coder", reason: "input", limit: 800_000 });
+
+  // A resume with no raise still works: not every pause is a ceiling.
+  await callTool(resumeTool, { task: "finish the work", runId: "run-1" });
+  expect(seen[1]?.raised).toBeUndefined();
+
+  // Each field is checked against the shipped unions rather than trusted, and
+  // a refusal names what was wrong instead of silently dropping the parameter.
+  const unknownRole = await callTool(resumeTool, {
+    task: "t",
+    runId: "run-1",
+    raiseRole: "typist",
+    raiseReason: "input",
+    raiseLimit: 1,
+  });
+  expect(unknownRole).toContain("typist");
+  const unknownReason = await callTool(resumeTool, {
+    task: "t",
+    runId: "run-1",
+    raiseRole: "coder",
+    raiseReason: "vibes",
+    raiseLimit: 1,
+  });
+  expect(unknownReason).toContain("vibes");
+  const partial = await callTool(resumeTool, {
+    task: "t",
+    runId: "run-1",
+    raiseRole: "coder",
+  });
+  expect(partial).toContain("together or not at all");
 });
 
 test("run_role description states the session's live delegates, models, and world when facts exist", async () => {
