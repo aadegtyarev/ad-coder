@@ -13,6 +13,27 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.59.0] - 2026-09-17
+
+### Fixed
+- **A pipeline no longer hangs forever when the planner submits no plan**
+  (issue #315). The coordinator records a resumable `plan_not_submitted` pause,
+  the way a review that never ran already records `review_not_run`.
+
+  Observed live: the planner spent both handoff attempts writing prose without
+  calling `submit_plan` -- `submit_plan` appears 38 times in that session's
+  transcript and not once as a tool call, while the tool WAS registered. The
+  coordinator had no branch for `missing_plan`, so the error escaped every
+  handler: the checkpoint kept its pre-stage value, and the `run_pipeline` tool
+  call that started the run stayed pending for 48 minutes, indistinguishable
+  from work in progress. Silence is the one outcome a caller cannot act on.
+
+  Narrowed to `missing_plan` deliberately. A planner that called the tool with
+  bad data raises `malformed_plan`, which names the field that was refused;
+  pausing on that would send an operator looking for a planner that never ran
+  instead of at the field to correct. Two different failures, two different
+  answers.
+
 ## [0.58.0] - 2026-09-17
 
 ### Added

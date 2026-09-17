@@ -308,7 +308,10 @@ export class RunCoordinator {
         pauseCode !== "interrupted" &&
         // A review that never ran is a red pause like a red gate: the same
         // explicit operator act is what lets the review be attempted again.
-        pauseCode !== "review_not_run")
+        pauseCode !== "review_not_run" &&
+        // A plan that never arrived is resumable for the same reason a review
+        // that never ran is (issue #315): the stage can be attempted again.
+        pauseCode !== "plan_not_submitted")
     )
       throw new ProjectOperationsError("unauthorized_resolution", checkpoint.runId);
     if (pauseCode !== "stage_limit") {
@@ -536,6 +539,35 @@ export class RunCoordinator {
             phase: "review",
             code: "review_not_run",
             action: `the review stage did not run (${error.code}); inspect the reviewer's registration and configuration, then resume the review explicitly`,
+          },
+        });
+        return undefined;
+      }
+      if (
+        error instanceof OrchestrationError &&
+        // `missing_plan` ONLY: a planner that called the tool with bad data is a
+        // different failure, and `malformed_plan` names the field that was
+        // refused. Pausing on that would send the operator looking for a planner
+        // that never ran instead of at the field to correct -- the same
+        // confusion the session's own comment warns about.
+        error.code === "missing_plan" &&
+        checkpoint.workflowState.phase === "plan"
+      ) {
+        // Same reasoning as the review pause above, for the stage that comes
+        // first (issue #315). A planner that spends its handoff attempts without
+        // calling `submit_plan` throws here, and with no branch for it the error
+        // escaped every handler: the checkpoint kept its pre-stage value, the
+        // run never settled, and the `run_pipeline` tool call that started it
+        // stayed pending forever. Observed live -- two planner attempts ending
+        // `stop` with no tool call, then 48 minutes of silence that looked
+        // exactly like work in progress. A pause is recoverable; silence is the
+        // one outcome a caller cannot act on.
+        this.save({
+          ...checkpoint,
+          pause: {
+            phase: "plan",
+            code: "plan_not_submitted",
+            action: `the planner did not submit a plan (${error.code}); inspect the planner's registration and configuration, then resume the plan explicitly`,
           },
         });
         return undefined;

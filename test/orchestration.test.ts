@@ -1318,6 +1318,12 @@ test("a planner emitting only text fails closed before code", async () => {
     ...reviewerTurn(verdict),
   ]);
 
+  // The run fails closed before any coder dispatch -- that has always been the
+  // point of this test. What it surfaces changed with issue #315: the coordinator
+  // now records a resumable `plan_not_submitted` pause, because a planner that
+  // produced no submission can be attempted again once its model or ceiling is
+  // adjusted, and because an unrecorded failure left the run hanging silently.
+  // The pause carries the original `missing_plan` in its action text.
   await expect(
     runPipeline({
       targetDir: fx.targetDir,
@@ -1326,7 +1332,7 @@ test("a planner emitting only text fails closed before code", async () => {
       maxRounds: 3,
       roles: { planner, coder, reviewer },
     }),
-  ).rejects.toMatchObject({ code: "missing_plan" });
+  ).rejects.toMatchObject({ pause: { phase: "plan", code: "plan_not_submitted" } });
 });
 
 test("a planner whole-JSON fallback is strictly validated before code", async () => {
@@ -1392,7 +1398,7 @@ test("a default-open planner emitting only text fails closed before code", async
         reviewer: reviewerRole(fx),
       },
     }),
-  ).rejects.toMatchObject({ code: "missing_plan" });
+  ).rejects.toMatchObject({ pause: { phase: "plan", code: "plan_not_submitted" } });
 });
 
 test("parsePlan rejects invented contract IDs and covered entries without evidence", () => {
