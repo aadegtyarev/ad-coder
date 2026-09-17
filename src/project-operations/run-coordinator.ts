@@ -9,6 +9,7 @@ import {
   WorkflowStageLimitError,
 } from "../orchestration/session";
 import {
+  ROLE_BY_PHASE,
   STAGE_LIMIT_KEY,
   StageLimitError,
   type StageLimitReason,
@@ -18,6 +19,7 @@ import type {
   PipelineResult,
   ResearchDispatchIntent,
   StepResult,
+  WorkflowPhase,
   WorkflowState,
 } from "../orchestration/types";
 import { OrchestrationError } from "../orchestration/types";
@@ -323,7 +325,18 @@ export class RunCoordinator {
     // here and the field written there must be the same one, or a raise would
     // satisfy this check without changing what the stage actually measures.
     const key = STAGE_LIMIT_KEY[reason];
-    const resumedLimit = this.session.stageLimits?.[key] ?? 0;
+    // ...and the same OBJECT, which is the half this originally missed (#208).
+    // A raise lands on the role that ran the paused stage -- the orchestrator
+    // raises `planner` when the plan stage exhausts its budget -- so reading the
+    // session-wide ceiling saw an unchanged number and refused a correct raise,
+    // leaving the run unresumable however large the new ceiling was. Observed
+    // live: two resumes with raiseLimit 900000 both rejected against the 180000
+    // default. The phase names the role, so nothing extra has to be persisted
+    // and checkpoints written before this fix still resolve.
+    const pausedRole = ROLE_BY_PHASE[checkpoint.workflowState.phase as WorkflowPhase];
+    const roleLimit =
+      pausedRole === undefined ? undefined : this.session.roleStageLimits?.[pausedRole]?.[key];
+    const resumedLimit = roleLimit ?? this.session.stageLimits?.[key] ?? 0;
     if (resumedLimit !== 0 && resumedLimit <= priorLimit)
       throw new ProjectOperationsError("invalid_config", `unchanged ${reason} stage limit`);
     const next = { ...checkpoint };
