@@ -4,20 +4,12 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type {
   AgentHarnessOptions,
-  AgentHarnessTool,
   Context,
   ExecutionToolContext,
   OperationResultRecord,
   Session,
 } from "@earendil-works/pi-agent-core";
-import {
-  AgentHarness,
-  BACKGROUND_CONTEXT,
-  createBashTool,
-  createEditTool,
-  createReadTool,
-  createWriteTool,
-} from "@earendil-works/pi-agent-core";
+import { AgentHarness, BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/harness/env/nodejs";
 import type { Api, Model, Models, TextContent } from "@earendil-works/pi-ai";
 import { closeOpenAICodexWebSocketSessions } from "@earendil-works/pi-ai/api/openai-codex-responses";
@@ -48,6 +40,7 @@ import type { ProjectStoreConfig } from "../project-store/types";
 import type { Role } from "../role";
 import { toHarnessOptions } from "../role";
 import type { SessionLimitController } from "../session-limits";
+import { createBuiltinTools } from "./builtin-tools";
 import {
   assertRunId,
   assertUniqueToolNames,
@@ -530,12 +523,7 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
 
   const env = new NodeExecutionEnv({ cwd: absTargetDir });
   const toolContext: ExecutionToolContext = { env };
-  const builtin: AgentHarnessTool<ExecutionToolContext>[] = [
-    createBashTool(),
-    createReadTool(),
-    createWriteTool(),
-    createEditTool(),
-  ];
+  const builtin = [...createBuiltinTools(env)];
   // Concatenate before validating so the collision guard sees the full set
   // (built-in-vs-custom and custom-vs-custom). `?? []` avoids ever registering
   // `undefined` when no custom tools were supplied -- prior behavior byte-for-byte.

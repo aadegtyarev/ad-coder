@@ -58,3 +58,12 @@ for machines?
   checking permissions, never re-checking the path. The file byte ceiling is
   also applied against a stat BEFORE the read, so the limit that bounds the
   read acts before the read instead of after an unbounded block.
+- 2026-09-17 (issue #231): A failed `edit` call is self-serviceable INSIDE one failing call. The not-found error said
+  the text
+  must match exactly but not where the file's equivalent region sat, so the measured model's cheapest move after a
+  failure was an invisible `sed -i` from bash -- no path, no diff, no observability. Now a not-found failure names the
+  file's closest matching region (line and similarity, `close` vs. stale) and a non-uniqueness failure names bounded
+  occurrence line numbers, each with one recovery sentence: read the named region, rebuild oldText from what the file
+  contains, retry the EDIT. The evidence never includes file content, and it is skipped -- the unenriched upstream
+  error passes through -- when the file cannot be read or exceeds the positive diagnostic read ceiling, because advice
+  invented without evidence misdirects the retry more than no advice at all.

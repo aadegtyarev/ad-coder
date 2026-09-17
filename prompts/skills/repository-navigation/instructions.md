@@ -6,7 +6,7 @@ Ask the repository one question per call, and prefer the tool built for the ques
 - **Where something is** — `search_project`. It returns ranked `path:line`, bounded, without pulling file bodies into context.
 - **What it says** — `read_project` for the slices you chose; `read` when you need the whole file.
 - **Shape of the project** — `explore_project`. Structure and sizes without contents.
-- **Everything else** — `bash`. It has no description of its own and can do anything, which makes it the easiest wrong answer: before reaching for it, name the specific tool you are declining to use and why.
+- **Everything else** — `bash`. Its own description says what it is for and what it is NOT for: the escape hatch for what no specialised tool covers. The failure that gives it that reputation is passing the narrow contract's look-small check: when a specialised tool's contract fits (read, write, edit, search), use it even when bash seems quicker, and say to yourself which one you are declining and why.
 
 ## Git, specifically
 

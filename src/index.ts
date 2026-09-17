@@ -522,6 +522,19 @@ export type {
 export { DEFAULT_CONTEXT_WINDOW, parseRegistryConfig } from "./registry/validate";
 export type { Role, RoleRunDeps } from "./role";
 export { defineRole, resolveRoleModel, toHarnessOptions } from "./role";
+export type {
+  EditDiagnosticRegion,
+  EditDiagnosticsOptions,
+} from "./runner/builtin-tools";
+export {
+  BASH_TOOL_DESCRIPTION,
+  createBuiltinTools,
+  DEFAULT_EDIT_DIAGNOSTIC_MAX_BYTES,
+  locateEditOccurrences,
+  locateNearestEditRegion,
+  MAX_REPORTED_OCCURRENCES,
+  wrapEditToolWithDiagnostics,
+} from "./runner/builtin-tools";
 export type { RunnerErrorCode } from "./runner/errors";
 export {
   ConfiguredToolsUnavailableError,
