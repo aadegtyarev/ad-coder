@@ -13,6 +13,21 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.50.1] - 2026-09-17
+
+### Added
+- `architecture-recon` gains a third habit: **somebody has met this format before
+  you**. Anything involving a third-party tool, protocol or wire format has
+  almost certainly been handled elsewhere -- in a library, in a dependency
+  already present, or in the tracker about to be filed into. Written after one
+  session broke it twice within an hour: a fallback parser was started without
+  checking whether one existed, and an issue was filed that duplicated an
+  existing one. The search overturned the diagnosis -- what looked like a
+  corrupted transport was a model's documented tool-call format with parsers in
+  every major inference engine -- before code was written against the wrong
+  picture. The outcome may still be "write our own"; reading someone else's
+  first is what makes that a decision rather than an assumption.
+
 ## [0.50.0] - 2026-09-17
 
 ### Fixed
