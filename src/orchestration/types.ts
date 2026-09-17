@@ -1,4 +1,5 @@
 import type { Api, Model, Models } from "@earendil-works/pi-ai";
+import type { DelegatedRoute } from "../cli/resolve-config";
 import type { ContextBudgetPercents } from "../context/budget";
 import type { CompactionPolicy } from "../context/compactor";
 import type { CostAnomalyDetector } from "../economics/cost-anomaly";
@@ -276,6 +277,8 @@ export interface PipelineConfig {
   pluginToolsForModel?: (model: Model<Api>) => Tool[];
   /** Optional Planner governance limits; every zero value disables that limit. */
   surfaceAnalysisLimits?: SurfaceAnalysisLimits;
+  /** Resolved pairing of each delegatable role with its model this session. */
+  delegatedRoute?: DelegatedRoute;
   roles: {
     planner?: RoleSpec;
     /** Optional bounded fact-finding role used before Coder for research-required coverage. */

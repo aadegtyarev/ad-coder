@@ -4,6 +4,31 @@ All notable changes to ad-coder are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project aims at
 [Semantic Versioning](https://semver.org/).
 
+## [0.39.0] - 2026-09-17
+
+### Added
+- **The orchestrator now knows its session's delegation world** (issue #232):
+  which worker roles exist, on which models, and in which execution mode.
+
+  The static half lives in a shipped skill, not the unconditional prompt:
+  `role-selection` (v1, orchestrator-scoped) carries the three execution paths
+  (direct editing, roles only, roles plus pipeline) with the tool markers that
+  tell them apart, what each delegable role does and returns, and the
+  conditions under which delegation is the wrong call. The orchestrator prompt
+  keeps one line per surface and points there.
+
+  The live half is assembled by the machine, never authored: the resolver now
+  attaches `delegatedRoute` -- the same role-to-model grouping the startup
+  banner prints (source, complexity, reachable groups, roles that resolved to
+  no model) -- to the resolved config, and `buildRunRoleTool` renders it into
+  the `run_role` tool description along with the session's mode. Roles not
+  routed say so; the description names the `role-selection` skill for the
+  static half. Hosts still constructing the tool outside a resolved session
+  get the former plain role list.
+
+  (docs/contracts/skills.md, docs/contracts/operation-modes.md,
+  docs/contracts/config.md)
+
 ## [0.38.2] - 2026-09-17
 
 ### Fixed

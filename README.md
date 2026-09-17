@@ -204,8 +204,10 @@ the same turn-only interruption for scripted terminals.
 With `--workflows=false`, the pipeline's `run_pipeline`, `decompose_task`,
 `run_step`, `choose_transition`, and `show_cost` tools are not registered. Standalone
 `drive` still explicitly selects the built-in pipeline. The general `run_role`
-tool remains available either way and lets the Orchestrator invoke Planner,
-Researcher, Security, Coder, Reviewer, or Auditor independently.
+tool remains available either way and lets the Orchestrator invoke a worker
+role independently; which roles this session actually has and on which models
+is stated in that tool's description, assembled from the resolved routing the
+startup banner prints.
 
 Enter `/exit` or EOF to close it. While a turn runs, semantic `Read`,
 `Search`, `Edit`, `Run`, `Web`, and `Inspect image` summaries appear on stderr.

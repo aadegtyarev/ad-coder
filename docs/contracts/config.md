@@ -163,3 +163,10 @@ The 2026-09-17 boundary rule extends the capability table across the one
 process boundary the CLI itself owns: the detached background worker repeats
 the operator's explicit capability words verbatim (issue #245) instead of
 re-resolving them to enabled defaults.
+The 2026-09-17 delegation-facts rule (issue #232) makes the resolver's role-to-
+model grouping -- the data the startup banner prints -- a structured field of
+the resolved config (`delegatedRoute`: source, complexity, reachable groups,
+and roles that resolved to no model). The conversational front renders that
+field into the `run_role` tool description instead of listing role names as
+prose, so the facts an orchestrator delegates on are the facts the operator
+was shown, under the same overriding rules the banner already answers to.

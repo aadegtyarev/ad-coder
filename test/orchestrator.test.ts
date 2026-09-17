@@ -379,6 +379,52 @@ test("run_role delegates independently and rejects unknown role names safely", a
   expect(calls).toHaveLength(1);
 });
 
+test("run_role description states the session's live delegates, models, and world when facts exist", async () => {
+  const tool = buildRunRoleTool(async () => ({ role: "coder", text: "", cost: 0 }), {
+    route: {
+      source: 'inventory "test-go"',
+      complexity: "medium",
+      groups: [
+        { model: "flash", roles: ["planner", "researcher"] },
+        { model: "ds41", roles: ["coder", "reviewer"] },
+      ],
+      unreachable: ["auditor"],
+    },
+    workflows: [],
+  });
+  const live = tool.description;
+  expect(live).toContain(
+    'inventory "test-go" | complexity "medium" | flash: planner, researcher | ds41: coder, reviewer | not configured: auditor',
+  );
+  expect(live).toContain("roles-only mode");
+  expect(live).toContain("role-selection");
+  // Security is only absent when the profile leaves it unrouted; here it is
+  // mapped, so the description cannot call it unconfigured.
+  expect(live).toContain("coder, reviewer");
+
+  const pipelineWorld = buildRunRoleTool(
+    async () => ({
+      role: "coder",
+      text: "",
+      cost: 0,
+    }),
+    {
+      route: {
+        source: 'provider "test"',
+        complexity: "low",
+        groups: [{ model: "m1", roles: ["coder"] }],
+        unreachable: [],
+      },
+      workflows: ["pipeline"],
+    },
+  ).description;
+  expect(pipelineWorld).toContain("roles plus workflow mode (pipeline)");
+  // Without session facts, the tool keeps the plain role list it always had.
+  expect(
+    buildRunRoleTool(async () => ({ role: "coder", text: "", cost: 0 })).description,
+  ).toContain("Available roles: planner, researcher, security, coder, reviewer, auditor");
+});
+
 test("pipeline-disabled startOrchestrator delegates Researcher and Auditor with own roles", async () => {
   const targetDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-delegated-")));
   const credentials: CredentialStore = {
@@ -422,6 +468,40 @@ test("pipeline-disabled startOrchestrator delegates Researcher and Auditor with 
   expect(delegated[1]?.tools).toContain(EXPLORE_PROJECT_TOOL_NAME);
   expect(delegated.flatMap(({ tools }) => tools)).not.toContain("write");
 });
+
+test("startOrchestrator renders the delegated tool description from the resolved session, not prose", async () => {
+  const targetDir = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-runrole-live-")),
+  );
+  const credentials: CredentialStore = {
+    read: async () => ({ type: "oauth", access: "a", refresh: "r", expires: 0 }),
+    list: async () => [],
+    modify: async (_providerId, fn) => fn(undefined),
+    delete: async () => {},
+  };
+  let outerTools: Tool[] = [];
+  await startOrchestrator({
+    targetDir,
+    env: () => undefined,
+    warn: () => {},
+    credentials,
+    researcherModel: "codex-sol",
+    auditorModel: "codex-terra",
+    enabledWorkflows: [],
+    startConversation: async (config) => {
+      outerTools = config.tools ?? [];
+      return fakeConversation("outer");
+    },
+  });
+  const description = (outerTools.find(({ name }) => name === RUN_ROLE_TOOL_NAME) as Tool)
+    .description;
+  // Live facts come from the resolved config, matching what the startup banner
+  // prints -- model names and the roles routed to them, not a memorized list.
+  expect(description).toContain('provider "openai-codex" | complexity "medium"');
+  expect(description).toContain("Sol: planner, researcher, coder, security");
+  expect(description).toContain("Terra: reviewer, auditor");
+  expect(description).toContain("roles-only mode");
+}, 20000);
 
 test("every delegated role's activeToolNames names a tool the conversation registers", async () => {
   // #236: a delegated role's tool list was assembled from resolver output. The

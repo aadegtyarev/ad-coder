@@ -30,6 +30,15 @@ test("loads shipped skills with a content digest", () => {
   expect(skill).toBeDefined();
   if (skill === undefined) throw new Error("missing built-in skill");
   expect(skill).toMatchObject({ id: "task-slicing", version: "1", source: "builtin" });
+  const roleSelection = resolveSkills(["role-selection"])[0];
+  expect(roleSelection).toBeDefined();
+  if (roleSelection === undefined) throw new Error("missing built-in skill");
+  expect(roleSelection).toMatchObject({ id: "role-selection", version: "1", source: "builtin" });
+  // The static half of issue #232: what each worker role does, returns, and
+  // when delegating to it is wrong -- never a restatement of the role names.
+  expect(roleSelection.instructions).toContain("Roles only");
+  expect(roleSelection.instructions).toContain("do not call it");
+  expect(roleSelection.instructions.length).toBeGreaterThan(600);
   // Substance, not a phrase: a skill that only restates the role prompt is the
   // defect these were expanded to fix. Each must carry a stop rule and the
   // failure it exists to prevent, which is what a role prompt does not have
