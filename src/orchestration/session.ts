@@ -1324,6 +1324,20 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     return { state: nextState, result, transitions };
   };
 
+  /**
+   * How many times a review round asks for its verdict before the run pauses.
+   *
+   * Two, matching the planner's handoff attempts: one retry converts the common
+   * failure -- a thorough inspection that ends in prose -- into a settled round,
+   * while a reviewer that will not submit twice is a configuration problem the
+   * pause should surface rather than a cost to keep paying.
+   */
+  const REVIEW_SUBMISSION_ATTEMPTS = 2;
+
+  /** Re-states only the submission requirement; the inspection already happened. */
+  const REVIEW_SUBMISSION_RETRY =
+    "Your preceding response did not call submit_verdict. Your review stands; submit it now by calling submit_verdict with the complete verdict object, then stop.";
+
   const stepReview = async (state: WorkflowState): Promise<StepResult> => {
     const round = state.round;
     const attempt = stageAttempt(state, "review", `review:${round}`);
@@ -1331,7 +1345,6 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     // Fresh holder + tool PER ROUND: a stale verdict from an earlier round can
     // never be read as this round's (mirrors the old per-runId file keying).
     const capture: VerdictCapture = {};
-    const submitTool = buildSubmitVerdictTool(capture, runId, state.surfaceAnalysis);
     const coderMetrics = [...(state.stageMetrics ?? [])]
       .reverse()
       .find((metric) => metric.stage.startsWith("code:"));
@@ -1372,24 +1385,53 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
             formatGateEvidence(state.lastGateReport),
           );
     const selection = pickSelection("reviewer", config.roles.reviewer, state.effective);
-    const {
-      text,
-      followUps,
-      metrics: rawMetrics,
-    } = await runWorkflowTurn(
-      config.roles.reviewer,
-      selection,
-      prompt,
-      `review:${round}`,
-      runId,
-      [
-        submitTool,
-        ...(config.pluginToolsForModel?.(selection.model) ?? config.pluginTools ?? []),
-        ...skillTools(config.roles.reviewer),
-      ],
-      true,
-      attempt.resume ? attempt.stage : undefined,
-    );
+    // ONE MORE ATTEMPT WHEN THE VERDICT NEVER ARRIVED (issue #278).
+    //
+    // A reviewer that inspects thoroughly and then ends its turn in prose has
+    // done the work and skipped the submission; measured on a flash reviewer,
+    // roughly two attempts in three ended that way, and each one paused the run
+    // at `review_not_run` with nothing recoverable. The planner has carried the
+    // same retry since it was written (`plannerHandoffAttempts`) for the same
+    // reason, so this is the existing answer applied to the other required-tool
+    // stage rather than a new mechanism.
+    //
+    // The retry re-states the submission requirement and nothing else: the
+    // review itself was not the problem, and re-prompting the whole task would
+    // pay for the inspection twice.
+    let text = "";
+    let followUps: FollowUp[] = [];
+    let rawMetrics: PipelineStageMetrics | undefined;
+    let attemptRunId = runId;
+    for (let index = 0; index < REVIEW_SUBMISSION_ATTEMPTS; index += 1) {
+      // A FRESH run id per attempt, as the planner's handoff does: a turn is
+      // keyed by run id in the session store, so re-asking under the first
+      // one is rejected as an existing session rather than reaching the model.
+      if (index > 0) attemptRunId = crypto.randomUUID();
+      const submitTool = buildSubmitVerdictTool(capture, attemptRunId, state.surfaceAnalysis);
+      const turn = await runWorkflowTurn(
+        config.roles.reviewer,
+        selection,
+        index === 0 ? prompt : `${prompt}\n\n${REVIEW_SUBMISSION_RETRY}`,
+        `review:${round}`,
+        attemptRunId,
+        [
+          submitTool,
+          ...(config.pluginToolsForModel?.(selection.model) ?? config.pluginTools ?? []),
+          ...skillTools(config.roles.reviewer),
+        ],
+        true,
+        index === 0 && attempt.resume ? attempt.stage : undefined,
+      );
+      text = turn.text;
+      followUps = turn.followUps;
+      rawMetrics = turn.metrics;
+      // A rejected submission is a DIFFERENT failure: the reviewer called the
+      // tool and the payload was refused, so retrying the same prompt would
+      // repeat the same malformed call. That path keeps throwing below.
+      if (capture.verdict !== undefined || capture.error !== undefined) break;
+    }
+    if (rawMetrics === undefined)
+      throw new OrchestrationError("missing_verdict", runId, "reviewer produced no turn");
     const metrics = {
       ...rawMetrics,
       pipelineContextStrategy: decision.selection,

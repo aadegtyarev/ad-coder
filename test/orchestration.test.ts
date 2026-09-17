@@ -1003,14 +1003,46 @@ test("a shared ledger sink carries distinct role/step records per round", async 
   }
 });
 
+test("a reviewer that reviewed in prose is asked again, and its verdict settles the round (#278)", async () => {
+  const fx = fixture();
+  const coder = fx.role("coder", "You code.");
+  const reviewer = reviewerRole(fx);
+  // The measured failure: a thorough inspection that ends in prose without
+  // calling submit_verdict -- roughly two attempts in three on a flash
+  // reviewer. The review happened; only the submission was skipped, so the
+  // round must not be thrown away.
+  fx.faux.setResponses([
+    fauxAssistantMessage("coded"),
+    fauxAssistantMessage("I reviewed it thoroughly and it looks correct"),
+    ...reviewerTurn({ status: "approved", issues: [], summary: "good" }),
+  ]);
+
+  const result = await runPipeline({
+    targetDir: fx.targetDir,
+    models: fx.models,
+    task: "implement R",
+    maxRounds: 2,
+    roles: { coder, reviewer },
+  });
+
+  expect(result.approved).toBe(true);
+  expect(result.verdicts.at(-1)?.status).toBe("approved");
+  // One review ROUND, settled on its second ask -- not a second round, which
+  // would have re-run the coder and paid for the inspection twice.
+  expect(result.rounds).toBe(1);
+});
+
 test("a reviewer that never calls submit_verdict blocks as a red review-not-run pause", async () => {
   const fx = fixture();
   const coder = fx.role("coder", "You code.");
   const reviewer = reviewerRole(fx);
-  // Reviewer emits only text -- no submit_verdict tool call.
+  // Reviewer emits only text -- no submit_verdict tool call. TWICE: the stage
+  // asks again when the verdict never arrived (#278), so a reviewer that will
+  // not submit has to refuse both times for the pause to be the real outcome.
   fx.faux.setResponses([
     fauxAssistantMessage("coded"),
     fauxAssistantMessage("I reviewed but submitted no verdict"),
+    fauxAssistantMessage("still no verdict"),
   ]);
 
   let caught: unknown;

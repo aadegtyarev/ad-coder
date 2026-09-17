@@ -4,7 +4,7 @@ tags
 .claude/ldo-args/
 
 # Dependencies and local run state
-node_modules/
+node_modules
 .ad-coder/*
 !.ad-coder/calibration.json
 
