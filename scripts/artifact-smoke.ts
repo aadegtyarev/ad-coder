@@ -45,6 +45,9 @@ const TRACKED_FILES = new Set([
   "bun.lock",
   "package.json",
   "tsconfig.json",
+  // Every-PR delivery/review stamping opt-in switch; deliberately committed at the
+  // repo root and deliberately excluded from package files (not in "files").
+  "ad-coder.stamps.json",
 ]);
 const SECRET_PATTERNS: Array<[string, RegExp]> = [
   ["private-key", /-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/],
