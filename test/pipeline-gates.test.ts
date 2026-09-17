@@ -335,8 +335,11 @@ test("the coordinator renders a review that did not run as a red pause, resumabl
   const reviewer = reviewerRole(fx);
   fx.faux.setResponses([
     fauxAssistantMessage("coded"),
-    // The reviewer runs but never calls submit_verdict.
+    // The reviewer runs but never calls submit_verdict -- TWICE, because the
+    // stage asks again when the verdict never arrived (#278). A reviewer that
+    // will not submit at all is what this pause is for.
     fauxAssistantMessage("I looked but did not submit a verdict"),
+    fauxAssistantMessage("still no verdict"),
   ]);
   const session = createWorkflowSession({
     targetDir: fx.targetDir,
