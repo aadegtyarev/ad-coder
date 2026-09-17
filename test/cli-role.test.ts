@@ -464,3 +464,27 @@ test("every attempt ending in prose still charges every attempt", async () => {
   expect(result.cost).toBeCloseTo(0.02, 10);
   expect(result.text).toBe("attempt 1");
 });
+
+test("an unknown role is refused before a start is announced", () => {
+  // `withCliProgress` prints "started role X; waiting for provider" the moment it
+  // is entered, so validating inside the command produced a success line followed
+  // by a failure (issue #306). Anything reading the first line -- a person
+  // glancing at output, a log tail, a wrapper script -- saw a run that had begun.
+  const result = Bun.spawnSync([
+    process.execPath,
+    "run",
+    path.join(import.meta.dir, "..", "src", "cli.ts"),
+    "role",
+    "nosuchrole",
+    "some task",
+    "--target-dir",
+    targetDir,
+  ]);
+  const stderr = result.stderr.toString();
+  expect(stderr).toContain("unknown role: nosuchrole");
+  expect(stderr).not.toContain("started role");
+  // The orchestrator is a configured role with its own prompt and profile row,
+  // so it belongs in the accepted set rather than being reachable only through
+  // an interactive console.
+  expect(stderr).toContain("orchestrator");
+});

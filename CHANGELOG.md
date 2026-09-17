@@ -13,6 +13,27 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.56.0] - 2026-09-17
+
+### Fixed
+- **`ad-coder role orchestrator` works, and an unknown role no longer announces a
+  start first** (issue #306).
+
+  The orchestrator is a configured role like any other -- its own prompt, its own
+  row in every inventory profile, its own ceilings -- but `role` did not accept
+  it, so a one-shot orchestrator task or a scripted invocation had no route but
+  an interactive console.
+
+  The name is now validated before `withCliProgress` prints
+  `started role X; waiting for provider`. Previously a bad name produced that
+  success line and *then* the failure, so anything reading the first line -- a
+  person glancing at output, a log tail, a wrapper script -- saw a run that had
+  begun.
+
+  The role list in `--help` is rendered from `ROLE_NAMES` rather than spelled out
+  by hand. The hand-written copy is how `orchestrator` came to be missing from it
+  while every inventory declared the role: two lists, one of them silently stale.
+
 ## [0.55.0] - 2026-09-17
 
 ### Fixed

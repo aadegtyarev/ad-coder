@@ -149,7 +149,20 @@ import {
   BUILT_IN_PIPELINE_WORKFLOW_NAME,
 } from "./workflows/builtin-pipeline";
 
-const ROLE_NAMES = ["planner", "researcher", "coder", "reviewer", "auditor", "security"] as const;
+// The orchestrator is included because it is a configured role like any other --
+// its own prompt, its own profile row, its own ceilings -- and excluding it made
+// `ad-coder role orchestrator` fail with "unknown role" while every inventory
+// listed it (issue #306). A one-shot orchestrator task, a scripted invocation,
+// or simply asking it a question had no route but an interactive console.
+const ROLE_NAMES = [
+  "orchestrator",
+  "planner",
+  "researcher",
+  "coder",
+  "reviewer",
+  "auditor",
+  "security",
+] as const;
 type RoleName = (typeof ROLE_NAMES)[number];
 const PROVIDERS = ["deepseek", "openrouter", "openai-codex"] as const;
 const COMPLEXITIES = ["trivial", "medium", "complex"] as const;
@@ -685,19 +698,29 @@ export async function runRoleStandalone(params: {
 }
 
 /** The resolved RoleSpec for a validated shipped role name. */
+/** Reject an unknown role name, so no caller announces a start it cannot honour. */
+function assertKnownRole(name: string | undefined): RoleName {
+  if (name === undefined) fail("missing <role>");
+  if (!(ROLE_NAMES as readonly string[]).includes(name))
+    fail(`unknown role: ${name} (expected one of ${ROLE_NAMES.join(", ")})`);
+  return name as RoleName;
+}
+
 function roleSpecFor(config: PipelineConfig, name: RoleName): RoleSpec {
   const spec =
-    name === "planner"
-      ? config.roles.planner
-      : name === "researcher"
-        ? config.roles.researcher
-        : name === "security"
-          ? config.roles.security
-          : name === "coder"
-            ? config.roles.coder
-            : name === "reviewer"
-              ? config.roles.reviewer
-              : config.roles.auditor;
+    name === "orchestrator"
+      ? config.roles.orchestrator
+      : name === "planner"
+        ? config.roles.planner
+        : name === "researcher"
+          ? config.roles.researcher
+          : name === "security"
+            ? config.roles.security
+            : name === "coder"
+              ? config.roles.coder
+              : name === "reviewer"
+                ? config.roles.reviewer
+                : config.roles.auditor;
   if (spec === undefined) {
     throw new Error(`ad-coder: internal error: resolved config has no ${name} role`);
   }
@@ -2331,11 +2354,7 @@ async function roleCommand(
   positionals: string[],
   flags: Record<string, string | undefined>,
 ): Promise<void> {
-  const name = positionals[1];
-  if (name === undefined) fail("missing <role>");
-  if (!(ROLE_NAMES as readonly string[]).includes(name)) {
-    fail(`unknown role: ${name} (expected one of ${ROLE_NAMES.join(", ")})`);
-  }
+  const name = assertKnownRole(positionals[1]);
   const task = positionals[2];
   if (task === undefined) fail("missing <task>");
   const targetDirArg = flags["--target-dir"];
@@ -3438,7 +3457,10 @@ const COMMANDS: readonly CommandDefinition[] = [
     description: "Run one shipped role once.",
     positionals: [
       {
-        name: "<planner|researcher|coder|reviewer|auditor|security>",
+        // Derived, not spelled out: a hand-written list drifts from ROLE_NAMES
+        // silently, which is how `orchestrator` came to be absent here while
+        // every inventory profile declared it (issue #306).
+        name: `<${ROLE_NAMES.join("|")}>`,
         description: "Role to run.",
       },
       { name: "<task>", description: "Task for the role." },
@@ -3451,13 +3473,20 @@ const COMMANDS: readonly CommandDefinition[] = [
       },
       ...PIPELINE_OPTIONS,
     ],
-    run: ({ positionals, flags }) =>
-      withCliProgress(
+    run: ({ positionals, flags }) => {
+      // Validate the role name BEFORE announcing a start: the progress wrapper
+      // prints "started role X; waiting for provider" immediately, so a bad name
+      // produced a success line followed by a failure, and anything reading the
+      // first line -- a person glancing at output, a log tail, a wrapper script
+      // -- saw a run that had begun (issue #306).
+      assertKnownRole(positionals[1]);
+      return withCliProgress(
         `role ${positionals[1] ?? "unknown"}`,
         parseNonNegativeIntegerFlag("--heartbeat-ms", flags["--heartbeat-ms"]) ??
           DEFAULT_HEARTBEAT_MS,
         () => roleCommand(positionals, flags),
-      ),
+      );
+    },
   },
   {
     name: "drive",

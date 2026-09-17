@@ -428,7 +428,9 @@ test("each command renders its own help before validating required input", () =>
     ["auth", "<status|login|logout>", "--auto"],
     ["operations", "ldo-resume", "<script.ts>"],
     ["run", "<script.ts>", "--provider"],
-    ["role", "<planner|researcher|coder|reviewer|auditor|security>", "--auto"],
+    // The orchestrator is a runnable role like any other (issue #306); this list
+    // is rendered from ROLE_NAMES, so it cannot drift from what `role` accepts.
+    ["role", "<orchestrator|planner|researcher|coder|reviewer|auditor|security>", "--auto"],
     ["drive", "--auto", "<planner|coder|reviewer|security>"],
     ["console", "--max-input-bytes", "<planner|coder|reviewer|security>"],
   ];
