@@ -13,6 +13,29 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.57.0] - 2026-09-17
+
+### Added
+- **Ledger rows carry the request's part sizes** -- system prompt, prompt, tool
+  definitions and their total (issue #317). Sizes only, never content, so a
+  ledger stays safe to attach to an issue.
+
+  Nothing else preserved them. `PipelineStageMetrics` computes `requestBytes`,
+  but those travel in the pipeline result, which a hung run never returns
+  (#315), and a session transcript stores streamed assistant frames only --
+  searching every session for the coder prompt's opening line returns nothing.
+  So "the role received no system prompt" and "the role behaved oddly" were
+  indistinguishable after the fact, which is how a debugging session turns into
+  guesswork.
+
+  Written onto every row rather than once per run: a ledger is read row by row,
+  and a value recorded somewhere else is a value that does not answer the
+  question in front of you.
+
+  First measurement from a live coder run: `systemPrompt: 8831, prompt: 51,
+  toolDefinitions: 6094` — the prompt does arrive, and it is the full
+  `prompts/coder.md`.
+
 ## [0.56.1] - 2026-09-17
 
 ### Fixed

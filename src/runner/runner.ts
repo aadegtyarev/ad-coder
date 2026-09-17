@@ -616,6 +616,16 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
     runId,
     role: params.role.name,
     step: params.step ?? "run",
+    // Sizes already computed above for the stage metrics, written onto every
+    // ledger row as well: the metrics reach a caller only through a settled
+    // pipeline result, and the ledger is what survives a run that does not
+    // settle (issue #317).
+    requestBytes: {
+      systemPrompt: systemPromptBytes,
+      prompt: promptBytes,
+      toolDefinitions: toolDefinitionBytes,
+      total: systemPromptBytes + promptBytes + toolDefinitionBytes,
+    },
     sink,
   });
 
