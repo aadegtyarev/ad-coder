@@ -61,7 +61,12 @@ import type {
 } from "./types";
 import { OrchestrationError } from "./types";
 import type { VerdictCapture } from "./verdict";
-import { buildSubmitVerdictTool, formatReviewerInstruction } from "./verdict";
+import {
+  buildSubmitVerdictTool,
+  formatReviewerInstruction,
+  REVIEW_SUBMISSION_ATTEMPTS,
+  REVIEW_SUBMISSION_RETRY,
+} from "./verdict";
 
 const RESEARCH_REQUEST_MAX_BYTES = 64 * 1024;
 const RESEARCH_RESPONSE_MAX_BYTES = 128 * 1024;
@@ -1323,20 +1328,6 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     }
     return { state: nextState, result, transitions };
   };
-
-  /**
-   * How many times a review round asks for its verdict before the run pauses.
-   *
-   * Two, matching the planner's handoff attempts: one retry converts the common
-   * failure -- a thorough inspection that ends in prose -- into a settled round,
-   * while a reviewer that will not submit twice is a configuration problem the
-   * pause should surface rather than a cost to keep paying.
-   */
-  const REVIEW_SUBMISSION_ATTEMPTS = 2;
-
-  /** Re-states only the submission requirement; the inspection already happened. */
-  const REVIEW_SUBMISSION_RETRY =
-    "Your preceding response did not call submit_verdict. Your review stands; submit it now by calling submit_verdict with the complete verdict object, then stop.";
 
   const stepReview = async (state: WorkflowState): Promise<StepResult> => {
     const round = state.round;

@@ -248,3 +248,31 @@ test("a malformed stamp line is a parse error, never a throw", () => {
     "string",
   );
 });
+
+test("a standalone reviewer run stamps through the same writer as the pipeline", () => {
+  // The stamp never needed a pipeline -- only a review that produced a
+  // structured verdict (issue #283). Before this, `role reviewer` could return a
+  // real verdict and had no way to record it: the gate demanded paperwork the
+  // cheap path could not produce, which teaches stepping around the gate.
+  const root = gitRepo();
+  fs.writeFileSync(path.join(root, STAMPS_MARKER_FILE), JSON.stringify({}));
+  const recorded = recordReviewStampFromResult(root, {
+    approved: false,
+    runIds: ["standalone-run"],
+    stageMetrics: [{ stage: "review:1", provider: "opencode-go", model: "glm-5.3-flash" }],
+    reviewRan: true,
+  });
+  expect(recorded.recorded).toBe(true);
+  const line = fs
+    .readFileSync(path.join(root, "docs/reviews/stamps.log"), "utf8")
+    .trimEnd()
+    .split("\n")
+    .at(-1);
+  const parsed = parseReviewStamp(line ?? "");
+  if (typeof parsed === "string") throw new Error(parsed);
+  // `changes_requested` stamps too: "the reviewer said no" is a fact the gate
+  // should read, not re-derive from prose.
+  expect(parsed.verdict).toBe("changes_requested");
+  expect(parsed.reviewer).toBe("opencode-go/glm-5.3-flash");
+  expect(parsed.runIds).toEqual(["standalone-run"]);
+});
