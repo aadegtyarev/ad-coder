@@ -1381,3 +1381,62 @@ test("config show reports the resolved skill set with version, source tier, and 
   expect(off.value).toEqual({ enabled: false, skills: [] });
   expect(off.source).toBe("cli");
 });
+
+test("config show's pinned skill row applies the requires filter the run applies", () => {
+  // A pin whose `requires` this launch cannot honour is dropped from the paste
+  // silently (skills/role-kit.ts), so the row must drop it too -- otherwise the
+  // row advertises a capability no run reaches (docs/contracts/skills.md,
+  // 2026-09-17).
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-skills-pinned-row-"));
+  const pin = (id: string, manifest: Record<string, unknown>): void => {
+    const at = path.join(target, ".ad-coder", "skills", id);
+    fs.mkdirSync(at, { recursive: true });
+    fs.writeFileSync(
+      path.join(at, "skill.json"),
+      JSON.stringify({ id, version: "1", roles: ["planner"], ...manifest }),
+    );
+    fs.writeFileSync(path.join(at, "instructions.md"), `${id} body`);
+  };
+  pin("pinned-met", {
+    description: "needs only the resolved pipeline workflow",
+    requires: { workflows: ["pipeline"] },
+  });
+  pin("pinned-unmet", {
+    description: "needs the vision plugin",
+    requires: { plugins: ["vision"] },
+  });
+  const rowIds = (...args: string[]): string[] => {
+    const show = runCli(["config", "show", "--target-dir", target, "--json", ...args]);
+    expect(show.code).toBe(0);
+    return (
+      JSON.parse(show.stdout).skills as { value: { skills: { id: string }[] } }
+    ).value.skills.map((entry) => entry.id);
+  };
+
+  // The built-in composition registers explore, web and vision and resolves the
+  // pipeline workflow: both pins are reachable and both are rows.
+  expect(rowIds("--skills", "pinned-met,pinned-unmet")).toEqual(["pinned-met", "pinned-unmet"]);
+  // `--plugins none` is what this launch registers, so the vision-requiring pin
+  // is unreachable: exactly one row remains, the same set pin mode pastes.
+  expect(rowIds("--skills", "pinned-met,pinned-unmet", "--plugins", "none")).toEqual([
+    "pinned-met",
+  ]);
+  // The other composition axis filters the other way, so this is the shared
+  // dependency rule and not a blanket drop of pinned rows.
+  expect(rowIds("--skills", "pinned-met,pinned-unmet", "--workflows", "false")).toEqual([
+    "pinned-unmet",
+  ]);
+  // A pin still resolves loudly: the dependency filter must not swallow the
+  // typed failure for an id that is not installed.
+  const unknown = runCli([
+    "config",
+    "show",
+    "--target-dir",
+    target,
+    "--json",
+    "--skills",
+    "pinned-met,not-installed",
+  ]);
+  expect(unknown.code).toBe(1);
+  expect(unknown.stderr).toContain("skill resolution failed");
+});

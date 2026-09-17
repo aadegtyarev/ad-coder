@@ -118,6 +118,7 @@ import type { SessionLimits } from "./session-limits";
 import { SessionLimitController } from "./session-limits";
 import { buildLoadSkillTool, LOAD_SKILL_TOOL_NAME } from "./skills/load-tool";
 import {
+  dependenciesMet,
   pluginNamesFromToolNames,
   resolveSkills,
   SkillResolutionError,
@@ -2155,18 +2156,28 @@ function buildConfigOptions(
     skillsDisabled = capabilities.skills === false;
   }
   const workflows = resolveWorkflowsFlag(flags["--workflows"]);
+  // The composition a run's role kits are handed: the workflows this launch
+  // resolved and the plugin groups its flag registers. Both selection modes
+  // filter by it, because pin mode drops a skill whose `requires` is unmet
+  // (src/skills/role-kit.ts) -- a row that skipped the filter would advertise a
+  // capability no run reaches (docs/contracts/skills.md, 2026-09-17).
+  const skillComposition = {
+    availableWorkflows: workflows.names,
+    // The flag's own resolution decides plugin availability here, so the
+    // skill row reports what this launch actually registers: `--plugins
+    // none` proves nothing, an unset flag is the built-in default set.
+    availablePlugins: enabledPlugins ?? ["explore", "web", "vision"],
+  };
   const skillSet = skillsDisabled
     ? []
     : selectedSkills !== undefined
-      ? resolveSkills(selectedSkills, { projectDir: targetDir })
-      : skillInventory({
-          projectDir: targetDir,
-          availableWorkflows: workflows.names,
-          // The flag's own resolution decides plugin availability here, so the
-          // skill row reports what this launch actually registers: `--plugins
-          // none` proves nothing, an unset flag is the built-in default set.
-          availablePlugins: enabledPlugins ?? ["explore", "web", "vision"],
-        });
+      ? // A pin still resolves loudly -- unknown, malformed, duplicate, and
+        // oversized ids fail through resolveSkills exactly as before -- and
+        // only the reported set is filtered, so the row names what a run pastes.
+        resolveSkills(selectedSkills, { projectDir: targetDir }).filter((skill) =>
+          dependenciesMet(skill.requires, skillComposition),
+        )
+      : skillInventory({ projectDir: targetDir, ...skillComposition });
   // Source names the layer that decided the set, so profile-off cannot hide
   // behind a flag default and a flag cannot pose as the built-in default.
   const skillsSource: "cli" | "profile" | "built-in-default" =
