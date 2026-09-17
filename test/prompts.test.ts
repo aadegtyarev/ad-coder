@@ -6,6 +6,16 @@ import { PromptError, resolvePrompt } from "ad-coder";
 
 const REPO_ROOT = path.join(import.meta.dir, "..");
 
+/**
+ * Prompts are hard-wrapped, so a phrase that happens to straddle a newline is
+ * absent from the raw string and present in the rendered prompt -- an assertion
+ * that reads the raw text fails for a reason that has nothing to do with the
+ * prompt's meaning. Collapse runs of whitespace before matching.
+ */
+function flat(text: string): string {
+  return text.replace(/\s+/g, " ");
+}
+
 function tmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-prompts-"));
 }
@@ -16,16 +26,48 @@ test("resolves a built-in prompt by name byte-for-byte", () => {
 });
 
 test("ships the Auditor contract-coverage prompt", () => {
-  const prompt = resolvePrompt("auditor");
+  const prompt = flat(resolvePrompt("auditor"));
   expect(prompt).toContain("contract_missing");
   expect(prompt).toContain("explicitly approves");
+  // The auditor has no write tools. A prompt that tells it to store a proposal
+  // or write to the backlog itself describes work it cannot do -- the finding
+  // leaves as its report and the orchestrator records it.
+  expect(prompt).toContain("no write tools");
 });
 
 test("Planner prompt bounds reconnaissance without hiding evidence gaps", () => {
-  const prompt = resolvePrompt("planner");
-  expect(prompt).toContain("twelve tool calls");
-  expect(prompt).toContain("Batch independent `rg`, `sed`, and `git` reads");
-  expect(prompt).toContain("mark any material gap `research_required`");
+  const prompt = flat(resolvePrompt("planner"));
+  expect(prompt).toContain("Read to answer the task, not to catalogue the repository");
+  expect(prompt).toContain("research_required");
+  // The planner has no bash tool (see resolve-config's per-role grants), so the
+  // prompt must not teach shell batching it cannot perform.
+  expect(prompt).not.toContain("`rg`");
+});
+
+test("the Planner prompt names the channel the coder actually reads", () => {
+  // session.ts sets `planSummary` from the planner's ASSISTANT TEXT, and that
+  // is what composeCoderPrompt hands the coder -- submit_plan's schema has no
+  // steps field at all. A prompt forbidding plan text in the assistant message
+  // told a compliant planner to hand the next stage an empty plan.
+  const prompt = flat(resolvePrompt("planner"));
+  expect(prompt).toContain("Your assistant text carries the plan itself");
+  expect(prompt).not.toContain("Do not emit the plan or a JSON copy in assistant text");
+});
+
+test("every shipped role prompt points at the skills carrying its technique", () => {
+  // The technique lives in skills so that it survives a disabled role: any role
+  // may be switched off, and the knowledge must not leave with it.
+  for (const role of ["coder", "reviewer", "security", "researcher", "planner", "auditor"]) {
+    expect(flat(resolvePrompt(role))).toContain("Load `");
+  }
+});
+
+test("the summarizer prompt is a file like every other role prompt", () => {
+  // It was a string constant in src/context/compactor.ts, which made it the one
+  // role contract a project could not override.
+  const prompt = flat(resolvePrompt("summarizer"));
+  expect(prompt).toContain("compacting a coding agent's conversation");
+  expect(prompt).toContain("Identifiers exactly as written");
 });
 
 test("a project prompt shadows the built-in of the same name", () => {
@@ -105,22 +147,21 @@ test("a prompt with trailing whitespace and non-ASCII round-trips verbatim", () 
 });
 
 test("the orchestrator prompt makes classification a step before mutation (issues #263/#264)", () => {
-  const prompt = resolvePrompt("orchestrator");
+  const prompt = flat(resolvePrompt("orchestrator"));
   // The classification step exists, names the rubric it runs on, and is named
   // as a step whose answer can only exist before the work.
   const classify = prompt.indexOf("Classify before you mutate");
   expect(classify).toBeGreaterThan(-1);
   expect(prompt).toContain("Read-only inspection may precede the classification");
-  expect(prompt).toContain("precedes your own first edit");
-  // Ordering is the fix: delegation rules and the direct-edit exception come
-  // after the classification step, so the permissive branch no longer matches
-  // first.
-  const runRole = prompt.indexOf("Invoke a specialist with `run_role`");
-  const pipeline = prompt.indexOf("For a feature, refactor");
-  const direct = prompt.indexOf("Edit directly only inside a recorded `trivial`");
-  expect(runRole).toBeGreaterThan(classify);
+  // Ordering is the fix: nothing that permits a mutation may be readable before
+  // the classification step, so the permissive branch cannot match first.
+  const prohibition = prompt.indexOf("Editing files is a delegate's work");
+  const exception = prompt.indexOf("Direct editing is the classified exception");
+  const pipeline = prompt.indexOf("goes through the pipeline");
+  expect(prohibition).toBeGreaterThan(classify);
   expect(pipeline).toBeGreaterThan(classify);
-  expect(direct).toBeGreaterThan(pipeline);
-  // The direct path is the exception, not the normal path.
-  expect(prompt).toContain("the classified exception, not the normal path");
+  // The permission is stated only inside the prohibition that bounds it, never
+  // before it.
+  expect(exception).toBeGreaterThan(prohibition);
+  expect(prompt).toContain("When unsure, classify up.");
 });

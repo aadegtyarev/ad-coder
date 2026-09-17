@@ -877,7 +877,13 @@ test("every built-in plugin combination keeps role tools and prompt fallbacks al
           hasExplore && !(role === "coder" && tool === "explore_project"),
         );
       }
-      expect(spec?.role.systemPrompt).toMatch(/when\s+(?:[^\n]*tools are\s+)?available/i);
+      // A prompt must never teach a tool its role was not granted: the planner
+      // has no `bash`, the coder is denied `explore_project`, and a prompt that
+      // instructs either to use one describes work the role cannot perform.
+      for (const missing of ["explore_project", "search_project", "read_project", "bash"]) {
+        if (spec?.role.activeToolNames?.includes(missing) === true) continue;
+        expect(spec?.role.systemPrompt).not.toContain(`\`${missing}\``);
+      }
     }
     for (const role of ["researcher", "auditor"] as const) {
       expect(resolved.roles[role]?.role.activeToolNames?.includes("web_search")).toBe(hasWeb);

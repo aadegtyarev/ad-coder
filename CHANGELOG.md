@@ -13,6 +13,56 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.62.0] - 2026-09-17
+
+### Changed
+- **Technique moved out of the role prompts and into skills grouped by task**
+  (issue #324). Any role can be switched off, and so can the pipeline, so
+  knowledge that lived only in one role's prompt left the harness with that
+  role. Five new shipped skills carry what the prompts were holding:
+  `change-implementation` (baseline, contracts as blocking requirements, a test
+  per step), `change-verification` (captured output over appearance, a test
+  proven to go red against the old code), `threat-modelling` (the dimensions,
+  and tracing a lead to the door that authorizes it), `external-research`
+  (classify the question, cross-verify what would change a decision, cite only
+  what was fetched), and `overload-response` (five signals ordered by detection
+  cost, one bounded ceiling raise, and a `decompose` report distinct from
+  `changes_requested`). Every `roles` list now names each role that can perform
+  the task rather than the one role whose title matches it. Role prompts state
+  what the role owns and point at the skills; they shrank from 774 lines to 439
+  in total.
+- **The summarizer's system prompt is a file like every other role prompt**
+  (`prompts/summarizer.md`), resolved through the same loader and overridable at
+  `.ad-coder/prompts/summarizer.md`. It was a string constant in
+  `src/context/compactor.ts` -- the one role contract an operator could not
+  change without rebuilding the package, governing what every later turn still
+  knows. It now also states what must survive compaction literally: operator
+  requirements in the terms they were asked, carried contract requirements,
+  identifiers exactly as written, and numbers with their units and source.
+
+### Fixed
+- **Prompts no longer contradict what the harness grants or what the code
+  reads.** The planner was told `submit_plan` is the sole handoff and that plan
+  text must not appear in the assistant message -- but `session.ts` sets
+  `planSummary` from that assistant text and `submit_plan`'s schema has no steps
+  field, so a compliant planner handed the coder an empty plan. The researcher
+  was told "Do not survey the repository" while holding `architecture-recon` and
+  `repository-navigation`, leaving in-repository reconnaissance to the stage
+  that pays for it out of its own window. The orchestrator's prompt listed
+  `write`, `edit`, `explore_project` and the web tools as its built-in set while
+  `resolve-config` grants it `read` and `bash`, and told it to accept an
+  approved report as completed verification while `acceptance-review` told it
+  never to accept an assertion as a result. The auditor was told never to edit
+  and also to store proposals and write to the backlog, with no write tool. The
+  "ask the repository one question per call" block was duplicated verbatim in
+  six prompts beside the skill that carries it.
+
+### Added
+- **A test that a role prompt never names a tool the role was not granted**, run
+  over every built-in plugin combination. The planner has no `bash` and the
+  coder is denied `explore_project`; a prompt teaching either spends a turn on a
+  call that cannot succeed.
+
 ## [0.61.0] - 2026-09-17
 
 ### Added

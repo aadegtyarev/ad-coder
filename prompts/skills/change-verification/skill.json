@@ -1,0 +1,6 @@
+{
+  "id": "change-verification",
+  "version": "1",
+  "description": "Decide whether a change is correct by attacking it: captured output over appearance, reproducible breaks, and a test proven to go red against the old code.",
+  "roles": ["orchestrator", "reviewer", "auditor", "coder", "planner"]
+}

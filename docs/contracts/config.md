@@ -181,3 +181,31 @@ and roles that resolved to no model). The conversational front renders that
 field into the `run_role` tool description instead of listing role names as
 prose, so the facts an orchestrator delegates on are the facts the operator
 was shown, under the same overriding rules the banner already answers to.
+
+- 2026-09-17: **The plan is carried past compaction, not through it.** A plan
+  that reaches the summarizer comes back as a paraphrase, and the stage then
+  works from the paraphrase: the acceptance criteria blur, the carried contract
+  requirements stop being requirements, and the identifiers a later turn looks
+  up literally no longer match. It is excluded from the evicted head and carried
+  verbatim instead. This is cheaper as well as safer -- the plan is the largest
+  stable block in a run, so not summarising it saves the tokens compaction was
+  called to save. A plan too large to carry whole is the size signal in
+  `overload-response`, and the answer there is decomposition, not a paraphrase.
+  The same rule covers what a later turn acts on literally: the role's own
+  system prompt and skill catalogue (already cached), the registered tool
+  definitions (a paraphrased tool name is called and missed), the contract text
+  a plan carried as blocking, and, on a fix pass, the reviewer's verdict -- that
+  is the stage's task, not its history. What compaction is for is what grows:
+  turn narration and tool output whose finding is already recorded.
+
+- 2026-09-17: **The summary has a size target, expressed as a fraction of the
+  window and configurable like every other context share.** It sits beside
+  `maxTokensPercent`, `reserveTokensPercent` and `keepRecentTokensPercent` in
+  `ContextBudgetPercents`, defaulting to 0.18. Without a target the summarizer
+  is told to compact and nothing bounds the result, so a summary can return a
+  third of the window and buy almost nothing -- while a run near its ceiling
+  compacts again immediately, which is the compaction-burst signal in
+  `overload-response` firing for a reason nobody set. The target reaches the
+  summarizer as a parameter, never as a number written into
+  `prompts/summarizer.md`: a quantity that changes behavior is not a constant in
+  the source (`quality.md`).
