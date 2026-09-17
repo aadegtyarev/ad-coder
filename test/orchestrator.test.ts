@@ -44,6 +44,7 @@ import { SUBMIT_PLAN_TOOL_NAME } from "../src/orchestration/plan";
 import { createWorkflowSession } from "../src/orchestration/session";
 import { DriveError } from "../src/orchestration/transition-guard";
 import type {
+  Complexity,
   PipelineConfig,
   PipelineResult,
   RoleSpec,
@@ -389,20 +390,111 @@ test("run_role projects its thrown errors with reason kept and leak withheld", a
 });
 
 test("run_role delegates independently and rejects unknown role names safely", async () => {
-  const calls: Array<{ role: string; task: string }> = [];
-  const tool = buildRunRoleTool(async (role, task) => {
-    calls.push({ role, task });
+  const calls: Array<{ role: string; task: string; complexity?: string | undefined }> = [];
+  const tool = buildRunRoleTool(async (role, task, complexity) => {
+    calls.push({ role, task, complexity });
     return { role, text: "focused result", cost: 0.25 };
   });
 
   expect(await callTool(tool, { role: "auditor", task: "inspect health" })).toContain(
     "auditor complete (cost 0.25)\nfocused result",
   );
-  expect(calls).toEqual([{ role: "auditor", task: "inspect health" }]);
+  expect(calls).toEqual([{ role: "auditor", task: "inspect health", complexity: undefined }]);
+  expect(await callTool(tool, { role: "coder", task: "fix it", complexity: "trivial" })).toContain(
+    "coder complete",
+  );
+  expect(calls[1]).toEqual({ role: "coder", task: "fix it", complexity: "trivial" });
   expect(await callTool(tool, { role: "publisher", task: "publish" })).toBe(
     "error: invalid_role (publisher)",
   );
-  expect(calls).toHaveLength(1);
+  expect(calls).toHaveLength(2);
+});
+
+test("run_role routes the delegate on the orchestrator's classified tier (issues #263/#264)", async () => {
+  const targetDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-classified-")));
+  const credentials: CredentialStore = {
+    read: async () => ({ type: "oauth", access: "a", refresh: "r", expires: 0 }),
+    list: async () => [],
+    modify: async (_providerId, fn) => fn(undefined),
+    delete: async () => {},
+  };
+  // The coder row varies per complexity, so the delegated model id shows which
+  // cell the tier chose: without a tier the CONSTANT default (medium) applies;
+  // with one, the assessment does.
+  const profile = buildDefaultProfile({
+    strong: "codex-astra",
+    mid: "codex-terra",
+    cheap: "codex-luna",
+  });
+  let outerTools: Tool[] = [];
+  const delegated: Array<{ role: string; modelId: string }> = [];
+  await startOrchestrator({
+    targetDir,
+    env: () => undefined,
+    warn: () => {},
+    credentials,
+    profile,
+    enabledWorkflows: [],
+    startConversation: async (config) => {
+      outerTools = config.tools ?? [];
+      return fakeConversation("outer");
+    },
+    startDelegatedConversation: async (config) => {
+      delegated.push({ role: config.role.name, modelId: config.model.id });
+      return fakeConversation(config.role.name);
+    },
+  });
+  const runRole = outerTools.find(({ name }) => name === RUN_ROLE_TOOL_NAME) as Tool;
+  await callTool(runRole, { role: "coder", task: "fix", complexity: "complex" });
+  await callTool(runRole, { role: "coder", task: "fix" });
+  await callTool(runRole, { role: "coder", task: "fix", complexity: "trivial" });
+
+  expect(delegated.map(({ modelId }) => modelId)).toEqual([
+    // Registry aliases map the codex names to registered models -- the cells
+    // themselves are what the tier changes.
+    "gpt-6-astra",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+  ]);
+}, 20000);
+
+async function classificationFauxCore(fx: Fixture) {
+  const seen: Array<{ task: string; complexity?: Complexity | undefined }> = [];
+  const core = createOrchestrator({
+    buildConfig: (task, complexity) => {
+      seen.push({ task, complexity });
+      return fx.buildConfig(task);
+    },
+    ledgerSink: fx.sink,
+  });
+  return { core, seen };
+}
+
+test("the orchestrator core dispatches the classified tier into the per-run config (issues #263/#264)", async () => {
+  const fx = fixture();
+  fx.faux.setResponses(governedPlanTurn());
+  const { core, seen } = await classificationFauxCore(fx);
+
+  await core.decomposeTask("split this task", "trivial");
+  expect(seen[0]).toEqual({ task: "split this task", complexity: "trivial" });
+
+  // Manual stepping carries the tier too, up front, with no provider turn.
+  fx.faux.setResponses(governedPlanTurn());
+  core.beginStepping("step the run", "complex");
+  expect(seen[1]).toEqual({ task: "step the run", complexity: "complex" });
+});
+
+test("the run_pipeline tool carries the classified tier into the run (issues #263/#264)", async () => {
+  const fx = fixture();
+  const verdict: Verdict = { status: "approved", issues: [], summary: "ok" };
+  approveScenario(fx, verdict);
+  const { core, seen } = await classificationFauxCore(fx);
+  const runPipelineTool = buildOrchestratorTools(core, [], [BUILT_IN_PIPELINE_WORKFLOW]).find(
+    ({ name }) => name === RUN_PIPELINE_TOOL_NAME,
+  ) as Tool;
+
+  await callTool(runPipelineTool, { task: "implement X", complexity: "complex" });
+  expect(seen).toEqual([{ task: "implement X", complexity: "complex" }]);
 });
 
 test("run_role description states the session's live delegates, models, and world when facts exist", async () => {

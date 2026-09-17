@@ -103,3 +103,24 @@ test("a prompt with trailing whitespace and non-ASCII round-trips verbatim", () 
   fs.writeFileSync(path.join(builtinDir, "verbatim.md"), body, "utf8");
   expect(resolvePrompt("verbatim", { builtinDir })).toBe(body);
 });
+
+test("the orchestrator prompt makes classification a step before mutation (issues #263/#264)", () => {
+  const prompt = resolvePrompt("orchestrator");
+  // The classification step exists, names the rubric it runs on, and is named
+  // as a step whose answer can only exist before the work.
+  const classify = prompt.indexOf("Classify before you mutate");
+  expect(classify).toBeGreaterThan(-1);
+  expect(prompt).toContain("Read-only inspection may precede the classification");
+  expect(prompt).toContain("precedes your own first edit");
+  // Ordering is the fix: delegation rules and the direct-edit exception come
+  // after the classification step, so the permissive branch no longer matches
+  // first.
+  const runRole = prompt.indexOf("Invoke a specialist with `run_role`");
+  const pipeline = prompt.indexOf("For a feature, refactor");
+  const direct = prompt.indexOf("Edit directly only inside a recorded `trivial`");
+  expect(runRole).toBeGreaterThan(classify);
+  expect(pipeline).toBeGreaterThan(classify);
+  expect(direct).toBeGreaterThan(pipeline);
+  // The direct path is the exception, not the normal path.
+  expect(prompt).toContain("the classified exception, not the normal path");
+});

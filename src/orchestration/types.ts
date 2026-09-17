@@ -698,7 +698,13 @@ export interface WorkflowState {
   securitySurface?: SecuritySurface;
   /** The security phase's final text (or `''`), threaded into round-1 coder + every reviewer. */
   securityNotes: string;
-  /** The complexity every pre-plan role routes on (routing.defaultComplexity ?? 'medium'). */
+  /**
+   * The complexity every pre-plan role routes on: an explicitly passed tier
+   * (the orchestrator's own classification, issues #263/#264) or the declared
+   * `routing.defaultComplexity`/built-in `'medium'` fallback. It is never an
+   * assessment by itself -- the fallback is a constant nothing validated
+   * against the task.
+   */
   preComplexity: Complexity;
   /** The complexity every post-plan role routes on (`complexity ?? preComplexity`). */
   effective: Complexity;

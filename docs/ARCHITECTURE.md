@@ -94,13 +94,13 @@ and contract.
 the automatic driver for that one built-in workflow. Custom workflows use the
 same substrate without becoming the built-in pipeline.
 
-The conversational Orchestrator exposes the same execution choices: `run_role`
-for one specialist, `run_step` plus `choose_transition` for manual workflow
-control, and `run_pipeline` for automatic completion (the built-in module ships
-enabled; `--workflows` selects or excludes members). Results carry a durable run
-ID; `resume_pipeline` reopens that run with the original task and reuses
-committed stages. After raising a budget, recovery resumes without repeating
-work.
+The conversational Orchestrator exposes the same choices: `run_role` for one
+specialist, `run_step` plus `choose_transition` for manual control, and
+`run_pipeline` for automatic completion (the built-in module ships enabled;
+`--workflows` selects or excludes members; dispatch accepts a pre-read
+`complexity` tier). Results carry a durable run
+ID; `resume_pipeline` reopens with the original task, reuses committed stages,
+and after a raised budget recovery resumes without repeating work.
 
 ### Conversation and orchestrator
 
