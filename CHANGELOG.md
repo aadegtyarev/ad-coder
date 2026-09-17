@@ -13,6 +13,30 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.60.0] - 2026-09-17
+
+### Added
+- **`src/config`: the models and settings documents from issue #280**, parsed,
+  validated and written back without disturbing an operator's comments.
+
+  `models-file`/`validate` refuse at the boundary what the old four-layer join
+  surfaced three layers down as a lookup miss: a role row naming an undeclared
+  provider or model, a `role@complexity` row with no bare row for that role, an
+  unknown role or tier, a `default` naming a profile that does not exist.
+
+  `store` reads and writes under `(XDG_CONFIG_HOME ?? ~/.config)/ad-coder`. A
+  save applies the caller's edit to the parsed YAML Document, **validates the
+  result before anything reaches disk**, and replaces the file atomically. A
+  machine edit therefore leaves comments and layout intact -- the property the
+  whole format choice rests on, since a row's comment is where an operator
+  records why a cell is what it is.
+
+  Written by delegated roles. One real defect came out of exercising it rather
+  than reading it: the save copied `src/inventory/store.ts`'s `link`-based write,
+  which only ever CREATES a file and treats `EEXIST` as "someone else got there
+  first". An update always hits `EEXIST`, so every save failed as a false
+  concurrent-write. `rename` replaces; `link` cannot.
+
 ## [0.59.0] - 2026-09-17
 
 ### Fixed
