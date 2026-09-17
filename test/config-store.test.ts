@@ -71,7 +71,28 @@ test("a bad edit is refused before anything reaches disk", () => {
 
 test("the config path follows XDG, and falls back to ~/.config", () => {
   expect(defaultModelsPath("/home/x", "/custom")).toBe("/custom/ad-coder/models.yaml");
-  expect(defaultModelsPath("/home/x", undefined)).toBe("/home/x/.config/ad-coder/models.yaml");
+
+  // An empty value counts as unset, per the XDG spec. Without this,
+  // `path.join("", "ad-coder")` yields a RELATIVE path resolving against
+  // whatever the working directory happens to be -- worse than wrong, because it
+  // silently reads and writes somewhere plausible.
+  expect(defaultModelsPath("/home/x", "")).toBe("/home/x/.config/ad-coder/models.yaml");
+
+  // The unset case must REMOVE the variable, not pass `undefined`: an explicit
+  // `undefined` argument selects the parameter's default, which is
+  // `process.env.XDG_CONFIG_HOME` -- so the assertion read the machine it ran
+  // on. It passed here, where the variable is absent, and failed in CI, where it
+  // is set, having never tested the fallback at all.
+  const saved = process.env.XDG_CONFIG_HOME;
+  // `delete`, not assignment: assigning `undefined` to a process env value
+  // stores the STRING "undefined", which then resolves to `undefined/ad-coder`.
+  delete process.env.XDG_CONFIG_HOME;
+  try {
+    expect(defaultModelsPath("/home/x")).toBe("/home/x/.config/ad-coder/models.yaml");
+  } finally {
+    if (saved === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = saved;
+  }
 });
 
 test("a role row naming an undeclared provider or model is refused", () => {

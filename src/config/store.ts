@@ -33,7 +33,17 @@ export function defaultSettingsPath(
 }
 
 function resolveConfigPath(file: string, home: string, xdgConfigHome: string | undefined): string {
-  const root = xdgConfigHome === undefined ? path.join(home, ".config") : xdgConfigHome;
+  // An EMPTY `XDG_CONFIG_HOME` means unset, not "the filesystem root". CI sets
+  // it to "" and the undefined-only check then resolved to `/ad-coder/...`,
+  // which is where a config would have been looked for on any machine with that
+  // environment. The XDG spec says a variable set to an empty value is treated
+  // as though it were unset, so this follows the spec rather than patching a
+  // test: `path.join("", "ad-coder")` silently yields a relative path, which is
+  // worse than wrong because it resolves against whatever the cwd happens to be.
+  const root =
+    xdgConfigHome === undefined || xdgConfigHome === ""
+      ? path.join(home, ".config")
+      : xdgConfigHome;
   return path.join(root, "ad-coder", file);
 }
 
