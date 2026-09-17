@@ -41,6 +41,7 @@ import type { Role } from "../role";
 import { toHarnessOptions } from "../role";
 import type { SessionLimitController } from "../session-limits";
 import { createBuiltinTools } from "./builtin-tools";
+import { dumpRequest } from "./dump-request";
 import {
   assertRunId,
   assertUniqueToolNames,
@@ -594,6 +595,22 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
     tools,
     toolContext,
   };
+  // Opt-in dump of what the role was actually sent (issue #317). Sizes on the
+  // ledger answer "did a prompt arrive"; only the text answers "was it the right
+  // one" -- a question that cost this session an hour of reading source to
+  // settle by hand. Off unless the operator sets the variable, because a request
+  // carries the task and whatever the role has read, and that must never land in
+  // a durable file by default.
+  if (process.env.AD_CODER_DUMP_REQUEST !== undefined) {
+    dumpRequest(store ?? new ProjectStore(absTargetDir, params.projectStoreConfig), {
+      runId,
+      role: params.role.name,
+      step: params.step ?? "run",
+      systemPrompt: effectiveSystemPrompt,
+      prompt: params.resumeActiveOperation === true ? "" : params.prompt,
+      toolNames: tools.map(({ name }) => name),
+    });
+  }
   const systemPromptBytes = Buffer.byteLength(effectiveSystemPrompt);
   const promptBytes = params.resumeActiveOperation === true ? 0 : Buffer.byteLength(params.prompt);
   const toolDefinitionBytes = Buffer.byteLength(

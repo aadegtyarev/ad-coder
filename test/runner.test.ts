@@ -21,6 +21,7 @@ import { StageLimitController, StageLimitError } from "../src/orchestration/stag
 import { ProjectStore } from "../src/project-store/project-store";
 import type { Role } from "../src/role";
 import { defineRole } from "../src/role";
+import { dumpRequest } from "../src/runner/dump-request";
 import {
   ConfiguredToolsUnavailableError,
   ProviderLimitError,
@@ -841,4 +842,30 @@ test("(e) runRole with no tools param settles exactly as today", async () => {
 
   expect(result.result.status).toBe("completed");
   expect(result.droppedRecords).toBe(0);
+});
+
+test("the request dump is off by default and writes what was sent when asked", () => {
+  // Sizes on the ledger answer "did a prompt arrive"; only the text answers "was
+  // it the right one" (issue #317). Off unless asked, because a request carries
+  // the task and whatever the role has read.
+  const target = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-dump-")));
+  const store = new ProjectStore(target);
+  const file = dumpRequest(store, {
+    runId: "11111111-2222-4333-8444-555555555555",
+    role: "coder",
+    step: "code:1",
+    systemPrompt: "You are the Coder.",
+    prompt: "do the thing",
+    toolNames: ["read", "edit"],
+  });
+  if (file === undefined) throw new Error("dump did not write a file");
+  const body = fs.readFileSync(file, "utf8");
+  expect(body).toContain("# role: coder");
+  expect(body).toContain("You are the Coder.");
+  expect(body).toContain("do the thing");
+  // Tool NAMES only: the definitions are large and their shapes live in source.
+  expect(body).toContain("# tools: read, edit");
+  // Private: a dump holds task text and project content.
+  expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+  fs.rmSync(target, { recursive: true, force: true });
 });

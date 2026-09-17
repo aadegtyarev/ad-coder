@@ -13,6 +13,29 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.58.0] - 2026-09-17
+
+### Added
+- **An opt-in dump of what a role was actually sent** (issue #317), written when
+  `AD_CODER_DUMP_REQUEST` is set: the system prompt, the prompt, and the tool
+  names, under the project store's scratch area with mode 0600.
+
+  The ledger's sizes answer "did a system prompt arrive". They cannot answer
+  "was it the right one" -- a byte count separates an empty prompt from a present
+  one, not one prompt from another of similar length. Settling that by hand means
+  reading the source to work out what is appended where.
+
+  It answered its own question immediately. A live coder run dumps a system
+  prompt beginning exactly with `prompts/coder.md`, plus 1200 bytes that turn out
+  to be the skills catalogue; the pipeline's variant adds the compaction safety
+  instruction instead. Two unexplained size differences, both explained by
+  reading one file.
+
+  Off by default and deliberately so: a request carries the task text and
+  whatever the role has read from the project, which must never land in a durable
+  file without the operator asking. A failed dump never fails the run it
+  observes.
+
 ## [0.57.0] - 2026-09-17
 
 ### Added
