@@ -252,6 +252,15 @@ export interface WorkflowSession {
   readonly projectStore: ProjectStore;
   /** Effective stage ceilings used to validate durable stage-limit recovery. */
   readonly stageLimits?: PipelineConfig["stageLimits"];
+  /**
+   * Per-role ceilings, which is where a raise actually lands (issue #208).
+   *
+   * The durable resume check reads the ceiling for the role whose stage paused,
+   * not the session-wide one: the orchestrator raises `planner` when the plan
+   * stage exhausts its budget, so validating against the session default would
+   * reject a correct raise as "unchanged" and leave the run unresumable.
+   */
+  readonly roleStageLimits?: PipelineConfig["roleStageLimits"];
 }
 
 export class WorkflowStageLimitError extends StageLimitError {
@@ -423,6 +432,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       costAnomalyDetector: config.costAnomalyDetector,
     }),
     ...(config.stageLimits !== undefined && { stageLimits: config.stageLimits }),
+    ...(config.roleStageLimits !== undefined && { roleStageLimits: config.roleStageLimits }),
     ...(config.projectStoreConfig !== undefined && {
       projectStoreConfig: config.projectStoreConfig,
     }),

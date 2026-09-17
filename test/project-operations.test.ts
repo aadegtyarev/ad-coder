@@ -743,6 +743,79 @@ test("RunCoordinator durably pauses a limited stage and resumes only that stage"
     paused.checkpoint.workflowState.stageMetrics,
   );
   expect(attempts).toBe(2);
+
+  // A raise lands on the ROLE that ran the paused stage, not on the session
+  // default: the orchestrator raises `coder` when the code stage exhausts its
+  // budget (issue #208). Validating against the session-wide ceiling saw an
+  // unchanged number and refused the raise, leaving the run unresumable however
+  // large the new ceiling was -- observed live, two resumes at 900000ms both
+  // rejected against the 180000ms default, so the pipeline could not progress
+  // past a stage that legitimately needed longer.
+  const roleTarget = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-role-raise-"));
+  let roleAttempts = 0;
+  const roleSession = {
+    ...base,
+    stageLimits: { maxDurationMs: 10 },
+    async step(state: WorkflowState) {
+      roleAttempts += 1;
+      if (roleAttempts === 1) {
+        const limit = new StageLimitError("duration", 10, 10, {
+          maxDurationMs: 10,
+          maxModelTurns: 0,
+          maxToolTurns: 0,
+          maxInputTokens: 0,
+          maxCostUsd: 0,
+          finalResponseReserveModelTurns: 0,
+          finalResponseReserveDurationMs: 0,
+          finalResponseReserveToolTurns: 0,
+          finalResponseReserveInputTokens: 0,
+          elapsedMs: 10,
+          modelTurns: 1,
+          toolTurns: 1,
+          inputTokens: 7,
+          lastInputTokens: 7,
+          costUsd: 0.25,
+          costInFlight: false,
+        });
+        throw new WorkflowStageLimitError(limit, "role-paused-code", {
+          stage: "code:1",
+          status: "paused",
+          input: 7,
+          cachedInput: 2,
+          freshInput: 5,
+          output: 3,
+          costUsd: 0.25,
+          requestBytes: { systemPrompt: 0, prompt: 0, toolDefinitions: 0, total: 0 },
+          readFiles: [],
+          readFilesTotal: 0,
+          readFilesTruncated: 0,
+          diffBytes: 0,
+          contextStrategy: "auto",
+        });
+      }
+      return base.step(state);
+    },
+  };
+  const rolePaused = await new RunCoordinator(roleSession, new ProjectStore(roleTarget), {
+    runId: "role-raise",
+  }).run();
+  expect(rolePaused.status).toBe("paused");
+
+  // The session ceiling is deliberately left at its original value: this is
+  // exactly the shape the orchestrator produces, and reading it instead of the
+  // role's would see "unchanged" and refuse.
+  const roleRaised = new RunCoordinator(
+    {
+      ...roleSession,
+      stageLimits: { maxDurationMs: 10 },
+      roleStageLimits: { coder: { maxDurationMs: 40 } },
+    },
+    new ProjectStore(roleTarget),
+    { runId: "role-raise", resumeExisting: true },
+  );
+  roleRaised.resumeStage({ source: "host_config", action: "retry" });
+  expect((await roleRaised.run()).status).toBe("complete");
+  fs.rmSync(roleTarget, { recursive: true, force: true });
 });
 
 test("RunCoordinator retains safe usage from a rejected research stage", async () => {

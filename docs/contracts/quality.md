@@ -85,6 +85,16 @@ Rules for the project's own code quality. A violation is always blocking.
   Comments must explain rationale, contract, provenance, risk, or a non-obvious
   invariant; narration of syntax, duplicated types, stale history, and generated
   verbosity are quality defects when clearer code can carry the meaning.
+- 2026-09-17: **A quantity that changes behavior is not a constant in the
+  source.** If it is needed, it is a setting with a default. The exceptions are
+  the safety ceilings this contract and `config.md` enumerate explicitly, which
+  bound runaway behavior and are named rather than discovered. The existing rule
+  ("any behavior a reasonable user may want to change is configurable",
+  `config.md`) states the obligation from the side of the user's wishes, and the
+  person deciding what a user will want is the person writing the constant -- a
+  compiled-in default is invisible, so nobody asks for it to become a setting.
+  Stated as a prohibition the check is mechanical: is this number in the source?
+  (issue #308)
 
 ## Sources
 

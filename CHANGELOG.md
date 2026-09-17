@@ -13,6 +13,30 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.54.2] - 2026-09-17
+
+### Fixed
+- **A raised stage ceiling never reached the run it was raised for** (issue
+  #208). The durable resume check compared the new ceiling against the
+  session-wide `stageLimits`, while a raise lands on the role that ran the paused
+  stage -- the orchestrator raises `planner` when the plan stage exhausts its
+  budget. The session default was therefore unchanged, the check reported
+  "unchanged duration stage limit", and the run stayed paused however large the
+  new ceiling was.
+
+  Observed live: a pipeline paused on the planner's 180s ceiling, the
+  orchestrator correctly called `resume_pipeline` with `raiseRole: planner`,
+  `raiseReason: duration`, `raiseLimit: 900000`, and the run did not move.
+
+  The check now reads the ceiling of the role whose phase paused, falling back to
+  the session default for phases no single role owns (`gates` runs commands,
+  `done` runs nothing) and for checkpoints written before this fix.
+
+  The comment beside the original code said the field checked here and the field
+  written by the raise "must be the same one". They were -- `maxDurationMs` in
+  both places. The halves that differed were the *objects*, and the earlier test
+  proved the raise was validated rather than that it arrived.
+
 ## [0.54.1] - 2026-09-17
 
 ### Fixed
