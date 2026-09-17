@@ -388,6 +388,16 @@ enforces that dated release headings go in non-increasing date order
   reconnaissance and reported "I ran out of budget during reconnaissance and
   made zero edits" -- honest, caught by review, and unrecoverable until now.
   (#208)
+- Review of the first version of this fix (`changes_requested`) caught two
+  blockers, both now closed and pinned by tests. A `raiseLimit` of `0` passed a
+  `>= 0` check while `0` DISABLES a limit, and the coordinator's guard
+  short-circuits on a resolved zero -- so a zero raise would have slipped past
+  the protection it exists to satisfy and removed the ceiling. And validation
+  sat only inside the tool, so a library caller of the exported
+  `resumePipeline` got a silently unmatched overlay and then failed on the
+  "unchanged ceiling" guard, reporting the wrong cause; `assertRaisedLimits` now
+  guards the core boundary every entry point crosses. A malformed raise also
+  gets its own `invalid_raise` code rather than reusing `invalid_role`.
 - `STAGE_LIMIT_KEY` maps each exhaustion reason to the `StageLimits` field it
   is measured against, shared by the coordinator's guard and the raise path.
   Two copies of that mapping would drift the moment a reason is added, and a

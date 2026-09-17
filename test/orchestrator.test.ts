@@ -552,6 +552,47 @@ test("resume_pipeline carries a raised ceiling into the run, and refuses a malfo
     raiseRole: "coder",
   });
   expect(partial).toContain("together or not at all");
+
+  // A raise of 0 would DISABLE the ceiling, and the coordinator's guard
+  // short-circuits on a resolved zero -- so zero would slip past the
+  // unchanged-ceiling protection this path exists to satisfy. Raising is not
+  // disabling (found in review of d933625).
+  const zero = await callTool(resumeTool, {
+    task: "t",
+    runId: "run-1",
+    raiseRole: "coder",
+    raiseReason: "input",
+    raiseLimit: 0,
+  });
+  expect(zero).toContain("greater than 0");
+});
+
+test("a raise is validated at the core boundary, not only at the tool (#208)", async () => {
+  const fx = fixture();
+  const verdict: Verdict = { status: "approved", issues: [], summary: "ok" };
+  approveScenario(fx, verdict);
+  const { core, seen } = await classificationFauxCore(fx);
+
+  // `resumePipeline` is exported: a library caller never passes the tool's
+  // parameter parsing, so validation living only there would let an unmatched
+  // overlay through and fail later on the coordinator's "unchanged ceiling"
+  // guard -- a message about the wrong thing entirely.
+  // The offending value rides in `detail` -- the field safeErrorText surfaces
+  // to a model -- while `message` carries the authored guidance.
+  await expect(
+    core.resumePipeline("t", "run-1", {
+      role: "typist" as never,
+      reason: "input",
+      limit: 1,
+    }),
+  ).rejects.toMatchObject({ code: "invalid_raise", detail: expect.stringContaining("typist") });
+  await expect(
+    core.resumePipeline("t", "run-1", { role: "coder", reason: "input", limit: 0 }),
+  ).rejects.toMatchObject({
+    code: "invalid_raise",
+    detail: expect.stringContaining("greater than 0"),
+  });
+  expect(seen).toEqual([]);
 });
 
 test("run_role description states the session's live delegates, models, and world when facts exist", async () => {

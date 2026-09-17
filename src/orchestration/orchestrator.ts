@@ -101,7 +101,10 @@ export type OrchestratorErrorCode =
   | "no_active_session"
   | "awaiting_transition"
   | "no_pending_transition"
-  | "invalid_role";
+  | "invalid_role"
+  // A malformed ceiling raise is not a bad role: errors.md requires invalid
+  // input to stay distinguishable rather than collapsing into one code.
+  | "invalid_raise";
 
 /**
  * Raised on an orchestrator-core precondition failure. Carries a `code`
@@ -203,6 +206,44 @@ export interface RaisedStageLimits {
   role: ProfileRole;
   reason: StageLimitReason;
   limit: number;
+}
+
+/**
+ * Check a raise against the shipped unions, or refuse it by name.
+ *
+ * Module scope, not inside a factory: every entry point -- the `resume_pipeline`
+ * tool, the exported `resumePipeline`, a library caller building the object
+ * itself -- must clear the same gate. Validating only at the tool would leave a
+ * programmatic raise silently unmatched by the overlay, and the run would then
+ * fail on the coordinator's "unchanged ceiling" guard, reporting the wrong
+ * cause (docs/contracts/errors.md: an expected boundary failure has a stable
+ * typed code, and invalid input stays distinguishable).
+ */
+export function assertRaisedLimits(raised: RaisedStageLimits): RaisedStageLimits {
+  if (!PROFILE_ROLES.includes(raised.role))
+    throw new OrchestratorError(
+      "invalid_raise",
+      `unknown raiseRole ${raised.role}; expected one of ${PROFILE_ROLES.join(", ")}`,
+      "the raised ceiling must name a configured role",
+    );
+  if (!(raised.reason in STAGE_LIMIT_KEY))
+    throw new OrchestratorError(
+      "invalid_raise",
+      `unknown raiseReason ${raised.reason}; expected one of ${Object.keys(STAGE_LIMIT_KEY).join(", ")}`,
+      "the raised ceiling must name the exhausted limit",
+    );
+  // NOT `>= 0`. Zero DISABLES a limit (docs/contracts/config.md), and the
+  // coordinator's unchanged-ceiling guard short-circuits on a resolved zero
+  // (`resumedLimit !== 0 && ...`), so a zero raise would slip past the very
+  // protection this path exists to satisfy and remove the ceiling instead of
+  // enlarging it. Raising is not disabling.
+  if (!Number.isFinite(raised.limit) || raised.limit <= 0)
+    throw new OrchestratorError(
+      "invalid_raise",
+      `raiseLimit ${raised.limit} must be a finite number greater than 0`,
+      "a raise enlarges a ceiling; zero would disable it",
+    );
+  return raised;
 }
 
 export interface OrchestratorDeps {
@@ -317,7 +358,13 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     complexity?: Complexity,
     raisedLimits?: RaisedStageLimits,
   ): Promise<RunPipelineResult> => {
-    const config = buildConfig(task, complexity, raisedLimits);
+    // Validated HERE, not at the tool: `resumePipeline` is exported, so a
+    // library caller reaches this path without passing the tool's parameter
+    // parsing. An unvalidated raise would never match the overlay and the run
+    // would then fail on the coordinator's "unchanged ceiling" guard -- a
+    // message about the wrong thing entirely.
+    const raised = raisedLimits === undefined ? undefined : assertRaisedLimits(raisedLimits);
+    const config = buildConfig(task, complexity, raised);
     const wf = createWorkflowSession(config);
     const runCoordinator = new RunCoordinator(wf, wf.projectStore, {
       ...config.coordinator,
@@ -860,13 +907,12 @@ export function buildBuiltInPipelineTools(core: Orchestrator): Tool[] {
   });
 
   /**
-   * Validate a raise the model asked for, or refuse it by name.
+   * Parse the tool's three loose fields into a raise, or refuse by name.
    *
-   * The three fields arrive as free strings from a model, so each is checked
-   * against the shipped unions rather than trusted: an unknown role or reason
-   * is a typed rejection carrying what was wrong (docs/contracts/errors.md),
-   * never a silently ignored parameter that would leave the resume failing for
-   * a reason the model cannot see.
+   * The fields arrive as free strings from a model, so "all three or none" is
+   * checked here where the shape is still three parameters; the resulting
+   * object is validated by `assertRaisedLimits` at the core boundary like any
+   * other caller's.
    */
   const raisedLimitsFrom = (
     role: string | undefined,
@@ -876,29 +922,15 @@ export function buildBuiltInPipelineTools(core: Orchestrator): Tool[] {
     if (role === undefined && reason === undefined && limit === undefined) return undefined;
     if (role === undefined || reason === undefined || limit === undefined)
       throw new OrchestratorError(
-        "invalid_role",
+        "invalid_raise",
         "raiseRole, raiseReason and raiseLimit are supplied together or not at all",
         "a partial raise cannot name a ceiling",
       );
-    if (!PROFILE_ROLES.includes(role as ProfileRole))
-      throw new OrchestratorError(
-        "invalid_role",
-        `unknown raiseRole ${role}; expected one of ${PROFILE_ROLES.join(", ")}`,
-        "the raised ceiling must name a configured role",
-      );
-    if (!(reason in STAGE_LIMIT_KEY))
-      throw new OrchestratorError(
-        "invalid_role",
-        `unknown raiseReason ${reason}; expected one of ${Object.keys(STAGE_LIMIT_KEY).join(", ")}`,
-        "the raised ceiling must name the exhausted limit",
-      );
-    if (!Number.isFinite(limit) || limit < 0)
-      throw new OrchestratorError(
-        "invalid_role",
-        `raiseLimit ${limit} must be a finite number >= 0`,
-        "a ceiling is a number",
-      );
-    return { role: role as ProfileRole, reason: reason as StageLimitReason, limit };
+    return assertRaisedLimits({
+      role: role as ProfileRole,
+      reason: reason as StageLimitReason,
+      limit,
+    });
   };
 
   const runPipelineTool = defineTool({
@@ -1031,7 +1063,7 @@ export function buildBuiltInPipelineTools(core: Orchestrator): Tool[] {
   const resumePipelineTool = defineTool({
     name: RESUME_PIPELINE_TOOL_NAME,
     description:
-      "Resume an interrupted built-in pipeline from its durable run ID using the original task. Completed stages are reused. A run paused on a stage ceiling CANNOT resume at the same ceiling -- pass raiseRole, raiseReason and raiseLimit (the pause reports all three) to resume with a larger one, which is the correction the operator-flow contract requires for an underestimate on progressing work.",
+      "Resume an interrupted built-in pipeline from its durable run ID using the original task. Completed stages are reused. A run paused on a stage ceiling CANNOT resume at the same ceiling -- pass raiseRole (the role whose stage paused), raiseReason and raiseLimit (the pause reports the reason and the exhausted value) to resume with a larger one, which is the correction the operator-flow contract requires for an underestimate on progressing work.",
     label: "resume pipeline",
     parameters: Type.Object({
       task: Type.String(),
