@@ -4,6 +4,22 @@ All notable changes to ad-coder are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project aims at
 [Semantic Versioning](https://semver.org/).
 
+## [0.38.1] - 2026-09-17
+
+### Fixed
+- **README describes the enabled-by-default world** (issue #246): the front
+  page no longer tells a reader to pass `--workflows pipeline`, the flag that
+  `3d9bf13` removed the need for. The README now says in one pass that every
+  shipped capability resolves enabled: the built-in pipeline module and its
+  tools are present in a plain session, skills ship as a catalogue each role
+  loads from (`--skills` pins, `--no-skills` turns off, the profile
+  `capabilities` setting persists the switch), `config show` reports the
+  resolved capability state with the layer that decided it, and the pipeline
+  runs the project's declared quality gates before review. The new
+  `ad-coder ledger report` command joins the diagnose section as the way to
+  read what a run actually cost. Stale opt-in wording is cut rather than
+  annotated.
+
 ## [0.38.0] - 2026-09-17
 
 ### Fixed
