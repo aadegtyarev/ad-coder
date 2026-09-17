@@ -4,6 +4,17 @@ All notable changes to ad-coder are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project aims at
 [Semantic Versioning](https://semver.org/).
 
+## [0.40.0] - 2026-09-17
+
+### Added
+- **The `bash` built-in tool reaches every role with a project-owned boundary description** (issue #231): what it is for (the escape hatch for what no specialised tool covers: builds, installs, git state, processes) and what it is not for (reading goes to `read`, creating to `write`, editing to `edit`, content search to the project tools). Attached to the built-in tool object -- a custom tool named `bash` collides with it as `tool_name_collision`, so wrapping was not a vehicle. A mechanism, not a prompt: the boundary travels in the tool schema on every request (docs/contracts/tool-observability.md).
+
+### Fixed
+- **A failed `edit` now carries the recovery evidence inside the failing call** (issue #231): across two measured orchestrator sessions, 16 of 96 edit calls failed and the model then usually fell back to `sed -i`, trading a visible edit -- path, line counts, diff -- for an invisible one. The failure was self-serviceable: the not-found error said the text must match exactly but not where the file's equivalent region sat. A not-found failure now names the file's closest matching region (line and similarity, `close` vs. stale) and a non-uniqueness failure names bounded occurrence line numbers, each with a read-then-retry-the-EDIT sentence, and never prints file content; diagnostics are skipped -- the upstream error passes through -- when the file cannot be read or exceeds the positive read ceiling (docs/contracts/errors.md).
+
+### Refactored
+- `src/runner/runner.ts` and `src/conversation/conversation.ts` both built the four built-in tools inline; the boundary description and edit diagnostics now live in one seam, `src/runner/builtin-tools.ts` (docs/contracts/decomposition.md).
+
 ## [0.39.0] - 2026-09-17
 
 ### Added

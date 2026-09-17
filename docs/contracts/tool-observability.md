@@ -44,5 +44,12 @@ arguments or drowning in implementation noise?
   named once a second role appears and hidden while only one works (never a
   literal `activity`), and every line where tokens or cost are known shows the
   stage spend so far alongside the remaining-capacity projection.
+- 2026-09-17 (issue #231): The `bash` built-in tool reaches every role with a project-owned boundary description
+  attached -- what it is FOR (the escape hatch for what no specialised tool covers: builds, installs, git state,
+  processes) and NOT for (read/write/edit and the project search tools own their domains; edits go through `edit`,
+  whose failure output names the region to re-read). The description is attached to the built-in tool object rather
+  than shipped as a wrapping custom tool -- a custom tool named `bash` collides with the built-in
+  (`tool_name_collision`), so wrapping is not a vehicle here. This is a mechanism, not a prompt rule: the boundary
+  travels with the tool schema on every request, not in a prompt a model must remember mid-task.
 - Every configurable grouping, refresh, retention, and output limit has an
   efficient default and remains overridable under the configuration contract.
