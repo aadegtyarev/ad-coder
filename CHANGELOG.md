@@ -4,6 +4,42 @@ All notable changes to ad-coder are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project aims at
 [Semantic Versioning](https://semver.org/).
 
+## [0.41.0] - 2026-09-17
+
+### Fixed
+- **The orchestration error boundary keeps the reason without weakening what it withholds** (issue #237):
+  `safeErrorText` collapsed every error without a `code`+`detail` pair into a
+  fixed string, so neither of two independent diagnoses of delegated
+  `run_role` failures could see its one-word cause (`configured_tools_unavailable`,
+  then `EmptyTurnError`) without patching the line by hand -- and after #236's
+  deterministic fix, two of five intermittent delegated calls stayed
+  undiagnosable behind it. The boundary now projects in three ordered shapes,
+  each safe by construction, honouring both halves of the errors contract: the
+  `code`+`detail` passthrough is unchanged (`error: code (detail)`);
+  house classes whose message is an authored string -- fixed wording, numbers,
+  a validated run id, a harness failure-code token -- are matched BY CLASS and
+  keep that message plus the run id (`error: empty_turn (the provider returned
+  a failed empty turn; ... (provider code assistant_error); run <id>)`);
+  an unrecognised error still names its inert constructor
+  (`(TypeError)`) -- the one word that ends the investigation -- while its
+  message, stack, and payloads stay withheld. Each allow-list entry is audited
+  field-by-field before entering; `WorkflowStageFailureError` is excluded
+  because its message re-wraps an uncontrolled source error.
+- **A deferred-suspension failure is typed, not a bare `Error`** (issues #236, #237):
+  `runRole` and the workflow step's turn loop now raise `SuspendedRunError`
+  (`code: suspended`, with the run id the provider left hanging) instead of
+  unrecognised plain errors, so the intermittent "two of five invocations
+  failed, a plain retry succeeded" pattern from #236 is at least now
+  FACTUALLY DISTINCT in the projection category from
+  `empty_turn`, `provider_rejected`, `configured_tools_unavailable`, and
+  `provider_limit`, and the run id the error carries locates the ledger with
+  the settled record. The intermittent cause itself is NOT yet identified
+  from static evidence -- no live-provider failure to instrument here -- but
+  the next occurrence now names its own code token instead of collapsing.
+- `EmptyTurnError` now also carries the harness-authored provider failure code
+  that emptied the turn (`providerCode`, e.g. `assistant_error`), so a failed
+  empty turn is categorised instead of guessed (docs/contracts/errors.md).
+
 ## [0.40.0] - 2026-09-17
 
 ### Added

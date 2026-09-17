@@ -17,8 +17,40 @@ export class EmptyTurnError extends Error {
   override readonly name = "EmptyTurnError";
   readonly code = "empty_turn" as const;
 
+  constructor(
+    readonly runId: string,
+    /** The bounded, harness-authored failure code that emptied the turn, when one exists. */
+    readonly providerCode?: string,
+  ) {
+    super(
+      `the provider returned a failed empty turn; verify authentication and retry` +
+        `${providerCode !== undefined ? ` (provider code ${providerCode})` : ""}`,
+    );
+  }
+}
+
+/**
+ * A provider response settled as a deferred suspension instead of a settled
+ * turn: the conveniences this boundary serves (single-turn `runRole`, one
+ * workflow step) do not resume deferrals.
+ *
+ * WHY A TYPED CLASS. This failure used to be a bare `Error` with a run id in
+ * its text, so -- until the errors boundary learns to trust it -- it collapsed
+ * into the generic internal-error string (#236: an intermittent failure whose
+ * cause stayed invisible while `safeErrorText` swallowed every unrecognised
+ * error). An intermittent deferral reads exactly like an `EmptyTurnError` from
+ * the outside; typing it is what makes `retry succeeded after a delay`
+ * diagnosable instead of anecdotal.
+ */
+export class SuspendedRunError extends Error {
+  override readonly name = "SuspendedRunError";
+  readonly code = "suspended" as const;
+
   constructor(readonly runId: string) {
-    super("the provider returned a failed empty turn; verify authentication and retry");
+    super(
+      `run ${runId} suspended; deferred provider response is not resumed by this call; ` +
+        "retry the call, or resume the run through its runner",
+    );
   }
 }
 

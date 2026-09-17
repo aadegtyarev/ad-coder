@@ -41,6 +41,7 @@ import {
   ProviderRejectionError,
   providerRejectionStatusFrom,
   resolveTargetDir,
+  SuspendedRunError,
 } from "../runner/errors";
 import type { Tool } from "../runner/tool";
 import type { SessionLimits } from "../session-limits";
@@ -401,7 +402,7 @@ export async function startConversation(config: ConversationConfig): Promise<Con
         // run is a deferred provider response this loop does not resume; fail
         // loud rather than returning a record the caller reads as settled --
         // same discipline as runRole (src/runner/runner.ts).
-        throw new Error(`conversation: run ${runId} suspended; step does not resume deferrals`);
+        throw new SuspendedRunError(runId);
       }
       const assistantText = await extractFinalText(session, context);
       if (result.status !== "completed" && assistantText.trim() === "") {
@@ -410,7 +411,7 @@ export async function startConversation(config: ConversationConfig): Promise<Con
         // failure. See ProviderRejectionError for why only the number crosses.
         const rejection = providerRejectionStatusFrom(result.error);
         if (rejection !== undefined) throw new ProviderRejectionError(runId, rejection);
-        throw new EmptyTurnError(runId);
+        throw new EmptyTurnError(runId, result.error?.code);
       }
       cumulativeDropped += ledger.droppedRecords;
       return {

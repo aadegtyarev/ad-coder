@@ -52,6 +52,7 @@ import {
   RunInterruptedError,
   RunnerError,
   resolveTargetDir,
+  SuspendedRunError,
 } from "./errors";
 import type { Tool } from "./tool";
 
@@ -855,7 +856,7 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
         // an unattributed failure keeps the authentication wording.
         const rejection = providerRejectionStatusFrom(result.error);
         if (rejection !== undefined) throw new ProviderRejectionError(runId, rejection);
-        throw new EmptyTurnError(runId);
+        throw new EmptyTurnError(runId, result.error?.code);
       }
     }
     if ("status" in result && result.status === "suspended") {
@@ -863,9 +864,7 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
       // faux/live drive settles; a suspended run means a deferred provider
       // response this convenience path does not resume. Fail loud rather than
       // returning a record the caller would read as settled.
-      throw new Error(
-        `runRole: run ${runId} suspended; single-turn drive does not resume deferrals`,
-      );
+      throw new SuspendedRunError(runId);
     }
     const diffBytes = await measureSafeGitDiffBytes(absTargetDir);
     params.stageLimitController?.assertActive();
