@@ -663,8 +663,14 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
     model: params.role.modelId,
     runId,
     step: params.step ?? "run",
-    ...(stageLimitController !== undefined && {
-      budget: () => projectRemainingStageBudget(stageLimitController.snapshot()),
+    // Spend is known after every provider turn, limits or not; the remaining
+    // capacity projection stays alongside for stages that do have limits.
+    budget: () => ({
+      ...(stageLimitController !== undefined && {
+        ...projectRemainingStageBudget(stageLimitController.snapshot()),
+      }),
+      usedTokens: usage.freshInput + usage.cachedInput + usage.output + usage.reasoning,
+      usedCostUsd: usage.costUsd,
     }),
   });
   harness.hooks.on("after_response", (event) => {

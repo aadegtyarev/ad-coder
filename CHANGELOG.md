@@ -4,6 +4,21 @@ All notable changes to ad-coder are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project aims at
 [Semantic Versioning](https://semver.org/).
 
+## [0.38.0] - 2026-09-17
+
+### Fixed
+- **The activity line answers "is this going anywhere"** (issue #226): the
+  literal actor placeholder `activity` is gone -- role and model are named once
+  a second role appears (`orchestrator·flash`) and the column collapses
+  while only one role works. Tokens and cost from the stage ledger now render
+  on every line where they are known (`12.3k tok  $0.015`). A long compound
+  `bash` command is named by its first meaningful command -- `git status`, not
+  a fixed-width prefix cut mid-pipe -- and a cut subject ends in a visible
+  `…`. A call that outlives the grouping refresh keeps its one line and
+  updates it in place instead of stacking a `started` line above the result.
+  `search_project`'s `terms` array is now recognized as a search subject, so
+  `Search` lines no longer print without one.
+
 ## [0.37.0] - 2026-09-17
 
 ### Added

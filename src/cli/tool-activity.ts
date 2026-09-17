@@ -17,15 +17,17 @@ export interface LineOutput {
 interface HumanGroup {
   activity: string;
   label: string;
+  /** Who is working: role and model, both held here and named only on render. */
+  role: string;
+  model?: string;
+  /** Wall-clock at which the group opened, so a reader can scan down the left edge. */
+  at: number;
   count: number;
   lifecycle: string;
   durationMs?: number;
-  /** Who is working: role, model, complexity -- one thought, rendered as one block. */
-  actor: string;
-  /** Wall-clock at which the group opened, so a reader can scan down the left edge. */
-  at: number;
+  /** Stage spend, as far as the last terminal event knew it. */
   costUsd?: number;
-  budgetLeft?: number;
+  tokens?: number;
 }
 
 /** `14:32:07` -- local time, seconds resolution, fixed width so the column aligns. */
@@ -75,19 +77,33 @@ function durationOf(durationMs: number | undefined): string {
  * Cost, but only once it is worth a glance.
  *
  * Printing `$0.000` on every line trains the eye to skip the column, which
- * defeats the point of having it.
+ * defeats the point of having it; a known-but-zero spend still prints, so the
+ * column never silently lies by omission, but unknown stays blank.
  */
 function costOf(costUsd: number | undefined): string {
-  if (costUsd === undefined || !Number.isFinite(costUsd) || costUsd < 0.001) return "";
-  return `$${costUsd.toFixed(3)}`;
+  if (costUsd === undefined || !Number.isFinite(costUsd) || costUsd <= 0) return "";
+  return costUsd < 0.001 ? "<$0.001" : `$${costUsd.toFixed(3)}`;
 }
+
+/** Tokens at a glance: `850 tok`, `12.3k tok`. Zero or unknown prints nothing. */
+function tokensOf(tokens: number | undefined): string {
+  if (tokens === undefined || !Number.isFinite(tokens) || tokens < 1) return "";
+  if (tokens < 1000) return `${Math.round(tokens)} tok`;
+  const k = tokens / 1000;
+  return k < 100 ? `${k.toFixed(1)}k tok` : `${Math.round(k)}k tok`;
+}
+
+const TERMINAL_LIFECYCLE = new Set(["completed", "failed", "cancelled", "timed_out"]);
 
 /** A bounded, backpressure-aware stderr transport and semantic human grouper. */
 export class ToolActivityRenderer {
   private readonly config: ToolActivityConfig;
+  /** Groups persist across flushes until their call reaches a terminal state. */
   private readonly groups = new Map<string, HumanGroup>();
   /** Roles seen so far: one means the console, several mean a pipeline. */
   private readonly seenRoles = new Set<string>();
+  /** The in-place line, if any: erased on the next flush and redrawn. */
+  private live: { key: string; text: string } | undefined;
   private readonly queue: string[] = [];
   private queuedBytes = 0;
   private dropped = 0;
@@ -116,37 +132,51 @@ export class ToolActivityRenderer {
     }
     const label = subjectOf(record.projection);
     // Grouping keys on WHO and WHAT: two roles touching one file are two lines,
-    // because "which role went there" is the question being asked.
-    // The console runs one role, so printing "orchestrator" on every line is
-    // noise the operator asked to drop. A pipeline alternates roles, where the
-    // name IS the point -- so the role appears once a second one has been seen.
+    // because "which role went there" is the question being asked. The role is
+    // decided on render, not here, so a second role appearing later cannot
+    // re-key mid-lifecycle groups.
     this.seenRoles.add(record.role);
-    const actor = [this.seenRoles.size > 1 ? record.role : undefined, record.model]
-      .filter((part) => part !== undefined && part !== "")
-      .join("\u00b7");
-    const key = `${actor}\0${record.activity}\0${label}`;
+    const key = record.toolCallId;
     const previous = this.groups.get(key);
-    if (previous === undefined && this.groups.size >= this.config.humanGroupCount) {
-      this.dropped++;
-      return;
+    if (previous === undefined) {
+      if (this.groups.size >= this.config.humanGroupCount) {
+        this.dropped++;
+        return;
+      }
+      this.groups.set(key, {
+        activity: record.activity,
+        label,
+        role: record.role,
+        ...(record.model !== undefined && { model: record.model }),
+        at: Date.now(),
+        count: record.lifecycle === "requested" ? 1 : 0,
+        lifecycle: record.lifecycle,
+        ...(record.durationMs !== undefined && { durationMs: record.durationMs }),
+        ...(record.budget?.usedCostUsd !== undefined && { costUsd: record.budget.usedCostUsd }),
+        ...(record.budget?.usedTokens !== undefined && { tokens: record.budget.usedTokens }),
+      });
+    } else {
+      // ONE call is ONE group for its whole lifecycle: subject, duration, and
+      // spend update that same line instead of stacking a second unrelated one.
+      previous.activity = record.activity;
+      previous.label = label || previous.label;
+      previous.lifecycle = record.lifecycle;
+      if (record.lifecycle === "requested") previous.count++;
+      if (record.durationMs !== undefined) previous.durationMs = record.durationMs;
+      if (record.budget?.usedCostUsd !== undefined) previous.costUsd = record.budget.usedCostUsd;
+      if (record.budget?.usedTokens !== undefined) previous.tokens = record.budget.usedTokens;
+      if (record.model !== undefined) previous.model = record.model;
     }
-    this.groups.set(key, {
-      activity: record.activity,
-      label,
-      actor,
-      at: previous?.at ?? Date.now(),
-      count: (previous?.count ?? 0) + (record.lifecycle === "requested" ? 1 : 0),
-      lifecycle: record.lifecycle,
-      ...(record.durationMs !== undefined && { durationMs: record.durationMs }),
-      ...(record.budget?.costUsd !== undefined && { budgetLeft: record.budget.costUsd }),
-    });
+    this.scheduleFlush(record.lifecycle);
+  };
+
+  private readonly scheduleFlush = (lifecycle: string): void => {
     if (
-      record.lifecycle === "failed" ||
-      record.lifecycle === "cancelled" ||
-      record.lifecycle === "timed_out"
+      lifecycle === "failed" ||
+      lifecycle === "cancelled" ||
+      lifecycle === "timed_out" ||
+      this.config.groupingRefreshMs === 0
     ) {
-      this.flush();
-    } else if (this.config.groupingRefreshMs === 0) {
       this.flush();
     } else if (this.timer === undefined) {
       this.timer = setTimeout(() => {
@@ -156,28 +186,68 @@ export class ToolActivityRenderer {
     }
   };
 
+  /**
+   * Signals bunched terminal groups first, as settled lines; the newest still
+   * running call then takes the ONE in-place line, re-erased and rewritten on
+   * every flush so one call stays one line.
+   */
+  private renderLine(group: HumanGroup, live: boolean): string {
+    const count = group.count > 1 ? ` ×${group.count}` : "";
+    // Who is shown only once a second role has been seen. A literal "activity"
+    // printed while one role worked named nothing, so the column simply
+    // collapses instead.
+    const actor =
+      this.seenRoles.size > 1
+        ? [group.role, group.model].filter((part) => part !== "" && part !== undefined).join("·")
+        : "";
+    const lifecycle = live ? "…" : group.lifecycle === "completed" ? "" : group.lifecycle;
+    const duration = live ? durationOf(Date.now() - group.at) : durationOf(group.durationMs);
+    // Left to right: when, who, what, with what, how long, what it spent.
+    const parts = [
+      clockOf(group.at),
+      actor,
+      `${group.activity}${count}`,
+      group.label,
+      lifecycle,
+      duration,
+      tokensOf(group.tokens),
+      costOf(group.costUsd),
+    ].filter((part) => part !== "");
+    return live ? `${parts.join("  ")} …` : `${parts.join("  ")}\n`;
+  }
+
   flush(): void {
+    if (this.mode === "json") return;
     if (this.timer !== undefined) {
       clearTimeout(this.timer);
       this.timer = undefined;
     }
-    for (const group of this.groups.values()) {
-      // Left to right: when, who, what, with what, how long, what it cost.
-      // Empty columns collapse rather than printing a placeholder, so a line
-      // never carries a field that says nothing.
-      const count = group.count > 1 ? ` \u00d7${group.count}` : "";
-      const parts = [
-        clockOf(group.at),
-        group.actor === "" ? "activity" : group.actor,
-        `${group.activity}${count}`,
-        group.label,
-        group.lifecycle === "completed" ? "" : group.lifecycle,
-        durationOf(group.durationMs),
-        costOf(group.costUsd),
-      ].filter((part) => part !== "");
-      this.write(`${parts.join("  ")}\n`);
+    // Erase the in-place line before anything new lands under it.
+    if (this.live !== undefined) {
+      this.raw(`\r${" ".repeat(Buffer.byteLength(this.live.text))}\r`);
+      this.live = undefined;
     }
-    this.groups.clear();
+    let liveKey: string | undefined;
+    let liveGroup: HumanGroup | undefined;
+    for (const [key, group] of this.groups) {
+      if (TERMINAL_LIFECYCLE.has(group.lifecycle)) {
+        this.write(this.renderLine(group, false));
+        this.groups.delete(key);
+      } else {
+        liveKey = key;
+        liveGroup = group;
+      }
+    }
+    if (liveGroup !== undefined && liveKey !== undefined) {
+      const text = this.renderLine(liveGroup, true);
+      this.write(text, false);
+      this.live = liveKey === undefined ? undefined : { key: liveKey, text };
+    }
+  }
+
+  /** Direct write, bypassing newline framing: used only for erase sequences. */
+  private raw(chunk: string): void {
+    this.output.write(chunk);
   }
 
   close(): void {
@@ -215,9 +285,9 @@ export class ToolActivityRenderer {
       : `Activity: ${dropped} rendered event(s) dropped${final ? " before close" : ""}\n`;
   }
 
-  private write(raw: string): void {
+  private write(raw: string, frame = true): void {
     const line = boundToolActivityText(raw, this.config.renderedLineBytes);
-    const framed = line.endsWith("\n") ? line : `${line}\n`;
+    const framed = !frame || line.endsWith("\n") ? line : `${line}\n`;
     if (!this.blocked && this.queue.length === 0) {
       this.blocked = !this.output.write(framed);
       return;

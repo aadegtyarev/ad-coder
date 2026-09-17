@@ -36,5 +36,13 @@ arguments or drowning in implementation noise?
   always preserve explicit cursor polling as reconnect recovery. Console notice
   callbacks are rendering-only: they never enqueue conversational input or call a
   model/session turn, and JSON notices stay on complete stderr lines.
+- 2026-09-17: The rendered activity line names the SUBJECT, the WORKER, and the
+  PRICE. A compound command is identified by its first meaningful command
+  (`git status`, not a 120-character prefix) with a visible `…` marker when
+  anything is cut, one call is ONE line that updates in place while it runs
+  rather than a `started` line followed by a result line, role and model are
+  named once a second role appears and hidden while only one works (never a
+  literal `activity`), and every line where tokens or cost are known shows the
+  stage spend so far alongside the remaining-capacity projection.
 - Every configurable grouping, refresh, retention, and output limit has an
   efficient default and remains overridable under the configuration contract.
