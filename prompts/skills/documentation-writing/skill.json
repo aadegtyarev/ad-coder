@@ -1,1 +1,14 @@
-{"id":"documentation-writing","version":"1","description":"Write and revise documentation so a reader finds the answer: compactness is not word count, and a stale sentence is worse than a missing one.","roles":["orchestrator","planner","researcher","coder","reviewer","auditor","security"]}
+{
+  "id": "documentation-writing",
+  "version": "1",
+  "description": "Write and revise documentation so a reader finds the answer: compactness is not word count, and a stale sentence is worse than a missing one.",
+  "roles": [
+    "orchestrator",
+    "planner",
+    "researcher",
+    "security",
+    "coder",
+    "reviewer",
+    "auditor"
+  ]
+}

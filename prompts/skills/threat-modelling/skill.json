@@ -1,0 +1,6 @@
+{
+  "id": "threat-modelling",
+  "version": "1",
+  "description": "Find threats in a plan before code exists: the dimensions worth checking, tracing a lead to the door that authorizes it, and a mitigation per real finding.",
+  "roles": ["orchestrator", "security", "planner", "reviewer", "auditor"]
+}

@@ -1,1 +1,14 @@
-{"id":"repository-navigation","version":"1","description":"Ask the repository one question per call: git for state, search for location, read for content.","roles":["orchestrator","planner","researcher","coder","reviewer","auditor","security"]}
+{
+  "id": "repository-navigation",
+  "version": "1",
+  "description": "Ask the repository one question per call: git for state, search for location, read for content.",
+  "roles": [
+    "orchestrator",
+    "planner",
+    "researcher",
+    "security",
+    "coder",
+    "reviewer",
+    "auditor"
+  ]
+}

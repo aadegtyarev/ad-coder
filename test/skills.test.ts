@@ -76,7 +76,7 @@ test("loads shipped skills with a content digest", () => {
   expect(resolveSkills(["delivery-calibration"])[0]).toMatchObject({
     id: "delivery-calibration",
     source: "builtin",
-    roles: ["orchestrator", "planner"],
+    roles: ["orchestrator"],
   });
 });
 
@@ -259,8 +259,11 @@ test("a role receives the catalogue, and loads instructions only when it asks", 
   expect(catalogue.length).toBeGreaterThan(0);
   const rendered = formatSkillCatalogue(catalogue);
   for (const entry of catalogue) expect(rendered).toContain(entry.id);
-  // Cheap by construction: names and one-liners, not methods.
-  expect(rendered.length).toBeLessThan(1200);
+  // Cheap by construction: names and one-liners, not methods. The bound is per
+  // entry, not on the whole rendering -- a total ceiling would mean shipping a
+  // new skill could only be paid for by shortening an unrelated one, and the
+  // property being protected is that a catalogue row stays a row.
+  expect(rendered.length / catalogue.length).toBeLessThan(200);
   expect(rendered).not.toContain("git status");
 
   const loaded: SkillLoadRecord[] = [];

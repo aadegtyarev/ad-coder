@@ -29,11 +29,10 @@ unbounded prompt directory.
   instructions still reach a prompt only through an explicit load or a pin,
   never silently.
 - Built-in `architecture-recon`, `task-slicing`, `acceptance-review`,
-  `delivery-calibration` and `repository-navigation` are the shipped skills.
-  Their outputs respectively bound exploration, define a minimal
-  acceptance-tested slice, verify delivery independently, estimate
-  accepted-result cost before bounded dispatch, and keep repository questions to
-  one call each.
+  `delivery-calibration`, `repository-navigation`, `role-selection`,
+  `documentation-writing`, `change-implementation`, `change-verification`,
+  `threat-modelling`, `external-research` and `overload-response` are the
+  shipped skills.
 - 2026-09-16: A skill carries what a role prompt has no room for: the specific
   technique, the failure it prevents, and the rule for stopping. A skill that
   restates its role prompt in one sentence costs a load and teaches nothing --
@@ -106,3 +105,28 @@ unbounded prompt directory.
   content-free error carrying its reason. A refusal for a skill outside the
   role's scope says what the catalogue said, so it cannot be used to enumerate
   skills written for other roles.
+- 2026-09-17: A skill is written for a TASK, and its `roles` list names every
+  role that can perform that task -- not the one role whose title matches it.
+  Any role can be switched off, and so can the pipeline, so knowledge that lives
+  only in one role's prompt leaves the harness when that role does. The
+  technique for editing code, verifying a change, modelling threats, researching
+  outside the repository, mapping a surface and responding to overload are
+  therefore skills, and a role prompt states what the role owns and points at
+  them.
+  The rule this replaces produced its own contradictions: `architecture-recon`
+  was granted to the researcher, whose prompt said "Do not survey the
+  repository", and withheld from the reviewer and auditor, whose prompts order
+  exactly that work.
+- 2026-09-17: A role prompt must not name a tool the role was not granted.
+  Teaching the planner to batch `rg` and `git` reads when it has no `bash`, or
+  the coder to call `explore_project` when that tool is filtered out of its
+  grant, spends a turn on a call that cannot succeed and reads as a defect in
+  the role. A skill shared across roles states which tool answers which question
+  without assuming any particular grant. Enforced by a test over every built-in
+  plugin combination.
+- 2026-09-17: The summarizer's system prompt is `prompts/summarizer.md`,
+  resolved through the same loader as every other role prompt and overridable at
+  `.ad-coder/prompts/summarizer.md`. It was a string constant in
+  `src/context/compactor.ts` -- the one role contract an operator could not
+  change without rebuilding the package, governing what every later turn still
+  knows.

@@ -877,7 +877,13 @@ test("every built-in plugin combination keeps role tools and prompt fallbacks al
           hasExplore && !(role === "coder" && tool === "explore_project"),
         );
       }
-      expect(spec?.role.systemPrompt).toMatch(/when\s+(?:[^\n]*tools are\s+)?available/i);
+      // A prompt must never teach a tool its role was not granted: the planner
+      // has no `bash`, the coder is denied `explore_project`, and a prompt that
+      // instructs either to use one describes work the role cannot perform.
+      for (const missing of ["explore_project", "search_project", "read_project", "bash"]) {
+        if (spec?.role.activeToolNames?.includes(missing) === true) continue;
+        expect(spec?.role.systemPrompt).not.toContain(`\`${missing}\``);
+      }
     }
     for (const role of ["researcher", "auditor"] as const) {
       expect(resolved.roles[role]?.role.activeToolNames?.includes("web_search")).toBe(hasWeb);
@@ -954,18 +960,18 @@ test("stage budgets have finite defaults, expose provenance, and are zero-disabl
   } as const;
   const defaults = resolvePipelineConfig(base);
   expect(defaults.stageLimits).toEqual({
-    maxDurationMs: 600_000,
-    maxModelTurns: 32,
-    maxToolTurns: 128,
-    maxInputTokens: 500_000,
-    maxCostUsd: 2,
-    finalResponseReserveModelTurns: 4,
-    finalResponseReserveDurationMs: 30_000,
-    finalResponseReserveToolTurns: 8,
-    finalResponseReserveInputTokens: 100_000,
+    maxDurationMs: 1_800_000,
+    maxModelTurns: 96,
+    maxToolTurns: 384,
+    maxInputTokens: 1_500_000,
+    maxCostUsd: 6,
+    finalResponseReserveModelTurns: 12,
+    finalResponseReserveDurationMs: 90_000,
+    finalResponseReserveToolTurns: 24,
+    finalResponseReserveInputTokens: 300_000,
   });
   expect(defaults.effectiveConfig?.["stageLimits.maxDurationMs"]).toEqual({
-    value: 600_000,
+    value: 1_800_000,
     source: "built-in-default",
   });
   const disabled = resolvePipelineConfig({
@@ -1011,7 +1017,7 @@ test("role stage-budget overlays inherit global limits and preserve explicit zer
   expect(config.roleStageLimits?.reviewer).toMatchObject({
     maxModelTurns: 3,
     maxToolTurns: 0,
-    maxDurationMs: 300_000,
+    maxDurationMs: 900_000,
   });
   expect(config.roleStageLimits?.planner?.maxToolTurns).toBe(10);
 });
