@@ -122,6 +122,9 @@ test("a role row becomes one entry per tier, and a qualified row replaces its ow
     providers: {
       "opencode-go": {
         enabled: true,
+        api: "openai-completions",
+        baseUrl: "https://opencode.example.com",
+        credential: "OPENCODE_API_KEY",
         models: {
           "glm-5.3-flash": { input: 0.15, output: 0.5 },
           "minimax-m3": { input: 0.3, output: 1.2 },

@@ -50,6 +50,38 @@ Rules the operator declared for ad-coder. A violation is always blocking.
   built-in OpenAI profile when the file is absent; upgrades never overwrite an
   existing user-owned file. Explicit provider, registry, profile, or model flags
   remain non-persistent per-run overrides.
+- 2026-09-19: **The operator-facing routing config is `models.yaml` and the
+  behaviour config is `settings.yaml` (issue #280).** `models.yaml` declares
+  `providers` (each with an optional provider-level `baseUrl`, an `enabled`
+  switch, a `credential` env-var NAME, and `models`), `profiles`
+  (`role: provider:model`, with a `role@complexity` row REPLACING that tier
+  only, and a list-valued row as an IN-ORDER fallback ladder), and an optional
+  `default:` profile. `settings.yaml` carries `review.require-stamp`
+  (`on`/`off`/`auto`) and `review.cost-signature`. When `models.yaml` is
+  present and no explicit provider/registry/profile/model flag or `--inventory-config`
+  is given, it wins WHOLESALE over `inventories.json`; when it is ABSENT the
+  existing `inventories.json` path is unchanged. The winning source is visible
+  in `config show` and the startup banner (`models.yaml "<profile>"` vs
+  `inventory "<name>"` vs `provider "..."`) -- never a silent switch. A
+  present-but-unusable `models.yaml` (for example no `default` and no selected
+  profile) is a typed error, NEVER a silent fall back to JSON. Provider-qualified
+  names need no alias table; a credential is declared per provider as an
+  env-var NAME and translated at the projection boundary to the registry
+  `{ kind: "env-var", envVar }` shape (stored-credential support and `ad-coder
+  auth` coverage remain future work). An enabled provider MUST declare a
+  credential and a resolvable endpoint (a provider-level or model-level
+  `baseUrl`); `baseUrl` and `concurrency` both follow provider-declares/
+  model-narrows. Only a ladder's FIRST rung is served today (the runtime walk
+  is future work).
+- 2026-09-19: **`settings.yaml`'s `review` section is an explicit override of
+  the review-stamp marker-file behaviour, resolved ONCE and threaded to BOTH
+  the settle writer and the `stamp check` gate so the two can never disagree
+  (referencing #284).** `require-stamp: on` writes and requires a stamp with or
+  without a marker; `off` writes nothing and passes the gate; `auto`/absent
+  keeps exactly the existing marker-governed behaviour. `review.cost-signature`
+  follows the same declared-value-wins / absent-keeps-today pattern. A
+  present-but-empty or malformed `settings.yaml` is refused, never silently
+  defaulted; only an ABSENT file takes the defaults.
 - 2026-09-13: User profiles are portable through explicit versioned export and
   import. Exports contain inventories, routing calibration, confirmed economic
   history, and safe subscription-capacity estimates, but never credentials,
@@ -166,6 +198,12 @@ console surfaces without changing the existing context-window safeguards. The
 `researchBrief` source through the API and `--research-purpose` plus
 `--research-brief-id`, `--research-brief-version`, and `--research-brief-path`
 through pipeline-capable CLI commands.
+The 2026-09-19 pair (issue #280) supersedes the 2026-09-14 "`inventories.json`
+is the single editable runtime source" rule for routing: `models.yaml` is the
+operator-facing routing document and `settings.yaml` the behaviour document,
+resolved YAML-first-then-JSON with the winning source visible rather than
+silent; `inventories.json` remains only the absent-YAML fallback until it is
+retired in a later slice.
 The decomposition-depth exception implements the operation-mode contract's
 default stop after a child pipeline asks for decomposition again.
 The 2026-09-16 capability rule generalises the 2026-09-11 pair from values to

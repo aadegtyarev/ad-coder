@@ -104,6 +104,6 @@ export async function runPipeline(config: PipelineConfig): Promise<PipelineResul
   // stays a no-op in any target that has no stamp marker: this is ad-coder's
   // own repository's delivery paperwork, not harness behavior
   // (src/stamp/record-review-stamp.ts holds the scope rule).
-  recordReviewStampFromResult(config.targetDir, completed.result);
+  recordReviewStampFromResult(config.targetDir, completed.result, new Date(), config.requireStamp);
   return completed.result;
 }
