@@ -61,10 +61,16 @@ Rules for the project's own code quality. A violation is always blocking.
   closed with #239).** `ad-coder stamp delivery` renders the PR block straight
   from `.ad-coder/ledger/*.jsonl` -- run ids, total calls, provider-reported
   cost, fresh/cached/output tokens, then one compact row per declared role
-  (planner/researcher/security/coder/reviewer) with its dominant model, calls,
-  and cost; a role with no rows says "did not run" instead of vanishing. A
-  model summarising its own cost can be wrong about it, so the numbers are
-  never retyped by hand; re-run the command to refresh the block.
+  (orchestrator/planner/researcher/security/coder/reviewer) with its dominant
+  model, calls, and cost; a role with no rows says "did not run" instead of
+  vanishing. A model summarising its own cost can be wrong about it, so the
+  numbers are never retyped by hand; re-run the command to refresh the block.
+- 2026-09-18: **Every lane that spent money has a row, so the rows sum to the
+  header (issue #336).** The orchestrator lane drives the whole run and was
+  missing from the signature, which left the per-role rows adding up to less
+  than the total above them and invited a reader to conclude the run cost less
+  than it did. It leads the block -- first row, same shape as the others -- so
+  the sum is checkable by eye in the order the roles are named.
 - 2026-09-12: Project health is reviewed beyond the current diff. Before a public
   release, after a drift signal (oversized or high-churn module, repeated
   cross-boundary edits, or eight accumulated drift observations), and on an
