@@ -370,14 +370,22 @@ export class ProviderAdmissionController {
     scope.queue.push({ priority, enqueuedAt: this.now(), token });
     this.persist();
 
-    await token.wait();
-
-    // Woken either by a grant (state "admitted") or by a cancel/late-fill.
-    if (token.state === "cancelled") {
-      this.removeFromQueue(scope, token);
-      this.persist();
-      throw new AdmissionCancelledError(scopeLabel);
+    try {
+      await token.wait();
+    } catch (error) {
+      // Cancellation rejects the wait, so the removal must happen in the catch:
+      // an entry left in the queue would occupy capacity forever and could be
+      // granted later as a zombie permit (contract: cancellation while queued
+      // removes only that request).
+      if (token.state === "cancelled") {
+        this.removeFromQueue(scope, token);
+        this.persist();
+        throw new AdmissionCancelledError(scopeLabel);
+      }
+      throw error;
     }
+
+    // Woken by a grant (state "admitted").
     return token;
   }
 
@@ -528,8 +536,12 @@ export class ProviderAdmissionController {
                 return message;
               },
               (error: unknown) => {
-                controller.settleToken(token);
+                // Open the scope cooldown BEFORE releasing the permit: settle
+                // pumps the queue, and a queued request granted in that window
+                // would probe the provider the scope was just told to stand
+                // down from (contract: no probe during cooldown).
                 controller.reactRejection(scopeKey, error);
+                controller.settleToken(token);
                 throw error;
               },
             );
@@ -610,8 +622,8 @@ export class ProviderAdmissionController {
               return message;
             },
             (error: unknown) => {
-              this.settleToken(token);
               this.reactRejection(scopeKey, error);
+              this.settleToken(token);
               throw error;
             },
           );
