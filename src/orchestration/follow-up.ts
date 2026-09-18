@@ -35,17 +35,35 @@ const evidenceSchema = Type.Object(
 // its `exact()` check still refuses a field that does not belong to the kind
 // that was declared (a `note` carrying `document`, say). The schema advertises
 // the shape; the validator decides.
+// The `description` strings are what make the last sentence above true. They are
+// advisory by construction, so they cannot bounce a submission pre-execute and
+// the flattening decision (and its DeepSeek 400) is untouched -- but they are
+// the only statement of the vocabulary that reaches a provider sampling against
+// this schema, and the only one present on every turn. Without them the schema
+// advertised a shape whose one mandatory word was unguessable: a security stage
+// cycled through four invented kinds, was refused identically twelve times, and
+// recorded nothing (2026-09-18, run 8998ec7c).
 const followUpParameters = Type.Object(
   {
-    kind: Type.String(),
-    title: Type.String(),
-    evidence: Type.Array(evidenceSchema),
-    /** Only for kind "contract". */
-    contract: Type.Optional(Type.String()),
-    /** Required for kind "design-doc-drift". */
-    document: Type.Optional(Type.String()),
-    /** Only for kind "backlog": "low" | "medium" | "high". */
-    priority: Type.Optional(Type.String()),
+    kind: Type.String({
+      description:
+        'REQUIRED. Exactly one of: contract, note, design-doc-drift, backlog. "contract" also needs `contract`, "design-doc-drift" also needs `document`, "backlog" may carry `priority`; any other field for the chosen kind is rejected.',
+    }),
+    title: Type.String({ description: "one line naming the durable work" }),
+    evidence: Type.Array(evidenceSchema, {
+      description: "at least one entry; each needs a summary",
+    }),
+    contract: Type.Optional(
+      Type.String({ description: 'the contract name; required when kind is "contract"' }),
+    ),
+    document: Type.Optional(
+      Type.String({
+        description: 'the drifted document; required when kind is "design-doc-drift"',
+      }),
+    ),
+    priority: Type.Optional(
+      Type.String({ description: 'only for kind "backlog": one of low, medium, high' }),
+    ),
   },
   { additionalProperties: false },
 );

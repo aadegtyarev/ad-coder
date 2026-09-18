@@ -13,7 +13,10 @@ const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$/;
 const SHA256 = /^[a-f0-9]{64}$/;
 const FORBIDDEN =
   /(?:-----BEGIN [A-Z ]*PRIVATE KEY-----|gh[opusr]_[A-Za-z0-9_]{20,}|(?:api[_-]?key|token|password|secret)\s*[:=]\s*\S+|<!--\s*(?:BEGIN|END)|^\s*#\s*(?:CONTRACT|LDO)\b)/im;
-const KINDS = new Set(["contract", "note", "design-doc-drift", "backlog"]);
+// ONE list, and the set is derived from it, so the vocabulary a rejection names
+// and the vocabulary the validator accepts cannot drift apart.
+const KINDS = ["contract", "note", "design-doc-drift", "backlog"] as const;
+const KIND_SET = new Set<string>(KINDS);
 
 function fail(detail: string): never {
   throw new ProjectOperationsError("invalid_follow_up", detail);
@@ -87,7 +90,15 @@ export function validateFollowUp(
   options: FollowUpValidationOptions = {},
 ): FollowUp {
   if (!plain(value)) fail("follow-up must be an object");
-  if (typeof value.kind !== "string" || !KINDS.has(value.kind)) fail("kind is unsupported");
+  // The accepted set is named, not just refused: "kind is unsupported" leaves a
+  // caller holding an unguessable word with nothing to try next -- observed as
+  // twelve identical rejections across four invented kinds, ending a stage that
+  // produced no follow-up at all (2026-09-18, run 8998ec7c, security and
+  // reviewer). The submitted value is deliberately NOT echoed back: this
+  // sentence reaches a durable ledger, and an argument a model chose is exactly
+  // the place a credential-shaped string would arrive from.
+  if (typeof value.kind !== "string" || !KIND_SET.has(value.kind))
+    fail(`kind must be one of ${KINDS.join(", ")}`);
   const allowed = ["kind", "title", "evidence", "provenance"];
   if (value.kind === "contract") allowed.push("contract");
   if (value.kind === "design-doc-drift") allowed.push("document");

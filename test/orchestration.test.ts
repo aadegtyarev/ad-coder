@@ -407,7 +407,12 @@ test("submit_follow_up advertises one typed object and rejects all-fields calls 
   } catch (error) {
     unknownKind = error;
   }
-  expect((unknownKind as ProjectOperationsError).detail).toBe("kind is unsupported");
+  // The refusal names the accepted set, not only the disease: "kind is
+  // unsupported" cost a live stage twelve identical rejections across four
+  // invented kinds (2026-09-18, run 8998ec7c).
+  expect((unknownKind as ProjectOperationsError).detail).toBe(
+    "kind must be one of contract, note, design-doc-drift, backlog",
+  );
 });
 
 test("a rejected tool call tells the model WHAT was wrong, not only that it was", async () => {
@@ -2447,8 +2452,190 @@ test("an incomplete submit_plan reaches parsePlan and is named, not reported as 
   expect(caught).toBeInstanceOf(OrchestrationError);
   // The specific cause, not "you did not submit a plan".
   expect((caught as OrchestrationError).code).toBe("malformed_plan");
-  expect((caught as OrchestrationError).message).toContain("coverage.contractIds");
+  // The entry is indexed as well as the field named: a submission carries up to
+  // fifteen coverage entries and "coverage.contractIds" left the planner to
+  // find which one (2026-09-18, run 8998ec7c).
+  expect((caught as OrchestrationError).message).toContain("coverage[0].contractIds");
   expect((caught as OrchestrationError).code).not.toBe("missing_plan");
+});
+
+test("a refused coverage entry names the entry, the field, and the vocabulary it wanted", () => {
+  // THE REGRESSION THIS GUARDS. `parsePlan` answered THREE causes with ONE
+  // sentence -- "coverage fields are invalid" -- which named neither the entry
+  // nor the field. Observed live: a planner omitted the validator-required
+  // `status` on all eight of its entries, was refused with that sentence twice,
+  // and parsed only on the third attempt, once it happened to guess the field
+  // (2026-09-18, run 8998ec7c). `docs/contracts/errors.md` forbids naming the
+  // WRONG cause; naming none is the same failure with a friendlier face. Each
+  // sentence quotes the one list the validator checks against, so it cannot
+  // advertise a value the gate itself would then refuse.
+  const entry = {
+    surfaceId: "cli",
+    status: "covered",
+    contractIds: ["cli:thin-front"],
+    evidence: ["test"],
+    rationale: "applies",
+  };
+  const planWith = (coverageEntry: Record<string, unknown>) => ({
+    complexity: "medium",
+    securitySurface: "low",
+    summary: "s",
+    contractRequirements: [],
+    surfaceAnalysis: {
+      projectType: "CLI",
+      surfaces: [{ id: "cli", name: "CLI", rationale: "changed" }],
+      coverage: [coverageEntry],
+    },
+  });
+  const { status: _dropped, ...withoutStatus } = entry;
+  const refusedWith = (value: unknown): string => {
+    try {
+      parsePlan(value, "run-id");
+    } catch (error) {
+      return (error as OrchestrationError).message;
+    }
+    throw new Error("parsePlan accepted a submission it should have refused");
+  };
+
+  // The live case: `status` simply absent, which is what the schema invites by
+  // declaring the leaf optional with no description.
+  expect(refusedWith(planWith(withoutStatus))).toBe(
+    "coverage[0].status must be one of covered, not_applicable, research_required",
+  );
+  // A later entry is named as itself, not as the first: the planner's real
+  // submission carried eight, and "coverage fields are invalid" left it to find
+  // which one by hand.
+  expect(
+    refusedWith({
+      ...planWith(entry),
+      surfaceAnalysis: {
+        projectType: "CLI",
+        surfaces: [
+          { id: "cli", name: "CLI", rationale: "changed" },
+          { id: "core", name: "core", rationale: "changed" },
+        ],
+        coverage: [entry, { ...withoutStatus, surfaceId: "core" }],
+      },
+    }),
+  ).toBe("coverage[1].status must be one of covered, not_applicable, research_required");
+  expect(refusedWith(planWith({ ...entry, status: "partially_covered" }))).toBe(
+    "coverage[0].status must be one of covered, not_applicable, research_required",
+  );
+  expect(refusedWith(planWith({ ...entry, surfaceId: "  " }))).toBe(
+    "coverage[0].surfaceId must be a non-empty string",
+  );
+  expect(refusedWith(planWith({ ...entry, rationale: "" }))).toBe(
+    "coverage[0].rationale must be a non-empty string",
+  );
+  expect(refusedWith(planWith({ ...entry, contractIds: [] }))).toBe(
+    'coverage[0] is "covered" and requires contractIds and evidence',
+  );
+  // The refused VALUE is not echoed. This sentence reaches a durable failure
+  // surface, and a contract id is an argument a model chose -- the place a
+  // credential-shaped string would arrive from. The count plus the constant
+  // list is as actionable as naming it: the model still holds its submission.
+  // Independent review refused the version that echoed it.
+  const unknownId = refusedWith(planWith({ ...entry, contractIds: ["cli:invented"] }));
+  expect(unknownId).toContain("coverage[0].contractIds contains 1 unknown id(s)");
+  expect(unknownId).toContain("known ids are ");
+  expect(unknownId).not.toContain("cli:invented");
+  // A refusal names the field, never the value that filled it. `parsePlan`'s
+  // message is re-wrapped by `WorkflowStageFailureError` into a durable failure
+  // surface (docs/contracts/errors.md excludes that class from the
+  // safe-projection allow-list for exactly this reason), so an argument a model
+  // chose must not ride along -- that is where a credential-shaped string would
+  // arrive from. `verdict.ts` already refused an unknown surfaceId without
+  // echoing it; this pins the same discipline on the plan side and keeps it
+  // pinned, because the first version of the contract-id sentence did echo.
+  const secret = "opaque-submitted-value-7c1f";
+  // Opaque rather than credential-shaped on purpose. A token-shaped literal in a
+  // tracked file is refused by this repository's own `smoke:artifact` scanner
+  // (scripts/artifact-smoke.ts) -- the same discipline one level up. The shape of
+  // the value changes nothing about the code under test, only about the ledger
+  // it would reach.
+  const refusals = [
+    refusedWith(planWith({ ...entry, contractIds: [secret] })),
+    refusedWith(planWith({ ...entry, status: secret })),
+    refusedWith(planWith({ ...entry, surfaceId: secret })),
+    refusedWith({
+      ...planWith(entry),
+      surfaceAnalysis: {
+        ...planWith(entry).surfaceAnalysis,
+        surfaces: [{ id: secret, name: "CLI", rationale: "changed" }],
+      },
+    }),
+  ];
+  for (const refusal of refusals) expect(refusal).not.toContain(secret);
+  // A surface is indexed the same way, so the two lists can be read together.
+  expect(
+    refusedWith({
+      ...planWith(entry),
+      surfaceAnalysis: {
+        ...planWith(entry).surfaceAnalysis,
+        surfaces: [{ id: "cli", name: "", rationale: "changed" }],
+      },
+    }),
+  ).toBe("surfaces[0].name must be a non-empty string");
+});
+
+test("the submission schemas state their vocabulary in descriptions, not in unions", () => {
+  // The other half of the same fix. A `description` is ADVISORY: it is not a
+  // `required` entry and not a union of literals, so it cannot bounce a
+  // submission pre-execute -- the property the "every nested field is
+  // Type.Optional" decision protects, and the one the enum-leaf decision
+  // protects, both stay exactly as they were. What it buys is the vocabulary on
+  // the surface a model reads EVERY turn, which is also the surface a provider
+  // that samples against the schema can see. `follow-up.ts` records the same
+  // reasoning for `kind`.
+  type Leaf = { type?: string; description?: string; required?: string[] };
+  type Node = {
+    type?: string;
+    description?: string;
+    required?: string[];
+    properties?: Record<string, Node>;
+    items?: Node;
+  };
+  const leavesOf = (schema: unknown, ...path: string[]): Node =>
+    path.reduce<Node>(
+      (node, key) => (key === "items" ? (node.items as Node) : (node.properties?.[key] as Node)),
+      schema as Node,
+    );
+
+  const coverage = leavesOf(
+    buildSubmitPlanTool({}, "run").parameters,
+    "surfaceAnalysis",
+    "coverage",
+    "items",
+  );
+  expect(coverage.required ?? []).toEqual([]);
+  const status = leavesOf(coverage, "status") as Leaf;
+  // Still a bare string: `parsePlan` remains the gate.
+  expect(status.type).toBe("string");
+  expect(status.description).toBe(
+    "REQUIRED. Exactly one of: covered, not_applicable, research_required",
+  );
+  // The sentence a model reads here names the same three values the rejection
+  // quotes and the validator checks -- one vocabulary, three places, and the
+  // list is derived from the one the gate uses rather than retyped.
+  for (const value of ["covered", "not_applicable", "research_required"])
+    expect(status.description).toContain(value);
+  // `status` is the only coverage leaf the validator requires unconditionally,
+  // and the only one whose description says so.
+  for (const name of ["surfaceId", "contractIds", "evidence", "rationale"])
+    expect(leavesOf(coverage, name).description).toBeDefined();
+
+  const verdictStatus = leavesOf(buildSubmitVerdictTool({}, "run").parameters, "status") as Leaf;
+  expect(verdictStatus.type).toBe("string");
+  expect(verdictStatus.description).toContain("approved");
+  expect(verdictStatus.description).toContain("changes_requested");
+  const severity = leavesOf(
+    buildSubmitVerdictTool({}, "run").parameters,
+    "issues",
+    "items",
+    "severity",
+  ) as Leaf;
+  expect(severity.type).toBe("string");
+  expect(severity.description).toContain("blocker");
 });
 
 test("an incomplete submit_verdict reaches parseVerdict and is named, not reported as a missing verdict", async () => {

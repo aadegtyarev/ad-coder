@@ -13,6 +13,53 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.67.1] - 2026-09-18
+
+### Fixed
+- **A refused submission names the field it refused and the values it would
+  accept** (issue #359). `submit_plan` answered three different causes with one
+  sentence -- "coverage fields are invalid" -- and `submit_follow_up` answered
+  an unknown `kind` with "kind is unsupported". Neither named the entry, the
+  field, or the accepted set, so a model holding one had nothing to correct and
+  its only move was to resubmit unchanged. `docs/contracts/errors.md` forbids
+  naming the WRONG cause; naming none is the same failure with a friendlier
+  face.
+
+  Observed live, run `8998ec7c-af7f-4b17-bd82-6bc312762965` on 2026-09-18. A
+  planner omitted the validator-required `status` on all eight coverage entries
+  and was refused identically twice before it happened to guess the field on the
+  third attempt. A security stage invented four kinds in turn, was refused
+  twelve times, and recorded no follow-up at all; the reviewer stage then hit
+  the same wall on the same tool. Two roles and two providers' worth of evidence
+  that the defect is the message, not the model.
+
+  Coverage rejections now read `coverage[3].status must be one of covered,
+  not_applicable, research_required`; an unknown contract id lists the ids it
+  knows; the surfaces list is indexed the same way; and `verdict.coverage`'s
+  one-sentence-four-fields refusal is split per field, matching the corrective
+  messages already beside it. The submitted value is deliberately never echoed
+  back: these sentences reach a durable ledger, and an argument a model chose is
+  where a credential-shaped string would arrive from. The first version of the
+  contract-id sentence broke that rule -- it listed the unknown ids it had been
+  handed -- and independent review refused it, correctly: `parsePlan`'s message
+  is re-wrapped by `WorkflowStageFailureError` into a durable failure surface,
+  and `docs/contracts/errors.md` excludes that class from the safe-projection
+  allow-list for exactly this reason. It now names the entry, the count and the
+  constant list of known ids; `verdict.ts` already refused an unknown
+  `surfaceId` without echoing it, so the plan side was the odd one out. A test
+  submits a credential-shaped value into four refusal paths and asserts that
+  none of the four messages contains it.
+- **The submission schemas state their vocabulary where a model reads it**
+  (issue #359). The enum leaves stay bare strings -- `parsePlan` and
+  `parseVerdict` are the gates, and `follow-up.ts` records why a union of
+  literals breaks DeepSeek outright -- but they carried no `description` at all,
+  so the shape a model saw on every turn said only that `status`, `kind` and
+  `severity` were optional strings, while the validator required the first two.
+  Each now carries an advisory description naming its accepted values and, where
+  the validator conditions on it, that it is required. A description is not a
+  `required` entry and not a union of literals, so it cannot bounce a submission
+  pre-execute and both recorded decisions stand unchanged.
+
 ## [0.67.0] - 2026-09-18
 
 ### Fixed

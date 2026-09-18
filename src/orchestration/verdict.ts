@@ -97,14 +97,23 @@ export function parseVerdict(value: unknown, detail: string, expected?: SurfaceA
       if (typeof entry !== "object" || entry === null || Array.isArray(entry))
         return bad(`verdict.coverage[${index}] must be an object`);
       const item = entry as Record<string, unknown>;
+      // The index was here but the FIELD was not, and this branch covers four of
+      // them: it was the same refusal-plan.ts used to give, one sentence for
+      // several causes, and it names neither the one that failed nor what it
+      // wanted (`docs/contracts/errors.md`). Split per field, matching the
+      // corrective messages below.
+      if (typeof item.surfaceId !== "string")
+        return bad(`verdict.coverage[${index}].surfaceId must be a string`);
       if (
-        typeof item.surfaceId !== "string" ||
         !Array.isArray(item.contractIds) ||
-        !item.contractIds.every((id) => typeof id === "string") ||
+        !item.contractIds.every((id) => typeof id === "string")
+      )
+        return bad(`verdict.coverage[${index}].contractIds must be an array of strings`);
+      if (
         !Array.isArray(item.evidence) ||
         !item.evidence.every((evidence) => typeof evidence === "string")
       )
-        return bad(`verdict.coverage[${index}] fields are invalid`);
+        return bad(`verdict.coverage[${index}].evidence must be an array of strings`);
       return {
         surfaceId: item.surfaceId,
         contractIds: item.contractIds as string[],
@@ -183,21 +192,49 @@ export function buildSubmitVerdictTool(
     // silences `parseVerdict`'s corrective messages -- the coverage branch
     // names the exact contract IDs to resubmit -- which are the reviewer's
     // only route to a correct second attempt. `parseVerdict` is the gate.
+    // The `description` strings state the vocabulary where a model actually
+    // reads it. They are advisory, so -- like the optional leaves above -- they
+    // cannot bounce a submission pre-execute: decision (1) is untouched, and
+    // the rejection still reaches `parseVerdict`. Their absence is what left
+    // `status` and `severity` unguessable from the schema alone (2026-09-18,
+    // run 8998ec7c).
     parameters: Type.Object({
-      status: Type.String(),
+      status: Type.String({
+        description: "REQUIRED. Exactly one of: approved, changes_requested",
+      }),
       issues: Type.Array(
         Type.Object({
-          severity: Type.Optional(Type.String()),
-          what: Type.Optional(Type.String()),
+          severity: Type.Optional(
+            Type.String({
+              description: "one of: blocker, major, minor",
+            }),
+          ),
+          what: Type.Optional(
+            Type.String({ description: "the issue itself; required for every issue" }),
+          ),
         }),
       ),
-      summary: Type.String(),
+      summary: Type.String({ description: "a short summary of the review" }),
       coverage: Type.Optional(
         Type.Array(
           Type.Object({
-            surfaceId: Type.Optional(Type.String()),
-            contractIds: Type.Optional(Type.Array(Type.String())),
-            evidence: Type.Optional(Type.Array(Type.String())),
+            surfaceId: Type.Optional(
+              Type.String({
+                description:
+                  "the id of a surface the PLAN marked covered; every such surface needs one entry here",
+              }),
+            ),
+            contractIds: Type.Optional(
+              Type.Array(Type.String(), {
+                description:
+                  "must exactly match the contract ids the plan recorded for that surface",
+              }),
+            ),
+            evidence: Type.Optional(
+              Type.Array(Type.String(), {
+                description: "at least one verification result; an empty array is rejected",
+              }),
+            ),
           }),
         ),
       ),

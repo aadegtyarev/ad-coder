@@ -141,17 +141,20 @@ function parseSurfaceAnalysis(
   ) {
     return bad("surfaceAnalysis.surfaces exceeds the configured item limit");
   }
-  const surfaces = record.surfaces.map((item) => {
+  const surfaces = record.surfaces.map((item, index) => {
     if (typeof item !== "object" || item === null || Array.isArray(item))
-      return bad("surface is not an object");
+      return bad(`surfaces[${index}] is not an object`);
     const entry = item as Record<string, unknown>;
-    if (
-      !nonEmptyBounded(entry.id, maxTextBytes) ||
-      !nonEmptyBounded(entry.name, maxTextBytes) ||
-      !nonEmptyBounded(entry.rationale, maxTextBytes)
-    ) {
-      return bad("surface id, name, and rationale are required");
-    }
+    // Three separate sentences, one per field, rather than a loop over the three
+    // key names: `nonEmptyBounded` is a type predicate, and only a check on the
+    // literal path narrows `entry.id` to a string. A loop compiles to `unknown`
+    // and `tsc` refuses the assignment below -- which is how CI caught it.
+    if (!nonEmptyBounded(entry.id, maxTextBytes))
+      return bad(`surfaces[${index}].id must be a non-empty string`);
+    if (!nonEmptyBounded(entry.name, maxTextBytes))
+      return bad(`surfaces[${index}].name must be a non-empty string`);
+    if (!nonEmptyBounded(entry.rationale, maxTextBytes))
+      return bad(`surfaces[${index}].rationale must be a non-empty string`);
     return { id: entry.id, name: entry.name, rationale: entry.rationale };
   });
   if (new Set(surfaces.map(({ id }) => id)).size !== surfaces.length)
@@ -163,36 +166,58 @@ function parseSurfaceAnalysis(
   ) {
     return bad("coverage must contain exactly one entry per surface");
   }
-  const coverage = record.coverage.map((item) => {
+  const coverage = record.coverage.map((item, index) => {
     if (typeof item !== "object" || item === null || Array.isArray(item))
-      return bad("coverage is not an object");
+      return bad(`coverage[${index}] is not an object`);
     const entry = item as Record<string, unknown>;
+    // Three separate causes, three separate sentences, each naming the entry it
+    // refused. They used to share `coverage fields are invalid`, which told a
+    // planner holding a fifteen-line submission nothing: observed live, a
+    // planner omitted `status` on all eight of its entries, was refused with
+    // that one sentence twice, and only parsed on the third attempt when it
+    // happened to guess the field (2026-09-18, run 8998ec7c).
+    if (!nonEmptyBounded(entry.surfaceId, maxTextBytes))
+      return bad(`coverage[${index}].surfaceId must be a non-empty string`);
     if (
-      !nonEmptyBounded(entry.surfaceId, maxTextBytes) ||
       typeof entry.status !== "string" ||
-      !COVERAGE_STATUSES.includes(entry.status as ContractCoverageStatus) ||
-      !nonEmptyBounded(entry.rationale, maxTextBytes)
+      !COVERAGE_STATUSES.includes(entry.status as ContractCoverageStatus)
     )
-      return bad("coverage fields are invalid");
+      return bad(`coverage[${index}].status must be one of ${COVERAGE_STATUSES.join(", ")}`);
+    if (!nonEmptyBounded(entry.rationale, maxTextBytes))
+      return bad(`coverage[${index}].rationale must be a non-empty string`);
     for (const key of ["contractIds", "evidence"] as const) {
       if (
         !Array.isArray(entry[key]) ||
         (maxItems > 0 && entry[key].length > maxItems) ||
         entry[key].some((v) => !nonEmptyBounded(v, maxTextBytes))
       )
-        return bad(`coverage.${key} must be bounded non-empty strings`);
+        return bad(`coverage[${index}].${key} must be bounded non-empty strings`);
     }
     const status = entry.status as ContractCoverageStatus;
     const contractIds = entry.contractIds as string[];
     const evidence = entry.evidence as string[];
     if (status === "covered" && (contractIds.length === 0 || evidence.length === 0))
-      return bad("covered surfaces require contractIds and evidence");
-    if (contractIds.some((id) => !(id in CONTRACT_INDEX)))
-      return bad("coverage contains an unknown contract id");
+      return bad(`coverage[${index}] is "covered" and requires contractIds and evidence`);
+    const unknown = contractIds.filter((id) => !(id in CONTRACT_INDEX));
+    // The refused VALUES are deliberately not echoed: this sentence reaches a
+    // durable failure surface. `OrchestrationError.message` is re-wrapped by
+    // `WorkflowStageFailureError` (src/orchestration/session.ts), which
+    // docs/contracts/errors.md excludes from the safe-projection allow-list
+    // precisely because it carries an uncontrolled message -- and a contract id
+    // is an argument a model chose, which is exactly where a credential-shaped
+    // string would arrive from. "one unknown id, here are all the known ones"
+    // is as actionable as naming it: the model holds its own submission and can
+    // diff it against the constant list. Caught by independent review, which
+    // refused the first version of this sentence.
+    if (unknown.length > 0)
+      return bad(
+        `coverage[${index}].contractIds contains ${unknown.length} unknown id(s); ` +
+          `known ids are ${Object.keys(CONTRACT_INDEX).join(", ")}`,
+      );
     if (status === "not_applicable" && (contractIds.length !== 0 || evidence.length === 0))
-      return bad("not_applicable surfaces require rationale evidence and no contracts");
+      return bad(`coverage[${index}] is "not_applicable" and requires evidence and no contracts`);
     if (status === "research_required" && evidence.length === 0)
-      return bad("research_required surfaces require evidence of the gap");
+      return bad(`coverage[${index}] is "research_required" and requires evidence of the gap`);
     return {
       surfaceId: entry.surfaceId,
       status,
@@ -541,24 +566,66 @@ export function buildSubmitPlanTool(
       // which says which field is wrong. `surfaceAnalysis` itself stays
       // required because it was required before this schema existed too.
       surfaceAnalysis: Type.Object({
-        projectType: Type.Optional(Type.String()),
+        projectType: Type.Optional(
+          Type.String({ description: "the kind of project this repository is" }),
+        ),
         surfaces: Type.Optional(
           Type.Array(
             Type.Object({
-              id: Type.Optional(Type.String()),
-              name: Type.Optional(Type.String()),
-              rationale: Type.Optional(Type.String()),
+              id: Type.Optional(
+                Type.String({ description: "a stable id, unique across the list" }),
+              ),
+              name: Type.Optional(Type.String({ description: "the affected product surface" })),
+              rationale: Type.Optional(
+                Type.String({ description: "why this surface is affected" }),
+              ),
             }),
           ),
         ),
+        // Every `description` below is ADVISORY, which is why adding one cannot
+        // cost decision (1) anything: a description is not a `required` entry
+        // and not a union of literals, so a submission that omits or mis-spells
+        // the field still reaches `parsePlan` and still surfaces as
+        // `malformed_plan` with `capture.error` set. What it buys is the
+        // vocabulary on the surface a model sees EVERY turn -- the schema --
+        // rather than only in the one long instruction line
+        // `formatPlannerInstruction` appends to the task, and it reaches
+        // providers that sample against this schema. Live evidence for the
+        // cost of leaving it out: a planner omitted the required-by-validator
+        // `status` on all eight entries of a submission, was refused with
+        // "coverage fields are invalid" (which named neither the entry nor the
+        // field), and burned two turns before it guessed (2026-09-18, run
+        // 8998ec7c).
         coverage: Type.Optional(
           Type.Array(
             Type.Object({
-              surfaceId: Type.Optional(Type.String()),
-              status: Type.Optional(Type.String()),
-              contractIds: Type.Optional(Type.Array(Type.String())),
-              evidence: Type.Optional(Type.Array(Type.String())),
-              rationale: Type.Optional(Type.String()),
+              surfaceId: Type.Optional(
+                Type.String({
+                  description:
+                    "the id of the surface entry this covers; must match a surfaces[].id",
+                }),
+              ),
+              status: Type.Optional(
+                Type.String({
+                  description:
+                    "REQUIRED. Exactly one of: covered, not_applicable, research_required",
+                }),
+              ),
+              contractIds: Type.Optional(
+                Type.Array(Type.String(), {
+                  description:
+                    "canonical contract ids this entry covers; required non-empty when status is covered, and required empty when it is not_applicable",
+                }),
+              ),
+              evidence: Type.Optional(
+                Type.Array(Type.String(), {
+                  description:
+                    "source locations, or the gap itself; required non-empty for every status",
+                }),
+              ),
+              rationale: Type.Optional(
+                Type.String({ description: "why this status holds for this surface" }),
+              ),
             }),
           ),
         ),
