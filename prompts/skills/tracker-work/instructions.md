@@ -15,6 +15,12 @@ paths, counts, run ids — then why it matters, then what would fix it. "X is
 broken" is not work anyone can pick up. "X did Y at 12:22; 438k input tokens on
 a 540s ceiling; run `1c2ed7d7`" is.
 
+**Correct the record in place.** When a measurement turns out to have accused the
+wrong layer — a flake blamed on GC that was really a threshold below what healthy
+code measures, a reviewer blamed for a provider that mangled its tool call —
+post the correction on the same issue rather than leaving the wrong conclusion as
+its newest word. The next reader acts on whatever is newest.
+
 ## Before you work: claim it
 
 An unclaimed ticket is ambiguous, and two developers can spend the same
