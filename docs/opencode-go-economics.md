@@ -2,28 +2,58 @@
 
 What a $10/month OpenCode Go subscription actually buys, why its allowances do
 not track token prices, and which models a role grid should sit on. Recorded
-2026-09-16 from the provider's published tables and a live account.
+2026-09-16 from the provider's published tables and a live account. Amended
+2026-09-18: the first section's central conclusion was wrong and is corrected
+below, against the account's own usage dashboard.
 
-## The allowance is a multiplier, not a ceiling
+## The allowance is a rate, and the cap on it is shared
 
 Go is a flat $10/month subscription. Each model carries its own monthly
-allowance denominated in list-price dollars, and the allowances are per model
-rather than one shared wallet. The published windows are proportions of it:
-5 hours is 20% of the monthly allowance, a week is 50%, a month is 100%.
+allowance denominated in list-price dollars. The published windows are
+proportions of it: 5 hours is 20% of the monthly allowance, a week is 50%, a
+month is 100%.
 
 So a model allowed $60 returns six list-dollars of usage for every dollar paid,
 a $30 model three, a $15 model one and a half. Where OpenCode negotiated bulk
 capacity the multiplier is 6x; where the model is new, or its vendor already
-discounts it heavily, it is 1.5x.
+discounts it heavily, it is 1.5x. **That multiplier is a rate on one model, not
+a purchase you can repeat.**
 
-**The allowances multiply across models rather than adding up.** Spreading roles
-over four models allowed $60 each yields $240 of included usage for the same
-$10. A role grid is therefore not only a quality decision on this provider — it
-is how the budget is multiplied, and ad-coder's grid happens to be shaped for it.
+**The allowances do not add up. This section claimed they did until
+2026-09-18.** The superseded claim was that spreading roles over four models
+allowed $60 each "yields $240 of included usage for the same $10". The
+correction is measured rather than argued. What the provider meters is each
+model's spend as a fraction of *that model's own* weekly quota, and the week
+ends when those fractions **sum** to 100 points; the "Weekly Usage 100%" bar is
+that sum. It is one shared cap over per-model denominators, not a wallet per
+model. Probed model by model with a two-token prompt on 2026-09-18, every model
+in the profile answered the weekly-limit refusal while `glm-5.3-flash` stood at
+33.8 points of its own quota and `minimax-m3` at 3.4 — which is what a summed
+gate looks like and what a per-model gate cannot look like.
+
+The consequence is the reverse of the superseded claim. A role grid on this
+provider cannot multiply the budget — there is nothing to multiply — it can only
+spend the one pool well or badly.
+
+**What the ceiling is, stated as arithmetic.** Under a summed cap the most
+list-price usage one $10 month can yield is the *largest single allowance*, not
+the sum of them: $30 in a week, $60 in a month, and only by spending it all
+through one $60 model. Concentration is what reaches 6x. Spreading across models
+does not add a second allowance; it routes part of the spend through a smaller
+denominator, where each dollar burns points faster.
+
+**What it yielded in practice.** The account's dashboard on 2026-09-18 read 100%
+of the week beside 50% of the month, over roughly $21.83 of list-price spend —
+the week closed at $21.83 where a single $60 model would have carried it to $30.
+The month projects to about $43.7 of usage for the $10 paid, a multiplier near
+4.4x. That is a real result and a good one, and it is the honest number to quote
+in place of $240.
 
 ## What the multiplier is worth in tokens
 
-Blended at 90% input / 10% output, which is the shape agent traffic actually has:
+Blended at 90% input / 10% output, which is the shape agent traffic actually has.
+Each token figure is what that model's allowance buys when it is used alone; the
+rows describe competing uses of one shared cap, so they do not sum.
 
 | model | allowance | list in/out | ≈ tokens/month | multiplier |
 | --- | --- | --- | --- | --- |
@@ -53,9 +83,14 @@ spent: a five-hour window is 20% of the monthly figure, a week is 50%.
 **Measured quality and allowance disagree, and the allowance wins.** Of the four
 models that reached 1.00 on `coder-retention-v1`, `glm-5.2` carries a $60
 allowance and `kimi-k3` and `qwen3.8-max` carry $15 -- so the two that look
-cheapest per token buy a quarter of the work. `longcat-2.0` and `minimax-m2.5`
-are $60 but score 0.88. The buy is `glm-5.2`: best allowance among the models
-that actually reach 1.00.
+cheapest per token draw down the shared week four times as fast per dollar of
+work. `longcat-2.0` and `minimax-m2.5` are $60 but score 0.88. The buy is
+`glm-5.2`: best allowance among the models that actually reach 1.00.
+
+This conclusion was first drawn from the multiplier arithmetic that has since
+been corrected, and it survives the correction on a sharper reason than it was
+originally held on: a small allowance is a small denominator, so a dollar spent
+through it consumes more of the one pool every model draws on.
 
 **`kimi-k3` is the second instance of the trap this document was written for.**
 It reaches 1.00 on `coder-retention-v1` and its list price is about half
@@ -125,7 +160,8 @@ together.
 
 The pi-ai catalog carries a single list price per model, so none of the above is
 visible to routing: not the allowance, not the peak split, not the promotion's
-end date. Worse, two catalog entries disagree with the published prices —
+end date, and not the summed weekly cap, which is the quantity that actually
+ends the week. Worse, two catalog entries disagree with the published prices —
 `glm-5.3-flash` is listed at half its real rate, which would report this plan's
 central model at a 12x multiplier instead of 6x. See
 [#132](https://github.com/aadegtyarev/ad-coder/issues/132).

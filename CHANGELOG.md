@@ -13,6 +13,30 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.67.2] - 2026-09-18
+
+### Fixed
+- **The OpenCode Go allowance is one shared week, not a per-model wallet that
+  multiplies** (`docs/opencode-go-economics.md`). The document concluded that
+  "the allowances multiply across models rather than adding up", so four models
+  allowed $60 each "yields $240 of included usage for the same $10". Measured
+  against the account's own usage dashboard on 2026-09-18, that is wrong: the
+  provider meters each model's spend as a fraction of that model's own weekly
+  quota and ends the week when the fractions SUM to 100 points. Under a summed
+  cap the most one $10 month can yield is the largest single allowance -- $30 in
+  a week, $60 in a month -- and only by spending it through one model. The
+  account's own week closed at $21.83, projecting to about $43.7 a month, a
+  multiplier near 4.4x rather than 24x.
+
+  What survives is the per-model rate (a $60-quota model drains six times slower
+  per dollar) and every conclusion drawn from it, including "the allowance wins"
+  over measured quality -- which now holds for a sharper reason, since a small
+  allowance is a small denominator and each dollar spent through it consumes
+  more of the one pool. `docs/CHECKPOINT.md` carried the same claim and points at
+  this document, so it is corrected in place rather than left as a second
+  contradictory source. The 0.13.1 entry below records what that release
+  published and is left as history.
+
 ## [0.67.1] - 2026-09-18
 
 ### Fixed
