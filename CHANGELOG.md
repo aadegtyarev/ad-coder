@@ -13,6 +13,24 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.69.2] - 2026-09-19
+
+### Added
+- **The agent instructions say who does the work: the orchestrator and its roles,
+  not the coordinator.** `AGENTS.md` gains the convention, stated on the operator's
+  authority and dated. The agent coordinating a workstream hands the orchestrator a
+  ticket -- the issue, the finding, the branch, the constraints -- and sequences what
+  comes back: the implementation is the coder's, the judgement is the reviewer's, and
+  how the work is sliced is the orchestrator's. A finding that returns
+  `changes_requested` is a ticket like any other and goes back to the orchestrator,
+  not into the coordinator's own editor, because a hand fix is a loss even when it is
+  faster -- the run that would have learned the shape of the problem never happens,
+  and no ledger, verdict or stamp is left behind to show what was done. The section
+  also names what the coordinator still owns because no role does: reading the durable
+  record when a run cannot answer a question, deciding what is dispatched next and in
+  what order, checking claims against the tree before writing them into a PR body, and
+  reporting to the operator.
+
 ## [0.69.1] - 2026-09-19
 
 ### Added

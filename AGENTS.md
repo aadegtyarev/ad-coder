@@ -112,8 +112,22 @@ Dating clock for releases and contract entries: use the operator's LOCAL date,
 never `date -u` (`docs/contracts/documentation.md`, 2026-09-17; the CHANGELOG
 order it protects is enforced by `bun run check:release`).
 
+## Who does the work: the orchestrator and its roles, not the coordinator
 
+(Operator, 2026-09-19.) The agent coordinating a workstream does not implement.
+Its work is to hand the orchestrator a ticket -- the issue, the finding, the
+branch, the constraints -- and to sequence what comes back. Implementation is the
+coder's, judgement is the reviewer's, and how the work is sliced is the
+orchestrator's. Review findings that come back `changes_requested` are a ticket
+like any other: they go back to the orchestrator, not into the coordinator's own
+editor. A hand fix is a loss even when it is faster, because the run that would
+have learned the shape of the problem never happens, and no ledger, verdict or
+stamp is left behind to show what was done.
 
+What the coordinator still owns, because no role does: reading the durable record
+when a run cannot answer the question, deciding what is dispatched next and in
+what order, checking claims against the tree before writing them into a PR body,
+and reporting to the operator.
 
 
 ## Step closeout
