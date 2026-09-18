@@ -13,6 +13,17 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.64.2] - 2026-09-18
+
+### Fixed
+- **The delivery stamp's rows now sum to its own total (issue #336).** The
+  orchestrator lane was in the header (calls and cost) and in no row, so a
+  reader adding the blocks' rows got 221 calls and $0.437600 against a header
+  of 281 calls and $0.537070 on PR #333 -- 18.5% of the run's cost unattributed.
+  `SIGNATURE_ROLES` now leads with `orchestrator`: the lane that drove the run
+  is a row with its provider, model, calls and cost, and a run with no
+  orchestrator records renders it `-- did not run`, never blank.
+
 ## [0.64.1] - 2026-09-18
 
 ### Added
