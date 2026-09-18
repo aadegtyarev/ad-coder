@@ -1,5 +1,11 @@
 import * as crypto from "node:crypto";
-import type { AssistantMessage, Models } from "@earendil-works/pi-ai";
+import {
+  type AssistantMessage,
+  type AssistantMessageEventStream,
+  createAssistantMessageEventStream,
+  fauxAssistantMessage,
+  type Models,
+} from "@earendil-works/pi-ai";
 import {
   MAX_PROVIDER_RETRY_HINT_MS,
   type ProviderLimitError,
@@ -28,6 +34,17 @@ import {
  *    sharing one scope cannot each independently re-trigger the 429 they were
  *    just told to pause for (requirement 6, retry-storm threat).
  */
+
+/**
+ * A stream-terminal error result. A deferred stream must settle its result
+ * even when admission or the provider fails — silence hangs the caller.
+ */
+function errorResult(error: unknown): AssistantMessage {
+  const message = fauxAssistantMessage("");
+  message.stopReason = "error";
+  message.errorMessage = error instanceof Error ? error.message : String(error);
+  return message;
+}
 
 export const ADMISSION_PRIORITY_CLASSES = ["interactive", "background", "title"] as const;
 
@@ -196,7 +213,12 @@ export interface ProviderAdmissionToken {
   wait(): Promise<void>;
   /** Cancel while queued: removes only this entry. */
   cancel(): void;
-  /** Release the permit exactly once (idempotent). */
+  /**
+   * Release the permit exactly once (idempotent). A queued request removes
+   * itself from the queue; an admitted or uncertain one returns its permit
+   * through the controller, so capacity is restored — a bare flag flip would
+   * leak the permit for the life of the process.
+   */
   release(): void;
 }
 
@@ -217,7 +239,12 @@ class AdmissionToken implements ProviderAdmissionToken {
   state: "admitted" | "queued" | "cancelled" | "settled" | "uncertain" = "queued";
   uncertain = false;
   released = false;
+  settled = false;
+  /** Restored queue tombstone: occupies capacity, is never granted to nobody. */
+  unowned = false;
   limitError: ProviderLimitError | undefined;
+  /** Back-reference set at reserve() so a public release can return the permit. */
+  controller: ProviderAdmissionController | undefined = undefined;
   private waitResolvers: Array<{ resolve: () => void; reject: (error: unknown) => void }> = [];
 
   constructor(
@@ -254,6 +281,14 @@ class AdmissionToken implements ProviderAdmissionToken {
   release(): void {
     if (this.released) return;
     this.released = true;
+    // Route through the controller so a public release actually returns the
+    // permit: a queued request removes itself; an admitted or uncertain one
+    // settles through the same exactly-once path the wrap seam uses.
+    if (this.state === "queued") {
+      this.cancel();
+      return;
+    }
+    this.controller?.releaseToken(this);
   }
 }
 
@@ -299,10 +334,13 @@ export class ProviderAdmissionController {
       for (const entry of state.queue) {
         // Restored queue entries are placeholders that preserve order and
         // occupancy; a restart has no waiting caller to hand them to, so they
-        // are re-created as unowned tokens that still occupy capacity. Their
-        // admission order is retained via enqueuedAt for the scheduler.
+        // are re-created as UNOWNED tokens that still occupy queue capacity.
+        // They must never be granted: a grant with no waiter would hold the
+        // permit forever. Their admission order is retained via enqueuedAt for
+        // the scheduler.
         const token = new AdmissionToken("", key, entry.priority);
         token.state = "queued";
+        token.unowned = true;
         scope.queue.push({ priority: entry.priority, enqueuedAt: entry.enqueuedAt, token });
       }
       if (state.inFlight !== undefined) {
@@ -356,7 +394,14 @@ export class ProviderAdmissionController {
     // A per-call priority override is not part of the public surface; the
     // wrap() seam assigns priority per method (see priorityOf).
     const token = new AdmissionToken(scopeLabel, scopeKey, priority);
+    token.controller = this;
 
+    // Parked requests outrank a fresh arrival whenever capacity exists:
+    // nothing else pumps the queue when a cooldown expires, so granting the
+    // fresh arrival here would let it jump the queue (contract: the controller
+    // resumes fairly afterwards). Pump first; grant the fresh arrival only if
+    // capacity remains once the queue is served.
+    if (scope.queue.length > 0) this.pump();
     if (this.canGrant(scope)) {
       this.grant(scope, token);
       this.persist();
@@ -433,7 +478,7 @@ export class ProviderAdmissionController {
     // still applies, so a title deferred past the bound is promoted and cannot
     // be starved indefinitely).
     const anyInteractiveWaiting = entries.some(
-      (entry) => effectivePriority(entry) === "interactive",
+      (entry) => !entry.token.unowned && effectivePriority(entry) === "interactive",
     );
 
     let bestIndex = -1;
@@ -441,6 +486,9 @@ export class ProviderAdmissionController {
     let bestEnqueuedAt = Number.POSITIVE_INFINITY;
     for (let i = 0; i < entries.length; i += 1) {
       const entry = entries[i] as QueueEntry;
+      // Restored tombstones keep their queue slot but are never granted: there
+      // is no waiting caller to hand the permit to, so a grant would leak it.
+      if (entry.token.unowned) continue;
       const cls = effectivePriority(entry);
       if (cls === "title" && anyInteractiveWaiting) continue;
       const rank = this.config.priorityClasses.indexOf(cls);
@@ -455,12 +503,24 @@ export class ProviderAdmissionController {
     return chosen?.token;
   }
 
+  /** Terminal settle used by the wrap seam and uncertain re-arm: exactly once. */
   private settleToken(token: AdmissionToken): void {
-    if (token.released) return;
-    token.release();
-    const scope = this.scopes.get(token.scopeKey);
+    if (token.released || token.settled) return;
+    this.releaseToken(token);
+  }
+
+  /**
+   * Return a token's permit to its scope exactly once. Public release path:
+   * token.release() lands here, so capacity is actually restored instead of a
+   * flag flipping while the permit leaks.
+   */
+  releaseToken(token: ProviderAdmissionToken): void {
+    const admission = token as AdmissionToken;
+    if (admission.settled) return;
+    admission.settled = true;
+    const scope = this.scopes.get(admission.scopeKey);
     if (scope === undefined) return;
-    if (scope.inFlightToken === token) scope.inFlightToken = undefined;
+    if (scope.inFlightToken === admission) scope.inFlightToken = undefined;
     if (scope.concurrent > 0) scope.concurrent -= 1;
     this.persist();
     this.pump();
@@ -493,6 +553,20 @@ export class ProviderAdmissionController {
   private reactRejection(scopeKey: string, error: unknown): void {
     const limit = providerLimitFrom(error, this.now());
     if (limit !== undefined) this.openCooldown(scopeKey, limit);
+  }
+
+  /**
+   * Public admission seam for callers that assign the priority class
+   * themselves (the wrap() seam derives it from the method name). Title-class
+   * work arrives here; the caller releases the returned token exactly once.
+   */
+  async admit(
+    provider: string,
+    scopeLabel: string,
+    priority: AdmissionPriorityClass,
+  ): Promise<ProviderAdmissionToken> {
+    assertScopeLabel(scopeLabel);
+    return this.reserve(admissionScopeKey(provider, scopeLabel), scopeLabel, priority);
   }
 
   /**
@@ -580,62 +654,44 @@ export class ProviderAdmissionController {
     target: Models,
     args: unknown[],
   ): ReturnType<Models["stream"]> {
-    const state: {
-      result: (() => Promise<AssistantMessage>) | undefined;
-    } = { result: undefined };
-    const callers: Array<() => void> = [];
-
-    // A minimal stream object; its `result()` resolves once the real stream is
-    // wired after admission.
-    const stream = {
-      result: (): Promise<AssistantMessage> => {
-        if (state.result !== undefined) return state.result();
-        return new Promise<AssistantMessage>((resolve, reject) => {
-          callers.push(() => {
-            const settled = state.result;
-            if (settled === undefined) {
-              reject(new Error("admission stream flushed without a result"));
-              return;
-            }
-            settled().then(resolve, reject);
-          });
-        });
-      },
-    };
+    // A real AssistantMessageEventStream, not a hand-built placeholder: the
+    // class carries its methods (push, end, Symbol.asyncIterator) on its
+    // prototype, so an Object.assign graft of a granted real stream copies
+    // nothing and callers that iterate events silently break.
+    const stream = createAssistantMessageEventStream();
 
     void this.reserve(scopeKey, label, priority).then(
       (token) => {
-        let real: { result(): Promise<AssistantMessage> };
+        let real: AssistantMessageEventStream;
         try {
-          real = Reflect.apply(value, target, args) as { result(): Promise<AssistantMessage> };
+          real = Reflect.apply(value, target, args) as AssistantMessageEventStream;
         } catch (error) {
           this.settleToken(token);
-          state.result = () => Promise.reject(error);
-          for (const c of callers) c();
+          stream.end(errorResult(error));
           return;
         }
-        Object.assign(stream, real);
-        state.result = () =>
-          real.result().then(
-            (message) => {
-              this.settleToken(token);
-              return message;
-            },
-            (error: unknown) => {
-              this.reactRejection(scopeKey, error);
-              this.settleToken(token);
-              throw error;
-            },
-          );
-        for (const c of callers) c();
+        // Forward the real stream's events into the placeholder so the caller
+        // sees the full surface, and settle the permit from the stream's
+        // terminal outcome exactly once.
+        void (async () => {
+          try {
+            for await (const event of real) stream.push(event);
+            const message = await real.result();
+            this.settleToken(token);
+            stream.end(message);
+          } catch (error) {
+            this.reactRejection(scopeKey, error);
+            this.settleToken(token);
+            stream.end(errorResult(error));
+          }
+        })();
       },
       (error: unknown) => {
-        state.result = () => Promise.reject(error);
-        for (const c of callers) c();
+        stream.end(errorResult(error));
       },
     );
 
-    return stream as unknown as ReturnType<Models["stream"]>;
+    return stream;
   }
 
   private persist(): void {

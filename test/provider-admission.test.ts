@@ -290,20 +290,47 @@ test("aging promotes starved background work past fresher interactive arrivals",
 
   h.holds[0]?.resolve(message());
   await flush();
-  expect(h.calls).toEqual(["complete", "stream"]);
+  // The decisive aging assertion: the aged background call was granted BEFORE
+  // the fresher interactive arrival (the rest of the chain may settle during
+  // the same flush window).
+  expect(h.calls.slice(0, 2)).toEqual(["complete", "stream"]);
   await bg.result();
   await flush();
-  expect(h.calls).toEqual(["complete", "stream", "complete"]);
   h.holds[1]?.resolve(message());
   await fresh;
   await first;
+  expect(h.calls).toEqual(["complete", "stream", "complete"]);
 });
 
-test.skip("title-class requests defer while interactive work waits", () => {
-  // Public-API gap (found while writing this battery): no wrap() method maps to
-  // the title priority class, so title deferral cannot be exercised through the
-  // public surface. The wiring run must map asynchronous title generation onto
-  // it; unskip this test then.
+test("title-class requests defer while interactive work waits", async () => {
+  // The public admit() seam carries caller-assigned priority classes; wrap()
+  // only ever derives interactive/background from the method name. admit()
+  // resolves once the request is ADMITTED, so while it is queued the promise
+  // stays pending and the queue shows the entry.
+  const h = harness("prov", "title");
+  const first = h.models.complete({} as never, {} as never);
+  await flush();
+  const titleAdmission = h.controller.admit("prov", "title", "title");
+  await flush();
+  expect(h.controller.snapshot().scopes[h.key]?.queue).toHaveLength(1);
+  const bg = h.models.streamSimple({} as never, {} as never);
+  await flush();
+  expect(h.calls).toEqual(["complete"]);
+  expect(h.controller.snapshot().scopes[h.key]?.queue).toHaveLength(2);
+
+  // first settles: the background call outranks the title entry, so title
+  // defers; it is granted only once the interactive/background work drains.
+  h.holds[0]?.resolve(message());
+  await flush();
+  expect(h.calls).toEqual(["complete", "streamSimple"]);
+
+  await bg.result();
+  const titleToken = await titleAdmission;
+  expect(titleToken.state).toBe("admitted");
+  expect(scopesOf(h.controller).get(h.key)?.concurrent).toBe(1);
+  titleToken.release();
+  expect(scopesOf(h.controller).get(h.key)?.concurrent).toBe(0);
+  await first;
 });
 
 test("cooldown admits no probe until it expires; oversized hints fall back, moderate ones clamp", async () => {
@@ -337,14 +364,37 @@ test("cooldown admits no probe until it expires; oversized hints fall back, mode
   expect(probeR.error).toMatchObject({ status: 429 });
 });
 
-test.skip("after the cooldown expires the parked queue resumes before new arrivals", () => {
-  // Defect proof (contract: "The controller resumes fairly afterwards"):
-  // reserve() grants a brand-new arrival whenever canGrant() is true without
-  // consulting parked queue entries, so after a cooldown expires a fresh caller
-  // takes the permit and the request that waited through the cooldown stays
-  // parked until an unrelated settle pumps the queue. Current code fails this
-  // test; the wiring run must make expiry pump the queue (or make reserve()
-  // dequeue first) and unskip this test.
+test("after the cooldown expires the parked queue resumes before new arrivals", async () => {
+  const h = harness("prov", "fair");
+  const first = h.models.complete({} as never, {} as never);
+  const firstR = capture(first);
+  await flush();
+  const second = h.models.complete({} as never, {} as never);
+  await flush();
+  expect(h.calls).toEqual(["complete"]);
+
+  // The in-flight call is rejected with a 429: the whole scope stands down.
+  h.holds[0]?.reject({ status: 429, retryAfterMs: 4_000 });
+  await flush();
+  expect(h.controller.snapshot().scopes[h.key]?.cooldownUntil).toBe(5_000);
+
+  // The parked request survives the cooldown window in the queue.
+  h.clock.value = 5_001;
+  const third = h.models.complete({} as never, {} as never);
+  await flush();
+  // Fair resume: the request that waited through the cooldown is granted
+  // first; the fresh arrival must not jump the queue.
+  expect(h.calls).toEqual(["complete", "complete"]);
+  expect(h.controller.snapshot().scopes[h.key]?.queue).toHaveLength(1);
+
+  h.holds[1]?.resolve(message());
+  await flush();
+  // third was granted by the pump after second settled; resolve its park.
+  h.holds[2]?.resolve(message());
+  await third;
+  await second;
+  await firstR.done;
+  expect(h.calls).toEqual(["complete", "complete", "complete"]);
 });
 
 test("snapshot and restore preserve concurrent, queue, cooldown, and uncertain in-flight", async () => {
@@ -396,27 +446,41 @@ test("snapshot and restore preserve concurrent, queue, cooldown, and uncertain i
   await flush();
   expect(calls).toEqual(["complete"]);
 
-  // Store-backed restore of the settled snapshot: cooldown and queue survive a
-  // restart; a double restore is a guarded no-op.
+  // Store-backed restore of the settled snapshot: cooldown, queue tombstone
+  // and scheduler order survive a restart; a double restore is a guarded no-op.
   const readerB = new ProviderAdmissionController(config, store, () => clock.value);
   expect(readerB.snapshot().scopes[key]).toStrictEqual(settledSnap.scopes[key]);
   readerB.restore(settledSnap);
   expect(readerB.snapshot().scopes[key]).toStrictEqual(settledSnap.scopes[key]);
   const resumed = readerB.wrap(gateModels(calls, holds), "prov", "acct-1");
-  resumed.complete({} as never, {} as never);
+  const resumedCall = resumed.complete({} as never, {} as never);
+  const resumedR = capture(resumedCall);
   await flush();
   expect(calls).toEqual(["complete"]);
 
+  // The restored queue entry is a tombstone: it occupies its slot but is never
+  // granted (no waiter survived the restart), so the fresh caller parks behind
+  // it until the cooldown expires — and then FAIR ORDER applies: the call that
+  // parked first (resumedCall) is granted before next.
   clock.value = 5_001;
   const next = resumed.complete({} as never, {} as never);
   await flush();
   expect(calls).toEqual(["complete", "complete"]);
+  // The tombstone keeps its slot AND next parks behind it: two queue entries,
+  // while the single permit is held by resumedCall (fair order).
+  expect(readerB.snapshot().scopes[key]?.queue).toHaveLength(2);
   expect(readerB.snapshot().scopes[key]?.concurrent).toBe(1);
+
+  holds[1]?.resolve(message());
+  await resumedR.done;
+  expect(resumedR.error).toBeUndefined();
+  await flush();
+  expect(calls).toEqual(["complete", "complete", "complete"]);
+  holds[2]?.resolve(message());
+  await next;
 
   await firstR.done;
   expect(firstR.error).toMatchObject({ status: 429 });
-  holds[1]?.resolve(message());
-  await next;
 });
 
 test("cancelling a queued request removes only that request", async () => {
@@ -467,14 +531,27 @@ test("a settled permit is released exactly once; extra settles are idempotent no
   await first;
 });
 
-test.skip("release() after admission returns the permit to the scope", () => {
-  // Defect proof (review blocker on exactly-once release): the public
-  // ProviderAdmissionToken.release() only sets a flag and never decrements the
-  // scope's concurrent count, and a later settleToken() then becomes a no-op
-  // because `released` is already true — the permit leaks for the life of the
-  // process. Current code fails this test; the wiring run must route
-  // release() through the settle path (or drop it from the public token) and
-  // unskip this test.
+test("release() after admission returns the permit to the scope", async () => {
+  const h = harness("prov", "release");
+  const first = h.models.complete({} as never, {} as never);
+  await flush();
+  const scope = scopesOf(h.controller).get(h.key);
+  const token = scope?.inFlightToken;
+  expect(scope?.concurrent).toBe(1);
+
+  token?.release();
+  expect(scope?.concurrent).toBe(0);
+  // Exactly once: an extra settle after the public release is a no-op, not a
+  // second decrement.
+  if (token) settleToken(h.controller, token);
+  expect(scope?.concurrent).toBe(0);
+
+  const second = h.models.complete({} as never, {} as never);
+  await flush();
+  expect(h.calls).toEqual(["complete", "complete"]);
+  expect(scope?.concurrent).toBe(1);
+  h.holds[1]?.resolve(message());
+  await second;
 });
 
 test("queue saturation returns a typed, safe, actionable failure", async () => {
@@ -553,12 +630,33 @@ test("admission's own failures carry stable codes, retryability, and a next acti
   );
 });
 
-test.skip("a granted deferred stream preserves the real EventStream surface", () => {
-  // Defect proof (review blocker on the wrap seam): deferredStream() grafts the
-  // real AssistantMessageEventStream onto a hand-built placeholder with
-  // Object.assign — but AssistantMessageEventStream is a class whose methods
-  // (push, end, Symbol.asyncIterator) live on its prototype, so the graft
-  // copies nothing. Callers that only use .result() work; callers that iterate
-  // events do not. Current code fails this test; the wiring run must rebuild
-  // deferredStream on createAssistantMessageEventStream() and unskip this test.
+test("a granted deferred stream preserves the real EventStream surface", async () => {
+  const h = harness("prov", "graft");
+  const first = h.models.complete({} as never, {} as never);
+  await flush();
+
+  // Deferred: the stream method returns before admission resolves.
+  const g = h.models.stream({} as never, {} as never);
+  expect(h.calls).toEqual(["complete"]);
+  // The placeholder is a real EventStream from creation, so iteration works
+  // even while parked (AssistantMessageEventStream carries its methods on the
+  // prototype; an Object.assign graft could never provide them).
+  expect(Object.getPrototypeOf(g)).toBe(Object.getPrototypeOf(createAssistantMessageEventStream()));
+  expect(typeof (g as unknown as { push: unknown }).push).toBe("function");
+  expect(typeof (g as unknown as { end: unknown }).end).toBe("function");
+
+  h.holds[0]?.resolve(message());
+  await flush();
+  expect(h.calls).toEqual(["complete", "stream"]);
+  const result = await g.result();
+  expect(result.stopReason).not.toBe("error");
+  // Iterating the granted stream terminates (ended fake stream, zero events).
+  let events = 0;
+  for await (const event of g) {
+    events += 1;
+    void event;
+  }
+  expect(events).toBe(0);
+  expect(scopesOf(h.controller).get(h.key)?.concurrent).toBe(0);
+  await first;
 });
