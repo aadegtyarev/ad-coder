@@ -13,6 +13,21 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.66.0] - 2026-09-18
+
+### Changed
+- **The Reviewer reads the change, not the repository (issue #352).** The role
+  prompt now states the reading method it had been leaving to whoever briefed
+  the round: establish the change as a diff against the base -- counting the
+  files it adds -- read the contract files that diff touches and the source it
+  changes, and go beyond that only where judging the change requires it, because
+  a round that surveys the repository spends the stage's input ceiling on files
+  nobody changed and can reach the end of its budget with no verdict at all.
+  The first review round on PR #346 read 792569 input tokens that way and closed
+  out with nothing to submit; the same tree, read as a diff, took 44287 and
+  settled. The Planner's prompt already carried the analogous bound for its own
+  role.
+
 ## [0.65.0] - 2026-09-18
 
 ### Fixed
