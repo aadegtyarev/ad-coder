@@ -5,9 +5,13 @@ Stage budgets are cumulative across durable resume. The configurable
 `finalResponseReserveToolTurns`, and `finalResponseReserveInputTokens` settings
 protect closeout capacity. Once a
 bounded stage enters any enabled reserve, new tool calls fail with an instruction
-to return the final response, and following provider requests expose no tools and
-carry that same instruction as a user message naming the reserve that tripped,
-while the reserved capacity remains available. Input admission uses the preceding
+to return the final response, and following provider requests expose no tools --
+except the workflow's submission tools: a stage whose deliverable is a
+submission keeps those granted and has them admitted past the reserve, because
+refusing the submission destroys the deliverable the closeout exists to save
+(2026-09-18, issue #339). The same request carries that instruction as a user
+message naming the reserve that tripped, while the reserved capacity remains
+available. Input admission uses the preceding
 provider request as its conservative next-request estimate.
 Zero disables each reserve independently.
 
@@ -209,3 +213,16 @@ was shown, under the same overriding rules the banner already answers to.
   summarizer as a parameter, never as a number written into
   `prompts/summarizer.md`: a quantity that changes behavior is not a constant in
   the source (`quality.md`).
+
+- 2026-09-18: **A closeout keeps the workflow's submission tools (issue #339).**
+  Reaching a reserve stripped every tool from the next request AND told the model
+  to stop using tools, in the same conversation that was still demanding a
+  `submit_plan`; a planner left with nothing to submit with emitted the
+  submission as text, and the stage died as `malformed_plan` with the plan and
+  the stage's whole budget gone. Observed live: run
+  `e4ccfbdb-37b1-47bd-8bc3-3d5e6ac5372f`, 2026-09-18. The closeout request now
+  keeps the workflow's submission tools and nothing else, `admitToolTurn` admits
+  a submission past the reserve while still counting the turn, and the wording
+  says "other tools" and names the exception instead of commanding a stop the
+  same turn contradicts. A stage that granted no submission tool still closes
+  out tool-free, exactly as before.

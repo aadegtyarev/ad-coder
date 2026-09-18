@@ -43,6 +43,7 @@ import {
   resolveTargetDir,
   SuspendedRunError,
 } from "../runner/errors";
+import { wrapModelsForToolCallRecovery } from "../runner/native-tool-calls";
 import type { Tool } from "../runner/tool";
 import type { SessionLimits } from "../session-limits";
 import { SessionLimitController } from "../session-limits";
@@ -205,6 +206,13 @@ export async function startConversation(config: ConversationConfig): Promise<Con
   const limitedModels =
     config.costAnomalyDetector?.wrap(sessionModels, config.model.provider, config.model.id) ??
     sessionModels;
+  // Also at this boundary: recovery for a provider that serialized a tool call
+  // as assistant text instead of a structured tool-call block (issue #292),
+  // granted the names this invocation actually registered.
+  const recoveredModels = wrapModelsForToolCallRecovery(
+    limitedModels,
+    tools.map((tool) => tool.name),
+  );
   const explicitPolicy =
     config.compaction ??
     (config.summarizer === undefined ? undefined : { mode: "auto", summarizer: config.summarizer });
@@ -225,7 +233,7 @@ export async function startConversation(config: ConversationConfig): Promise<Con
 
   const base = toHarnessOptions(config.role, {
     session,
-    models: limitedModels,
+    models: recoveredModels,
     model: config.model,
   });
   const options: AgentHarnessOptions<ExecutionToolContext> = {

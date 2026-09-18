@@ -56,6 +56,7 @@ import {
   resolveTargetDir,
   SuspendedRunError,
 } from "./errors";
+import { wrapModelsForToolCallRecovery } from "./native-tool-calls";
 import type { Tool } from "./tool";
 
 /**
@@ -541,7 +542,9 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
       : {
           ...tool,
           execute: async (...args: Parameters<typeof tool.execute>) => {
-            params.stageLimitController?.admitToolTurn();
+            // The name lets the controller keep a workflow submission tool
+            // admissible past the closeout reserve (issue #339).
+            params.stageLimitController?.admitToolTurn(tool.name);
             return tool.execute(...args);
           },
         },
@@ -557,9 +560,14 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
   // session controller instead would let a refused start still consume one of
   // the session's counted turns, charging the operator a turn for a request
   // that was never sent.
-  const models =
+  // Also at this boundary: recovery for a provider that serialized a tool call
+  // as assistant text instead of a structured tool-call block (issue #292),
+  // granted the names this invocation actually registered.
+  const models = wrapModelsForToolCallRecovery(
     params.costAnomalyDetector?.wrap(limitedModels, params.model.provider, params.model.id) ??
-    limitedModels;
+      limitedModels,
+    tools.map((tool) => tool.name),
+  );
   const explicitPolicy =
     params.compaction ??
     (params.summarizer === undefined ? undefined : { mode: "auto", summarizer: params.summarizer });
