@@ -39,8 +39,28 @@ reinstall the previous version and still exit zero, which surfaces as
 `install_mismatch` with the lockfile to repair, and `install_unverifiable` when
 no installed version can be read at all. The updater never installs a package
 whose name differs from the one running, and an identity it cannot establish is
-`identity_unknown` rather than a guess. For development, a linked checkout
-remains supported:
+`identity_unknown` rather than a guess.
+
+ad-coder is published in two channels, and they install side by side because
+they are two different binaries. `ad-coder` is the stable channel: a release,
+published from a version tag. `ad-coder-dev` is the channel for developers --
+the same CLI, published from every merge to `main`, versioned as the release it
+carries plus the build number (for example `0.64.2-dev.19`):
+
+```sh
+bun add -g ad-coder-dev
+ad-coder-dev --help
+ad-coder-dev about
+```
+
+Install it with `bun add -g`, not `npm install -g`: `ad-coder-dev update`
+resolves its channel through Bun and installs into Bun's global directory, so an
+install placed by npm would be updated by a different package manager than the
+one that put it there. The dev channel is a build of `main` -- it is how a
+second developer gets current behaviour without cloning the repository, and it
+is not what a user who wants a released version installs.
+
+A linked checkout remains supported:
 
 ```sh
 git clone https://github.com/aadegtyarev/ad-coder.git
