@@ -1,5 +1,6 @@
 import type { AssistantMessage, Models, UserMessage } from "@earendil-works/pi-ai";
 import type { ProfileRole } from "../profiles/types";
+import { isSubmissionToolName } from "./submission-tools";
 import type { WorkflowPhase } from "./types";
 
 export interface StageLimits {
@@ -116,12 +117,34 @@ export interface StageCloseoutFact {
 }
 
 /**
- * The single closeout wording. Tool rejections and the tool-free provider
+ * The single closeout wording. Tool rejections and the closeout provider
  * requests that follow them carry the same instruction, so a model that loses
- * its tool schema is told why and what to do instead of inferring it.
+ * its non-submission tools is told why, what it may still do, and what to do
+ * instead of inferring it. It says "other tools" deliberately: a workflow
+ * submission tool stays granted, and the earlier wording -- stop using tools,
+ * when the same conversation was demanding a submission -- is what left the
+ * planner emitting `submit_plan` as text and dying as `malformed_plan`
+ * (issue #339).
  */
 export function stageCloseoutInstruction(detail: string): string {
-  return `stage closeout reserve reached; stop using tools and return the final response (${detail})`;
+  return `stage closeout reserve reached; stop using other tools and finish -- return the final response, or submit through the workflow's submission tool when this stage still requires a submission from you (${detail})`;
+}
+
+/**
+ * The granted tools a closeout request still carries: the workflow's submission
+ * tools and nothing else. A request that granted none keeps granting none, which
+ * is what the tool-free closeout did for every independent role (issue #339).
+ */
+function submissionToolsOnly(context: object): unknown[] {
+  const tools = (context as { tools?: unknown }).tools;
+  if (!Array.isArray(tools)) return [];
+  return tools.filter(
+    (tool) =>
+      tool !== null &&
+      typeof tool === "object" &&
+      typeof (tool as { name?: unknown }).name === "string" &&
+      isSubmissionToolName((tool as { name: string }).name),
+  );
 }
 
 /** A non-terminal tool rejection that preserves capacity for the role's final answer. */
@@ -314,10 +337,22 @@ export class StageLimitController {
     return { code: "stage_closeout", reason: this.closeoutReason, detail: this.closeoutDetail };
   }
 
-  admitToolTurn(): void {
+  /**
+   * Reserve a tool turn, or close the stage out. Once the closeout reserve is
+   * reached a workflow submission tool is still admitted: the stage's
+   * deliverable IS that submission, and refusing it destroys the deliverable
+   * (issue #339). Every other tool closes out exactly as before, and the
+   * closeout fact stays recorded either way.
+   */
+  admitToolTurn(name?: string): void {
     this.assertActive();
     const closeout = this.detectCloseout(0);
     if (closeout !== undefined) {
+      if (this.closeoutReason !== undefined && name !== undefined && isSubmissionToolName(name)) {
+        this.toolTurns += 1;
+        this.onSnapshot?.(this.snapshot());
+        return;
+      }
       this.closeoutReason = closeout.reason;
       this.closeoutDetail = closeout.detail;
       throw new StageCloseoutError(closeout.reason, closeout.detail);
@@ -373,6 +408,11 @@ export class StageLimitController {
      * and no way to act, and models answer that by emitting their native
      * tool-call syntax as prose. The same instruction the tool rejection carries
      * is appended as a user message so the request says why tools vanished.
+     *
+     * The workflow's submission tools are the exception: they stay granted,
+     * because a stage whose deliverable is a submission has nothing left to
+     * deliver without them, and stripping them while the conversation demanded
+     * one is what killed the plan stage as `malformed_plan` (issue #339).
      */
     const closeoutRequest = (args: unknown[]): unknown[] => {
       if (this.closeoutReason === undefined) return args;
@@ -390,7 +430,11 @@ export class StageLimitController {
         timestamp: Date.now(),
       };
       const next = [...args];
-      next[1] = { ...context, messages: [...context.messages, instruction], tools: [] };
+      next[1] = {
+        ...context,
+        messages: [...context.messages, instruction],
+        tools: submissionToolsOnly(context),
+      };
       return next;
     };
     const settle = (message: AssistantMessage | undefined) => {

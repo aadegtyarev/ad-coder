@@ -32,6 +32,37 @@ enforces that dated release headings go in non-increasing date order
   source of truth, with a drift-alarm test so the table and the guard cannot
   diverge again.
 
+## [0.66.0] - 2026-09-18
+
+### Fixed
+- **A stage closeout keeps the submission tool it just demanded** (issue #339).
+  Reaching the closeout reserve stripped every tool from the next request and
+  told the model to stop using tools -- in the same conversation that was still
+  demanding a `submit_plan`. A planner left with nothing to submit with emitted
+  the submission as text, and the stage died as `malformed_plan` with the plan
+  and the stage's whole budget gone.
+
+  Observed live: run `e4ccfbdb-37b1-47bd-8bc3-3d5e6ac5372f`, 2026-09-18.
+
+  Now the closeout request keeps the workflow's submission tools and nothing
+  else, `admitToolTurn` admits a submission past the reserve (still counting the
+  turn), and the closeout wording says "other tools" and names the exception
+  rather than commanding a stop the same turn contradicts. A stage that granted
+  no submission tool still closes out tool-free, exactly as before.
+- **A tool call a provider serialized as assistant text is recovered into an
+  action** (issue #292). minimax-m3's pseudo-XML (`<invoke name=...>` with
+  `<parameter>` children) and DeepSeek's delimiter markup were emitted as prose,
+  so a real verdict arrived as a message carrying no tool call at all and was
+  discarded as one.
+
+  Recovery sits at the model boundary, in front of each generation method, and
+  repairs the final assistant message in place -- appended as a proper
+  `toolCall` block, with the markup downgraded to `[recovered tool call: name]`.
+  Three gates, each failing closed: the message must carry no structured tool
+  call, the name must be one the request actually granted, and the serialization
+  must be the last thing in the text. A call merely *described* in prose is
+  never recovered; only serialization the model itself emitted counts.
+
 ## [0.63.0] - 2026-09-18
 
 ### Added
