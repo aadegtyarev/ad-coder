@@ -17,15 +17,21 @@ enforces that dated release headings go in non-increasing date order
 
 ### Added
 - **A learned stage ceiling is recorded where the next dispatch can find it**
-  (`docs/stage-limit-calibration.md`). The plan stage's duration ceiling for
-  slice-planning one bounded medium slice inside a complex feature is now
-  810000 ms, learned by a deliberate probe: 540000 ms was exhausted
-  mid-composition at 19 model turns, and at the raised ceiling the stage
-  completed in 726866 ms. The record carries the probe policy with it — one
-  bounded step at a time, a pre-committed branch for failure (stop and report,
-  or decompose; never a second raise on the same shape), and never rewriting a
-  learned number from a single observation — together with the read-back blind
-  spot that made the exhausted stage look like a no-read loop.
+  (`docs/contracts/stage-limit-calibration.md`, moved from `docs/`). The plan
+  stage's duration ceiling for slice-planning one bounded medium slice inside a
+  complex feature is 810000 ms, learned by a deliberate probe on
+  @preset/zai-glm53flash: the 540000 ms limit was exhausted mid-composition at
+  19 model turns and 432801 input tokens, and at the raised ceiling the same
+  run's stage closed out in 726866 ms with 20/30 model turns used (12 reserved)
+  and 544898 input tokens. The record separates the pause moment from the
+  completion moment and ties every figure to its durable source, carries the
+  probe policy with it — one bounded step at a time, a pre-committed branch for
+  failure (stop and report, or decompose; never a second raise on the same
+  shape), and never rewriting a learned number from a single observation — and
+  states the `readFiles` blind spot as the shipped code does: the field counts
+  literal-read calls only, so sliced `read_project`/`search_project`
+  reconnaissance never appears in it and an empty `readFiles` is not evidence
+  of zero reconnaissance.
 
 ## [0.69.2] - 2026-09-19
 
