@@ -87,9 +87,7 @@ test("closeout reserve rejects tools while preserving final model capacity", () 
   controller.admitToolTurn();
   controller.admitModelTurn();
   controller.observeUsage(1, 0);
-  expect(() => controller.admitToolTurn()).toThrow(
-    /stop using tools and return the final response/,
-  );
+  expect(() => controller.admitToolTurn()).toThrow(/stop using other tools/);
   expect(() => controller.admitModelTurn()).not.toThrow();
 });
 
@@ -102,9 +100,7 @@ test("duration closeout reserve rejects tools before the hard deadline", () => {
   now = 79;
   expect(() => controller.admitToolTurn()).not.toThrow();
   now = 80;
-  expect(() => controller.admitToolTurn()).toThrow(
-    /stop using tools and return the final response/,
-  );
+  expect(() => controller.admitToolTurn()).toThrow(/stop using other tools/);
   expect(() => controller.admitModelTurn()).not.toThrow();
 });
 
@@ -133,9 +129,7 @@ test("input closeout reserve stops tools while preserving the hard input boundar
   controller.observeUsage(74, 0);
   expect(() => controller.admitToolTurn()).not.toThrow();
   controller.observeUsage(1, 0);
-  expect(() => controller.admitToolTurn()).toThrow(
-    /stop using tools and return the final response/,
-  );
+  expect(() => controller.admitToolTurn()).toThrow(/stop using other tools/);
   expect(controller.snapshot()).toMatchObject({
     inputTokens: 75,
     finalResponseReserveInputTokens: 25,
@@ -258,8 +252,60 @@ test("a tool-free closeout request tells the model why its tools are gone", asyn
   expect(seen[1]?.messages).toHaveLength(2);
   const instruction = seen[1]?.messages[1];
   expect(instruction?.role).toBe("user");
-  expect(instruction?.content).toMatch(/stop using tools and return the final response/);
+  expect(instruction?.content).toMatch(/stop using other tools/);
   expect(instruction?.content).toMatch(/input tokens used/);
+});
+
+test("a closeout request keeps the workflow's submission tool and drops the rest", async () => {
+  const seen: unknown[][] = [];
+  const message = fauxAssistantMessage("ok");
+  message.usage.input = 100;
+  message.usage.cacheRead = 0;
+  const models = {
+    completeSimple: async (_model: unknown, context: { tools?: unknown[] }) => {
+      seen.push([...(context.tools ?? [])]);
+      return message;
+    },
+  } as unknown as Models;
+  const controller = new StageLimitController({
+    maxInputTokens: 300,
+    finalResponseReserveInputTokens: 100,
+  });
+  const limited = controller.wrap(models);
+  const context = {
+    messages: [{ role: "user", content: "do the work", timestamp: 0 }],
+    tools: [{ name: "submit_plan" }, { name: "bash" }, { name: "submit_verdict" }],
+  } as never;
+
+  await limited.completeSimple({} as never, context);
+  await limited.completeSimple({} as never, context);
+
+  expect(seen[0]).toHaveLength(3);
+  expect((seen[1] as { name: string }[]).map((tool) => tool.name)).toEqual([
+    "submit_plan",
+    "submit_verdict",
+  ]);
+  // The caller's own context keeps every tool; only the closeout request narrows.
+  expect((context as { tools: unknown[] }).tools).toHaveLength(3);
+});
+
+test("a submission tool is admitted past the closeout reserve while other tools still close out", () => {
+  const controller = new StageLimitController({
+    maxToolTurns: 4,
+    finalResponseReserveToolTurns: 2,
+  });
+  controller.admitToolTurn("bash");
+  controller.admitToolTurn("bash");
+  expect(() => controller.admitToolTurn("bash")).toThrow(StageCloseoutError);
+  expect(controller.closeout()).toMatchObject({ code: "stage_closeout", reason: "tool_turns" });
+
+  // The deliverable still arrives: the submission is admitted and the recorded
+  // closeout fact survives it. Everything else stays closed out (issue #339).
+  expect(() => controller.admitToolTurn("submit_verdict")).not.toThrow();
+  expect(controller.snapshot().toolTurns).toBe(3);
+  expect(controller.closeout()?.reason).toBe("tool_turns");
+  expect(() => controller.admitToolTurn("bash")).toThrow(StageCloseoutError);
+  expect(controller.snapshot().toolTurns).toBe(3);
 });
 
 test("a closeout request leaves the caller's own context untouched", async () => {
