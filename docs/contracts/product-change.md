@@ -78,6 +78,15 @@ structural moves from behavior changes.
   `product-change.md` already said the signature is generated -- what was
   missing was an obligation and a gate (issues #335, and #336 for the
   orchestrator lane the block's own rows leave out).
+- 2026-09-18: **The carried block is checked, not trusted (#335).** After
+  #336 the block sums; the gate `ad-coder stamp body-check <body.md>
+  [ledger...]` reads a pull-request body and fails when the freshly rendered
+  block is absent from it or no longer equals it (stale = the ledger moved).
+  The rendered block is pasted verbatim, so the check is a plain substring
+  match. CI runs this the way #295's stamp gate will -- not today: the same
+  dependency on a reviewer stamp being obtainable at merge time now. The
+  repository-opt-in rule above (`ad-coder.stamps.json`) governs in targets;
+  this gate reads ad-coder's own ledger files for its own pull request.
 
 ## Close the loop
 
