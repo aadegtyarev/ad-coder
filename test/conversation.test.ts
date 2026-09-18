@@ -104,6 +104,30 @@ test("a two-turn conversation retains history on the live session branch", async
   }
 });
 
+test("a message-embedded 429 quota refusal surfaces as a typed quota outcome through conversation", async () => {
+  const { faux, models, model, role } = harnessFixture();
+  const session = await new MemorySessionRepo().create({}, BACKGROUND_CONTEXT);
+  faux.setResponses([
+    fauxAssistantMessage("", {
+      stopReason: "error",
+      errorMessage:
+        '429: {"error":{"type":"insufficient_quota","message":"Weekly usage limit reached"}}',
+    }),
+  ]);
+  const conversation = await startConversation({ role, targetDir, models, model, session });
+  try {
+    // The quota boundary is the same attribution rule as runRole: a typed quota
+    // outcome with the provider token, and never the authentication wording.
+    await expect(conversation.step("do it")).rejects.toMatchObject({
+      code: "provider_quota",
+      status: 429,
+      providerCode: "insufficient_quota",
+    });
+  } finally {
+    await conversation.close();
+  }
+});
+
 test("startConversation forwards content-free background subscriptions without a model turn", async () => {
   const { models, model, role } = harnessFixture();
   let subscriber:

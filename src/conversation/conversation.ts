@@ -38,7 +38,9 @@ import {
   assertRunId,
   assertUniqueToolNames,
   EmptyTurnError,
+  ProviderQuotaError,
   ProviderRejectionError,
+  providerQuotaFrom,
   providerRejectionStatusFrom,
   resolveTargetDir,
   SuspendedRunError,
@@ -417,6 +419,12 @@ export async function startConversation(config: ConversationConfig): Promise<Con
         // Same attribution rule as runRole: a named client-error status means
         // the provider answered and refused, which is not an authentication
         // failure. See ProviderRejectionError for why only the number crosses.
+        // Quota/rate-limit (429) is classified first, for the same reason as
+        // runRole: a spent quota is not a request-shape problem and not a
+        // credential problem (#356).
+        const quota = providerQuotaFrom(result.error);
+        if (quota !== undefined)
+          throw new ProviderQuotaError(runId, quota.providerCode, quota.retryAfterMs);
         const rejection = providerRejectionStatusFrom(result.error);
         if (rejection !== undefined) throw new ProviderRejectionError(runId, rejection);
         throw new EmptyTurnError(runId, result.error?.code);

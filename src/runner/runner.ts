@@ -48,8 +48,10 @@ import {
   assertUniqueToolNames,
   ConfiguredToolsUnavailableError,
   EmptyTurnError,
+  ProviderQuotaError,
   ProviderRejectionError,
   providerLimitFrom,
+  providerQuotaFrom,
   providerRejectionStatusFrom,
   RunInterruptedError,
   RunnerError,
@@ -871,6 +873,16 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
         code: "code" in details ? details.code : result.error.code,
       });
       if (providerLimit !== undefined) throw providerLimit;
+      // A message-embedded 429 is a quota/rate-limit refusal the structured
+      // conversions above cannot see: pi-agent-core composes `providerError` as
+      // `{ code, message }` with no status field, so the 429 lives only in the
+      // message body. Classify it HERE, at the settled-error boundary, before
+      // the empty-turn fallback can misattribute it as an authentication
+      // failure (#356). A refusal is a refusal whether or not the prompt's
+      // input tokens were billed.
+      const quota = providerQuotaFrom(result.error);
+      if (quota !== undefined)
+        throw new ProviderQuotaError(runId, quota.providerCode, quota.retryAfterMs);
     }
     if (result.status === "failed") {
       if (result.error?.code === "configured_tools_unavailable") {
@@ -894,7 +906,10 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
         // causes, and the transcript cannot tell them apart. When the provider
         // named a client-error status it ANSWERED and refused the request, so
         // say that instead of sending the operator to check credentials; only
-        // an unattributed failure keeps the authentication wording.
+        // an unattributed failure keeps the authentication wording. (A
+        // message-embedded 429 was already classified by `providerQuotaFrom`
+        // at the settled-error boundary above, where usage does not gate the
+        // refusal.)
         const rejection = providerRejectionStatusFrom(result.error);
         if (rejection !== undefined) throw new ProviderRejectionError(runId, rejection);
         throw new EmptyTurnError(runId, result.error?.code);

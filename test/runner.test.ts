@@ -25,9 +25,12 @@ import { defineRole } from "../src/role";
 import { dumpRequest } from "../src/runner/dump-request";
 import {
   ConfiguredToolsUnavailableError,
+  extractProviderCodeToken,
   ProviderLimitError,
+  ProviderQuotaError,
   ProviderRejectionError,
   providerLimitFrom,
+  providerQuotaFrom,
   providerRejectionStatusFrom,
   RunnerError,
   resolveTargetDir,
@@ -375,6 +378,107 @@ test("provider rejection is attributed from a status and never carries a body", 
   expect(JSON.stringify({ ...new ProviderRejectionError("run-1", carried ?? 0) })).not.toContain(
     "never-publish-me",
   );
+});
+
+test("a message-embedded 429 is classified as quota from both message shapes", () => {
+  // Shape 1, `formatProviderError`: "<status>: <body>".
+  expect(
+    providerQuotaFrom({
+      code: "assistant_error",
+      message: '429: {"error":{"type":"weekly_usage_limit_exceeded","message":"resets in 2 days"}}',
+    }),
+  ).toEqual({ status: 429, providerCode: "weekly_usage_limit_exceeded" });
+  // Shape 2, the provider SDK's own `APIError.message`: "<status> <body>".
+  expect(
+    providerQuotaFrom({
+      code: "assistant_error",
+      message: '429 {"type":"error","error":{"type":"insufficient_quota","message":"slow down"}}',
+    }),
+  ).toEqual({ status: 429, providerCode: "insufficient_quota" });
+  // A structured status of 429 is also honoured.
+  expect(providerQuotaFrom({ status: 429 })).toEqual({ status: 429 });
+  // Non-429 statuses are not quota. 401/403 stay with the credential wording,
+  // 5xx stays out, and a no-status message is not quota either.
+  expect(providerQuotaFrom({ message: '401: {"error":{"message":"bad key"}}' })).toBeUndefined();
+  expect(providerQuotaFrom({ message: '403: {"error":{"message":"forbidden"}}' })).toBeUndefined();
+  expect(providerQuotaFrom({ message: '503: {"error":{"message":"overloaded"}}' })).toBeUndefined();
+  expect(providerQuotaFrom({ message: "assistant stopped with error" })).toBeUndefined();
+  expect(providerQuotaFrom(undefined)).toBeUndefined();
+  expect(providerQuotaFrom({ status: 400 })).toBeUndefined();
+});
+
+test("quota token extraction returns a bounded token and never body prose", () => {
+  // The real code/type is extracted.
+  expect(extractProviderCodeToken('{"error":{"type":"weekly_usage_limit"}}')).toBe(
+    "weekly_usage_limit",
+  );
+  expect(extractProviderCodeToken('{"error":{"code":"quota_exceeded"}}')).toBe("quota_exceeded");
+  expect(extractProviderCodeToken('{"error_type":"insufficient_quota"}')).toBe(
+    "insufficient_quota",
+  );
+  // The Anthropic envelope discriminator "error" is skipped, and the nested
+  // type is found instead.
+  expect(extractProviderCodeToken('{"type":"error","error":{"type":"rate_limit_error"}}')).toBe(
+    "rate_limit_error",
+  );
+  // Prose, URLs and long identifiers never cross: the value must match the
+  // strict charset exactly and be length-capped.
+  expect(
+    extractProviderCodeToken('{"error":{"message":"You have exceeded your weekly usage limit"}}'),
+  ).toBeUndefined();
+  expect(
+    extractProviderCodeToken('{"error":{"url":"https://example.com/upgrade"}}'),
+  ).toBeUndefined();
+  expect(extractProviderCodeToken(`{"error":{"code":"${"a".repeat(65)}"}}`)).toBeUndefined();
+  // A token exactly at the 64-char bound is kept.
+  expect(extractProviderCodeToken(`{"error":{"code":"${"b".repeat(64)}"}}`)).toBe("b".repeat(64));
+});
+
+test("quota errors are typed, bounded, and carry a reset window when supplied", () => {
+  const quota = new ProviderQuotaError("run-1", "quota_exceeded", 120_000);
+  expect(quota.code).toBe("provider_quota");
+  expect(quota.status).toBe(429);
+  expect(quota.providerCode).toBe("quota_exceeded");
+  expect(quota.retryAfterMs).toBe(120_000);
+  // The message names the status, the provider token, the reset window, and
+  // waits/checks-plan advice -- never "authentication" or "inspect the request".
+  expect(quota.message).toContain("HTTP 429");
+  expect(quota.message).toContain("quota_exceeded");
+  expect(quota.message).toContain("resets in");
+  expect(quota.message).toContain("wait for the reset window");
+  expect(quota.message).not.toContain("authentication");
+  expect(quota.message).not.toContain("inspect the request");
+  // Without a token or reset window the fields are simply absent; the body
+  // that produced them never appears on the error.
+  const bare = new ProviderQuotaError("run-1");
+  expect(bare.providerCode).toBeUndefined();
+  expect(bare.retryAfterMs).toBeUndefined();
+  expect(JSON.stringify(bare)).not.toContain("weekly_usage_limit");
+  expect(JSON.stringify(bare)).not.toContain("resets in 2 days");
+  expect(JSON.stringify(quota)).not.toContain("never-publish-me");
+});
+
+test("#356: a message-embedded 429 quota refusal surfaces as a typed quota outcome", async () => {
+  const { faux, models, model, role } = harnessFixture();
+  // The incident body: a 429 whose structured error names a quota exhaustion
+  // ("insufficient_quota"), which pi-ai classifies non-retryable so it settles
+  // as a failed operation with the message-embedded status -- the exact shape
+  // that was collapsing into EmptyTurnError.
+  faux.setResponses([
+    fauxAssistantMessage("", {
+      stopReason: "error",
+      errorMessage:
+        '429: {"error":{"type":"insufficient_quota","message":"Weekly usage limit reached, resets in 2 days, enable usage from available balance"}}',
+    }),
+  ]);
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-quota-"));
+  await expect(
+    runRole({ role, targetDir: tmp, models, model, prompt: "do it" }),
+  ).rejects.toMatchObject({
+    code: "provider_quota",
+    status: 429,
+    providerCode: "insufficient_quota",
+  });
 });
 
 test("runRole rejects missing authentication before provider generation", async () => {

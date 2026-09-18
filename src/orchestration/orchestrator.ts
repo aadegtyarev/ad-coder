@@ -26,6 +26,7 @@ import {
   ConfiguredToolsUnavailableError,
   EmptyTurnError,
   ProviderLimitError,
+  ProviderQuotaError,
   ProviderRejectionError,
   RunInterruptedError,
   RunnerError,
@@ -733,6 +734,15 @@ const SAFE_NAME_PATTERN = /^[\w$.-]{1,64}$/;
 const SAFE_HOUSE_ERRORS = [
   EmptyTurnError,
   ProviderRejectionError,
+  // Field-by-field audit (errors contract 2026-09-16 / 2026-09-19):
+  // `code` is the authored literal `provider_quota`; `status` is the literal
+  // 429; `providerCode` is a strict-charset token
+  // (`[A-Za-z0-9_.-]{1,64}`, length-capped, prose/URLs impossible) extracted
+  // from the body, never its prose; `retryAfterMs` is a safe-integer delay
+  // bounded by MAX_PROVIDER_RETRY_HINT_MS; `runId` is validated by
+  // `assertRunId` before any projection. `message` is an AUTHORED string
+  // splicing only those bounded fields.
+  ProviderQuotaError,
   ConfiguredToolsUnavailableError,
   ProviderLimitError,
   RunInterruptedError,

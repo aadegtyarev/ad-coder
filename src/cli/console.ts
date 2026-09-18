@@ -15,7 +15,7 @@ import { TurnInterruptedError } from "../conversation/conversation";
 import { CostAnomalyBlockedError } from "../economics/cost-anomaly";
 import type { ToolActivityConfig } from "../observability/tool-activity";
 import type { BackgroundRunManager, BackgroundRunNotice } from "../orchestration/background-runs";
-import { EmptyTurnError, ProviderRejectionError } from "../runner/errors";
+import { EmptyTurnError, ProviderQuotaError, ProviderRejectionError } from "../runner/errors";
 import { SessionLimitError } from "../session-limits";
 import { loadTaskFile } from "./task-file";
 import { ToolActivityRenderer } from "./tool-activity";
@@ -793,6 +793,29 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
         // the console keeps reading input rather than tearing down.
         if (mode === "formatted") params.output.write("ad-coder> ");
         return;
+      } else if (error instanceof ProviderQuotaError) {
+        // Quota/rate-limit is retryable but NOT now, and never: the credential
+        // is valid, the request shape is fine, only the account is out of
+        // quota (#356). The advice names the reset window and points at the
+        // plan, never at authentication or the request.
+        const reset =
+          error.retryAfterMs === undefined
+            ? "wait for the provider's reset window"
+            : `wait for the reset window (~${Math.ceil(error.retryAfterMs / 1_000)}s)`;
+        params.error.write(
+          renderFailure(
+            {
+              code: "provider_quota",
+              message:
+                `provider refused the request with HTTP 429 (quota/rate limit exhausted)` +
+                (error.providerCode !== undefined ? ` (provider code ${error.providerCode})` : ""),
+              action: `${reset}, or check the plan and usage, then retry`,
+              retryable: true,
+            },
+            mode,
+          ),
+        );
+        reason = "turn_failed";
       } else if (error instanceof ProviderRejectionError) {
         // Never offer the authentication command here: the provider answered.
         params.error.write(

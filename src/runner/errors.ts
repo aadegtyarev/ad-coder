@@ -141,6 +141,53 @@ export class ProviderLimitError extends Error {
   }
 }
 
+/**
+ * A provider REFUSED the request because the account's quota/rate limit is
+ * spent -- an HTTP 429 that reached the settled-empty-turn boundary through the
+ * MESSAGE, not through a structured `status`/`statusCode` field or a
+ * `Retry-After` header. Structured 429s are converted to `ProviderLimitError`
+ * earlier; this class is the message-embedded sibling of the same refusal.
+ *
+ * WHY A SEPARATE TYPE. `ProviderLimitError` carries only an optional delay and
+ * is produced by `providerLimitFrom`, which reads ONLY structured
+ * status/retry/retry-after fields. pi-agent-core's `providerError` composes
+ * `{ code, message }` with no status field, so a 429 embedded in the message
+ * (`"429: {"error":{...}}"`) sails past every structured conversion and lands
+ * here instead. Collapsing it into `EmptyTurnError` told the operator to
+ * "verify authentication" about a valid credential whose quota is spent
+ * (#356) -- a wrong cause and an impossible remedy. This class keeps the
+ * refusal distinguishable by code, HTTP status, the provider's own bounded
+ * error token, and the reset window when the provider supplied one.
+ *
+ * CARRIES ONLY BOUNDED FIELDS. `status` is the numeric 429. `providerCode` is
+ * a strict-charset token (`[A-Za-z0-9_.-]{1,64}`) extracted from the response
+ * body's structured error field -- never the body's prose, never a URL, never
+ * a `message` value. `retryAfterMs` is a safe-integer delay bounded by
+ * `MAX_PROVIDER_RETRY_HINT_MS`, read from the same validated structured hints
+ * `providerLimitFrom` accepts. The uncontrolled body is read for those fields
+ * and dropped, exactly as the errors contract requires.
+ */
+export class ProviderQuotaError extends Error {
+  override readonly name = "ProviderQuotaError";
+  readonly code = "provider_quota" as const;
+  readonly status = 429 as const;
+
+  constructor(
+    readonly runId: string,
+    /** The bounded provider error code/type, when one was extractable. */
+    readonly providerCode?: string,
+    /** The reset window the provider supplied, in ms, when one was carried. */
+    readonly retryAfterMs?: number,
+  ) {
+    super(
+      `the provider refused the request with HTTP 429 (quota/rate limit exhausted)` +
+        `${providerCode !== undefined ? ` (provider code ${providerCode})` : ""}` +
+        `${retryAfterMs !== undefined ? `; resets in ${Math.ceil(retryAfterMs / 1_000)}s` : ""}` +
+        "; wait for the reset window, or check the plan and usage, then retry",
+    );
+  }
+}
+
 export const MAX_PROVIDER_RETRY_HINT_MS = 86_400_000;
 
 const PROVIDER_LIMIT_CODES = new Set([
@@ -164,30 +211,43 @@ export function providerLimitFrom(
   if (status !== 429 && !(typeof rawCode === "string" && PROVIDER_LIMIT_CODES.has(rawCode))) {
     return undefined;
   }
+  const retryAfterMs = boundedRetryHintMs(value as Record<string, unknown>, nowMs);
+  return new ProviderLimitError(retryAfterMs);
+}
+
+/**
+ * Resolve a provider-supplied reset hint into a bounded millisecond delay, or
+ * `undefined` when none of the recognised fields carries a safe value. Shared
+ * by `providerLimitFrom` (structured 429) and `providerQuotaFrom`
+ * (message-embedded 429) so both boundaries validate the same way, and a reset
+ * window can never exceed `MAX_PROVIDER_RETRY_HINT_MS`.
+ */
+function boundedRetryHintMs(value: Record<string, unknown>, nowMs: number): number | undefined {
   const millisecondHint = value.retryAfterMs ?? value.retry_after_ms;
   const secondHint = value.retryAfterSeconds ?? value.retry_after;
   const resetAtMs = value.resetAtMs ?? value.reset_at_ms;
-  let retryAfterMs: number | undefined;
   if (
     typeof millisecondHint === "number" &&
     Number.isSafeInteger(millisecondHint) &&
     millisecondHint > 0 &&
     millisecondHint <= MAX_PROVIDER_RETRY_HINT_MS
   ) {
-    retryAfterMs = millisecondHint;
-  } else if (typeof secondHint === "number" && Number.isFinite(secondHint) && secondHint > 0) {
+    return millisecondHint;
+  }
+  if (typeof secondHint === "number" && Number.isFinite(secondHint) && secondHint > 0) {
     const converted = Math.ceil(secondHint * 1_000);
     if (Number.isSafeInteger(converted) && converted <= MAX_PROVIDER_RETRY_HINT_MS)
-      retryAfterMs = converted;
-  } else if (
+      return converted;
+  }
+  if (
     typeof resetAtMs === "number" &&
     Number.isSafeInteger(resetAtMs) &&
     resetAtMs > nowMs &&
     resetAtMs - nowMs <= MAX_PROVIDER_RETRY_HINT_MS
   ) {
-    retryAfterMs = resetAtMs - nowMs;
+    return resetAtMs - nowMs;
   }
-  return new ProviderLimitError(retryAfterMs);
+  return undefined;
 }
 
 /**
@@ -197,7 +257,9 @@ export function providerLimitFrom(
  * `EmptyTurnError` already names, and re-labelling them "inspect the request"
  * would trade one wrong instruction for another. 5xx is excluded too -- a
  * server fault is not a statement about the request -- and 429 never reaches
- * here because `providerLimitFrom` converts it first.
+ * here because a structured 429 is converted by `providerLimitFrom` first and a
+ * message-embedded 429 is converted by `providerQuotaFrom` first: the quota
+ * boundary runs BEFORE this rejection boundary (#356).
  */
 const PROVIDER_REJECTION_STATUSES = new Set([400, 404, 405, 409, 413, 415, 422]);
 
@@ -251,6 +313,100 @@ export function providerRejectionStatusFrom(error: unknown): number | undefined 
   if (match === null) return undefined;
   const parsed = Number(match[1]);
   return PROVIDER_REJECTION_STATUSES.has(parsed) ? parsed : undefined;
+}
+
+/**
+ * Keys whose string value names the provider's own error code/type, ordered
+ * most-specific-first (see `extractProviderCodeToken`).
+ */
+const PROVIDER_CODE_TOKEN_KEYS = ["code", "error_code", "error_type", "type"] as const;
+
+const PROVIDER_CODE_TOKEN_RE = new RegExp(
+  `"(?:${PROVIDER_CODE_TOKEN_KEYS.join("|")})"\\s*:\\s*"([A-Za-z0-9_.-]{1,64})(?![A-Za-z0-9_.-])\\s*"`,
+  "g",
+);
+
+/**
+ * Extract the provider's own error code/type from an uncontrolled response
+ * body, as a strict-charset token, or `undefined` when no such token exists.
+ *
+ * ONLY a value matching `[A-Za-z0-9_.-]{1,64}` is ever returned: every other
+ * character class -- spaces (prose), `/` and `:` (URLs), quotes and braces
+ * (more body) -- fails the match and is dropped. A token longer than 64 chars
+ * fails the `{1,64}` bound AND the trailing `(?![A-Za-z0-9_.-])` guard, so a
+ * long identifier can never be returned truncated. The body is otherwise never
+ * read: `message` values, URLs, and free prose stay in the body they came from.
+ *
+ * The bare token `"error"` is skipped: in Anthropic's error envelope
+ * (`{"type":"error","error":{...}}`) it is the generic discriminator, not the
+ * provider's code, and reporting it would re-create the `assistant_error`
+ * misattribution this class exists to end. Skipping (not stopping) is what lets
+ * the real nested token (`"error":{"type":"..."}`) be found after it.
+ */
+export function extractProviderCodeToken(body: string): string | undefined {
+  for (const match of body.matchAll(PROVIDER_CODE_TOKEN_RE)) {
+    const token = match[1] as string;
+    if (token !== "error") return token;
+  }
+  return undefined;
+}
+
+/**
+ * What a message-embedded 429 refusal carries past the quota boundary. `status`
+ * is always the literal 429 that produced the classification; `providerCode`
+ * and `retryAfterMs` are present only when the provider actually supplied them
+ * in a structured, bounded form.
+ */
+export interface ProviderQuotaSignal {
+  readonly status: 429;
+  readonly providerCode?: string;
+  readonly retryAfterMs?: number;
+}
+
+/**
+ * Classify a settled provider failure as a quota/rate-limit refusal (HTTP 429),
+ * or `undefined` when the failure is not a 429 at all.
+ *
+ * READ ONLY ABOUT QUOTA. This is the message-embedded sibling of
+ * `providerLimitFrom`: it answers "is this a 429, and what does the provider
+ * name and the reset window?" for a refusal that reached the settled boundary
+ * through the message. A structured `status`/`statusCode` of 429 is also
+ * honoured for symmetry with `providerLimitFrom`, but in practice that case is
+ * converted earlier and never arrives here.
+ *
+ * The status is read from the same two anchored message shapes
+ * `providerRejectionStatusFrom` reads -- shape 1 `"429: <body>"` (and the
+ * prefixed variant) and shape 2 `"429 <body>"` -- plus a structured
+ * status/statusCode equal to 429. 401/403/5xx are simply not 429 and return
+ * `undefined`, leaving those to the credential and rejection boundaries that
+ * already own them. The bounded provider token and the reset window are read
+ * from the body/structured fields and nothing else crosses.
+ */
+export function providerQuotaFrom(
+  error: unknown,
+  nowMs = Date.now(),
+): ProviderQuotaSignal | undefined {
+  if (error === null || typeof error !== "object") return undefined;
+  const value = error as Record<string, unknown>;
+  const structured = value.status ?? value.statusCode;
+  let isStatus429: boolean;
+  if (typeof structured === "number") {
+    isStatus429 = structured === 429;
+  } else {
+    const message = value.message;
+    if (typeof message !== "string") return undefined;
+    const match = /^(?:[^():]{0,64} )?\(?(\d{3})\)?: /.exec(message) ?? /^(\d{3}) /.exec(message);
+    isStatus429 = match !== null && Number(match[1]) === 429;
+  }
+  if (!isStatus429) return undefined;
+  const message = typeof value.message === "string" ? value.message : undefined;
+  const providerCode = message === undefined ? undefined : extractProviderCodeToken(message);
+  const retryAfterMs = boundedRetryHintMs(value as Record<string, unknown>, nowMs);
+  return {
+    status: 429,
+    ...(providerCode !== undefined && { providerCode }),
+    ...(retryAfterMs !== undefined && { retryAfterMs }),
+  };
 }
 
 /**

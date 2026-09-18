@@ -546,9 +546,12 @@ export type { RunnerErrorCode } from "./runner/errors";
 export {
   ConfiguredToolsUnavailableError,
   EmptyTurnError,
+  extractProviderCodeToken,
   ProviderLimitError,
+  ProviderQuotaError,
   ProviderRejectionError,
   providerLimitFrom,
+  providerQuotaFrom,
   providerRejectionStatusFrom,
   RunnerError,
   resolveTargetDir,
