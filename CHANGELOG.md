@@ -63,6 +63,28 @@ enforces that dated release headings go in non-increasing date order
   when the skill applies, not only what it contains, because the catalogue
   description is the only surface a model reads before deciding to load the
   file.
+- **A skill that applies is binding, and the rule that says so names no
+  skill.** The catalogue header states it in general words for every role that
+  has a catalogue, and each role's own prompt repeats it: where a skill's
+  description matches the work in front of you, loading it and following it is
+  mandatory rather than optional. The seven role prompts' `Load \`x\` when y`
+  tails are gone -- an enumeration is advice a model can skim, and with
+  `--no-skills`, a pin, or an unmet `requires` it named a capability the session
+  did not have. The conditions those tails carried now live in the descriptions,
+  which is where a model reads them before deciding.
+- **Every shipped skill opens by stating that its instruction is mandatory.**
+  One identical sentence, its own paragraph, in all thirteen: the method is
+  required where the description matches, and an approach that contradicts it is
+  a defect to fix rather than a preference to keep. It binds the skill a role
+  has already loaded, been handed by a pin, or received as an `always` paste --
+  which the catalogue header cannot reach.
+- Ten shipped descriptions rewritten into `<situation>: <what it carries>`,
+  nine of them version-bumped to v2 with the wording (`acceptance-review`,
+  `architecture-recon`, `change-implementation`, `change-verification`,
+  `documentation-writing`, `external-research`, `repository-navigation`,
+  `task-slicing`, `threat-modelling`); `tracker-work` keeps v1, which this
+  release is the first to ship, so its wording is corrected rather than
+  versioned.
 
 ## [0.63.0] - 2026-09-18
 

@@ -1,6 +1,6 @@
 {
   "id": "change-implementation",
-  "version": "1",
-  "description": "Turn a decision into a working, tested change: baseline first, contracts as blocking requirements, a test per step, and a report of what was actually run.",
+  "version": "2",
+  "description": "Editing code: baseline first, contracts as blocking requirements, a test per step, and a report of what was actually run.",
   "roles": ["orchestrator", "coder", "planner", "reviewer"]
 }

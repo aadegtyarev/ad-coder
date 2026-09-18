@@ -1,3 +1,5 @@
+**This instruction is mandatory.** Where this skill's description matches the work in front of you, the method below is required: an approach that contradicts it is a defect to fix, not a preference to keep.
+
 The tracker is where this project's work is decided, claimed and closed. Being
 readable there is most of what makes a second developer possible. Everything
 below is identifiers and evidence — state, numbers, paths, run ids — never

@@ -155,3 +155,31 @@ unbounded prompt directory.
   exception must be written from the rule's side -- the obligation stands, and
   a dispatcher who cannot name the files owes a planner or researcher pass
   first (issue #316).
+- 2026-09-18: **A skill that applies is binding, and the rule that says so names
+  no skill.** The obligation is stated in general words on the two surfaces
+  every role reads: the catalogue header `formatSkillCatalogue` emits, and the
+  role's own prompt ("Your skills catalogue lists the methods for this work:
+  where one of them describes what you are doing, loading it and following it is
+  mandatory rather than optional, and the technique in it governs over your own
+  habit"). Naming a skill in a prompt is wrong twice over: the enumeration
+  ("Load `x` when y") is advice a model skims past -- the orchestrator held
+  `delivery-calibration`, never loaded it, and dispatched the decomposed ticket
+  seconds later -- and with `--no-skills`, a pin, or an unmet `requires` it names
+  a capability that session does not have, which the 2026-09-17 tool-grant rule
+  already forbade for tools. The seven role prompts' tails were deleted; the
+  conditions they carried ("when the surface is elevated and no security stage
+  will run") moved into the descriptions, which is where a model reads them
+  before deciding. Enforced by a test that no shipped prompt contains a
+  backticked skill id, and one that the catalogue header carries the rule.
+- 2026-09-18: **Every shipped skill opens by stating that its instruction is
+  mandatory.** The first line of every `instructions.md` is the same sentence --
+  "**This instruction is mandatory.** Where this skill's description matches the
+  work in front of you, the method below is required: an approach that
+  contradicts it is a defect to fix, not a preference to keep." -- followed by a
+  blank line so it reads as a statement about the skill rather than as the
+  technique's opening sentence. The catalogue header binds the set; this binds
+  the one skill a role has already loaded, been handed by a pin, or received as
+  an `always` paste, which no header reaches. The wording is identical in all
+  thirteen because it is a rule about skills, not a habit of each author; a test
+  reads the shipped directory and fails on the first skill whose opening line
+  differs.

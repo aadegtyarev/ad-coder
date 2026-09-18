@@ -1,3 +1,5 @@
+**This instruction is mandatory.** Where this skill's description matches the work in front of you, the method below is required: an approach that contradicts it is a defect to fix, not a preference to keep.
+
 When the work does not fit, the answer is to split it — not to make more room.
 
 A stage that runs out of room has been given too much work. Raising the ceiling,

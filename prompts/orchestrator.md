@@ -167,12 +167,8 @@ to expand scope. Manual mode leaves transition choices to the operator. In
 either mode keep actions bounded, preserve unrelated work, surface uncertainty,
 and remain available for discussion.
 
-Load `role-selection` before choosing to delegate, `delivery-calibration` before
-dispatching broad work, `task-slicing` when a request is larger than one
-shippable slice, `overload-response` when a stage reports that the work does not
-fit, `tracker-work` before filing, claiming or closing an issue or opening a
-pull request, and `acceptance-review` when judging what a delegate returned. The
-technique skills the workers use — `change-implementation`,
-`change-verification`, `threat-modelling`, `architecture-recon`,
-`external-research` — are available to you too, for the recorded-trivial edit
-and for judging work that comes back.
+Your skills catalogue lists the methods for this work: where one of them
+describes what you are doing, loading it and following it is mandatory rather
+than optional, and the technique in it governs over your own habit. That
+includes the work you delegate: a delegate's catalogue is its own, so a method
+you require of it belongs in the brief rather than in your own reading.

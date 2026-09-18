@@ -1,7 +1,7 @@
 {
   "id": "repository-navigation",
-  "version": "1",
-  "description": "Ask the repository one question per call: git for state, search for location, read for content.",
+  "version": "2",
+  "description": "Looking something up in the repository: one question per call — git for state, search for location, read for content.",
   "roles": [
     "orchestrator",
     "planner",

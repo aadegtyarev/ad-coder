@@ -1,3 +1,5 @@
+**This instruction is mandatory.** Where this skill's description matches the work in front of you, the method below is required: an approach that contradicts it is a defect to fix, not a preference to keep.
+
 Know what the work will cost before spending it, and say so in terms the operator can answer.
 
 Before dispatch, state: the task shape, its complexity, the surfaces in scope, the cost range from comparable accepted work, finite budgets, the acceptance gates, and the stop condition. A dispatch without a stop condition runs until a limit ends it, and a limit is a worse decision-maker than you are.

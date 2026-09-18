@@ -1,3 +1,5 @@
+**This instruction is mandatory.** Where this skill's description matches the work in front of you, the method below is required: an approach that contradicts it is a defect to fix, not a preference to keep.
+
 Map only what the task touches, and stop when the map answers the question.
 
 Reconnaissance has a stopping rule, and it is not "I have read enough": it is that you can name the surfaces the change touches, the contracts that govern them, and what you still do not know. Reading further after that is cost without information.

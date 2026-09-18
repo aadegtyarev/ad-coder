@@ -1,3 +1,5 @@
+**This instruction is mandatory.** Where this skill's description matches the work in front of you, the method below is required: an approach that contradicts it is a defect to fix, not a preference to keep.
+
 Write for a reader with a task, not for a file that fits a number.
 
 Every document here has one reader and one job. A contributor map answers "where

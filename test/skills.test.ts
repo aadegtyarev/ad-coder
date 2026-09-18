@@ -16,6 +16,8 @@ import {
   unconditionalSkills,
 } from "ad-coder";
 
+const REPO_ROOT = path.join(import.meta.dir, "..");
+
 function expectSkillError(action: () => unknown, code: SkillResolutionError["code"]): void {
   try {
     action();
@@ -51,11 +53,34 @@ function writeSkill(
   fs.writeFileSync(path.join(dir, "instructions.md"), instructions);
 }
 
+test("every shipped skill opens by stating that its instruction is mandatory", () => {
+  // The catalogue header binds the set; this binds the one skill a role has
+  // already loaded, been handed by a pin, or received as an `always` paste. A
+  // skill that reads as a suggestion is the failure #330 named: the technique
+  // was granted, never applied. The line is identical in every skill so the
+  // statement is a rule about skills rather than a habit of one author.
+  const opening =
+    "**This instruction is mandatory.** Where this skill's description matches the work in front of you, the method below is required: an approach that contradicts it is a defect to fix, not a preference to keep.";
+  const dir = path.join(REPO_ROOT, "prompts", "skills");
+  const shipped = fs
+    .readdirSync(dir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory());
+  expect(shipped.length).toBeGreaterThan(10);
+  for (const skill of shipped) {
+    const text = fs.readFileSync(path.join(dir, skill.name, "instructions.md"), "utf8");
+    const [first, second] = text.split("\n");
+    expect(first).toBe(opening);
+    // The statement is its own paragraph, so it cannot be read as the opening
+    // sentence of the technique it introduces.
+    expect(second).toBe("");
+  }
+});
+
 test("loads shipped skills with a content digest", () => {
   const skill = resolveSkills(["task-slicing"])[0];
   expect(skill).toBeDefined();
   if (skill === undefined) throw new Error("missing built-in skill");
-  expect(skill).toMatchObject({ id: "task-slicing", version: "1", source: "builtin" });
+  expect(skill).toMatchObject({ id: "task-slicing", version: "2", source: "builtin" });
   const roleSelection = resolveSkills(["role-selection"])[0];
   expect(roleSelection).toBeDefined();
   if (roleSelection === undefined) throw new Error("missing built-in skill");

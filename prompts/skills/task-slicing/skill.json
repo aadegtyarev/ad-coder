@@ -1,1 +1,1 @@
-{"id":"task-slicing","version":"1","description":"Turn a broad request into a minimal testable vertical slice.","roles":["orchestrator","planner"]}
+{"id":"task-slicing","version": "2","description":"A request broader than one shippable slice: cut the smallest change that ships on its own and can be shown correct.","roles":["orchestrator","planner"]}
