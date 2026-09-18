@@ -10,6 +10,10 @@
  * exists, parses, matches the verdict rule, and names the CURRENT tree
  * digest -- a stale stamp must not pass (`review-stamp.ts`).
  *
+ * `stampBodyCheckErrors` is the pull-request-body gate (issue #335): it
+ * verifies that a PR body carries the freshly rendered delivery block
+ * verbatim -- absent or stale bodies fail with the render command named.
+ *
  * Ad-hoc writers use the library entry points directly; no CLI write path is
  * offered, because a stamp the orchestrator hand-writes into the committed
  * log would certify a review that only the settled result data speaks for,
@@ -58,4 +62,33 @@ export function stampDeliveryText(targetDir: string, files: readonly string[] = 
 /** Reasons the branch may not merge; empty list means the stamp gate passes. */
 export function stampCheckErrors(targetDir: string): string[] {
   return checkReviewStamps(targetDir).errors;
+}
+
+/**
+ * The PR-body gate (issue #335): the body must carry the delivery block as
+ * rendered from the ledger NOW, verbatim -- a hand-composed or stale block
+ * defeats the point of rendering cost from evidence.
+ *
+ * Presence is a substring check of the freshly rendered block (trimmed), so
+ * sentence wrapping and one trailing-newline difference around the block do
+ * not matter. A body that carries a similar block -- a `runs ` header line --
+ * that is NOT the fresh rendering is stale, not absent: the fix is to re-run
+ * the render command and replace the block verbatim.
+ */
+export function stampBodyCheckErrors(
+  bodyPath: string,
+  targetDir: string,
+  files: readonly string[],
+): string[] {
+  const block = stampDeliveryText(targetDir, files).trim();
+  const body = fs.readFileSync(bodyPath, "utf8");
+  if (body.includes(block)) return [];
+  const hasSimilarBlock = body.split("\n").some((line) => line.startsWith("runs "));
+  if (hasSimilarBlock)
+    return [
+      `${bodyPath}: the delivery block is stale (rendered cost differs from the ledger now); re-run "ad-coder stamp delivery" and replace the block verbatim`,
+    ];
+  return [
+    `${bodyPath}: the generated delivery block is absent (render it with "ad-coder stamp delivery", never compose one)`,
+  ];
 }
