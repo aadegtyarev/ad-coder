@@ -13,6 +13,20 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.69.3] - 2026-09-19
+
+### Added
+- **A learned stage ceiling is recorded where the next dispatch can find it**
+  (`docs/stage-limit-calibration.md`). The plan stage's duration ceiling for
+  slice-planning one bounded medium slice inside a complex feature is now
+  810000 ms, learned by a deliberate probe: 540000 ms was exhausted
+  mid-composition at 19 model turns, and at the raised ceiling the stage
+  completed in 726866 ms. The record carries the probe policy with it — one
+  bounded step at a time, a pre-committed branch for failure (stop and report,
+  or decompose; never a second raise on the same shape), and never rewriting a
+  learned number from a single observation — together with the read-back blind
+  spot that made the exhausted stage look like a no-read loop.
+
 ## [0.69.2] - 2026-09-19
 
 ### Added
