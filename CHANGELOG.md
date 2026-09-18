@@ -13,6 +13,19 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.69.1] - 2026-09-19
+
+### Added
+- **The skill authoring contract is written down** (`docs/contracts/skill-authoring.md`).
+  It answers what shape a skill under `prompts/skills/` must have and which of its
+  properties are enforceable rather than preferred: the manifest (`always`, `requires`,
+  ceilings), the catalogue entry as the trigger surface with its three-part shape and
+  its 1,536-character budget, the obligations that are bound to a lifecycle event and
+  must therefore be hook-carried rather than always-on, the progressive-disclosure cost
+  rule, and eval-gated triggering with the current gap named instead of implied.
+  `docs/contracts/skills.md` gains the cross-reference that separates the two contracts'
+  territory, and `test/skills.test.ts` gains the check that owns the budget rule.
+
 ## [0.69.0] - 2026-09-19
 
 ### Added
