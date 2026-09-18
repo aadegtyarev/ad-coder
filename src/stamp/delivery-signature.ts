@@ -13,6 +13,9 @@ import type { LedgerRecord } from "../ledger/types";
 
 /** Role names the delivery signature always names, even when they never ran. */
 export const SIGNATURE_ROLES: readonly string[] = [
+  // The orchestrator lane drives the whole run, so it leads the block: its row
+  // is a row like the others, first so readers can sum rows to the header. (#336)
+  "orchestrator",
   "planner",
   "researcher",
   "security",
@@ -53,8 +56,9 @@ function renderRoleRow(entry: DeliverySignature["roles"][number]): string {
 
 /**
  * Build the delivery signature from ledger records alone. Per-role rows come
- * from the records' own role/provider/model values; a declared role with NO
- * records still gets a row marked "did not run", because a missing planner or
+ * from the records' own role/provider/model values -- including the
+ * orchestrator lane, which is a row like the others (#336); a declared role
+ * with NO records still gets a row marked "did not run", because a missing planner or
  * reviewer is part of the run's story, not an absence to paper over (#239).
  */
 export function buildDeliverySignature(
