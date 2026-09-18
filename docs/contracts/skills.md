@@ -140,13 +140,18 @@ unbounded prompt directory.
   task -- is stated in that role's own prompt, while the skill keeps how to do
   it (issues #307, #330, #316, #293). This is the boundary against the
   2026-09-17 duplicate-the-prompt defect: restating the prompt is duplication,
-  and an obligation the prompt never stated is not.
+  and an obligation the prompt never stated is not. Where the obligation is bound
+  to a lifecycle event, docs/contracts/skill-authoring.md (2026-09-18) places it:
+  hook-carried by the harness at the event, never always-on, never a catalogue
+  guess.
 - 2026-09-18: **A skill's description says when the skill applies, not only what
   it contains.** The catalogue is everything a model sees before deciding to
   load a file, so "Estimate accepted-result cost" does not fire before a
   dispatch while "Size a ticket before dispatching it" does. Descriptions are
   the only always-read surface a skill has, which is why they are contract text
-  and why a version bump is warranted when the wording changes.
+  and why a version bump is warranted when the wording changes. The shape, the
+  1,536-character budget, and the transition rule for shipped descriptions are
+  pinned in docs/contracts/skill-authoring.md (2026-09-18).
 - 2026-09-18: **A rule conditioned on something the dispatcher often does not do
   licenses the common case.** `coder.md` said "when the plan names affected
   files, do not run broad exploration", and the coder explored: with no file
