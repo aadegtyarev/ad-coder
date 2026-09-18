@@ -157,6 +157,13 @@ export interface Plan {
   summary: string;
   /** Exact applicable contract rules, or faithful labeled compression when oversized. */
   contractRequirements: string[];
+  /**
+   * The product files the planner determined this task touches, injected into
+   * the coder's round-1 handoff. Optional in the submission and defaulted to
+   * `[]` by `parsePlan`: a planner that names no files degrades cleanly, it
+   * never fails the plan.
+   */
+  affectedFiles: string[];
   surfaceAnalysis: SurfaceAnalysis;
 }
 
@@ -693,6 +700,12 @@ export interface WorkflowState {
   contractRequirements: string[];
   /** Planner governance artifact retained across code/review and durable resume. */
   surfaceAnalysis?: SurfaceAnalysis;
+  /**
+   * The files the planner's structured submission named as affected. Injected
+   * into the coder's round-1 handoff as framed data; absent or empty means no
+   * section, never a failure. Retained for durable resume like its siblings.
+   */
+  affectedFiles?: string[];
   /** Normalized, bounded research metadata; provider payloads are never retained. */
   researchProvenance?: ResearchProvenance[];
   /** Present only while a coordinator-owned research effect is in flight. */

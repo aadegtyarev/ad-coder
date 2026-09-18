@@ -254,7 +254,8 @@ export interface PlanCapture {
  * This is a pure, self-contained, hand-written validator (no `eval`, no schema
  * library): `value` must be an object; `complexity` one of the three allowed
  * literals; `securitySurface` one of the three allowed literals; `summary` a
- * string; and optional `contractRequirements` an array of non-empty strings.
+ * string; and optional `contractRequirements` and `affectedFiles`, each an
+ * array of non-empty strings.
  * Any deviation throws
  * `OrchestrationError('malformed_plan')` -- never a silent coercion, never a
  * default. `summary` is checked for type only and is NOT interpolated into any
@@ -306,6 +307,13 @@ export function parsePlan(
   ) {
     return bad("plan.contractRequirements must be an array of non-empty strings");
   }
+  const affectedFiles = record.affectedFiles === undefined ? [] : record.affectedFiles;
+  if (
+    !Array.isArray(affectedFiles) ||
+    affectedFiles.some((file) => typeof file !== "string" || file.trim() === "")
+  ) {
+    return bad("plan.affectedFiles must be an array of non-empty strings");
+  }
   const surfaceAnalysis = parseSurfaceAnalysis(record.surfaceAnalysis, bad, limits);
 
   return {
@@ -313,6 +321,7 @@ export function parsePlan(
     securitySurface: securitySurface as SecuritySurface,
     summary: record.summary,
     contractRequirements: contractRequirements as string[],
+    affectedFiles: affectedFiles as string[],
     surfaceAnalysis,
   };
 }
@@ -535,7 +544,8 @@ export function buildSubmitPlanTool(
   validateLimits(limits);
   return defineTool({
     name: SUBMIT_PLAN_TOOL_NAME,
-    description: "Record the plan's complexity, security surface, contract rules, and summary.",
+    description:
+      "Record the plan's complexity, security surface, contract rules, affected files, and summary.",
     label: "submit plan",
     // Providers that expose strict JSON-schema tool calls can constrain this
     // mandatory handoff; others retain the normal tool-call fallback.
@@ -545,6 +555,10 @@ export function buildSubmitPlanTool(
       securitySurface: Type.String(),
       summary: Type.String(),
       contractRequirements: Type.Optional(Type.Array(Type.String())),
+      // Same reasoning as `contractRequirements`: optional at the schema so a
+      // legacy submission missing it reaches `parsePlan` and is named there,
+      // never bounced pre-execute as a wrong-cause failure.
+      affectedFiles: Type.Optional(Type.Array(Type.String())),
       // Spelled out STRUCTURALLY rather than as `Type.Any()`. An any-schema
       // serialises to a bare `{}`, and a provider that validates tool schemas
       // rejects the whole request for it -- DeepSeek answers "one of `type`,
@@ -672,7 +686,7 @@ export function formatPlannerInstruction(): string {
   return [
     `When your plan is ready, record it by calling the ${SUBMIT_PLAN_TOOL_NAME} tool.`,
     "Call it with this shape:",
-    '{ "complexity": "trivial" | "medium" | "complex", "securitySurface": "none" | "low" | "elevated", "summary": "<short summary>", "contractRequirements": ["<rule>"], "surfaceAnalysis": { "projectType": "<type>", "surfaces": [{"id":"<stable-id>","name":"<surface>","rationale":"<why affected>"}], "coverage": [{"surfaceId":"<stable-id>","status":"covered|not_applicable|research_required","contractIds":["<canonical id>"],"evidence":["<source or gap evidence>"],"rationale":"<decision>"}] } }',
+    '{ "complexity": "trivial" | "medium" | "complex", "securitySurface": "none" | "low" | "elevated", "summary": "<short summary>", "contractRequirements": ["<rule>"], "affectedFiles": ["<path>"], "surfaceAnalysis": { "projectType": "<type>", "surfaces": [{"id":"<stable-id>","name":"<surface>","rationale":"<why affected>"}], "coverage": [{"surfaceId":"<stable-id>","status":"covered|not_applicable|research_required","contractIds":["<canonical id>"],"evidence":["<source or gap evidence>"],"rationale":"<decision>"}] } }',
     "This structured submission is mandatory. Identify every affected product surface before coding.",
     // The text fallback used to demand a bare object with "no Markdown", which
     // asked models to suppress the fenced form they emit by default and made a
