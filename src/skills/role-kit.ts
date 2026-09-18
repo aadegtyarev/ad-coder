@@ -103,7 +103,7 @@ export function roleSkillKit(options: RoleSkillKitOptions): RoleSkillKit {
       };
     }
     return {
-      appendix: `\n\nSelected skills:\n${pasted
+      appendix: `\n\nSelected skills. These are pinned for this task, so they apply: follow them, and where one contradicts your own habit the skill wins.\n${pasted
         .map((skill) => `## ${skill.id}@${skill.version}\n${skill.instructions}`)
         .join("\n\n")}`,
       includeLoadTool: false,

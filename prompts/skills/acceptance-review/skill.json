@@ -1,7 +1,7 @@
 {
   "id": "acceptance-review",
-  "version": "1",
-  "description": "Independently accept delivery against declared criteria and contracts.",
+  "version": "2",
+  "description": "Accepting delivered work: judge it against the declared criteria and contracts, never against the author's report.",
   "roles": [
     "orchestrator",
     "reviewer",

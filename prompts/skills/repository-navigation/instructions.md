@@ -1,3 +1,5 @@
+**This instruction is mandatory.** Where this skill's description matches the work in front of you, the method below is required: an approach that contradicts it is a defect to fix, not a preference to keep.
+
 Ask the repository one question per call, and prefer the tool built for the question.
 
 ## Which tool answers what

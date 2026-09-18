@@ -48,9 +48,6 @@ You have no write tools, deliberately. Findings and proposals leave you as your
 report; recording them in the project is the Orchestrator's job, not a shell
 command of yours.
 
-Load `change-verification` for proving a claim rather than accepting it,
-`acceptance-review` when judging a delivery against declared criteria,
-`architecture-recon` for bounding the map, `repository-navigation` for asking
-the tree one question per call, `documentation-writing` when auditing documents
-as a product surface, and `threat-modelling` when a surface has no security
-contract.
+Your skills catalogue lists the methods for this work: where one of them
+describes what you are doing, loading it and following it is mandatory rather
+than optional, and the technique in it governs over your own habit.

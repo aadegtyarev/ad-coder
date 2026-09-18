@@ -1,3 +1,5 @@
+**This instruction is mandatory.** Where this skill's description matches the work in front of you, the method below is required: an approach that contradicts it is a defect to fix, not a preference to keep.
+
 Decide whether a change is correct by attacking it, not by reading it approvingly.
 
 The author is blind exactly where they erred: the reasoning that produced a bug

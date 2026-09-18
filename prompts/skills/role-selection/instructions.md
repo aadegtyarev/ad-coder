@@ -1,3 +1,5 @@
+**This instruction is mandatory.** Where this skill's description matches the work in front of you, the method below is required: an approach that contradicts it is a defect to fix, not a preference to keep.
+
 Three execution paths exist, and the wrong one usually costs the operator money
 or verdicts they cannot trust -- not because a role fails, but because the job
 was never a role's job.

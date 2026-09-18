@@ -1,3 +1,5 @@
+**This instruction is mandatory.** Where this skill's description matches the work in front of you, the method below is required: an approach that contradicts it is a defect to fix, not a preference to keep.
+
 Verify delivery against the criteria that were declared, not against your own taste.
 
 Start from the diff and the commands that were actually run. A claim of passing tests is not evidence of passing tests: the output is. If a check was reported but not shown, run it or say it is unverified — never accept an assertion as a result.

@@ -19,13 +19,20 @@ const DEFAULT_MAX_LOADS_PER_TURN = 4;
  * every role prompt". The model is better placed than the operator to know
  * which methodology a task needs -- but only after reading the task, which is
  * exactly when a tool call can still happen and a prompt can no longer change.
+ *
+ * WHY THE HEADER CARRIES A RULE. A menu is advice: the orchestrator held
+ * `delivery-calibration`, never loaded it, and dispatched the decomposed ticket
+ * ten seconds later. The obligation is therefore stated here, in general words
+ * and without naming a skill -- this text reaches every role that has a
+ * catalogue, and the descriptions below it say which situation each one is for
+ * (2026-09-18, docs/contracts/skills.md).
  */
 export function formatSkillCatalogue(entries: readonly SkillCatalogueEntry[]): string {
   if (entries.length === 0) return "";
   const rows = entries
     .map((entry) => `- ${entry.id}@${entry.version} — ${entry.description}`)
     .join("\n");
-  return `\n\nAvailable skills. Each is a method for a kind of work, not a summary of your role. Call ${LOAD_SKILL_TOOL_NAME} with an id when the task at hand is that kind of work; do not load one speculatively.\n${rows}`;
+  return `\n\nAvailable skills. Each is a method for a kind of work, and its description says when it applies. Where one matches the work in front of you, following it is mandatory rather than optional. Call ${LOAD_SKILL_TOOL_NAME} with an id to load the full text.\n${rows}`;
 }
 
 export interface SkillLoadRecord {
@@ -57,7 +64,7 @@ export function buildLoadSkillTool(options: BuildLoadSkillToolOptions): Tool {
   return defineTool({
     name: LOAD_SKILL_TOOL_NAME,
     description:
-      "Load one skill's full instructions for this turn, by id from the available-skills list.",
+      "Load one skill's full instructions for this turn, by id from the available-skills list. Load one only when its description matches the work at hand, never speculatively.",
     label: "load skill",
     parameters: Type.Object(
       { id: Type.String({ description: "Skill id exactly as listed in available skills." }) },

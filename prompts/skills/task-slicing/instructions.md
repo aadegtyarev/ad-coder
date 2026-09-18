@@ -1,3 +1,5 @@
+**This instruction is mandatory.** Where this skill's description matches the work in front of you, the method below is required: an approach that contradicts it is a defect to fix, not a preference to keep.
+
 Turn a broad request into one slice that can ship on its own and be shown to be correct.
 
 A slice is not "the first third of the work". It is a change with its own acceptance criterion, which leaves the project working whether or not the next slice ever happens. If removing the rest of the plan makes this piece pointless, it is not a slice — it is a stage, and stages have to be sequenced, not shipped.

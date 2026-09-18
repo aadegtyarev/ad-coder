@@ -1,3 +1,5 @@
+**This instruction is mandatory.** Where this skill's description matches the work in front of you, the method below is required: an approach that contradicts it is a defect to fix, not a preference to keep.
+
 Answer a question from sources outside the repository, and grade how much of the answer to trust.
 
 A confident wrong answer costs more than an honest "the sources disagree", so

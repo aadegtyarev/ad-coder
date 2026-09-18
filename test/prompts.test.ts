@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { PromptError, resolvePrompt } from "ad-coder";
+import { formatSkillCatalogue, PromptError, resolvePrompt, skillCatalogue } from "ad-coder";
 
 const REPO_ROOT = path.join(import.meta.dir, "..");
 
@@ -54,12 +54,45 @@ test("the Planner prompt names the channel the coder actually reads", () => {
   expect(prompt).not.toContain("Do not emit the plan or a JSON copy in assistant text");
 });
 
-test("every shipped role prompt points at the skills carrying its technique", () => {
-  // The technique lives in skills so that it survives a disabled role: any role
-  // may be switched off, and the knowledge must not leave with it.
-  for (const role of ["coder", "reviewer", "security", "researcher", "planner", "auditor"]) {
-    expect(flat(resolvePrompt(role))).toContain("Load `");
+test("every shipped role prompt states that a matching skill is binding", () => {
+  // A rule that lives only in a skill a model may skip is advice, not a rule:
+  // a catalogue is a menu, and a menu is optional. The obligation is therefore
+  // stated in general words in the role's own prompt -- never by naming a
+  // skill, which is the catalogue's job because only it knows what this
+  // session's composition actually offers (2026-09-18, docs/contracts/skills.md).
+  for (const role of [
+    "orchestrator",
+    "coder",
+    "reviewer",
+    "security",
+    "researcher",
+    "planner",
+    "auditor",
+  ]) {
+    expect(flat(resolvePrompt(role))).toContain(
+      "loading it and following it is mandatory rather than optional",
+    );
   }
+});
+
+test("no shipped role prompt names a skill", () => {
+  // The enumeration this replaced was advice ("Load `x` when y") and, with
+  // --no-skills or an unmet `requires`, it named a capability the session did
+  // not have. Names live in the catalogue, which is composition-aware; the
+  // prompt carries the rule that makes them binding.
+  const promptDir = path.join(REPO_ROOT, "prompts");
+  const ids = fs
+    .readdirSync(path.join(promptDir, "skills"), { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name);
+  expect(ids.length).toBeGreaterThan(10);
+  for (const file of fs.readdirSync(promptDir).filter((name) => name.endsWith(".md"))) {
+    const text = fs.readFileSync(path.join(promptDir, file), "utf8");
+    for (const id of ids) expect(text).not.toContain(`\`${id}\``);
+  }
+  // The rule is not vacuous: it is stated where the names are.
+  const catalogue = formatSkillCatalogue(skillCatalogue("orchestrator"));
+  expect(catalogue).toContain("mandatory rather than optional");
 });
 
 test("the summarizer prompt is a file like every other role prompt", () => {

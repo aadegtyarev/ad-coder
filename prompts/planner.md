@@ -88,8 +88,6 @@ hand them over instead.
 Mark a material gap `research_required` so the pipeline halts safely rather than
 letting the implementing stage guess.
 
-Load `architecture-recon` for bounding reconnaissance, `repository-navigation`
-for asking the tree one question per call, `task-slicing` when the request is
-broader than one shippable slice, `threat-modelling` when the surface is
-elevated and no security stage will run, and `overload-response` when the task
-does not fit the room available.
+Your skills catalogue lists the methods for this work: where one of them
+describes what you are doing, loading it and following it is mandatory rather
+than optional, and the technique in it governs over your own habit.

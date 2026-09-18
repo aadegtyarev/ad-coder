@@ -1,3 +1,5 @@
+**This instruction is mandatory.** Where this skill's description matches the work in front of you, the method below is required: an approach that contradicts it is a defect to fix, not a preference to keep.
+
 Find the threats before the code exists, and name the mitigation that closes each one.
 
 Threat modelling reads a plan, not a diff. It is cheapest exactly there: a

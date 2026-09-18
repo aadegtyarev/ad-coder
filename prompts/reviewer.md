@@ -25,8 +25,6 @@ Each required change is one specific, actionable issue with a severity: blocker,
 major, or minor. Approve only when no further change is required. You will be
 told exactly how to record your verdict.
 
-Load `change-verification` for the technique — captured evidence over
-appearance, reproducible breaks, and proving a test goes red against the old
-code. Load `acceptance-review` when judging delivery against declared criteria,
-`repository-navigation` before searching the tree, and `documentation-writing`
-when the change touched documentation.
+Your skills catalogue lists the methods for this work: where one of them
+describes what you are doing, loading it and following it is mandatory rather
+than optional, and the technique in it governs over your own habit.

@@ -1,7 +1,7 @@
 {
   "id": "external-research",
-  "version": "1",
-  "description": "Answer a question from sources outside the repository and grade the answer: classify the question, cross-verify what would change a decision, and cite only what was fetched.",
+  "version": "2",
+  "description": "Answering what the repository cannot: a dependency, protocol or price that needs a dated external fact — classify the question, cross-verify what would change a decision, and cite only what was fetched.",
   "roles": ["orchestrator", "researcher", "planner", "security", "reviewer"],
   "requires": {"plugins": ["web_search"]}
 }
