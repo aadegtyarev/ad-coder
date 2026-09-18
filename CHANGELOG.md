@@ -15,6 +15,22 @@ enforces that dated release headings go in non-increasing date order
 
 ## [0.64.2] - 2026-09-18
 
+### Added
+- **The pre-commit branch boundary is tested, not only described.** The
+  independent review of this release pointed out that `scripts/hooks/pre-commit`
+  shipped with no test while the contract requires both paths.
+  `test/hooks.test.ts` runs the shipped hook itself in scratch repositories, with
+  `core.hooksPath` pointed at the real hooks directory: a work commit on the
+  default branch is refused and names the next command, the same commit passes on
+  a feature branch, both git defaults fail closed when `origin/HEAD` is unknown,
+  `hooks.defaultbranch` replaces those defaults rather than extending them, a
+  merge finished from a pending `MERGE_HEAD` is allowed on the default branch,
+  and a detached HEAD is unguarded.
+- **The delivery-signature contract names every role the block renders.** The
+  2026-09-17 entry in `docs/contracts/quality.md` enumerated the rows without the
+  orchestrator lane this release adds; the list now matches `SIGNATURE_ROLES`,
+  and a dated entry records why the lane leads the block.
+
 ### Fixed
 - **The delivery stamp's rows now sum to its own total (issue #336).** The
   orchestrator lane was in the header (calls and cost) and in no row, so a
