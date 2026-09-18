@@ -47,6 +47,19 @@ enforces that dated release headings go in non-increasing date order
   must be the last thing in the text. A call merely *described* in prose is
   never recovered; only serialization the model itself emitted counts.
 
+### Changed
+- **The review requirement is written down, with its one exemption**
+  (`docs/contracts/product-change.md`, 2026-09-18). Every change is reviewed by
+  a reviewer that did not write it -- code, configuration, prompts, skills,
+  tests and contracts alike -- and only a documentation-only change, prose that
+  states no rule, is exempt. A contract is not documentation for this purpose:
+  it is the text every later reviewer enforces. A pipeline run satisfies the
+  requirement through its own review stage; outside a pipeline the review is a
+  standalone `role reviewer` run against the branch tree, whose `submit_verdict`
+  appends the same stamp through the same writer (issue #283). The enforcement
+  is `bun run stamp:check` -- no stamp, no merge -- and issue #295 records that
+  CI does not run it yet.
+
 ## [0.66.0] - 2026-09-18
 
 ### Changed

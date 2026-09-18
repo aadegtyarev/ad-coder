@@ -95,3 +95,25 @@ paths are tested, user-facing behavior and recovery are documented, compatibilit
 effects are explicit, release metadata is current, and a cold Reviewer has checked
 the result against the original user outcome. Record unresolved work in the
 canonical backlog instead of hiding it in a completion summary.
+
+- 2026-09-18: **Every change is reviewed by a reviewer that did not write it, and
+  only documentation is exempt** (the operator's rule, stated in their own words
+  on 2026-09-18; it was implied by "a cold Reviewer" above and applied unevenly).
+  Code, configuration, prompts, skills, tests and CONTRACTS all need an
+  independent review round before the merge. A contract is not documentation for
+  this purpose: it is the text every later reviewer enforces, so changing it
+  changes what "reviewed" means and needs a reviewer of its own. The exemption is
+  narrow -- a documentation-only change, i.e. prose that states no rule: a
+  README section, a guide, a dated note under `docs/reviews/`. A change produced
+  by a pipeline run is already covered: its review stage IS the independent
+  review, and the stamp that stage appends is the evidence that it happened.
+  Outside a pipeline the review is a standalone reviewer run against the branch
+  tree, which appends the same stamp through the same writer (issue #283) --
+  `bun run src/cli.ts role reviewer ... --target-dir <branch worktree>` and the
+  verdict is recorded by `submit_verdict`, never transcribed from prose. A
+  review by the author, or by the model family that wrote the change, is not an
+  independent review; that half of the rule is what issue #203 asks to make
+  checkable, and the paper half is what issue #265 names as self-satisfiable.
+  The enforcement is `bun run stamp:check` (quality.md, 2026-09-17) -- no stamp,
+  no merge -- with the caveat issue #295 records: CI does not yet run it, so
+  today it is a step the merging party performs rather than a wall.
