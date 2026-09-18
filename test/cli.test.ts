@@ -405,7 +405,9 @@ test("root help succeeds on stdout and failure usage is registry-derived", () =>
     expect(code).toBe(0);
     expect(stdout).toContain("usage: ad-coder <command> [options]");
     expect(stdout).toContain("auth    Manage persistent provider authentication.");
-    expect(stdout).toContain("update  Update the global GitHub install or a linked Git checkout");
+    expect(stdout).toContain(
+      "update  Update the global install (npm or GitHub) or a linked Git checkout",
+    );
     expect(stdout).toContain("operations Run a project-operations action and emit JSON.");
     expect(stdout).toContain("run     Run a workflow module.");
     expect(stdout).toContain("role    Run one shipped role once.");
