@@ -19,6 +19,7 @@
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
+import type { SettingsConfig, StampRequirement } from "../config/types";
 import {
   appendReviewStamp,
   computeTreeDigest,
@@ -56,6 +57,21 @@ export function readStampsMarker(repoRoot: string): StampsMarkerConfig | undefin
   return file === undefined ? {} : { file };
 }
 
+/**
+ * The ONE resolution of `settings.yaml`'s `review.require-stamp` into the
+ * three answers the writer and the gate share. This is the shared sink that
+ * keeps them from ever disagreeing -- a half-wired `off` that reached the
+ * writer but not the gate would manufacture a merge-gate failure.
+ *
+ * `on` -> on (write and require, marker or no marker). `off` -> off (write
+ * nothing, gate passes). `auto`, or no settings file at all, defers to the
+ * marker exactly as today: the writer writes only when a marker is present and
+ * the gate reads the marker's stamps file (default `docs/reviews/stamps.log`).
+ */
+export function resolveStampRequirement(settings: SettingsConfig | undefined): StampRequirement {
+  return settings?.review.requireStamp ?? "auto";
+}
+
 export interface ReviewStampOutcome {
   recorded: boolean;
   /** Why no stamp was written; absent when one was. */
@@ -90,15 +106,18 @@ export function recordReviewStampFromResult(
   repoRoot: string,
   result: ReviewStampSource,
   now: Date = new Date(),
+  requireStamp: StampRequirement = "auto",
 ): ReviewStampOutcome {
   const marker = readStampsMarker(repoRoot);
-  if (marker === undefined)
+  if (requireStamp === "off")
+    return { recorded: false, skippedBecause: "review stamps are off (require-stamp: off)" };
+  if (requireStamp !== "on" && marker === undefined)
     return { recorded: false, skippedBecause: "target is not a stamp-writing repository" };
   if (result.reviewRan === false)
     return { recorded: false, skippedBecause: "the run settled without a review round" };
   const lastMetrics = result.stageMetrics.filter((entry) => entry.stage.startsWith("review:"));
   const reviewerMetrics = lastMetrics[lastMetrics.length - 1];
-  const filePath = marker.file ?? "docs/reviews/stamps.log";
+  const filePath = marker?.file ?? "docs/reviews/stamps.log";
   const stamp: ReviewStamp = {
     // The digest excludes the stamp log itself: appending one stamp line
     // cannot count as the tree moving (src/stamp/review-stamp.ts).
@@ -144,8 +163,14 @@ function safeBase(repoRoot: string): string {
 }
 
 /** The gate's check: the newest stamp must be well-formed and fresh. */
-export function checkReviewStamps(repoRoot: string): ReviewStampVerification {
+export function checkReviewStamps(
+  repoRoot: string,
+  requireStampOverride?: StampRequirement,
+): ReviewStampVerification {
   const marker = readStampsMarker(repoRoot);
+  // The settings layer may force the gate off; `auto`/absent keeps today's
+  // marker-governed read (the marker's file, or the built-in default path).
+  if (requireStampOverride === "off") return { ok: true, errors: [] };
   const stampsFile = marker?.file ?? "docs/reviews/stamps.log";
   const stamps = readReviewStamps(repoRoot, stampsFile);
   const newest = stamps[stamps.length - 1];

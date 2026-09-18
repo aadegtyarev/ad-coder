@@ -23,8 +23,10 @@
  * layer carries the number, it does not define a currency.
  *
  * `concurrency` is the one setting a provider also declares: the provider's
- * value is the default, a model's value narrows it. `baseUrl`, `contextWindow`,
- * `tools` and `format` are model-only, because they describe an ENDPOINT
+ * value is the default, a model's value narrows it. `baseUrl` is the other
+ * provider-declares/model-narrows pair: a provider's `baseUrl` is its default
+ * endpoint, a model's narrows it to an ENDPOINT variant. `contextWindow`,
+ * `tools` and `format` stay model-only, because they describe an endpoint
  * variant rather than a whole provider (`tools: false` on a provider would
  * silently strip tools from a model that does support them).
  */
@@ -52,6 +54,14 @@ export interface ModelConfig {
 export interface ProviderConfig {
   enabled: boolean;
   api?: string;
+  /**
+   * The provider's https endpoint. OPTIONAL: a model may carry its own
+   * `baseUrl`, and the projection resolves the first declared model's URL as
+   * the provider-level default (mirroring the registry's own "first model's
+   * URL is the honest default" fallback). https enforcement stays the registry
+   * validator's job, not this layer's.
+   */
+  baseUrl?: string;
   credential?: string;
   concurrency?: number;
   headers?: Record<string, string>;

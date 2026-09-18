@@ -1,6 +1,8 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Api, CacheRetention, CredentialStore, Model } from "@earendil-works/pi-ai";
 import { assertCredentialPathOutsideProject, FileCredentialStore } from "../auth/credential-store";
+import { loadModelsConfigSeam, loadSettingsConfigSeam } from "../config/seam";
+import { toRegistryAndProfile } from "../config/to-registry";
 import { type ContextBudgetPercents, deriveContextBudget } from "../context/budget";
 import type { CompactionMode } from "../context/compactor";
 import { assertSummarizerWindow } from "../context/compactor";
@@ -8,7 +10,8 @@ import { CostAnomalyDetector, FileCostAnomalyStore } from "../economics/cost-ano
 import { DEFAULT_PROJECT_GATES } from "../gates/project-gates";
 import type { QualityGate } from "../gates/types";
 import { resolveModelInventory } from "../inventory/resolve";
-import type { ModelInventoryConfig } from "../inventory/types";
+import { defaultInventoryPath, readOrCreateDefaultInventory } from "../inventory/store";
+import type { ModelInventoryConfig, ResolvedModelInventory } from "../inventory/types";
 import { MemoryLedgerSink } from "../ledger/ledger";
 import type {
   ToolActivityChannel,
@@ -53,6 +56,7 @@ import { defineRole } from "../role";
 import type { Tool } from "../runner/tool";
 import { pluginNamesFromToolNames } from "../skills/resolver";
 import { LOAD_SKILL_TOOL_NAME, roleSkillKit } from "../skills/role-kit";
+import { resolveStampRequirement } from "../stamp/record-review-stamp";
 import { buildImageInspectionTool, buildWebTools } from "../web/tools";
 import { BUILT_IN_PIPELINE_WORKFLOW_NAME } from "../workflows/builtin-pipeline";
 
@@ -241,6 +245,22 @@ export interface ResolvePipelineConfigOptions {
   profile?: Profile;
   inventoryConfig?: ModelInventoryConfig;
   inventoryProfile?: string;
+  /**
+   * The `models.yaml` path the stored-config seam reads. When set and
+   * `inventoryConfig` is absent with no independent overrides, the resolver
+   * tries this file FIRST (issue #280); absent/malformed follows the seam's
+   * typed rules. Never read from the real home config in tests -- inject a
+   * temp path.
+   */
+  modelsConfigPath?: string;
+  /** The `settings.yaml` path (behaviour). Always honoured when set, independent of routing. */
+  settingsConfigPath?: string;
+  /**
+   * The `inventories.json` path the stored-config seam falls back to when
+   * `models.yaml` is absent. Injectable so tests confine every read to a temp
+   * dir -- never the operator's real config.
+   */
+  inventoryPath?: string;
   /** Read a matching committed .ad-coder/calibration.json routing override. Defaults to true. */
   useProjectCalibration?: boolean;
   overrides?: Partial<Record<ProfileRole, import("../profiles/types").SpawnOverride>>;
@@ -486,8 +506,12 @@ function resolveConfig(
       "inventoryConfig cannot be combined with independent provider, profile, or model overrides",
     );
   }
-  if (options.inventoryProfile !== undefined && options.inventoryConfig === undefined)
-    throw new Error("inventoryProfile requires inventoryConfig");
+  if (
+    options.inventoryProfile !== undefined &&
+    options.inventoryConfig === undefined &&
+    options.modelsConfigPath === undefined
+  )
+    throw new Error("inventoryProfile requires inventoryConfig or modelsConfigPath");
   const env = options.env ?? ((name: string) => process.env[name]);
   if (
     options.orchestratorThinkingLevel !== undefined &&
@@ -501,23 +525,90 @@ function resolveConfig(
   if (credentials instanceof FileCredentialStore) {
     assertCredentialPathOutsideProject(credentials.path, options.targetDir);
   }
-  const inventory =
-    options.inventoryConfig === undefined
+
+  // Behaviour settings (`settings.yaml`) reach BOTH stamp consumers through one
+  // resolution, so the settle writer and the `stamp check` gate can never
+  // disagree (D3). Absent settings defer to the marker via "auto".
+  const settingsConfig =
+    options.settingsConfigPath === undefined
       ? undefined
-      : resolveModelInventory(options.inventoryConfig, options.inventoryProfile, {
-          env,
-          credentials,
-        });
+      : loadSettingsConfigSeam(options.settingsConfigPath);
+  const requireStamp = resolveStampRequirement(settingsConfig);
+
+  // THE STORED-CONFIG SEAM (issue #280). YAML-first, never silent. The branch
+  // is entered only when `inventoryConfig` is absent AND no independent model
+  // override is in play (the exact complement of the combination guard above).
+  // `models.yaml` present -> it wins; a present-but-unusable YAML is a typed
+  // error; absent -> the existing `inventories.json` path, unchanged.
+  const useStoredConfig =
+    options.inventoryConfig === undefined &&
+    options.modelsConfigPath !== undefined &&
+    ![
+      options.registryConfig,
+      options.profile,
+      options.provider,
+      options.strongModel,
+      options.midModel,
+      options.cheapModel,
+      options.plannerModel,
+      options.researcherModel,
+      options.securityModel,
+      options.coderModel,
+      options.reviewerModel,
+      options.auditorModel,
+      options.orchestratorModel,
+      options.summarizerModel,
+      options.visionModel,
+      options.overrides,
+    ].some((value) => value !== undefined);
+
+  let inventory: ResolvedModelInventory | undefined;
+  let rawInventoryConfig: ModelInventoryConfig | undefined;
+  let yamlSelection:
+    | {
+        registry: RegistryConfig;
+        profile: Profile;
+        name: string;
+        source: "default" | "selection";
+      }
+    | undefined;
+  if (useStoredConfig) {
+    const models = loadModelsConfigSeam(options.modelsConfigPath as string);
+    if (models !== undefined) {
+      const projected = toRegistryAndProfile(models, options.inventoryProfile);
+      yamlSelection = {
+        registry: projected.registry,
+        profile: projected.profile,
+        name: projected.name,
+        source: options.inventoryProfile === undefined ? "default" : "selection",
+      };
+    } else {
+      rawInventoryConfig = readOrCreateDefaultInventory(
+        options.inventoryPath ?? defaultInventoryPath(),
+      );
+      inventory = resolveModelInventory(rawInventoryConfig, options.inventoryProfile, {
+        env,
+        credentials,
+      });
+    }
+  } else if (options.inventoryConfig !== undefined) {
+    rawInventoryConfig = options.inventoryConfig;
+    inventory = resolveModelInventory(options.inventoryConfig, options.inventoryProfile, {
+      env,
+      credentials,
+    });
+  }
+
   const provider =
-    options.registryConfig === undefined && inventory === undefined
+    yamlSelection === undefined && inventory === undefined && options.registryConfig === undefined
       ? selectProvider(env, options.provider, warn)
       : undefined;
   const presetSelection = provider === undefined ? undefined : PROVIDER_PRESETS[provider];
   let authoredRegistry: RegistryConfig;
-  if (inventory !== undefined)
-    authoredRegistry = options.inventoryConfig?.profiles.find(
-      (entry) => entry.name === inventory.name,
-    )?.registry as RegistryConfig;
+  if (yamlSelection !== undefined) authoredRegistry = yamlSelection.registry;
+  else if (inventory !== undefined)
+    authoredRegistry = rawInventoryConfig?.profiles.find((entry) => entry.name === inventory?.name)
+      ?.registry as RegistryConfig;
   else if (options.registryConfig !== undefined) authoredRegistry = options.registryConfig;
   else if (presetSelection !== undefined)
     authoredRegistry = { providers: [presetSelection.preset()] };
@@ -599,6 +690,7 @@ function resolveConfig(
     options.cheapModel === undefined;
   const profile: Profile = parseProfile(
     projectProfile ??
+      yamlSelection?.profile ??
       inventory?.profile ??
       options.profile ??
       (useCodexOAuthDefaults
@@ -700,9 +792,11 @@ function resolveConfig(
     else roles.push(role);
   }
   const source =
-    inventory !== undefined
-      ? `inventory "${inventory.name}"`
-      : `provider "${provider ?? "custom"}"`;
+    yamlSelection !== undefined
+      ? `models.yaml "${yamlSelection.name}"`
+      : inventory !== undefined
+        ? `inventory "${inventory.name}"`
+        : `provider "${provider ?? "custom"}"`;
   const routing = [...layout]
     .map(([modelName, roles]) => `${modelName}: ${roles.join(", ")}`)
     .join(" | ");
@@ -1030,6 +1124,7 @@ function resolveConfig(
     targetDir: options.targetDir,
     models: registry.models,
     task: options.task,
+    ...(requireStamp !== "auto" && { requireStamp }),
     // Constructed here, for every run resolved through the CLI, because the
     // contract makes detection default-on: a detector nobody builds protects
     // nobody. Its state is per-project and on disk, so a block raised by an
@@ -1138,8 +1233,9 @@ function resolveConfig(
           (options.selectedWorkflows === undefined ? "built-in-default" : "caller"),
       },
       inventoryProfile: {
-        value: inventory?.name ?? "not-configured",
-        source: inventory?.source ?? "built-in-default",
+        value: yamlSelection?.name ?? inventory?.name ?? "not-configured",
+        source:
+          yamlSelection !== undefined ? "models.yaml" : (inventory?.source ?? "built-in-default"),
       },
       provider: {
         value: provider ?? "custom",

@@ -21,6 +21,7 @@
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
+import type { StampRequirement } from "../config/types";
 import { parseLedgerLine } from "../ledger/analytics";
 import { LEDGER_BASE_DIR } from "../ledger/ledger";
 import type { LedgerRecord } from "../ledger/types";
@@ -60,8 +61,8 @@ export function stampDeliveryText(targetDir: string, files: readonly string[] = 
 }
 
 /** Reasons the branch may not merge; empty list means the stamp gate passes. */
-export function stampCheckErrors(targetDir: string): string[] {
-  return checkReviewStamps(targetDir).errors;
+export function stampCheckErrors(targetDir: string, requireStamp?: StampRequirement): string[] {
+  return checkReviewStamps(targetDir, requireStamp).errors;
 }
 
 /**

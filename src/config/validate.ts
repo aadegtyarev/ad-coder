@@ -22,7 +22,15 @@ import type {
 const COMPLEXITIES: readonly Complexity[] = ["trivial", "medium", "complex"];
 
 const MODELS_KEYS = new Set(["providers", "default", "profiles"]);
-const PROVIDER_KEYS = new Set(["enabled", "api", "credential", "concurrency", "headers", "models"]);
+const PROVIDER_KEYS = new Set([
+  "enabled",
+  "api",
+  "baseUrl",
+  "credential",
+  "concurrency",
+  "headers",
+  "models",
+]);
 const MODEL_KEYS = new Set([
   "input",
   "output",
@@ -51,11 +59,12 @@ type Bad = (code: ConfigError["code"], detail: string, message: string) => never
  * UNKNOWN KEYS ARE REFUSED, at the top level and inside a provider and a model.
  * A hand-edited file is where a typo lives, and `contextwindow: 200000` next to
  * `contextWindow: 200000` is not a value the operator gets told about by any
- * later layer -- it is silently inert, forever. The two settings the format
- * does NOT allow on a provider but does allow on a model (`baseUrl`,
- * `contextWindow`, `tools`, `format`) are refused there for the same reason;
- * widening the provider shape is an additive change here plus in
- * `config/types.ts`, not a key quietly ignored today.
+ * later layer -- it is silently inert, forever. The settings the format
+ * does NOT allow on a provider but does allow on a model (`contextWindow`,
+ * `tools`, `format`) are refused there for the same reason; widening the
+ * provider shape is an additive change here plus in `config/types.ts`, not a
+ * key quietly ignored today. `baseUrl` IS a provider key (a provider endpoint
+ * default, narrowable per model).
  *
  * Cross-file rules all live here rather than in a consumer, because a consumer
  * only learns which providers and models exist after a row has already chosen
@@ -210,6 +219,7 @@ function parseProvider(name: string, value: unknown, bad: Bad): ProviderConfig {
   }
 
   const api = optionalString(record.api, `${name}.api`, bad);
+  const baseUrl = optionalString(record.baseUrl, `${name}.baseUrl`, bad);
   const credential = optionalString(record.credential, `${name}.credential`, bad);
   const concurrency = optionalConcurrency(record.concurrency, `${name}.concurrency`, bad);
   const headers = optionalHeaders(record.headers, name, bad);
@@ -230,6 +240,7 @@ function parseProvider(name: string, value: unknown, bad: Bad): ProviderConfig {
   return {
     enabled: record.enabled as boolean,
     ...(api !== undefined ? { api } : {}),
+    ...(baseUrl !== undefined ? { baseUrl } : {}),
     ...(credential !== undefined ? { credential } : {}),
     ...(concurrency !== undefined ? { concurrency } : {}),
     ...(headers !== undefined ? { headers } : {}),

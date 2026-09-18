@@ -6,6 +6,7 @@ import type {
   ModelConfig as RegistryModelConfig,
   ProviderConfig as RegistryProviderConfig,
 } from "../registry/types";
+import { DEFAULT_CONTEXT_WINDOW } from "../registry/validate";
 import { ConfigError } from "./errors";
 import type {
   ModelConfig as ConfigModelConfig,
@@ -31,14 +32,18 @@ function modelPart(rung: string): string {
  * file's row key: this layer derives no alias and no catalog, and the registry
  * documents `name` defaulting to `modelId`.
  *
- * Only declared fields are carried -- the input vocabulary has no `maxTokens`,
- * modalities, or thinking support, so those optional registry fields stay
- * absent rather than guessed.
+ * The input vocabulary has no `maxTokens` field, so it defaults to the model's
+ * declared window (or the shared 200000 ceiling) -- the largest completion a
+ * window that size can serve. `maxTokens` is a per-completion OUTPUT ceiling,
+ * not the budget, so over-claiming to the window is safe (the budget is
+ * derived separately from `contextWindow`); a value smaller than the window
+ * would be a guess this layer refuses to invent.
  */
 function toRegistryModel(name: string, model: ConfigModelConfig): RegistryModelConfig {
   return {
     name,
     modelId: name,
+    maxTokens: model.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
     cost: {
       input: model.input,
       output: model.output,
@@ -54,15 +59,52 @@ function toRegistryModel(name: string, model: ConfigModelConfig): RegistryModelC
   };
 }
 
+/** The first declared model of `provider`, in source order; undefined when empty. */
+function firstModel(provider: ConfigProviderConfig): ConfigModelConfig | undefined {
+  return Object.values(provider.models)[0];
+}
+
 function toRegistryProvider(id: string, provider: ConfigProviderConfig): RegistryProviderConfig {
+  // CREDENTIAL PROJECTION (three cases). `credential` is a NAME -- the
+  // env-var the resolver reads through its injected accessor -- never a value.
+  // This boundary is where the string reference becomes the registry's
+  // `{ kind: 'env-var', envVar }` shape, so `parseCredential` never sees an
+  // undefined or a raw string.
+  let credential: CredentialSource;
+  if (provider.credential !== undefined) {
+    credential = { kind: "env-var", envVar: provider.credential };
+  } else {
+    // Absent credential on an ENABLED provider (disabled providers are filtered
+    // out upstream) is refused here, naming the provider only -- a NAME is an
+    // identifier safe to echo; a value never appears anywhere.
+    throw new ConfigError(
+      "invalid_config",
+      id,
+      `provider "${id}" must declare a credential (an env-var NAME) to route through`,
+    );
+  }
+
+  // ENDPOINT PROJECTION (D2). A provider-level baseUrl wins; otherwise the
+  // first declared model's URL fills the provider slot, because the registry
+  // validator runs `assertHttpsUrl(record.baseUrl)` unconditionally for a
+  // hand-declared provider even when a model carries its own. An enabled
+  // provider with NEITHER is refused here with a typed error naming the
+  // provider -- the registry validator would otherwise throw on an undefined
+  // baseUrl even when no model could be a fallback.
+  const baseUrl = provider.baseUrl ?? firstModel(provider)?.baseUrl;
+  if (baseUrl === undefined) {
+    throw new ConfigError(
+      "invalid_config",
+      id,
+      `provider "${id}" declares no baseUrl and no model supplies one; declare provider.baseUrl or a model baseUrl`,
+    );
+  }
+
   return {
     id,
     api: provider.api as RegistryProviderConfig["api"],
-    // `credential` is a REFERENCE (an env-var name or the oauth marker) by
-    // the validated config contract; the canonical source shape lives in
-    // the registry layer, so the validated value is retyped at this one
-    // projection boundary.
-    credential: provider.credential as unknown as CredentialSource,
+    baseUrl,
+    credential,
     ...(provider.headers === undefined ? {} : { headers: provider.headers }),
     models: Object.entries(provider.models).map(([name, model]) => toRegistryModel(name, model)),
   };

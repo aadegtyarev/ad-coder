@@ -13,6 +13,29 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.70.0] - 2026-09-19
+
+### Added
+- **`models.yaml` and `settings.yaml` join the resolver's stored-config seam**
+  (issue #280). `~/.config/ad-coder/models.yaml` is now the operator-facing
+  routing config -- `providers` (provider-level `baseUrl`, `enabled`, an
+  env-var `credential` NAME, `models`), `profiles` (a bare row fills all three
+  tiers, `role@complexity` REPLACES that tier, a list is an in-order fallback
+  ladder of which only the first rung is served today), and an optional
+  `default:` -- resolved YAML-first over `inventories.json` with the source
+  visible in `config show` and the banner, and a present-but-unusable YAML a
+  typed error rather than a silent fallback. `settings.yaml`'s `review` section
+  reaches BOTH the stamp settle writer and the `stamp check` gate through one
+  resolution, so `require-stamp` `off`/`on`/`auto` can never disagree. Credentials
+  are env-var NAMES projected to `{ kind: "env-var", envVar }` at the boundary;
+  machine-local paths never reach surfaced errors (they carry logical names
+  only).
+
+  Remains OUT: config migration (`ad-coder config migrate`), ladder failover at
+  runtime (only rung 0), wider settings absorption plus `config set`, `ad-coder
+  auth` coverage of the declared providers, marker-file cleanup (#284), and
+  `inventories.json` retirement.
+
 ## [0.69.3] - 2026-09-19
 
 ### Added

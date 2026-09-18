@@ -1,5 +1,6 @@
 import type { Api, Model, Models } from "@earendil-works/pi-ai";
 import type { DelegatedRoute } from "../cli/resolve-config";
+import type { StampRequirement } from "../config/types";
 import type { ContextBudgetPercents } from "../context/budget";
 import type { CompactionPolicy } from "../context/compactor";
 import type { CostAnomalyDetector } from "../economics/cost-anomaly";
@@ -278,6 +279,13 @@ export interface PipelineConfig {
   models: Models;
   task: string;
   maxRounds: number;
+  /**
+   * The resolved review-stamp requirement (issue #280 settings wiring): a
+   * non-`auto` value forces the settle writer and the `stamp check` gate the
+   * same direction, so the two can never disagree. Absent means `auto`, the
+   * marker-governed default, so legacy callers are untouched.
+   */
+  requireStamp?: StampRequirement;
   /** General plugin tools available to roles whose allow-list names them. Empty disables plugins. */
   pluginTools?: Tool[];
   /** Built-in plugin factory bound to the model actually dispatched for a role turn. */

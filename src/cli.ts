@@ -25,6 +25,8 @@ import type {
 import { resolvePipelineConfig } from "./cli/resolve-config";
 import { resolveResumeRun, resumeOrchestratorConfig, resumeSeedNote } from "./cli/resume";
 import { ToolActivityRenderer } from "./cli/tool-activity";
+import { loadSettingsConfigSeam } from "./config/seam";
+import { defaultModelsPath, defaultSettingsPath } from "./config/store";
 import type { CompactionPolicy } from "./context/compactor";
 import { CostAnomalyDetector, FileCostAnomalyStore } from "./economics/cost-anomaly";
 import {
@@ -32,7 +34,6 @@ import {
   forecastCost,
   latestCreditBalance,
 } from "./economics/forecast";
-import { readOrCreateDefaultInventory } from "./inventory/store";
 import { parseModelInventoryConfig } from "./inventory/validate";
 import { readLedgerFiles, renderLedgerReport } from "./ledger/analytics";
 import {
@@ -134,7 +135,7 @@ import {
   skillInventory,
 } from "./skills/resolver";
 import { stampBodyCheckErrors, stampCheckErrors, stampDeliveryText } from "./stamp/cli";
-import { recordReviewStampFromResult } from "./stamp/record-review-stamp";
+import { recordReviewStampFromResult, resolveStampRequirement } from "./stamp/record-review-stamp";
 import { UpdateError, updateAdCoder } from "./update/updater";
 import {
   createDefaultUserProfileStore,
@@ -1325,7 +1326,11 @@ function stampCommand(positionals: string[], flags: Record<string, string | unde
     return;
   }
   if (positionals[2] !== undefined) fail("stamp check accepts no path arguments");
-  const errors = stampCheckErrors(targetDir);
+  // The settings layer may force the gate off; absent settings defer to the
+  // marker (today's behaviour). Loaded through the seam so a malformed file
+  // refuses and an absent file defaults, never a silent switch.
+  const requireStamp = resolveStampRequirement(loadSettingsConfigSeam(defaultSettingsPath()));
+  const errors = stampCheckErrors(targetDir, requireStamp);
   if (errors.length > 0) fail(errors.join("\n"));
   process.stdout.write("stamp check: the newest review stamp is fresh\n");
 }
@@ -2146,12 +2151,23 @@ function buildConfigOptions(
     ...ROLE_NAMES.map((role) => flags[`--${role}-model`]),
     flags["--orchestrator-model"],
   ].some((value) => value !== undefined);
+  // The stored YAML config (issue #280). `settings.yaml` (behaviour) applies to
+  // every run; `models.yaml` (routing) applies only when no independent model
+  // override is given and no `--inventory-config`. The paths are injected
+  // (defaulting to the XDG config location) so tests point them at temp files;
+  // `--models-config`/`--settings-config` let an operator override them.
+  const modelsConfigPath =
+    flags["--models-config"] ??
+    (!hasIndependentModelConfig && flags["--inventory-config"] === undefined
+      ? defaultModelsPath()
+      : undefined);
+  const settingsConfigPath = flags["--settings-config"] ?? defaultSettingsPath();
   const inventoryConfig =
     flags["--inventory-config"] !== undefined
       ? parseModelInventoryConfig(readJsonConfig(flags["--inventory-config"], "--inventory-config"))
       : hasIndependentModelConfig
         ? undefined
-        : readOrCreateDefaultInventory();
+        : undefined;
   const profile =
     flags["--profile-config"] === undefined
       ? undefined
@@ -2340,6 +2356,8 @@ function buildConfigOptions(
     ...(flags["--cheap-model"] !== undefined && { cheapModel: flags["--cheap-model"] }),
     ...(registryConfig !== undefined && { registryConfig }),
     ...(inventoryConfig !== undefined && { inventoryConfig }),
+    ...(modelsConfigPath !== undefined && { modelsConfigPath }),
+    ...(settingsConfigPath !== undefined && { settingsConfigPath }),
     ...(flags["--inventory-profile"] !== undefined && {
       inventoryProfile: flags["--inventory-profile"],
     }),
@@ -2598,12 +2616,17 @@ async function roleCommand(
     // Same writer the pipeline settles through, fed the same structured fields
     // (issue #283): a review is a review wherever it ran, and no path transcribes
     // a verdict out of prose.
-    const outcome = recordReviewStampFromResult(configOptions.targetDir, {
-      approved: verdict.status === "approved",
-      runIds: [standaloneRunId],
-      stageMetrics: [{ stage: "review:1", provider: spec.model.provider, model: spec.model.id }],
-      reviewRan: true,
-    });
+    const outcome = recordReviewStampFromResult(
+      configOptions.targetDir,
+      {
+        approved: verdict.status === "approved",
+        runIds: [standaloneRunId],
+        stageMetrics: [{ stage: "review:1", provider: spec.model.provider, model: spec.model.id }],
+        reviewRan: true,
+      },
+      new Date(),
+      config.requireStamp,
+    );
     process.stderr.write(
       outcome.recorded
         ? `ad-coder: review stamp appended to ${outcome.filePath}\n`
@@ -2919,7 +2942,19 @@ const PIPELINE_OPTIONS: CommandDefinition["options"] = [
   {
     name: "--inventory-profile",
     value: "<name>",
-    description: "Select one profile from --inventory-config.",
+    description: "Select one profile from --inventory-config or models.yaml.",
+  },
+  {
+    name: "--models-config",
+    value: "<file.yaml>",
+    description:
+      "Overrides the models.yaml routing config path (defaults to ~/.config/ad-coder/models.yaml).",
+  },
+  {
+    name: "--settings-config",
+    value: "<file.yaml>",
+    description:
+      "Overrides the settings.yaml behaviour config path (defaults to ~/.config/ad-coder/settings.yaml).",
   },
   {
     name: "--research-purpose",
