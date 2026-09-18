@@ -10,6 +10,7 @@ import {
   fauxToolCall,
 } from "@earendil-works/pi-ai";
 import {
+  formatStageCloseoutNotice,
   runReviewWithSubmissionRetry,
   runRoleStandalone,
   standaloneSystemPrompt,
@@ -487,4 +488,61 @@ test("an unknown role is refused before a start is announced", () => {
   // so it belongs in the accepted set rather than being reachable only through
   // an interactive console.
   expect(stderr).toContain("orchestrator");
+});
+
+test("a standalone run that settles inside the closeout reserve relays the fact", async () => {
+  const { faux, models, model, role } = fixture();
+  fs.writeFileSync(path.join(targetDir, "closeout.txt"), "safe\n");
+  faux.setResponses([
+    fauxAssistantMessage(fauxToolCall("read", { path: "closeout.txt" })),
+    fauxAssistantMessage("partial review"),
+  ]);
+  const runId = `closeout-${crypto.randomUUID()}`;
+
+  const result = await runRoleStandalone({
+    role,
+    model,
+    models,
+    targetDir,
+    task: "review the closing change",
+    runId,
+    ledgerSink: new MemoryLedgerSink(),
+    stageLimits: { maxToolTurns: 2, finalResponseReserveToolTurns: 1 },
+  });
+
+  expect(result.stageCloseout).toEqual({
+    code: "stage_closeout",
+    reason: "tool_turns",
+    detail: expect.any(String),
+  });
+  expect(result.stageCloseout?.detail.length).toBeGreaterThan(0);
+  const durable = JSON.parse(
+    fs.readFileSync(path.join(targetDir, ".ad-coder", "runs", `standalone-${runId}.json`), "utf8"),
+  ).value;
+  expect(durable.result.stageCloseout).toEqual(result.stageCloseout);
+});
+
+test("a normal standalone run carries no stageCloseout", async () => {
+  const { faux, models, model, role } = fixture();
+  faux.setResponses([fauxAssistantMessage("clean pass")]);
+  const result = await runRoleStandalone({
+    role,
+    model,
+    models,
+    targetDir,
+    task: "review the clean change",
+    runId: `normal-${crypto.randomUUID()}`,
+    ledgerSink: new MemoryLedgerSink(),
+  });
+  expect(result.stageCloseout).toBeUndefined();
+});
+
+test("the stderr closeout notice names the reason and the detail (issue #327)", () => {
+  expect(
+    formatStageCloseoutNotice({
+      code: "stage_closeout",
+      reason: "tool_turns",
+      detail: "1/2 tool turns used, 1 reserved",
+    }),
+  ).toBe("ad-coder: stage closeout (tool_turns): 1/2 tool turns used, 1 reserved\n");
 });

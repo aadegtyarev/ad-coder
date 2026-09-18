@@ -65,6 +65,7 @@ import { startOrchestrator } from "./orchestration/orchestrator";
 import { runPipeline } from "./orchestration/pipeline";
 import { createWorkflowSession } from "./orchestration/session";
 import {
+  type StageCloseoutFact,
   StageLimitError,
   type StageLimitReason,
   type StageLimitSnapshot,
@@ -446,6 +447,8 @@ export async function runRoleStandalone(params: {
   cost: number;
   ledgerPath: string | undefined;
   observations: import("./runner/runner").RoleObservations;
+  /** Relay of the recorded stage closeout; absent for normal completions (issue #327). */
+  stageCloseout?: StageCloseoutFact;
 }> {
   const runId = params.runId ?? crypto.randomUUID();
   const store = new ProjectStore(params.targetDir, params.projectStoreConfig);
@@ -467,6 +470,7 @@ export async function runRoleStandalone(params: {
       cost: number;
       ledgerPath?: string;
       observations: import("./runner/runner").RoleObservations;
+      stageCloseout?: StageCloseoutFact;
     };
     pause?:
       | {
@@ -681,6 +685,7 @@ export async function runRoleStandalone(params: {
     text,
     cost: result.observations.costUsd ?? 0,
     ...(result.ledgerPath !== undefined && { ledgerPath: result.ledgerPath }),
+    ...(result.stageCloseout !== undefined && { stageCloseout: result.stageCloseout }),
     observations: result.observations,
   };
   const { pause: _pause, ...completed } = checkpoint.value;
@@ -694,6 +699,7 @@ export async function runRoleStandalone(params: {
     cost: durableResult.cost,
     ledgerPath: result.ledgerPath,
     observations: result.observations,
+    ...(result.stageCloseout !== undefined && { stageCloseout: result.stageCloseout }),
   };
 }
 
@@ -2349,6 +2355,11 @@ function buildConfigOptions(
   };
 }
 
+/** Full stderr notice line naming the closeout reason (issue #327, pure for tests). */
+export function formatStageCloseoutNotice(closeout: StageCloseoutFact): string {
+  return `ad-coder: stage closeout (${closeout.reason}): ${closeout.detail}\n`;
+}
+
 /** Run a single role standalone against a target directory, resolved from the environment. */
 async function roleCommand(
   positionals: string[],
@@ -2516,6 +2527,10 @@ async function roleCommand(
   if (warning !== undefined) {
     process.stderr.write(warning);
   }
+  // The machine-readable closeout relay stays on the result; stderr only says WHY.
+  if (standaloneResult.stageCloseout !== undefined) {
+    process.stderr.write(formatStageCloseoutNotice(standaloneResult.stageCloseout));
+  }
   if (keepsVerdictTool) {
     // The verdict object, not the prose, decides. A rejected submission reports
     // why it was rejected -- the reviewer said something and it did not parse,
@@ -2526,6 +2541,15 @@ async function roleCommand(
       return;
     }
     if (verdictCapture.verdict === undefined) {
+      // An honest exhaustion is not a crash (issue #327): when the reserve the
+      // closeout notice above names forced the run to settle without a verdict,
+      // exit 0 -- the reason is on record. Without a closeout, no verdict is
+      // still today's failure.
+      if (standaloneResult.stageCloseout !== undefined) {
+        // The closeout notice (printed above, right after the usage line) names
+        // the reason, so an honest exhaustion is not a crash here (issue #327).
+        return;
+      }
       process.stderr.write(
         `ad-coder: the reviewer ended without calling ${SUBMIT_VERDICT_TOOL_NAME}; no stamp written\n`,
       );

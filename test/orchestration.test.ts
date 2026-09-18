@@ -658,6 +658,47 @@ test("one round approve returns approved:true rounds:1", async () => {
   }
 });
 
+test("a coder stage that enters its closeout reserve settles structurally closed_out (issue #327)", async () => {
+  const fx = fixture();
+  execFileSync("git", ["init", "-q"], { cwd: fx.targetDir });
+  execFileSync("git", ["config", "user.name", "Test"], { cwd: fx.targetDir });
+  fs.writeFileSync(path.join(fx.targetDir, "tracked.txt"), "base\n");
+  execFileSync("git", ["add", "tracked.txt"], { cwd: fx.targetDir });
+  execFileSync("git", ["commit", "-qm", "base"], { cwd: fx.targetDir });
+  const planner = plannerRole(fx);
+  const coder = fx.role("coder", "You code.", ["read"]);
+  const reviewer = reviewerRole(fx);
+  fx.faux.setResponses([
+    ...plannerTurn({ complexity: "medium", securitySurface: "none", summary: "plan" }),
+    fauxAssistantMessage(fauxToolCall("read", { path: "tracked.txt" })),
+    fauxAssistantMessage("partial coding"),
+    ...reviewerTurn({ status: "approved", issues: [], summary: "good" }),
+  ]);
+
+  const result = await runPipeline({
+    targetDir: fx.targetDir,
+    models: fx.models,
+    task: "implement X",
+    maxRounds: 1,
+    roleStageLimits: { coder: { maxToolTurns: 2, finalResponseReserveToolTurns: 1 } },
+    roles: { planner, coder, reviewer },
+  });
+
+  const coderMetrics = result.stageMetrics?.find((metric) => metric.stage === "code:1");
+  expect(coderMetrics?.status).toBe("closed_out");
+  expect(coderMetrics?.stageCloseout).toEqual({
+    code: "stage_closeout",
+    reason: "tool_turns",
+    detail: expect.any(String),
+  });
+  for (const metric of result.stageMetrics ?? []) {
+    if (metric.stage !== "code:1") {
+      expect(metric.status).toBeUndefined();
+      expect(metric.stageCloseout).toBeUndefined();
+    }
+  }
+});
+
 test("pipeline aggregates exact multi-response stage observations in stable order", async () => {
   const fx = fixture();
   execFileSync("git", ["init", "-q"], { cwd: fx.targetDir });

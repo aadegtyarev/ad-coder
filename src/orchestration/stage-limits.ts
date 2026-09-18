@@ -105,6 +105,17 @@ export class StageLimitError extends Error {
 export type StageCloseoutReason = "duration" | "model_turns" | "tool_turns" | "input";
 
 /**
+ * The already-recorded closeout, published structurally so machine callers can
+ * distinguish an exhausted stage from a completed one without parsing prose
+ * (issue #327). `code` matches `StageCloseoutError.code`.
+ */
+export interface StageCloseoutFact {
+  code: "stage_closeout";
+  reason: StageCloseoutReason;
+  detail: string;
+}
+
+/**
  * The single closeout wording. Tool rejections and the tool-free provider
  * requests that follow them carry the same instruction, so a model that loses
  * its tool schema is told why and what to do instead of inferring it.
@@ -292,6 +303,15 @@ export class StageLimitController {
         detail: `${this.toolTurns}/${maxToolTurns} tool turns used, ${finalResponseReserveToolTurns} reserved`,
       };
     return undefined;
+  }
+
+  /**
+   * The closeout reserve the stage entered, relayed as a structured fact, or
+   * `undefined` while no reserve has been touched (issue #327, relay only).
+   */
+  closeout(): StageCloseoutFact | undefined {
+    if (this.closeoutReason === undefined) return undefined;
+    return { code: "stage_closeout", reason: this.closeoutReason, detail: this.closeoutDetail };
   }
 
   admitToolTurn(): void {

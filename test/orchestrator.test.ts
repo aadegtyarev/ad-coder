@@ -411,6 +411,24 @@ test("run_role delegates independently and rejects unknown role names safely", a
   expect(calls).toHaveLength(2);
 });
 
+test('run_role renders a closed-out stage without claiming "complete" (issue #327)', async () => {
+  const tool = buildRunRoleTool(async (role) => ({
+    role,
+    text: "partial result",
+    cost: 0.4,
+    stageCloseout: {
+      code: "stage_closeout",
+      reason: "tool_turns",
+      detail: "1/2 tool turns used, 1 reserved",
+    },
+  }));
+  const text = await callTool(tool, { role: "auditor", task: "inspect health" });
+  expect(text).toContain("auditor closed out early (cost 0.4) stage_closeout reason=tool_turns");
+  expect(text).toContain("detail=1/2 tool turns used, 1 reserved");
+  expect(text).toContain("partial result");
+  expect(text).not.toContain("complete");
+});
+
 test("run_role routes the delegate on the orchestrator's classified tier (issues #263/#264)", async () => {
   const targetDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-classified-")));
   const credentials: CredentialStore = {

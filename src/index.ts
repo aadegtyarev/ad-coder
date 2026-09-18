@@ -268,6 +268,7 @@ export {
   WorkflowStageLimitError,
 } from "./orchestration/session";
 export type {
+  StageCloseoutFact,
   StageCloseoutReason,
   StageLimitReason,
   StageLimitSnapshot,
