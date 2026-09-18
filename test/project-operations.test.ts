@@ -30,12 +30,14 @@ import {
   GitHubBacklogStore,
   importLdoArtifacts,
   inspectImportedLdoWork,
+  PAUSES_CLEARED_BY_AN_EXPLICIT_ACT,
   ProjectOperationsError,
   ProjectStore,
   ProviderRejectionError,
   preflightRepositoryPublishing,
   previewLdoImport,
   probeGitHubBacklogCapability,
+  type RunCheckpoint,
   RunCoordinator,
   resolveRepositoryPublishingConfig,
   resumeImportedLdoWork,
@@ -816,6 +818,119 @@ test("RunCoordinator durably pauses a limited stage and resumes only that stage"
   roleRaised.resumeStage({ source: "host_config", action: "retry" });
   expect((await roleRaised.run()).status).toBe("complete");
   fs.rmSync(roleTarget, { recursive: true, force: true });
+});
+
+/**
+ * The drift alarm for the explicit-act pause table (issue #315's live resume).
+ *
+ * THE CONTRACT: `PAUSES_CLEARED_BY_AN_EXPLICIT_ACT` must list exactly the
+ * codes `resumeStage`'s guard accepts from source `operator`/`host_config`.
+ * Both fronts (the orchestrator's `resume_pipeline`, the CLI's
+ * `drive --resume-run`) clear an accepted pause through this table, so if the
+ * table and the guard drift apart one of two things breaks:
+ *
+ * - a code missing from the table (first half) means a front refuses to clear
+ *   a pause the coordinator would honour -- the `plan_not_submitted` pause
+ *   could never be resumed, observed live in
+ *   e4ccfbdb-37b1-47bd-8bc3-3d5e6ac5372f;
+ * - a code IN the table but not in the guard (second half) means a front
+ *   clears a pause the coordinator then rejects, stranding the operator.
+ */
+test("RunCoordinator's explicit-act pause table and resumeStage guard agree on both sides", async () => {
+  const target = root();
+  const store = new ProjectStore(target);
+  const base = coordinatorSession(store, []);
+  // The contract pinned from BOTH directions: the exported table must equal
+  // this expected list exactly (removal, addition or rename all fail here),
+  // and each candidate must behave as the guard does (clear vs. refuse).
+  // `expectedTable` is the independent enumeration the exactness needs; edits
+  // to the table are supposed to fail here until both sides are updated.
+  const expectedTable: string[] = [
+    "stage_limit",
+    "stage_failed",
+    "provider_rejected",
+    "interrupted",
+    "review_not_run",
+    "plan_not_submitted",
+  ];
+  expect([...(PAUSES_CLEARED_BY_AN_EXPLICIT_ACT as readonly string[])].sort()).toEqual(
+    expectedTable.slice().sort(),
+  );
+  const tableSet = new Set<string>(PAUSES_CLEARED_BY_AN_EXPLICIT_ACT);
+  const knownRejectedCodes: readonly string[] = [
+    "ambiguous_dispatch",
+    "researcher_unavailable",
+    "unsafe_request",
+  ];
+  const candidates: readonly string[] = [...expectedTable, ...knownRejectedCodes];
+  for (const code of candidates) {
+    const runId = `table-${code}`;
+    // `stage_limit` needs its limit evidence for the raise check in resumeStage.
+    const pause: NonNullable<RunCheckpoint["pause"]> =
+      code === "stage_limit"
+        ? {
+            phase: "code",
+            code,
+            action: "increase or disable the limit",
+            limitReason: "duration",
+            limit: 10,
+          }
+        : { phase: "code", code, action: "resume the stage explicitly" };
+    const checkpoint: RunCheckpoint = {
+      schemaVersion: 1,
+      runId,
+      phase: "workflow",
+      workflowState: coordinatorState(),
+      followUps: [],
+      completedEffects: [],
+      decisions: [],
+      contractReviews: [],
+      pause,
+    };
+    fs.mkdirSync(store.layout.runs, { recursive: true });
+    const checkpointPath = path.join(store.layout.runs, `coordinator-${runId}.json`);
+    store.writeVersionedJson(checkpointPath, checkpoint, 0);
+    const coordinator = new RunCoordinator(base, store, { runId });
+    expect(coordinator.checkpoint.pause?.code).toBe(code);
+    if (code === "stage_limit") continue; // covered separately by its own test
+    if (tableSet.has(code)) {
+      coordinator.resumeStage({ source: "operator", action: "retry" });
+      expect(store.readVersionedJson<RunCheckpoint>(checkpointPath).value.pause).toBeUndefined();
+    } else {
+      expect(() => coordinator.resumeStage({ source: "operator", action: "retry" })).toThrow(
+        new ProjectOperationsError("unauthorized_resolution", runId),
+      );
+      // The guard refused: the checkpoint must keep its pause.
+      expect(store.readVersionedJson<RunCheckpoint>(checkpointPath).value.pause).toBeDefined();
+    }
+  }
+
+  // The negative half spelled out for the pause the work names: `ambiguous_dispatch`
+  // is a research-phase pause handled by `resumeResearch`, NOT by the stage guard. If
+  // the table ever grew to include it, a front would clear a pause `resumeStage` refuses.
+  const runId = "table-ambiguous-dispatch";
+  const checkpoint: RunCheckpoint = {
+    schemaVersion: 1,
+    runId,
+    phase: "workflow",
+    workflowState: coordinatorState(),
+    followUps: [],
+    completedEffects: [],
+    decisions: [],
+    contractReviews: [],
+    pause: {
+      phase: "research",
+      code: "ambiguous_dispatch",
+      action: "reconcile the provider effect by its effectId, then resume explicitly",
+    },
+  };
+  const ambiguousPath = path.join(store.layout.runs, `coordinator-${runId}.json`);
+  store.writeVersionedJson(ambiguousPath, checkpoint, 0);
+  const coordinator = new RunCoordinator(base, store, { runId });
+  expect(() => coordinator.resumeStage({ source: "operator", action: "retry" })).toThrow(
+    new ProjectOperationsError("unauthorized_resolution", runId),
+  );
+  expect(store.readVersionedJson<RunCheckpoint>(ambiguousPath).value.pause).toBeDefined();
 });
 
 test("RunCoordinator retains safe usage from a rejected research stage", async () => {

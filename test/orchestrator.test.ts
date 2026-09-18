@@ -1277,6 +1277,47 @@ test("resume_pipeline reopens a durable stage pause and completes it", async () 
   expect(resumeTool).toBeDefined();
 });
 
+test("resume_pipeline clears a plan_not_submitted pause and re-runs the plan stage", async () => {
+  // The missing half of issue #315: the coordinator records a planner that
+  // produced no submission as an explicitly resumable pause, but the resume act
+  // cleared only the stage codes, so a live resume returned the same pause
+  // instantly with zero planner invocations (run e4ccfbdb-37b1-47bd-8bc3-3d5e6ac5372f).
+  const fx = fixture();
+  const runId = "orchestrator-plan-resume";
+  const buildConfig = (task: string): PipelineConfig => ({
+    ...fx.buildConfig(task),
+    coordinator: { runId },
+  });
+  const core = createOrchestrator({ buildConfig, ledgerSink: fx.sink });
+
+  // One prose planner response: no submit_plan call -> durable pause.
+  fx.faux.setResponses([fauxAssistantMessage("prose plan, no tool call")]);
+  await expect(core.runPipeline("implement X")).rejects.toMatchObject({
+    code: "pipeline_paused",
+    detail: runId,
+    pause: { phase: "plan", code: "plan_not_submitted" },
+  });
+  const callsBeforeResume = fx.faux.state.callCount;
+  expect(callsBeforeResume).toBe(2);
+
+  approveScenario(fx, { status: "approved", issues: [], summary: "ok" });
+  const resumed = await core.resumePipeline("implement X", runId);
+
+  // Same runId, the run completed, and the plan stage re-ran for real: the
+  // coordinator appended it now, before the pause there was no plan stage row.
+  expect(resumed.runId).toBe(runId);
+  expect(resumed.result.approved).toBe(true);
+  const planStages = resumed.result.stageMetrics.filter((s) => s.stage === "plan");
+  expect(planStages).toHaveLength(1);
+  expect(fx.faux.state.callCount).toBeGreaterThan(callsBeforeResume);
+  // The resume reused the existing checkpoint rather than starting a new run.
+  expect(
+    fs
+      .readdirSync(path.join(fx.targetDir, ".ad-coder", "runs"))
+      .filter((f) => f.startsWith("coordinator-")),
+  ).toEqual([`coordinator-${runId}.json`]);
+});
+
 const approvedPipeline: PipelineResult = {
   outcome: "approved",
   approved: true,

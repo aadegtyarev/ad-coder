@@ -112,7 +112,7 @@ import {
   preflightRepositoryPublishing,
   startRepositoryPublishing,
 } from "./project-operations/repository-publishing";
-import { RunCoordinator } from "./project-operations/run-coordinator";
+import { clearsOnExplicitAct, RunCoordinator } from "./project-operations/run-coordinator";
 import { ProjectStore } from "./project-store/project-store";
 import type { ProjectStoreConfig } from "./project-store/types";
 import { ProjectStoreError } from "./project-store/types";
@@ -2631,7 +2631,10 @@ async function driveCommand(
       task,
     });
     if (retryResearch) coordinator.resumeResearch({ source: "operator", action: "retry" });
-    if (resumeRun !== undefined && coordinator.checkpoint.pause?.code === "stage_limit")
+    // Same agreement as the orchestrator's `resume_pipeline`: an explicit
+    // resume act clears every pause `resumeStage` accepts from an operator,
+    // not only the stage ceiling.
+    if (resumeRun !== undefined && clearsOnExplicitAct(coordinator.checkpoint.pause?.code))
       coordinator.resumeStage({ source: "operator", action: "retry" });
     await driveWorkflow({
       session,

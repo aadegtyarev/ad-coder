@@ -428,8 +428,10 @@ export type {
   RunCoordinatorOptions,
 } from "./project-operations/run-coordinator";
 export {
+  clearsOnExplicitAct,
   createRunCoordinator,
   DEFAULT_RUN_COORDINATOR_OPTIONS,
+  PAUSES_CLEARED_BY_AN_EXPLICIT_ACT,
   RunCoordinator,
 } from "./project-operations/run-coordinator";
 export type {
