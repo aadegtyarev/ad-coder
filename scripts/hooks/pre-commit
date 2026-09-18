@@ -1,0 +1,46 @@
+#!/bin/sh
+# pre-commit: reject a work commit made on the default branch (issue #334).
+#
+# The branch rule lives in project memory (AGENTS.md, product-change.md), but a
+# rule consulted only at the model's discretion is advice; this hook is the
+# boundary that binds. `git commit --amend` without changes and `git commit`
+# with nothing staged do not fire pre-commit at all, which is git's own
+# behaviour, not this hook's scope.
+#
+# Merge commits are exempt: a reviewed PR landing on the default branch is the
+# documented vehicle ("merge green PRs"), and blocking it would be a gate routed
+# around. What is rejected is work authored directly on the branch.
+#
+# The default branch comes from, in order: `git config hooks.defaultbranch`
+# (an override for a repo whose PR base is neither git default), then
+# origin/HEAD, then -- with no way to know -- BOTH git defaults (`main`,
+# `master`) fail closed. Install:
+#   git config core.hooksPath scripts/hooks   (bun run setup:hooks)
+
+default_branches=""
+if branch_cfg=$(git config --get hooks.defaultbranch) && [ -n "$branch_cfg" ]; then
+	default_branches="$branch_cfg"
+elif git symbolic-ref --quiet refs/remotes/origin/HEAD; then
+	default_branches=$(git symbolic-ref --quiet refs/remotes/origin/HEAD | sed 's@^refs/remotes/origin/@@')
+else
+	default_branches="main master"
+fi
+branch=$(git symbolic-ref --quiet --short HEAD) || branch=""
+[ -n "$branch" ] || exit 0 # detached HEAD: nothing to guard
+
+case " $default_branches " in
+	*" $branch "*) ;;
+	*) exit 0 ;;
+esac
+
+if git rev-parse --verify --quiet MERGE_HEAD >/dev/null 2>&1; then
+	exit 0 # merge commit landing a reviewed change; allowed
+fi
+
+cat >&2 <<EOF
+no commit on '$branch': work lands on a feature branch and a pull request, never
+directly on the default branch (rule: AGENTS.md, product-change, issue #334).
+
+Next command: git switch -c <feature-branch> && git commit (then open a PR).
+EOF
+exit 1
