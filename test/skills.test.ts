@@ -76,6 +76,28 @@ test("every shipped skill opens by stating that its instruction is mandatory", (
   }
 });
 
+test("every shipped description fits the catalogue budget", () => {
+  // docs/contracts/skill-authoring.md (2026-09-18) pins the catalogue entry as
+  // the trigger surface and its budget at 1,536 characters: the vendor skill
+  // listing truncates a description at that length, so text past it is written
+  // but never shown. The budget is the contract's number; the three-part
+  // trigger shape is reviewed, not asserted here, because shipped
+  // situation-first descriptions are grandfathered until their next wording
+  // change.
+  const budget = 1536;
+  const dir = path.join(REPO_ROOT, "prompts", "skills");
+  const shipped = fs
+    .readdirSync(dir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory());
+  expect(shipped.length).toBeGreaterThan(10);
+  for (const skill of shipped) {
+    const manifest = JSON.parse(
+      fs.readFileSync(path.join(dir, skill.name, "skill.json"), "utf8"),
+    ) as { description: string };
+    expect(manifest.description.length).toBeLessThanOrEqual(budget);
+  }
+});
+
 test("loads shipped skills with a content digest", () => {
   const skill = resolveSkills(["task-slicing"])[0];
   expect(skill).toBeDefined();
