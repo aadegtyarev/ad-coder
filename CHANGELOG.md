@@ -59,6 +59,17 @@ enforces that dated release headings go in non-increasing date order
   appends the same stamp through the same writer (issue #283). The enforcement
   is `bun run stamp:check` -- no stamp, no merge -- and issue #295 records that
   CI does not run it yet.
+- **The README names the two publication channels and says which one is for
+  developers** (issue #349, the install half). `ad-coder` stays the headline
+  install: a release, published from a version tag. `ad-coder-dev` is now
+  documented as the channel for developers -- the same CLI, published from every
+  merge to `main`, versioned as the release it carries plus the build number --
+  installed with `bun add -g` rather than `npm install -g`, because
+  `ad-coder-dev update` resolves its channel through Bun and an install placed
+  by npm would be updated by a different package manager than the one that put
+  it there. The two install side by side because they are two different
+  binaries, and a linked checkout remains supported for working on ad-coder
+  itself.
 
 ## [0.66.0] - 2026-09-18
 
