@@ -13,6 +13,21 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.69.0] - 2026-09-19
+
+### Added
+- **The planner's declared affected files reach the coder's round-1 handoff.**
+  `submit_plan` accepts an optional `affectedFiles` array of non-empty strings,
+  and `parsePlan` defaults it to `[]` when a submission omits it -- the same
+  legacy-friendly pattern `contractRequirements` uses, so an older planner
+  degrades cleanly instead of failing its own plan. The harness frames the list
+  as data for the coder (never as an instruction to execute, and never
+  interpolated into a shell, SQL or path sink) and folds it into the first-round
+  handoff; an absent or empty list produces no section at all, leaving the
+  handoff byte-identical to a run that never had the field. The list rides on
+  the workflow state, so it survives a durable resume the way its siblings do.
+  (Slice 1 of #316.)
+
 ## [0.68.0] - 2026-09-19
 
 ### Added
