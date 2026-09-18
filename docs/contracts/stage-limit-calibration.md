@@ -32,9 +32,10 @@ Two moments the ceiling rests on; they are not one continuous effort and must no
 Absolute source paths (`<W>` is the worktree the run executed in, `/home/adegtyarev/Develop/Hobby/ad-coder-wt-scale`):
 
 ```
-<W>/.ad-coder/runs/4c26d8d9-f682-4587-8e5e-07f1de1f8e82.json
+<W>/.ad-coder/runs/background/4c26d8d9-f682-4587-8e5e-07f1de1f8e82.json
 <W>/.ad-coder/runs/coordinator-4c26d8d9-f682-4587-8e5e-07f1de1f8e82.json
 <W>/.ad-coder/sessions/--home-adegtyarev-Develop-Hobby-ad-coder-wt-scale--/2026-09-18T17-27-21-026Z_cdac318e-2ed0-47a1-88d2-92628030ed85.jsonl
+<W>/.ad-coder/sessions/--home-adegtyarev-Develop-Hobby-ad-coder-wt-scale--/2026-09-18T17-31-01-911Z_5f17aa41-7447-4ba8-921f-b29ee4158ee3.jsonl
 ```
 
 The `readFiles` blind spot is not the whole field but the sliced tools. The runner's after_tool
