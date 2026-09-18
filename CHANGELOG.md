@@ -13,6 +13,31 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.67.3] - 2026-09-19
+
+### Removed
+- **The LDO orchestration block is gone from `AGENTS.md`** (39 lines, the file's
+  last section). It told a reader to plan a non-trivial request with
+  `node .codex/ldo/scripts/ldo-run.mjs --runtime codex "<request>"` -- a Codex-side
+  runtime that is not part of this repository (`git ls-files .codex` is empty, so
+  the path only exists on a machine where that runtime was installed alongside)
+  and whose command surface had drifted from the block's description. `AGENTS.md`
+  is this project's durable instruction file, so a section pointing at another
+  harness's launcher both misdirects the reader and buries the rules that do
+  apply. The operator asked for its removal and confirmed its content is
+  outdated rather than asking for anything in it to be relocated.
+
+  The block was already overridden by the file's own text: line 201 reads "For
+  this program, do not use LDO. Develop directly or through ad-coder's native
+  roles", and the sentence after it said that instruction "overrides the generic
+  LDO guidance below" -- which was this block. That clause pointed at nothing
+  once the block was gone, so it now reads "overrides any generic LDO guidance";
+  that one phrase is the only edit this release makes outside the deletion. The
+  policies the block did carry -- a long-lived watcher over repeated polling, an
+  operator report after every completed pipeline, and a prohibition on invoking
+  LDO recursively from inside a role -- are LDO-pipeline rules, and the
+  recursive-invocation one is what line 201 already states more strongly.
+
 ## [0.67.2] - 2026-09-18
 
 ### Fixed
