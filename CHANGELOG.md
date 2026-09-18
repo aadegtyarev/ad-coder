@@ -13,6 +13,24 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.68.0] - 2026-09-19
+
+### Added
+- **`ad-coder console --resume [<run-id>]` continues a previous orchestrator
+  session after a restart.** The explicit form validates the run id first and
+  reopens the run only when BOTH its ledger (`.ad-coder/ledger/<id>.jsonl`)
+  and its durable session exist — an unknown or malformed id fails typed,
+  naming the id and the recovery action, and creates nothing. The bare form
+  discovers the most recent orchestrator session: a ledger qualifies only when
+  it carries a record with role "orchestrator" and step `turn:N` (the shape
+  only the conversation front's own turns write, so newer role/drive ledgers
+  are skipped), newest by mtime. Either form seeds the front's readable sink
+  from the resumed ledger — read-only, never replayed back onto the
+  append-only mirror — so `show_cost` is cumulative across the restart, and
+  unreadable rows degrade to a stderr note instead of a failure. Without the
+  flag, the default flow is unchanged: a fresh session every start.
+  (`docs/contracts/cli.md`, 2026-09-18.)
+
 ## [0.67.3] - 2026-09-19
 
 ### Removed

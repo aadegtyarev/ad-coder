@@ -42,6 +42,21 @@ export class MemoryLedgerSink implements LedgerSink {
     this.mirror?.write(record);
   }
 
+  /**
+   * Fill the readable records WITHOUT writing the mirror.
+   *
+   * A resumed front replays the ledger rows a previous process wrote durably
+   * so its cost view starts where that run left off. Those rows are already ON
+   * the append-only mirror file (that is where the caller read them from), so
+   * replaying them through write() would duplicate every row on disk; seeding
+   * fills only the in-memory view. Nothing here validates the records: the
+   * caller's job is to read them from this sink's own mirror file, not from
+   * another run's.
+   */
+  seed(records: readonly LedgerRecord[]): void {
+    this.written.push(...records);
+  }
+
   records(): readonly LedgerRecord[] {
     return this.written;
   }

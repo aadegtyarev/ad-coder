@@ -6,6 +6,7 @@ import {
   aggregateLedgerRecords,
   parseLedgerLine,
   readLedgerFiles,
+  readLedgerRecords,
   renderLedgerReport,
 } from "../src/ledger/analytics";
 import type { LedgerRecord } from "../src/ledger/types";
@@ -55,6 +56,40 @@ test("a truncated or malformed line is skipped, never thrown", () => {
   expect(report.skippedLines).toBe(1);
   expect(report.files[0]?.skippedLines).toBe(1);
   expect(report.total.modelCalls).toBe(1);
+});
+
+test("readLedgerRecords returns the rows themselves with the same skip accounting", () => {
+  // The resume path needs the records (to seed a readable sink), not a report.
+  const file = path.join(
+    fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-ledger-"))),
+    "run.jsonl",
+  );
+  const good = JSON.stringify(record({ ts: 1 }));
+  fs.writeFileSync(file, `${good}\n\n{"ts":100,"runId":"trunca${good.slice(20)}`);
+  const read = readLedgerRecords(file);
+  expect(read.records).toHaveLength(1);
+  expect(read.records[0]).toEqual(record({ ts: 1 }));
+  expect(read.skippedLines).toBe(1);
+  // The same file read through the report path agrees row for row.
+  const report = readLedgerFiles([file]);
+  expect(report.recordsRead).toBe(read.records.length);
+  expect(report.skippedLines).toBe(read.skippedLines);
+});
+
+test("a record line over the byte bound is skipped, not parsed and not fatal", () => {
+  const file = path.join(
+    fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-ledger-"))),
+    "run.jsonl",
+  );
+  const small = JSON.stringify(record({ ts: 1 }));
+  const large = JSON.stringify(record({ ts: 2, role: "orchestrator", step: "turn:2" }));
+  fs.writeFileSync(file, `${small}\n${large}\n`);
+  const read = readLedgerRecords(file, Buffer.byteLength(small));
+  expect(read.records).toHaveLength(1);
+  expect(read.records[0]?.ts).toBe(1);
+  expect(read.skippedLines).toBe(1);
+  // Zero (the default) bounds nothing, matching the report path.
+  expect(readLedgerRecords(file).records).toHaveLength(2);
 });
 
 test("a line whose usage or identifiers are not numbers/strings is skipped", () => {

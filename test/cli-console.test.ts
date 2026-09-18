@@ -6,6 +6,7 @@ import * as path from "node:path";
 import { PassThrough, Readable, Writable } from "node:stream";
 import { createModels, fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 import { runConsole } from "../src/cli/console";
+import { resolveResumeRun, resumeOrchestratorConfig, resumeSeedNote } from "../src/cli/resume";
 import { loadTaskFile } from "../src/cli/task-file";
 import {
   CONSOLE_COMMANDS,
@@ -24,10 +25,12 @@ import {
 } from "../src/conversation/conversation";
 import { CostAnomalyBlockedError } from "../src/economics/cost-anomaly";
 import { MemoryLedgerSink } from "../src/ledger/ledger";
+import type { LedgerRecord } from "../src/ledger/types";
 import {
   BackgroundRunManager,
   type BackgroundRunNotice,
 } from "../src/orchestration/background-runs";
+import { ProjectStoreError } from "../src/project-store/types";
 import { defineRole, type Role } from "../src/role";
 import { EmptyTurnError, ProviderRejectionError } from "../src/runner/errors";
 import { SessionLimitError } from "../src/session-limits";
@@ -2280,4 +2283,318 @@ test("a paused notice whose pause payload fails validation still projects the li
   expect(error.text()).toContain("background pipeline pause-run paused");
   expect(error.text()).not.toContain("stage_limit");
   expect(error.text()).not.toContain("increase it");
+});
+
+/**
+ * A ledger row shaped exactly as the real per-turn Ledger emits it (the same
+ * fixture shape test/orchestrator.test.ts pins), parameterized so one helper
+ * writes every front's ledger in these tests.
+ */
+function resumeRow(
+  runId: string,
+  role: string,
+  step: string,
+  total = 0.25,
+  ts = 1_757_000_000_000,
+): LedgerRecord {
+  return {
+    ts,
+    runId,
+    lane: "main",
+    role,
+    step,
+    provider: "faux",
+    model: "faux-1",
+    stopReason: "stop",
+    usage: {
+      input: 10,
+      output: 5,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 15,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total },
+    },
+  };
+}
+
+function writeLedgerFile(targetDir: string, runId: string, rows: readonly LedgerRecord[]): string {
+  const ledgerDir = path.join(targetDir, ".ad-coder", "ledger");
+  fs.mkdirSync(ledgerDir, { recursive: true, mode: 0o700 });
+  const filePath = path.join(ledgerDir, `${runId}.jsonl`);
+  fs.writeFileSync(filePath, `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`, {
+    mode: 0o600,
+  });
+  return filePath;
+}
+
+/** Backdate a ledger so mtime-based discovery has an unambiguous ordering. */
+function backdate(filePath: string, seconds: number): void {
+  const past = new Date(Date.now() - seconds * 1_000);
+  fs.utimesSync(filePath, past, past);
+}
+
+test("--resume with an unknown id fails typed and creates nothing", () => {
+  const target = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-resume-")));
+  expect(() => resolveResumeRun(target, { bare: false, runId: "never-started" })).toThrowError(
+    /no ledger for run never-started under \.ad-coder\/ledger\//,
+  );
+  // The refusal names the id and the recovery action, and nothing was created.
+  expect(fs.existsSync(path.join(target, ".ad-coder"))).toBe(false);
+});
+
+test("--resume validates a traversal-shaped id before any path is built", () => {
+  const target = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-resume-")));
+  for (const malformed of ["../escape", "a/b", "", ".hidden", "x".repeat(65)]) {
+    try {
+      resolveResumeRun(target, { bare: false, runId: malformed });
+      throw new Error(`expected ${JSON.stringify(malformed)} to be refused`);
+    } catch (error) {
+      expect(error).toBeInstanceOf(ProjectStoreError);
+      const typed = error as ProjectStoreError;
+      expect(typed.code).toBe("invalid_id");
+      expect(typed.message).toContain("--resume");
+    }
+  }
+  // A malformed id is refused before any path is built: no directories, no
+  // ledger file, nothing to clean up.
+  expect(fs.existsSync(path.join(target, ".ad-coder"))).toBe(false);
+});
+
+test("bare --resume picks the latest ORCHESTRATOR ledger and skips a newer drive ledger", () => {
+  const target = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-resume-")));
+  // A drive/role ledger: stage-role rows, never a front turn row. Newer on
+  // disk, and the discriminator must still skip it.
+  const driveRun = writeLedgerFile(target, "drive-newer", [
+    resumeRow("drive-newer", "coder", "run"),
+    resumeRow("drive-newer", "reviewer", "run"),
+  ]);
+  backdate(driveRun, 0);
+  // The orchestrator front: role "orchestrator" with step "turn:N" -- here
+  // AFTER a delegated row, because a front that delegates immediately writes
+  // the delegated rows first; the discriminator is ANY front row, not the
+  // first record.
+  const orchestratorRun = writeLedgerFile(target, "orch-older", [
+    resumeRow("orch-older", "coder", "role:coder"),
+    resumeRow("orch-older", "orchestrator", "turn:1"),
+  ]);
+  backdate(orchestratorRun, 60);
+  // A durable session for the winner only, as a previous console would leave.
+  fs.mkdirSync(
+    path.join(
+      target,
+      ".ad-coder",
+      "sessions",
+      `--${target.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`,
+    ),
+    {
+      recursive: true,
+      mode: 0o700,
+    },
+  );
+  fs.writeFileSync(
+    path.join(
+      target,
+      ".ad-coder",
+      "sessions",
+      `--${target.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`,
+      `2026-09-18T10-00-00-000Z_orch-older.jsonl`,
+    ),
+    "",
+    { mode: 0o600 },
+  );
+
+  const resumed = resolveResumeRun(target, { bare: true });
+  expect(resumed.runId).toBe("orch-older");
+  // The winner's rows ride along: this IS the seed the restarted sink replays.
+  expect(resumed.seedRecords).toHaveLength(2);
+  expect(resumed.skippedRows).toBe(0);
+  // The stand-alone role command can run the orchestrator ROLE, so a role
+  // ledger could carry role "orchestrator" rows -- with step "run", which the
+  // discriminator must reject. Pin that shape as skipped too.
+  const roleOrchestrator = writeLedgerFile(target, "role-orch", [
+    resumeRow("role-orch", "orchestrator", "run"),
+  ]);
+  backdate(roleOrchestrator, 0);
+  expect(resolveResumeRun(target, { bare: true }).runId).toBe("orch-older");
+});
+
+test("bare --resume with no orchestrator ledger fails with the start-fresh action", () => {
+  const target = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-resume-")));
+  // Only drive/role ledgers exist: nothing identifies an orchestrator front.
+  writeLedgerFile(target, "drive-only", [resumeRow("drive-only", "coder", "run")]);
+  expect(() => resolveResumeRun(target, { bare: true })).toThrowError(
+    /no previous orchestrator session found; start without --resume/,
+  );
+  // A target with no ledger directory at all behaves the same way.
+  const empty = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-resume-")));
+  expect(() => resolveResumeRun(empty, { bare: true })).toThrowError(
+    /no previous orchestrator session found; start without --resume/,
+  );
+  expect(fs.existsSync(path.join(empty, ".ad-coder"))).toBe(false);
+});
+
+test("--resume skips a symlinked ledger and invalid ledger names during discovery", () => {
+  const target = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-resume-")));
+  writeLedgerFile(target, "outside", [resumeRow("outside", "coder", "run")]);
+  const ledgerDir = path.join(target, ".ad-coder", "ledger");
+  // A drive-shaped ledger the symlink points at, plus a symlink named like a
+  // ledger: neither is ever a candidate and the symlink is never followed.
+  fs.symlinkSync(path.join(ledgerDir, "outside.jsonl"), path.join(ledgerDir, "linked.jsonl"));
+  fs.writeFileSync(path.join(ledgerDir, "we..ird.jsonl"), "", { mode: 0o600 });
+  expect(() => resolveResumeRun(target, { bare: true })).toThrowError(
+    /no previous orchestrator session found/,
+  );
+  // The pointed-at file is untouched -- discovery never writes.
+  expect(fs.readFileSync(path.join(ledgerDir, "outside.jsonl"), "utf8")).toContain("coder");
+});
+
+test("--resume refuses a symlinked ledger directory on both forms", () => {
+  const target = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-resume-")));
+  const realDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-ledger2-")));
+  fs.mkdirSync(path.join(target, ".ad-coder"), { recursive: true, mode: 0o700 });
+  fs.symlinkSync(realDir, path.join(target, ".ad-coder", "ledger"));
+  // Discovery through a symlinked ledger dir finds nothing (and never
+  // follows the link out).
+  expect(() => resolveResumeRun(target, { bare: true })).toThrowError(
+    /no previous orchestrator session found/,
+  );
+  // The explicit form names the refusal instead of reading through the link.
+  fs.writeFileSync(path.join(realDir, "resumable.jsonl"), "", { mode: 0o600 });
+  try {
+    resolveResumeRun(target, { bare: false, runId: "resumable" });
+    throw new Error("expected the symlinked ledger dir to be refused");
+  } catch (error) {
+    expect(error).toBeInstanceOf(ProjectStoreError);
+    expect((error as ProjectStoreError).code).toBe("unsafe_path");
+  }
+  // The link still points at an untouched directory: nothing was written.
+  expect(fs.readdirSync(realDir)).toEqual(["resumable.jsonl"]);
+});
+
+test("an explicit --resume reads the previous rows for the seed and reports skipped ones", () => {
+  const target = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-resume-")));
+  const good = resumeRow("resumable", "orchestrator", "turn:1");
+  const truncated = `{"ts":100,"runId":"resumca"`;
+  const ledgerPath = path.join(target, ".ad-coder", "ledger", "resumable.jsonl");
+  fs.mkdirSync(path.dirname(ledgerPath), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(ledgerPath, `${JSON.stringify(good)}\n\n${truncated}\n`, { mode: 0o600 });
+  const sessionsDir = path.join(
+    target,
+    ".ad-coder",
+    "sessions",
+    `--${target.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`,
+  );
+  fs.mkdirSync(sessionsDir, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(path.join(sessionsDir, "2026-09-18T10-00-00-000Z_resumable.jsonl"), "", {
+    mode: 0o600,
+  });
+
+  const resumed = resolveResumeRun(target, { bare: false, runId: "resumable" });
+  expect(resumed.runId).toBe("resumable");
+  expect(resumed.seedRecords).toEqual([good]);
+  // The truncated tail a live writer left mid-write degrades non-fatally and
+  // is reported, never thrown and never silently dropped.
+  expect(resumed.skippedRows).toBe(1);
+  expect(resumed.ledgerPath).toBe(ledgerPath);
+});
+
+test("the resume flag is the only seam that injects a run id into the config", () => {
+  // The default flow must stay byte-identical: without --resume the
+  // orchestrator config gains NOTHING, so startOrchestrator keeps minting a
+  // fresh run id (and a fresh session) on every start.
+  expect(resumeOrchestratorConfig(undefined)).toBeUndefined();
+  const resumed = {
+    runId: "resumable",
+    ledgerPath: "/tmp/whatever/.ad-coder/ledger/resumable.jsonl",
+    seedRecords: [resumeRow("resumable", "orchestrator", "turn:1")],
+    skippedRows: 0,
+  };
+  expect(resumeOrchestratorConfig(resumed)).toEqual({
+    runId: "resumable",
+    seedLedgerRecords: resumed.seedRecords,
+  });
+  // A clean seed is silent; a partial seed is named before the first turn,
+  // with a LEDGER_BASE_DIR-relative path only.
+  expect(resumeSeedNote(resumed)).toBeUndefined();
+  expect(resumeSeedNote({ ...resumed, skippedRows: 2 })).toBe(
+    "ad-coder: resumed ledger .ad-coder/ledger/resumable.jsonl skipped 2 unparseable row(s); pre-restart cost is partial\n",
+  );
+});
+
+test("--resume refuses a run whose durable session is gone, creating nothing", () => {
+  const target = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-resume-")));
+  writeLedgerFile(target, "sessionless", [resumeRow("sessionless", "orchestrator", "turn:1")]);
+  expect(() => resolveResumeRun(target, { bare: false, runId: "sessionless" })).toThrowError(
+    /no durable session for run sessionless under \.ad-coder\/sessions\//,
+  );
+  // The failed resume created nothing new.
+  expect(fs.existsSync(path.join(target, ".ad-coder", "sessions"))).toBe(false);
+});
+
+const REPO_ROOT = path.resolve(import.meta.dir, "..");
+
+/** Spawn the real CLI front: the resume refusals fire before any model call. */
+function runConsoleCli(args: string[]): { code: number; stdout: string; stderr: string } {
+  const proc = Bun.spawnSync(["bun", "run", path.join(REPO_ROOT, "src/cli.ts"), ...args], {
+    cwd: REPO_ROOT,
+    stdin: "ignore",
+  });
+  return {
+    code: proc.exitCode,
+    stdout: proc.stdout.toString(),
+    stderr: proc.stderr.toString(),
+  };
+}
+
+test("the real console front refuses a malformed --resume id typed and creates nothing", () => {
+  const target = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-console-")));
+  const failed = runConsoleCli(["console", "--resume", "../escape", "--target-dir", target]);
+  expect(failed.code).not.toBe(0);
+  // The human line names the pattern and the recovery action; no session and
+  // no ledger file were created on the way out.
+  expect(failed.stderr).toContain("runId must match");
+  expect(failed.stderr).toContain("start without --resume");
+  expect(fs.existsSync(path.join(target, ".ad-coder"))).toBe(false);
+});
+
+test("the real console front refuses an unknown --resume id for both forms", () => {
+  const target = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-console-")));
+  const human = runConsoleCli(["console", "--resume", "never-started", "--target-dir", target]);
+  expect(human.code).not.toBe(0);
+  expect(human.stderr).toContain("no ledger for run never-started");
+  expect(fs.existsSync(path.join(target, ".ad-coder"))).toBe(false);
+
+  const machine = runConsoleCli([
+    "console",
+    "--json",
+    "--resume",
+    "never-started",
+    "--target-dir",
+    target,
+  ]);
+  expect(machine.code).not.toBe(0);
+  // The machine record keeps the stable typed shape (errors contract): code
+  // plus the id as detail, never file contents.
+  const record = JSON.parse(machine.stderr) as { error: { code: string; detail: string } };
+  expect(record.error.code).toBe("not_found");
+  expect(record.error.detail).toBe("never-started");
+});
+
+test("the real console front refuses a bare --resume with nothing to continue", () => {
+  const target = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-console-")));
+  const failed = runConsoleCli(["console", "--resume", "--target-dir", target]);
+  expect(failed.code).not.toBe(0);
+  expect(failed.stderr).toContain("no previous orchestrator session found");
+  expect(failed.stderr).toContain("start without --resume");
+  // The bare form's refusal also creates nothing.
+  expect(fs.existsSync(path.join(target, ".ad-coder"))).toBe(false);
+});
+
+test("console --help renders --resume from the single registry", () => {
+  // Help is DERIVED from the registry (cli.md 2026-09-11): declaring the
+  // option once must be enough for the usage line to carry it.
+  const help = runConsoleCli(["console", "--help"]);
+  expect(help.code).toBe(0);
+  expect(help.stdout).toContain("--resume [<run-id>]");
+  expect(help.stdout).toContain("most recent one");
 });

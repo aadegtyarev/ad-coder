@@ -207,6 +207,13 @@ Start a persistent conversational orchestrator with:
 ad-coder console --provider openai-codex --target-dir ./my-project
 ```
 
+Pass `--resume <run-id>` (or bare `--resume` for the most recent orchestrator
+session) to continue a previous conversation instead of starting a fresh one:
+the named run's durable session reopens, prior turns are back in context, and
+`show_cost` stays cumulative over the earlier ledger. A run id that has no
+ledger or session, or that is malformed, is refused before anything is
+created.
+
 Every shipped capability is enabled at startup: the conversation carries the
 built-in pipeline module, its tools, and the skill catalogue without any flag.
 `/start <task>`, `/list`, `/events <run-id>`, `/status <run-id>`,

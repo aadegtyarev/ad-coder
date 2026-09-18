@@ -23,6 +23,7 @@ import type {
   ResolvePipelineConfigOptions,
 } from "./cli/resolve-config";
 import { resolvePipelineConfig } from "./cli/resolve-config";
+import { resolveResumeRun, resumeOrchestratorConfig, resumeSeedNote } from "./cli/resume";
 import { ToolActivityRenderer } from "./cli/tool-activity";
 import type { CompactionPolicy } from "./context/compactor";
 import { CostAnomalyDetector, FileCostAnomalyStore } from "./economics/cost-anomaly";
@@ -239,7 +240,14 @@ type CommandDefinition = {
   name: string;
   description: string;
   positionals: readonly { name: string; description: string }[];
-  options: readonly { name: string; value?: string; description: string; required?: boolean }[];
+  options: readonly {
+    name: string;
+    value?: string;
+    description: string;
+    required?: boolean;
+    /** The value may be omitted: the flag alone is then a boolean form. */
+    optional?: boolean;
+  }[];
   run: (args: ParsedArgs) => Promise<void>;
 };
 
@@ -261,6 +269,23 @@ function parseArgs(argv: string[], command: CommandDefinition): ParsedArgs {
         continue outer;
       }
       if (arg === option.name && option.value !== undefined) {
+        if (option.optional === true) {
+          // An OPTIONAL value attaches only when the next token cannot be
+          // another option (absent, or a dash token); anything else would make
+          // the bare form ambiguous. The bare form lands in both records
+          // exactly like a boolean flag, so a handler tells the two apart by
+          // the booleans record alone -- a value never sets it. A value that
+          // itself begins with `-` must ride the `--flag=value` form.
+          const value = argv[i + 1];
+          if (value !== undefined && !value.startsWith("-")) {
+            flags[option.name] = value;
+            i++;
+          } else {
+            booleans[option.name] = true;
+            flags[option.name] = "true";
+          }
+          continue outer;
+        }
         const value = argv[i + 1];
         if (value === undefined) fail(`${option.name} requires a value`);
         flags[option.name] = value;
@@ -2668,6 +2693,7 @@ async function driveCommand(
 async function consoleCommand(
   positionals: string[],
   flags: Record<string, string | undefined>,
+  booleans: Record<string, boolean>,
   json: boolean,
 ): Promise<void> {
   if (positionals[1] !== undefined) fail("the console command accepts no positional arguments");
@@ -2717,8 +2743,39 @@ async function consoleCommand(
   // `ad-coder background status` in the same project.
   const backgroundTargetDir = resolveTargetDir(targetDirArg);
   const backgroundOwnerId = flags["--owner-id"] ?? defaultBackgroundOwnerId(backgroundTargetDir);
+  // --resume resolves BEFORE startOrchestrator so an unknown or malformed run
+  // id fails typed and creates nothing: no session, no ledger file. The bare
+  // form discovers the most recent orchestrator session (the verified
+  // discriminator is in src/cli/resume.ts); both forms read the previous run's
+  // ledger rows back so the restarted front's cost view is cumulative. The
+  // per-row read bound is the same one the durable sink writes with.
+  const resumeBare = booleans["--resume"] === true;
+  const resumeValue = flags["--resume"];
+  const resumed = resumeBare
+    ? resolveResumeRun(
+        backgroundTargetDir,
+        { bare: true },
+        configOptions.projectStoreConfig?.byteLimits?.jsonlRecord ?? 0,
+      )
+    : resumeValue === undefined
+      ? undefined
+      : resolveResumeRun(
+          backgroundTargetDir,
+          { bare: false, runId: resumeValue },
+          configOptions.projectStoreConfig?.byteLimits?.jsonlRecord ?? 0,
+        );
+  // A row the seed could not replay must be heard before the first turn: the
+  // restarted cost view starts without it.
+  if (resumed !== undefined) {
+    const note = resumeSeedNote(resumed);
+    if (note !== undefined) process.stderr.write(note);
+  }
   const session = await startOrchestrator({
     ...configOptions,
+    // The whole resume contribution: the run id whose durable session
+    // reopens, and the rows the restarted cost view replays. No flag spreads
+    // nothing, so the default flow is untouched.
+    ...resumeOrchestratorConfig(resumed),
     sessionLimits,
     workflowModules: [BUILT_IN_PIPELINE_WORKFLOW],
     enabledWorkflows: configOptions.selectedWorkflows ?? [],
@@ -3581,6 +3638,13 @@ const COMMANDS: readonly CommandDefinition[] = [
         description: "Set the maximum bytes accepted in one input line.",
       },
       {
+        name: "--resume",
+        value: "[<run-id>]",
+        optional: true,
+        description:
+          "Continue a previous orchestrator session: name its run id, or omit the id to resume the most recent one.",
+      },
+      {
         name: "--console-page-size",
         value: "<n>",
         description: "Maximum background records shown by each console-local command.",
@@ -3603,7 +3667,7 @@ const COMMANDS: readonly CommandDefinition[] = [
       },
     ],
     run: ({ positionals, flags, booleans }) =>
-      consoleCommand(positionals, flags, booleans["--json"] === true),
+      consoleCommand(positionals, flags, booleans, booleans["--json"] === true),
   },
 ];
 
