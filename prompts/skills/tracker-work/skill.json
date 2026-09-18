@@ -1,0 +1,6 @@
+{
+  "id": "tracker-work",
+  "version": "1",
+  "description": "Work the issue tracker: search before filing, claim before starting, keep labels true, and put the generated evidence in the pull request.",
+  "roles": ["orchestrator"]
+}

@@ -56,6 +56,28 @@ structural moves from behavior changes.
 - 2026-09-17: The delivery signature and review stamp live in one compact
   block; per-call detail, tool histograms, and timing belong to the ledger
   report (`ledger-report.md`), not the PR comment.
+- 2026-09-18: **A working tree has one writer at a time.** A pipeline run, a
+  background worker, a console session and a developer all mutate the same
+  checkout, and a branch switch, a stash or a commit made under another writer
+  corrupts work in flight. Independent mutable work gets its own worktree
+  (`git worktree add <path> -b <branch> origin/main`); the shared tree keeps
+  the branch its owner left it on. Enforcing the branch rule itself is issue
+  #334.
+- 2026-09-18: **An issue is claimed before it is worked and closed when the
+  change lands.** The tracker is the only place a second developer can see what
+  is already taken: an assignee plus the `in-progress` label, and one comment
+  naming who took it and the run id, before the first edit or dispatch -- and
+  the assignee and label are read before anything is picked up. `Fixes #N` in
+  the pull request body closes it with the merge; when the link is missing,
+  close it by hand the moment it merges. A board where merged work still reads
+  as open is a board nobody trusts (issue #293).
+- 2026-09-18: **The PR body carries the generated stamp, never a composed cost
+  line.** On PR #333 the cost breakdown was simply absent; on #329 it was a
+  hand-written sentence a model happened to remember. `ad-coder stamp delivery`
+  renders per-role models and provider-reported cost from the ledger, and
+  `product-change.md` already said the signature is generated -- what was
+  missing was an obligation and a gate (issues #335, and #336 for the
+  orchestrator lane the block's own rows leave out).
 
 ## Close the loop
 
