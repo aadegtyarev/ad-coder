@@ -13,6 +13,35 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.65.0] - 2026-09-18
+
+### Fixed
+- **`ad-coder update` now updates the package that is actually running**
+  (issue #341). The updater hard-coded `github:aadegtyarev/ad-coder` and always
+  ran `bun add --global --force github:aadegtyarev/ad-coder#<revision>`, so an
+  npm-installed `ad-coder-dev` update moved a different package: the caller
+  stayed where it was, the verification then read a `.bun-tag` the npm install
+  never has, and the operator got `install_unverifiable` with no working
+  recovery. Measured 2026-09-18: the machine stayed on 0.54.2-dev.4 while npm
+  had 0.63.0-dev.16, and the attempt left a duplicated `ad-coder` key in
+  `~/.bun/install/global/bun.lock`.
+
+  The updater is now identity-aware. The running identity comes from the
+  package root's own package.json plus how it was installed: a linked checkout
+  (`.git`) takes the existing checkout path; a GitHub install (`.bun-tag`)
+  keeps the revision-resolving path and its `.bun-tag` proof; a registry
+  install (neither marker) resolves what the registry offers with
+  `bun pm view <name> version`, runs
+  `bun add --global --force <running-name>@latest`, and verifies the version
+  the package root carries afterwards -- never a `.bun-tag`. Resolving first is
+  what makes "already current" answerable: an install already at the resolved
+  version is reported as current and installs nothing, while one that stays
+  behind after a `bun add` that exited zero fails with `install_mismatch`
+  rather than reporting success. The updater never installs a package whose
+  name differs from the running one, and when the identity cannot be
+  established at all it fails typed with `identity_unknown` and a reinstall
+  action instead of falling back to the repository package.
+
 ## [0.64.3] - 2026-09-18
 
 ### Added

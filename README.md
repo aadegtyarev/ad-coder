@@ -19,18 +19,28 @@ ad-coder --help
 ad-coder about
 ```
 
-Then update it without remembering the Git command:
+Then update it without remembering the package manager command:
 
 ```sh
 ad-coder update
 ```
 
-The updater resolves GitHub `main`, installs its exact commit SHA, then reads back
-the revision Bun actually recorded and fails rather than reporting success when the
-two disagree. A stale global lockfile pin makes `bun add --force` reinstall the
-previous revision and still exit zero; that case now surfaces as `install_mismatch`
-with the lockfile to repair, and `install_unverifiable` when no installed revision
-can be read at all. For development, a linked checkout remains supported:
+The updater updates the package that is actually running. A linked checkout gets
+`git pull --ff-only`, `bun install`, and `bun link`; a GitHub install (one whose
+directory carries Bun's `.bun-tag`) resolves GitHub `main`, installs its exact
+commit SHA, then reads back the revision Bun actually recorded; a registry
+install (`ad-coder` or the development channel `ad-coder-dev` from npm) first
+resolves what the registry offers with `bun pm view <name> version`, then runs
+`bun add --global --force <running-package>@latest` and verifies the version the
+package root carries afterwards; an install already at the resolved version is
+reported as current and installs nothing. A zero exit from `bun add` is never
+treated as evidence: a stale global lockfile pin makes `bun add --force`
+reinstall the previous version and still exit zero, which surfaces as
+`install_mismatch` with the lockfile to repair, and `install_unverifiable` when
+no installed version can be read at all. The updater never installs a package
+whose name differs from the one running, and an identity it cannot establish is
+`identity_unknown` rather than a guess. For development, a linked checkout
+remains supported:
 
 ```sh
 git clone https://github.com/aadegtyarev/ad-coder.git

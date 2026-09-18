@@ -3178,7 +3178,7 @@ const COMMANDS: readonly CommandDefinition[] = [
   },
   {
     name: "update",
-    description: "Update the global GitHub install or a linked Git checkout.",
+    description: "Update the global install (npm or GitHub) or a linked Git checkout.",
     positionals: [],
     options: [{ name: "--json", description: "Emit a stable JSON result." }],
     run: async ({ positionals, booleans }) => {
