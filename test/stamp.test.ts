@@ -72,6 +72,33 @@ test("the rendered signature is compact: one header line plus one line per decla
   expect(lines.length).toBe(1 + signature.roles.length);
 });
 
+test("the orchestrator lane is its own row: per-role calls and costs sum to the header", () => {
+  const signature = buildDeliverySignature([
+    record({ ts: 1, role: "orchestrator", provider: "vendor", model: "medium" }),
+    record({ ts: 2, role: "orchestrator", provider: "vendor", model: "medium" }),
+    record({ ts: 3, role: "planner", provider: "vendor", model: "big" }),
+    record({ ts: 4, role: "coder", provider: "vendor", model: "small" }),
+    record({ ts: 5, role: "reviewer", provider: "vendor", model: "small" }),
+  ]);
+  expect(signature.roles.find((row) => row.role === "orchestrator")).toMatchObject({
+    ran: true,
+    calls: 2,
+    provider: "vendor",
+    model: "medium",
+  });
+  const callsSum = signature.roles.reduce((sum, row) => sum + (row.calls ?? 0), 0);
+  expect(callsSum).toBe(signature.totalCalls);
+  const costSum = signature.roles.reduce((sum, row) => sum + (row.costUsd ?? 0), 0);
+  expect(costSum).toBeCloseTo(signature.totalCostUsd, 10);
+});
+
+test("a run without orchestrator records still renders the orchestrator row as did not run", () => {
+  const text = renderDeliverySignature(buildDeliverySignature([record({ ts: 1 })]));
+  const orchestratorLine = text.split("\n").find((line) => line.startsWith("orchestrator"));
+  expect(orchestratorLine).toBeDefined();
+  expect(orchestratorLine).toContain("did not run");
+});
+
 /** A minimal real git repo, so tree digests are computed the way the gate does. */
 function gitRepo(): string {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-stamps-")));
