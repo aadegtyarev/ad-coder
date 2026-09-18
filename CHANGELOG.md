@@ -13,6 +13,20 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.64.3] - 2026-09-18
+
+### Added
+- **A PR body's carried delivery block is checked, not trusted (issue #335).**
+  `ad-coder stamp body-check <body.md> [ledger...]` reads a pull-request body
+  and fails loudly (exit 2) when the freshly rendered block is absent from it
+  or no longer equals it: the block is expected as a verbatim paste, so the
+  check is a substring match against `stamp delivery`'s output, and a stale
+  block means the ledger has moved since it was rendered. A new
+  `.github/pull_request_template.md` carries the mandatory sections (what
+  changed, captured gates, the cost block pasted verbatim) so the shape is
+  present before prose is written. CI wiring follows #295's dependency, not
+  today's patch; the target-repo scope rule still applies.
+
 ## [0.64.2] - 2026-09-18
 
 ### Added
