@@ -141,8 +141,11 @@ diagnosed per check and is honest difficulty -- every model finds the real threa
 and only `avoids-auth-false-positive` wobbles.
 
 Recorded separately: `docs/opencode-go-economics.md`, where a model's monthly
-allowance is a multiplier on the subscription rather than a ceiling, allowances
-multiply across models, and they do not track token price.
+allowance was read as a multiplier on the subscription rather than a ceiling, and
+as multiplying across models. The first half of that stands; the second does not,
+and the document was corrected on 2026-09-18 against the account's own usage
+dashboard -- the cap is one shared week, measured per model. Allowances still do
+not track token price, which is what the two identically priced GLM models show.
 
 Verification: `typecheck`, `check`, `check:release` (0.20.1), `check:docs`,
 `smoke:artifact`, and `bun test` (703 passing, 3,818 assertions) all pass on
