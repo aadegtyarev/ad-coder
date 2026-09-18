@@ -20,6 +20,7 @@ import {
 import { FileLedgerSink, MemoryLedgerSink } from "../src/ledger/ledger";
 import { SUBMIT_FOLLOW_UP_TOOL_NAME } from "../src/orchestration/follow-up";
 import { runPipeline } from "../src/orchestration/pipeline";
+import { SUBMIT_PLAN_TOOL_NAME } from "../src/orchestration/plan";
 import { createWorkflowSession } from "../src/orchestration/session";
 import type {
   AvailableTransition,
@@ -79,6 +80,34 @@ function fixture(): Fixture {
 
 function reviewerRole(fx: Fixture): RoleSpec {
   return fx.role("reviewer", "You review.", ["bash", "read", SUBMIT_VERDICT_TOOL_NAME]);
+}
+
+/** Script a submit_plan + text turn: the plan stage settles for real. */
+function governedPlanTurn(): FauxResponseStep[] {
+  return [
+    fauxAssistantMessage(
+      fauxToolCall(SUBMIT_PLAN_TOOL_NAME, {
+        complexity: "medium",
+        securitySurface: "none",
+        summary: "plan: do X",
+        contractRequirements: [],
+        surfaceAnalysis: {
+          projectType: "test fixture",
+          surfaces: [{ id: "core", name: "core", rationale: "exercise orchestration" }],
+          coverage: [
+            {
+              surfaceId: "core",
+              status: "not_applicable",
+              contractIds: [],
+              evidence: ["fixture changes no product contract surface"],
+              rationale: "CLI drive plumbing only",
+            },
+          ],
+        },
+      }),
+    ),
+    fauxAssistantMessage("plan: do X"),
+  ];
 }
 
 /** A scripted reviewer turn: submit_verdict, then a text summary. */
@@ -240,6 +269,77 @@ test("a paused drive resumes its incomplete stage from the coordinator checkpoin
   expect(
     resumed.checkpoint.workflowState.stageMetrics?.filter(({ stage }) => stage === "code:1"),
   ).toHaveLength(1);
+});
+
+test("drive --resume-run clears a plan_not_submitted pause and proceeds past the plan stage", async () => {
+  // The CLI composition half of issue #315: `drive --resume-run` cleared only
+  // `stage_limit`, so a planner that never submitted a plan (the resumable
+  // class the coordinator records as `plan_not_submitted`) could not be
+  // resumed through the CLI front -- the pause came back instantly.
+  const fx = fixture();
+  const planner = fx.role("planner", "You plan.", ["read"]);
+  const coder = fx.role("coder", "You code.");
+  const reviewer = reviewerRole(fx);
+  const approve: Verdict = { status: "approved", issues: [], summary: "ok" };
+  const ledgerSink = new MemoryLedgerSink();
+  const pipeline = config(fx, { planner, coder, reviewer }, ledgerSink);
+
+  // One drive with a planner that never calls submit_plan (both handoff
+  // attempts): the coordinator pauses the PLAN stage, not a stage limit.
+  fx.faux.setResponses([
+    fauxAssistantMessage("prose plan, no tool call"),
+    fauxAssistantMessage("still no plan"),
+  ]);
+  const firstSession = createWorkflowSession(pipeline);
+  const pausedCoordinator = new RunCoordinator(firstSession, firstSession.projectStore, {
+    runId: "drive-plan-resume",
+    task: pipeline.task,
+  });
+  await expect(
+    driveWorkflow({
+      session: firstSession,
+      ledgerSink,
+      auto: true,
+      input: Readable.from(""),
+      output: new Capture(),
+      error: new Capture(),
+      coordinator: pausedCoordinator,
+    }),
+  ).rejects.toMatchObject({ code: "pipeline_paused" });
+  expect(pausedCoordinator.checkpoint.pause?.code).toBe("plan_not_submitted");
+  expect(pausedCoordinator.checkpoint.pause?.phase).toBe("plan");
+  const callsBeforeResume = fx.faux.state.callCount;
+  expect(callsBeforeResume).toBe(2);
+
+  // The explicit resume act clears the pause; the next drive re-runs the plan
+  // stage for real and proceeds past it into code and review.
+  fx.faux.setResponses([
+    ...governedPlanTurn(),
+    fauxAssistantMessage("coded X"),
+    fauxAssistantMessage(fauxToolCall(SUBMIT_VERDICT_TOOL_NAME, approve)),
+    fauxAssistantMessage("review complete"),
+  ]);
+  const resumedSession = createWorkflowSession(pipeline);
+  const resumed = new RunCoordinator(resumedSession, resumedSession.projectStore, {
+    runId: "drive-plan-resume",
+    task: pipeline.task,
+    resumeExisting: true,
+  });
+  resumed.resumeStage({ source: "operator", action: "retry" });
+  expect(resumed.checkpoint.pause).toBeUndefined();
+  const result = await driveWorkflow({
+    session: resumedSession,
+    ledgerSink,
+    auto: true,
+    input: Readable.from(""),
+    output: new Capture(),
+    error: new Capture(),
+    coordinator: resumed,
+  });
+  expect(resumed.checkpoint.pause).toBeUndefined();
+  expect(result.approved).toBe(true);
+  expect(result.stageMetrics.filter((s) => s.stage === "plan")).toHaveLength(1);
+  expect(fx.faux.state.callCount).toBeGreaterThan(callsBeforeResume);
 });
 
 test("an interrupted coordinator without a pause can be reopened and driven", async () => {

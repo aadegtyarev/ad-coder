@@ -7,6 +7,7 @@ import {
   BackgroundRunManager,
   MIN_BACKGROUND_EVENT_PAGE_BYTES,
   RESUME_PIPELINE_DETAIL,
+  RESUME_PIPELINE_NO_RAISE_DETAIL,
 } from "../src/orchestration/background-runs";
 import type { RunPipelineResult } from "../src/orchestration/orchestrator";
 import { PipelinePauseError } from "../src/orchestration/types";
@@ -657,4 +658,48 @@ test("a paused run names a recovery the operator can actually perform", () => {
   // tries them first -- which is exactly what happened when this was found.
   expect(detail).toContain("background` has no resume action");
   expect(detail).toContain("control resume` does not read background runs");
+});
+
+test("a non-ceiling resumable pause reports recovery without the ceiling raise wording", async () => {
+  // The raise wording was written for the stage-ceiling class, but the
+  // coordinator pauses on more classes than that: a run paused
+  // `plan_not_submitted` (issue #315's resumable class) needs an explicit
+  // resume act and OUGHT to resume with its original task -- no ceiling raise
+  // is needed, and the raise wording sends the operator hunting for raise
+  // parameters the fix never uses. The ceiling wording stays for the ceiling
+  // codes, and the plain route wording stays for the pause-less paths
+  // (timed_out, abandoned).
+  const start = async (code: string, extra = {}) => {
+    const execute = async (_task: string, runId: string) => {
+      throw new PipelinePauseError(
+        runId,
+        {
+          phase: "plan",
+          code,
+          action: "resume the plan explicitly",
+          ...extra,
+        },
+        { steps: 1, totalCost: 0.02 },
+      );
+    };
+    const manager = new BackgroundRunManager(execute, {});
+    const { runId } = manager.start("resume detail");
+    await waitUntil(() => manager.status(runId).lifecycle === "paused");
+    const status = manager.status(runId);
+    await manager.close();
+    return status;
+  };
+
+  // A plan_not_submitted pause resumes with the original task: no raise needed.
+  const planPaused = await start("plan_not_submitted");
+  expect(planPaused.recovery).toBe("resume_pipeline");
+  expect(planPaused.recoveryDetail).toBe(RESUME_PIPELINE_NO_RAISE_DETAIL);
+  expect(planPaused.recoveryDetail).not.toContain("raising the exhausted ceiling");
+
+  // A ceiling pause keeps the raise wording verbatim.
+  const limited = await start("stage_limit", { limitReason: "cost", limit: 0.1 });
+  expect(limited.recoveryDetail).toBe(RESUME_PIPELINE_DETAIL);
+  expect(limited.recoveryDetail).toContain("raising the exhausted ceiling");
+  const failed = await start("stage_failed");
+  expect(failed.recoveryDetail).toBe(RESUME_PIPELINE_DETAIL);
 });

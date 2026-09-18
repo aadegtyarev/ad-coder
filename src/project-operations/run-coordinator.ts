@@ -203,6 +203,30 @@ function validateContractText(text: unknown, id: string): string {
   return text;
 }
 
+/**
+ * The pause codes an explicit operator/host act may clear, shared by every
+ * front that implements such an act (the orchestrator's `resume_pipeline`, the
+ * CLI's `drive --resume-run`). `resumeStage` below is the authority: this table
+ * MUST list exactly the codes its guard accepts from source `operator` or
+ * `host_config`, or a front would clear a pause the coordinator refuses to
+ * resume -- or refuse one it accepts. The table test in
+ * test/project-operations.test.ts drives both sides and fails if they drift.
+ */
+export const PAUSES_CLEARED_BY_AN_EXPLICIT_ACT = [
+  "stage_limit",
+  "stage_failed",
+  "provider_rejected",
+  "interrupted",
+  "review_not_run",
+  "plan_not_submitted",
+] as const;
+
+export function clearsOnExplicitAct(code: string | undefined): boolean {
+  return (
+    code !== undefined && (PAUSES_CLEARED_BY_AN_EXPLICIT_ACT as readonly string[]).includes(code)
+  );
+}
+
 /** Deterministic, non-model owner of workflow progress and project closeout. */
 export class RunCoordinator {
   private persisted: VersionedState<RunCheckpoint>;

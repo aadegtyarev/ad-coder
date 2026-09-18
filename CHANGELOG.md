@@ -13,6 +13,25 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+### Fixed
+- **The chat front's `resume_pipeline` no longer clears only the stage ceiling
+  pauses** (issue #315's resumable class). An explicit resume act -- the
+  orchestrator's `resume_pipeline` tool, the only working resume route per
+  `RESUME_PIPELINE_DETAIL`, and the CLI's `drive --resume-run` -- cleared only
+  `stage_limit` and `stage_failed`, so a `plan_not_submitted` pause could never
+  actually be resumed: a live resume returned the same pause instantly with
+  zero planner invocations and an untouched checkpoint.
+
+  Observed live: run `e4ccfbdb-37b1-47bd-8bc3-3d5e6ac5372f`, 2026-09-18. The run
+  paused with `action: "...resume the plan explicitly"`, the operator did
+  exactly that, and the returned status carried the same pause unchanged.
+
+  Now an explicit resume act clears every pause `resumeStage` accepts from an
+  operator/host source, on both fronts. The shared table
+  (`PAUSES_CLEARED_BY_AN_EXPLICIT_ACT` in run-coordinator.ts) is the single
+  source of truth, with a drift-alarm test so the table and the guard cannot
+  diverge again.
+
 ## [0.63.0] - 2026-09-18
 
 ### Added

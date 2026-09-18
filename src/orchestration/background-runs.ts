@@ -1,6 +1,7 @@
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { clearsOnExplicitAct } from "../project-operations/run-coordinator";
 import { ProjectStore } from "../project-store/project-store";
 import { ProjectStoreError } from "../project-store/types";
 import type { RunPipelineResult, StepCost } from "./orchestrator";
@@ -57,6 +58,27 @@ export type BackgroundRunNoticeConsumer = (notice: BackgroundRunNotice) => void 
  */
 export const RESUME_PIPELINE_DETAIL =
   "open `ad-coder console --target-dir <dir>` and ask the orchestrator to resume this run id with resume_pipeline, raising the exhausted ceiling; `background` has no resume action and `control resume` does not read background runs";
+
+/**
+ * Same route, minus the ceiling framing: a run paused on a NON-ceiling
+ * resumable pause resumes with its original task the way it paused, and a
+ * raised ceiling is neither needed nor there to find. Sending an operator
+ * hunting for raise parameters for a pause that needs only "resume it" reads
+ * as guidance, wastes their first move. The ceiling wording stays verbatim for
+ * `stage_limit`/`stage_failed` and the pause-less paths (timed_out, abandoned).
+ */
+export const RESUME_PIPELINE_NO_RAISE_DETAIL =
+  "open `ad-coder console --target-dir <dir>` and ask the orchestrator to resume this run id with resume_pipeline; a resumable stage pause resumes with its original task and needs no ceiling raise; `background` has no resume action and `control resume` does not read background runs";
+
+/** The recovery wording a paused/attention status actually owes the operator. */
+function resumeRecoveryDetail(pause: BackgroundRunPause | undefined): string {
+  return pause !== undefined &&
+    clearsOnExplicitAct(pause.code) &&
+    pause.code !== "stage_limit" &&
+    pause.code !== "stage_failed"
+    ? RESUME_PIPELINE_NO_RAISE_DETAIL
+    : RESUME_PIPELINE_DETAIL;
+}
 export interface BackgroundRunStatus {
   runId: string;
   lifecycle: BackgroundLifecycle;
@@ -584,7 +606,7 @@ export class BackgroundRunManager {
           : "wait",
       ...(!isTerminal(e.lifecycle) &&
       (e.lifecycle === "operator_attention" || e.lifecycle === "paused")
-        ? { recoveryDetail: RESUME_PIPELINE_DETAIL }
+        ? { recoveryDetail: resumeRecoveryDetail(e.pause) }
         : {}),
     };
   }

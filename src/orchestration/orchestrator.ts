@@ -19,7 +19,7 @@ import { StageCloseoutError, StageLimitError } from "../orchestration/stage-limi
 import type { ProfileRole } from "../profiles/types";
 import { PROFILE_ROLES } from "../profiles/validate";
 import { ProjectOperationsError } from "../project-operations/errors";
-import { RunCoordinator } from "../project-operations/run-coordinator";
+import { clearsOnExplicitAct, RunCoordinator } from "../project-operations/run-coordinator";
 import type { Role } from "../role";
 import { defineRole } from "../role";
 import {
@@ -380,11 +380,12 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         ? {}
         : { runId: resumeRunId, ...(createWithRunId ? {} : { resumeExisting: true }) }),
     });
-    if (
-      resumeRunId !== undefined &&
-      (runCoordinator.checkpoint.pause?.code === "stage_limit" ||
-        runCoordinator.checkpoint.pause?.code === "stage_failed")
-    )
+    // An explicit resume act clears every pause `resumeStage` accepts from a
+    // host/operator source: the act itself is the operator instruction to try
+    // the paused stage again (issue #315's resumable `plan_not_submitted`
+    // included). `stage_limit` stays raise-aware inside `resumeStage` -- an
+    // unchanged ceiling still refuses there.
+    if (resumeRunId !== undefined && clearsOnExplicitAct(runCoordinator.checkpoint.pause?.code))
       runCoordinator.resumeStage({ source: "host_config", action: "retry" });
     const perStep: StepCost[] = [];
     let costCursor = sink.records().length;
