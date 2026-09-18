@@ -13,6 +13,16 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.63.0] - 2026-09-18
+
+### Added
+- Stage closeout is published structurally (issue #327): `StageLimitController.closeout()`
+  relays the already-recorded closeout reserve as a `StageCloseoutFact`
+  (`{ code, reason, detail }`), `runRole` results, pipeline stage metrics (status
+  `"closed_out"`) and the standalone CLI carry it, and an honest reserve exhaustion
+  in the standalone reviewer exits 0 with a stderr notice naming the reason.
+  Delegated conversations stay unwired until issue #328.
+
 ## [0.62.0] - 2026-09-17
 
 ### Changed

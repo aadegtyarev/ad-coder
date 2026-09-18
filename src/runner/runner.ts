@@ -32,6 +32,7 @@ import {
 } from "../observability/tool-activity";
 import {
   projectRemainingStageBudget,
+  type StageCloseoutFact,
   type StageLimitController,
   StageLimitError,
 } from "../orchestration/stage-limits";
@@ -153,6 +154,11 @@ export interface RunRoleResult {
   droppedActivityEvents?: number;
   result: OperationResultRecord;
   observations: RoleObservations;
+  /**
+   * The stage closeout reserve the role entered before settling, when it did
+   * (issue #327); absent from normal completions.
+   */
+  stageCloseout?: StageCloseoutFact;
 }
 
 export interface RoleObservations {
@@ -895,6 +901,8 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
     }
     const diffBytes = await measureSafeGitDiffBytes(absTargetDir);
     params.stageLimitController?.assertActive();
+    // Relay the recorded closeout when the stage entered a reserve (issue #327).
+    const stageCloseout = stageLimitController?.closeout();
     const totalInput = boundedUsageInteger(usage.freshInput + usage.cachedInput, "total input");
     return {
       runId,
@@ -902,6 +910,7 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
       droppedRecords: ledger.droppedRecords,
       droppedActivityEvents: activityChannel.droppedCount,
       result,
+      ...(stageCloseout !== undefined && { stageCloseout }),
       observations: {
         provider: publicMetricLabel(params.model.provider),
         model: publicMetricLabel(params.model.id),

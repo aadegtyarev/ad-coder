@@ -330,3 +330,48 @@ test("input closeout prediction survives controller reconstruction", async () =>
   expect(resumedTools).toBe(0);
   expect(resumed.snapshot()).toMatchObject({ inputTokens: 200, lastInputTokens: 100 });
 });
+
+test("closeout() publishes undefined until a reserve is entered", () => {
+  expect(new StageLimitController().closeout()).toBeUndefined();
+});
+
+test("closeout() relays the recorded tool-turn closeout", () => {
+  const controller = new StageLimitController({
+    maxToolTurns: 2,
+    finalResponseReserveToolTurns: 1,
+  });
+  controller.admitToolTurn();
+  expect(controller.closeout()).toBeUndefined();
+  try {
+    controller.admitToolTurn();
+    throw new Error("expected closeout reserve");
+  } catch {
+    // The thrown rejection is asserted by the existing reserve tests.
+  }
+  expect(controller.closeout()).toEqual({
+    code: "stage_closeout",
+    reason: "tool_turns",
+    detail: "1/2 tool turns used, 1 reserved",
+  });
+});
+
+test("closeout() relays a model-boundary closeout detected inside wrap", async () => {
+  const message = fauxAssistantMessage("ok");
+  message.usage.input = 100;
+  message.usage.cacheRead = 0;
+  const models = { completeSimple: async () => message } as unknown as Models;
+  const controller = new StageLimitController({
+    maxInputTokens: 300,
+    finalResponseReserveInputTokens: 100,
+  });
+  const limited = controller.wrap(models);
+  const context = { messages: [], tools: [{}] } as never;
+  await limited.completeSimple({} as never, context);
+  expect(controller.closeout()).toBeUndefined();
+  await limited.completeSimple({} as never, context);
+  expect(controller.closeout()).toEqual({
+    code: "stage_closeout",
+    reason: "input",
+    detail: "100/300 input tokens used, 100 reserved",
+  });
+});

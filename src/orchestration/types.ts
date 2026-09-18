@@ -19,7 +19,7 @@ import type { ResolvedRegistry } from "../registry/types";
 import type { Role } from "../role";
 import type { Tool } from "../runner/tool";
 import type { SessionLimitController } from "../session-limits";
-import type { StageLimitReason, StageLimits } from "./stage-limits";
+import type { StageCloseoutFact, StageLimitReason, StageLimits } from "./stage-limits";
 
 /**
  * The two verdicts a reviewer round can settle on.
@@ -434,8 +434,15 @@ export interface PipelineResult {
 
 export interface PipelineStageMetrics {
   stage: string;
-  /** Paused attempts remain visible so terminal economics include failed work. */
-  status?: "complete" | "paused";
+  /**
+   * Paused attempts remain visible so terminal economics include failed work.
+   * "closed_out" (issue #327) marks a stage that settled its final response
+   * after entering the closeout reserve -- neither an ordinary completion nor
+   * a paused attempt.
+   */
+  status?: "complete" | "paused" | "closed_out";
+  /** Structurally published closeout; present only when a reserve was entered. */
+  stageCloseout?: StageCloseoutFact;
   /** Canonical public labels; `unknown` when an identifier is unsafe or unavailable. */
   provider?: string;
   model?: string;

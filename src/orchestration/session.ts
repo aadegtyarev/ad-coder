@@ -603,11 +603,18 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     if (readable === undefined) throw new Error("failed to reopen transient role session");
     try {
       const observed = run.observations;
+      // A stage that entered its closeout reserve is never an ordinary
+      // "complete": mark it closed_out and relay the fact (issue #327).
+      const closeout = run.stageCloseout;
       return {
         text: await extractFinalText(readable, BACKGROUND_CONTEXT),
         followUps: [],
         metrics: {
           stage: step,
+          ...(closeout !== undefined && {
+            status: "closed_out" as const,
+            stageCloseout: closeout,
+          }),
           provider: observed?.provider ?? "unknown",
           model: observed?.model ?? "unknown",
           thinkingLevel: observed?.thinkingLevel ?? role.thinkingLevel ?? "unknown",

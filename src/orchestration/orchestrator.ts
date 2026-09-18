@@ -14,6 +14,7 @@ import type { MemoryLedgerSink } from "../ledger/ledger";
 import { FileLedgerSink, MemoryLedgerSink as MemoryLedgerSinkImpl } from "../ledger/ledger";
 import type { ToolActivityConsumer, ToolActivitySnapshot } from "../observability/tool-activity";
 import { ToolActivityChannel } from "../observability/tool-activity";
+import type { StageCloseoutFact } from "../orchestration/stage-limits";
 import { StageCloseoutError, StageLimitError } from "../orchestration/stage-limits";
 import type { ProfileRole } from "../profiles/types";
 import { PROFILE_ROLES } from "../profiles/validate";
@@ -87,6 +88,11 @@ export interface DelegatedRoleResult {
   role: DelegatableRoleName;
   text: string;
   cost: number;
+  /**
+   * Stage closeout relay (issue #327). Stays absent for delegated
+   * conversations until issue #328 wires per-stage ceilings there.
+   */
+  stageCloseout?: StageCloseoutFact;
 }
 
 /**
@@ -840,11 +846,17 @@ Only the roles named above are callable; calling a "not configured" role fails w
           params.task,
           params.complexity,
         );
+        // Do not claim "complete" for a stage that entered its closeout
+        // reserve; the reason rides in the text the model reads (issue #327).
+        const closeout = result.stageCloseout;
         return {
           content: [
             {
               type: "text",
-              text: `${result.role} complete (cost ${result.cost})\n${result.text || "(no text)"}`,
+              text:
+                closeout === undefined
+                  ? `${result.role} complete (cost ${result.cost})\n${result.text || "(no text)"}`
+                  : `${result.role} closed out early (cost ${result.cost}) stage_closeout reason=${closeout.reason} detail=${closeout.detail}\n${result.text || "(no text)"}`,
             },
           ],
           details: undefined,
