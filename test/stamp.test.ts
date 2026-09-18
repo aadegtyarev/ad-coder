@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { LedgerRecord } from "../src/ledger/types";
+import { stampBodyCheckErrors, stampDeliveryText } from "../src/stamp/cli";
 import { buildDeliverySignature, renderDeliverySignature } from "../src/stamp/delivery-signature";
 import {
   checkReviewStamps,
@@ -234,6 +235,66 @@ test("the settle hook stamps an approved run and refuses to certify a review-les
   });
   expect(skipped.recorded).toBe(false);
   expect(skipped.skippedBecause).toContain("without a review round");
+});
+
+test("body-check passes when the body carries the freshly rendered delivery block", () => {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-body-check-")));
+  try {
+    const ledger = path.join(dir, "ledger.jsonl");
+    fs.writeFileSync(
+      ledger,
+      `${JSON.stringify(record({ ts: 1, role: "coder", provider: "vendor", model: "big" }))}\n` +
+        `${JSON.stringify(record({ ts: 2, role: "reviewer", provider: "vendor", model: "small" }))}\n`,
+    );
+    const body = path.join(dir, "body.md");
+    const block = stampDeliveryText(dir, [ledger]);
+    fs.writeFileSync(body, `## Delivery\n\nSome prose around it.\n\n${block}End.\n`);
+    expect(stampBodyCheckErrors(body, dir, [ledger])).toEqual([]);
+    // One trailing-newline difference around the block is tolerated.
+    fs.writeFileSync(body, `pre\n${block.trimEnd()}\npost\n`);
+    expect(stampBodyCheckErrors(body, dir, [ledger])).toEqual([]);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("body-check fails with the absent error when the body carries no block", () => {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-body-absent-")));
+  try {
+    const ledger = path.join(dir, "ledger.jsonl");
+    fs.writeFileSync(ledger, `${JSON.stringify(record({ ts: 1 }))}\n`);
+    const body = path.join(dir, "body.md");
+    fs.writeFileSync(body, "## Delivery\n\nNo cost block here at all.\n");
+    const errors = stampBodyCheckErrors(body, dir, [ledger]);
+    expect(errors.length).toBe(1);
+    expect(errors[0]).toContain("the generated delivery block is absent");
+    expect(errors[0]).toContain(body);
+    expect(errors[0]).toContain("ad-coder stamp delivery");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("body-check fails with the stale error when the body block differs from the ledger", () => {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-body-stale-")));
+  try {
+    const ledger = path.join(dir, "ledger.jsonl");
+    fs.writeFileSync(ledger, `${JSON.stringify(record({ ts: 1 }))}\n`);
+    const body = path.join(dir, "body.md");
+    // A block-shaped `runs ` header whose totals no longer match the ledger:
+    // the classic stale paste after more ledger lines landed.
+    fs.writeFileSync(
+      body,
+      "runs run-1 | calls=99 | cost=$999.000000 | tokens fresh=0 cached=0 out=0\n" +
+        "coder     vendor/small                     calls=1   cost=$0.010000\n",
+    );
+    const errors = stampBodyCheckErrors(body, dir, [ledger]);
+    expect(errors.length).toBe(1);
+    expect(errors[0]).toContain("the delivery block is stale");
+    expect(errors[0]).toContain("ad-coder stamp delivery");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 function settledResult() {

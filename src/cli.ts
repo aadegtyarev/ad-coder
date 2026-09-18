@@ -132,7 +132,7 @@ import {
   SkillResolutionError,
   skillInventory,
 } from "./skills/resolver";
-import { stampCheckErrors, stampDeliveryText } from "./stamp/cli";
+import { stampBodyCheckErrors, stampCheckErrors, stampDeliveryText } from "./stamp/cli";
 import { recordReviewStampFromResult } from "./stamp/record-review-stamp";
 import { UpdateError, updateAdCoder } from "./update/updater";
 import {
@@ -1269,7 +1269,9 @@ function listDefaultLedgerFiles(): string[] {
  *
  * `stamp delivery` renders the compact signature block straight from the
  * ledger the run wrote -- a projection, never a model's summary of its own
- * cost. `stamp check` is the review-stamp gate: it fails loudly when the
+ * cost. `stamp body-check` is the PR-body gate: it fails loudly when the pull-
+ * request body does not carry the freshly rendered delivery block verbatim
+ * (issue #335). `stamp check` is the review-stamp gate: it fails loudly when the
  * newest stamp is missing, malformed, or names a tree digest no longer
  * matching the current tree (src/stamp/review-stamp.ts). Both are read-only;
  * the stamp WRITER is the run-finish hook, not a CLI hand-write path.
@@ -1279,12 +1281,22 @@ function listDefaultLedgerFiles(): string[] {
  */
 function stampCommand(positionals: string[], flags: Record<string, string | undefined>): void {
   const action = positionals[1];
-  if (action !== "delivery" && action !== "check")
-    fail("the stamp command takes delivery or check");
+  if (action !== "delivery" && action !== "check" && action !== "body-check")
+    fail("the stamp command takes delivery, check, or body-check");
   const targetDir = resolveTargetDir(flags["--target-dir"] ?? process.cwd());
   if (action === "delivery") {
     const fileArgs = positionals.slice(2);
     process.stdout.write(`${stampDeliveryText(targetDir, fileArgs)}\n`);
+    return;
+  }
+  if (action === "body-check") {
+    const bodyPath = positionals[2];
+    if (bodyPath === undefined)
+      fail("stamp body-check requires a pull-request body file path as the first argument");
+    const fileArgs = positionals.slice(3);
+    const errors = stampBodyCheckErrors(bodyPath, targetDir, fileArgs);
+    if (errors.length > 0) fail(errors.join("\n"));
+    process.stdout.write("stamp body-check: the delivery block is present and fresh\n");
     return;
   }
   if (positionals[2] !== undefined) fail("stamp check accepts no path arguments");
@@ -3339,13 +3351,14 @@ const COMMANDS: readonly CommandDefinition[] = [
       "Delivery paperwork: the ledger-derived signature, and the review-stamp gate check.",
     positionals: [
       {
-        name: "<delivery|check>",
-        description: "delivery renders the PR block; check is the gate.",
+        name: "<delivery|check|body-check>",
+        description:
+          "delivery renders the PR block; check is the gate; body-check gates the PR body.",
       },
       {
         name: "[files...]",
         description:
-          "Ledger .jsonl paths for delivery; with none, every .ad-coder/ledger/*.jsonl is read.",
+          "Ledger .jsonl paths for delivery; with none, every .ad-coder/ledger/*.jsonl is read. For body-check, the FIRST positional is the pull-request body file, the rest are ledger paths.",
       },
     ],
     options: [
