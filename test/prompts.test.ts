@@ -44,6 +44,20 @@ test("Planner prompt bounds reconnaissance without hiding evidence gaps", () => 
   expect(prompt).not.toContain("`rg`");
 });
 
+test("the Reviewer prompt bounds the read to the change (issue #352)", () => {
+  // A round that surveyed the repository spent 792569 input tokens and closed
+  // out at the stage ceiling with no verdict; the same tree, read as a diff,
+  // took 44287 and settled. The method belongs in the role's own prompt, so no
+  // caller has to brief it.
+  const prompt = flat(resolvePrompt("reviewer"));
+  expect(prompt).toContain("Read the change as a diff, not as a repository");
+  expect(prompt).toContain("Surveying the rest of the repository is not diligence");
+  expect(prompt).toContain("the base the task names, `main` when it names none");
+  // The bound does not replace the contracts bullet: the changed surface still
+  // decides which contracts are read.
+  expect(prompt).toContain("every enforceable contract governing the changed surface");
+});
+
 test("the Planner prompt names the channel the coder actually reads", () => {
   // session.ts sets `planSummary` from the planner's ASSISTANT TEXT, and that
   // is what composeCoderPrompt hands the coder -- submit_plan's schema has no
