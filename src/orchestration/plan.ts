@@ -145,10 +145,16 @@ function parseSurfaceAnalysis(
     if (typeof item !== "object" || item === null || Array.isArray(item))
       return bad(`surfaces[${index}] is not an object`);
     const entry = item as Record<string, unknown>;
-    for (const key of ["id", "name", "rationale"] as const) {
-      if (!nonEmptyBounded(entry[key], maxTextBytes))
-        return bad(`surfaces[${index}].${key} must be a non-empty string`);
-    }
+    // Three separate sentences, one per field, rather than a loop over the three
+    // key names: `nonEmptyBounded` is a type predicate, and only a check on the
+    // literal path narrows `entry.id` to a string. A loop compiles to `unknown`
+    // and `tsc` refuses the assignment below -- which is how CI caught it.
+    if (!nonEmptyBounded(entry.id, maxTextBytes))
+      return bad(`surfaces[${index}].id must be a non-empty string`);
+    if (!nonEmptyBounded(entry.name, maxTextBytes))
+      return bad(`surfaces[${index}].name must be a non-empty string`);
+    if (!nonEmptyBounded(entry.rationale, maxTextBytes))
+      return bad(`surfaces[${index}].rationale must be a non-empty string`);
     return { id: entry.id, name: entry.name, rationale: entry.rationale };
   });
   if (new Set(surfaces.map(({ id }) => id)).size !== surfaces.length)
