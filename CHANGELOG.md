@@ -26,6 +26,9 @@ enforces that dated release headings go in non-increasing date order
   changed, captured gates, the cost block pasted verbatim) so the shape is
   present before prose is written. CI wiring follows #295's dependency, not
   today's patch; the target-repo scope rule still applies.
+- The CLI contract names that surface (`docs/contracts/cli.md`, 2026-09-18):
+  the stamp family's third read-only entry point, its arguments, and what makes
+  a body fail. A review found the surface shipped without it.
 
 ## [0.64.2] - 2026-09-18
 

@@ -70,3 +70,13 @@ Rules for ad-coder's command-line front. A violation is always blocking.
   working-tree digest — anything else fails loudly with the reason. Both
   surfaces are read-only by construction; the stamp WRITER is the run-finish
   hook (`src/stamp/record-review-stamp.ts`), not a CLI hand-write path.
+- 2026-09-18: `ad-coder stamp body-check <body.md> [files...]` is the stamp
+  family's third surface and the pull-request-body gate (issue #335). The FIRST
+  positional is the body file and the rest are ledger paths, read exactly as
+  `stamp delivery` reads them; the body must carry the delivery block as the
+  current ledger renders it, verbatim, and presence is that substring. A block
+  that is absent, or present but no longer equal to the fresh rendering, fails
+  with the body file named and the render command to re-run; a matching body
+  passes and nothing is written. It is read-only like its siblings, `ad-coder
+  stamp --help` states its arguments, and the shape a body carries is stated by
+  `.github/pull_request_template.md`.
