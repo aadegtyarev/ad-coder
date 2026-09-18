@@ -1,6 +1,6 @@
 {
   "name": "ad-coder",
-  "version": "0.64.0",
+  "version": "0.64.1",
   "description": "A small, explicit multi-provider agent harness: roles over pi-agent-core, per-role/step cost ledger, in-house context management, and a plan->[security]->code<->review pipeline.",
   "license": "MIT",
   "author": "Alexander Degtyarev <adegtyarev.ap@gmail.com>",
@@ -37,6 +37,7 @@
     "calibration:materialize": "bun run scripts/calibration-materialize.ts",
     "calibration:check-pipeline": "bun run evals/scorers/pipeline-repair-regressions.ts",
     "smoke:artifact": "bun run scripts/artifact-smoke.ts",
+    "setup:hooks": "git config core.hooksPath scripts/hooks",
     "format": "biome format --write src test",
     "lint": "biome lint src test",
     "start": "bun run src/cli.ts",

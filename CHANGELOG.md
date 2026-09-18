@@ -13,6 +13,21 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.64.1] - 2026-09-18
+
+### Added
+- **The branch rule is enforced at the boundary, not only advised (issue #334).**
+  A `pre-commit` hook in `scripts/hooks/pre-commit` rejects a work commit made
+  directly on the default branch with the reason and the next command
+  (`git switch -c <feature-branch> && git commit`); merge commits stay allowed
+  so a reviewed PR still lands, and `git config hooks.defaultbranch` names an
+  unusual base. The default branch resolves from that override, then
+  origin/HEAD, then both git defaults fail closed. Install with
+  `bun run setup:hooks` (`git config core.hooksPath scripts/hooks`).
+
+  Prompt-first was landed by #338 (orchestrator prompt, contract); this adds
+  the mechanism a model cannot pass at `git commit` time.
+
 ## [0.64.0] - 2026-09-18
 
 ### Fixed
