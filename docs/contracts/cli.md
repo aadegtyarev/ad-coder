@@ -80,3 +80,25 @@ Rules for ad-coder's command-line front. A violation is always blocking.
   passes and nothing is written. It is read-only like its siblings, `ad-coder
   stamp --help` states its arguments, and the shape a body carries is stated by
   `.github/pull_request_template.md`.
+- 2026-09-18: `ad-coder console --resume [<run-id>]` continues a previous
+  orchestrator session after a restart. The id is validated (`A-Za-z0-9_-`,
+  1..64) BEFORE any path is built from it; the explicit form then requires BOTH
+  the run's ledger `.ad-coder/ledger/<id>.jsonl` and its durable session under
+  `.ad-coder/sessions/` to exist — a resume never creates a session or a ledger
+  file, so an unknown or malformed id fails as a typed error naming the id and
+  the recovery action. The bare form discovers the most recent ORCHESTRATOR
+  session: a ledger qualifies iff it carries at least one record with role
+  "orchestrator" AND step `turn:N` — the shape only the conversation front's
+  own turns write (a standalone `role` run can write role "orchestrator" but
+  with step "run"; drive/pipeline ledgers only ever carry stage roles; and the
+  rule is ANY record, not the first, because a delegated `run_role` row can
+  settle before the front's first turn row) — and the newest such ledger by
+  mtime wins, with role/drive ledgers skipped even when newer. Either form
+  seeds the front's readable sink from the resumed ledger so `show_cost` is
+  cumulative across the restart; the seed is READ-ONLY on the ledger file and
+  never replays rows back onto the append-only mirror (seeding through write()
+  would duplicate every row on disk), and rows that cannot be read back
+  (truncated, corrupt, oversized) degrade non-fatally with a stderr note. The
+  banner still names the same run id and ledger file for a resumed session.
+  Without the flag the default flow is byte-identical: a fresh session every
+  start.

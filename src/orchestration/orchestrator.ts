@@ -1241,6 +1241,13 @@ export type OrchestratorConfig = Omit<ResolvePipelineConfigOptions, "task"> & {
    * (or to resume onto the same file) supplies it; otherwise one is minted.
    */
   runId?: string;
+  /**
+   * Ledger rows a resumed front replays into its readable sink's cost view,
+   * read back from the ledger file a previous process wrote. Seeding fills
+   * only the in-memory view (the rows are already on the append-only mirror
+   * file); absent means a fresh session with an empty cost view.
+   */
+  seedLedgerRecords?: readonly import("../ledger/types").LedgerRecord[];
   /** Explicit lazy skills for this managed conversation; absent means none. */
   selectedSkills?: readonly string[];
   /** Explicit off: no catalogue, no loader, no appendix for any role. */
@@ -1294,6 +1301,11 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
   const sink = new MemoryLedgerSinkImpl(
     new FileLedgerSink(ledgerPath, config.projectStoreConfig?.byteLimits?.jsonlRecord ?? 0),
   );
+  // A resumed front replays prior rows into its OWN READ VIEW only: the mirror
+  // file already holds them (append-only), so seeding through write() would
+  // duplicate history on disk. show_cost and the per-step cost arithmetic sum
+  // this view, which is what makes a resumed session's cost cumulative.
+  if (config.seedLedgerRecords !== undefined) sink.seed(config.seedLedgerRecords);
   const ownerId = config.backgroundOwnerId ?? crypto.randomUUID();
   const controller = new SessionLimitController(config.sessionLimits);
   // ONE activity channel for the whole orchestrated session. A conversation

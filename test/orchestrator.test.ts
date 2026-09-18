@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
 import type { Api, CredentialStore, Model } from "@earendil-works/pi-ai";
 import {
   createModels,
@@ -10,7 +11,9 @@ import {
   fauxToolCall,
 } from "@earendil-works/pi-ai";
 import type { FauxProviderHandle } from "@earendil-works/pi-ai/providers/faux";
+import { startConversation as startConversationImpl } from "../src/conversation/conversation";
 import { MemoryLedgerSink } from "../src/ledger/ledger";
+import type { LedgerRecord } from "../src/ledger/types";
 import { ToolActivityChannel } from "../src/observability/tool-activity";
 import {
   buildControlPlaneTools,
@@ -1923,4 +1926,253 @@ test("an orchestrated session names its ledger file and delegated rows land in i
   expect(rows.map(({ step }) => step)).toEqual(["turn:1", "role:planner"]);
   // What the bench asserts on: the delegation is provable from disk alone.
   expect(rows.some(({ role, step }) => role === "planner" && step === "role:planner")).toBe(true);
+});
+
+test("without --resume the orchestrator still mints a fresh session per start", async () => {
+  // The default flow is byte-identical: no run id reaches the front, so every
+  // start mints its own id, its own durable session and its own ledger file.
+  // This is the shape `--resume` must never disturb.
+  const targetDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-fresh-")));
+  const credentials: CredentialStore = {
+    read: async () => ({ type: "oauth", access: "a", refresh: "r", expires: 0 }),
+    list: async () => [],
+    modify: async (_providerId, fn) => fn(undefined),
+    delete: async () => {},
+  };
+  const common = {
+    targetDir,
+    env: () => undefined,
+    warn: () => {},
+    credentials,
+    enabledWorkflows: [],
+    // The REAL conversation, turn-free: minting a durable session is the
+    // behavior a second start must not disturb, so the fake that only returns
+    // a session object cannot stand in here.
+    startConversation: async (
+      config: import("../src/conversation/conversation").ConversationConfig,
+    ) => startConversationImpl(config),
+  };
+  const first = await startOrchestrator({ ...common });
+  const second = await startOrchestrator({ ...common });
+  await first.close();
+  await second.close();
+
+  // The orchestrator reports the ledger paths it minted; the durable sessions
+  // carry the same ids (conversation.ts reuses the run id for the session). A
+  // turn-free start writes no rows, and the sink creates its file lazily, so
+  // the ledger directory may not exist -- the MINTED path is the observable.
+  expect(first.ledgerPath).toBeDefined();
+  expect(second.ledgerPath).toBeDefined();
+  expect(first.ledgerPath).not.toBe(second.ledgerPath);
+  const mintedIds = [first.ledgerPath, second.ledgerPath].map((p) =>
+    path.basename(p as string).replace(".jsonl", ""),
+  );
+  const store = new ProjectStore(targetDir);
+  const sessions = (await store.listSessions()).map(({ id }) => id).sort();
+  expect(sessions).toEqual([...mintedIds].sort());
+  await store.close();
+});
+
+test("--resume's run id reopens the durable session with prior history visible", async () => {
+  // Process one (a previous console): a conversation over the run's durable
+  // session wrote history. Built with a faux model exactly the way
+  // test/conversation.test.ts drives a real front, so the prior entries are
+  // genuine session entries, not fixture data.
+  const targetDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-reopen-")));
+  const priorFaux = fauxProvider({
+    provider: "faux",
+    models: [{ id: "faux-1", contextWindow: CONTEXT_WINDOW }],
+  });
+  const priorModels = createModels();
+  priorModels.setProvider(priorFaux.provider);
+  const priorModel = priorFaux.getModel() as Model<Api>;
+  const priorRole = defineRole(
+    {
+      name: "orchestrator",
+      provider: "faux",
+      modelId: priorModel.id,
+      systemPrompt: "You orchestrate.",
+      cacheRetention: "none",
+      contextBudget: { ...BUDGET },
+    },
+    priorModel,
+  );
+  priorFaux.setResponses([fauxAssistantMessage("prior answer")]);
+  const previous = await startConversationImpl({
+    role: priorRole,
+    targetDir,
+    models: priorModels,
+    model: priorModel,
+    runId: "resumable-run",
+  });
+  await previous.step("prior question");
+  await previous.close();
+
+  // Process two (the resumed console): the SAME run id reaches the front's
+  // real startConversation, whose openOrCreateSession opens the existing
+  // durable session -- never a duplicate.
+  let frontRunId: string | undefined;
+  const credentials: CredentialStore = {
+    read: async () => ({ type: "oauth", access: "a", refresh: "r", expires: 0 }),
+    list: async () => [],
+    modify: async (_providerId, fn) => fn(undefined),
+    delete: async () => {},
+  };
+  const session = await startOrchestrator({
+    targetDir,
+    runId: "resumable-run",
+    env: () => undefined,
+    warn: () => {},
+    credentials,
+    enabledWorkflows: [],
+    startConversation: async (config) => {
+      frontRunId = config.runId;
+      return startConversationImpl(config);
+    },
+  });
+  await session.close();
+
+  expect(frontRunId).toBe("resumable-run");
+  const store = new ProjectStore(targetDir);
+  expect((await store.listSessions()).map(({ id }) => id)).toEqual(["resumable-run"]);
+  // The prior conversation's entries are in the REOPENED session -- history a
+  // post-restart turn would see.
+  const durable = await store.resumeSession("resumable-run");
+  const entries = await durable.findEntries({ type: "message" }, BACKGROUND_CONTEXT);
+  expect(entries.filter((entry) => entry.type === "message")).toHaveLength(2);
+  await durable.close(BACKGROUND_CONTEXT);
+  await store.close();
+});
+
+test("a resumed session's show_cost is cumulative over the seeded prior rows", async () => {
+  const targetDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-cost-")));
+  const credentials: CredentialStore = {
+    read: async () => ({ type: "oauth", access: "a", refresh: "r", expires: 0 }),
+    list: async () => [],
+    modify: async (_providerId, fn) => fn(undefined),
+    delete: async () => {},
+  };
+  const row = (role: string, step: string, total: number): LedgerRecord => ({
+    ts: 1_757_000_000_000,
+    runId: "costed-run",
+    lane: "main",
+    role,
+    step,
+    provider: "faux",
+    model: "faux-1",
+    stopReason: "stop",
+    usage: {
+      input: 10,
+      output: 5,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 15,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total },
+    },
+  });
+  let outerTools: Tool[] = [];
+  const session = await startOrchestrator({
+    targetDir,
+    runId: "costed-run",
+    env: () => undefined,
+    warn: () => {},
+    credentials,
+    // The core is what show_cost reads through: built exactly when the console
+    // enables the pipeline workflow.
+    workflowModules: [BUILT_IN_PIPELINE_WORKFLOW],
+    enabledWorkflows: [BUILT_IN_PIPELINE_WORKFLOW_NAME],
+    seedLedgerRecords: [row("orchestrator", "turn:1", 0.25), row("coder", "role:coder", 0.5)],
+    startConversation: async (config) => {
+      outerTools = config.tools ?? [];
+      return fakeConversation("outer");
+    },
+  });
+  const showCost = outerTools.find(({ name }) => name === SHOW_COST_TOOL_NAME) as Tool;
+  const text = await callTool(showCost, {});
+  await session.close();
+
+  // The restarted cost view sums the PRE-RESTART rows (0.25 + 0.5); no step
+  // ran through the pipeline, so the total is the seeds alone.
+  expect(text.startsWith("total cost: 0.75")).toBe(true);
+});
+
+test("a seeded readable sink replays prior rows without rewriting the mirror", async () => {
+  // The resume path reads the ledger a previous process wrote durably and
+  // hands the rows back so the restarted session's cost view starts where
+  // that run left off. Seeding must fill ONLY the in-memory view: the mirror
+  // file is append-only and already holds those rows, so seeding through
+  // write() would duplicate history on disk. Pinned here by byte-compare.
+  const targetDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-seed-")));
+  const credentials: CredentialStore = {
+    read: async () => ({ type: "oauth", access: "a", refresh: "r", expires: 0 }),
+    list: async () => [],
+    modify: async (_providerId, fn) => fn(undefined),
+    delete: async () => {},
+  };
+  const row = (role: string, step: string, total: number): LedgerRecord => ({
+    ts: 1_757_000_000_000,
+    runId: "seeded-run",
+    lane: "main",
+    role,
+    step,
+    provider: "faux",
+    model: "faux-1",
+    stopReason: "stop",
+    usage: {
+      input: 10,
+      output: 5,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 15,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total },
+    },
+  });
+  const seeded: LedgerRecord[] = [
+    row("orchestrator", "turn:1", 0.25),
+    row("coder", "role:coder", 0.5),
+  ];
+  let readBack: readonly LedgerRecord[] | undefined;
+  const ledgerPath = path.join(targetDir, ".ad-coder", "ledger", "seeded-run.jsonl");
+  fs.mkdirSync(path.dirname(ledgerPath), { recursive: true, mode: 0o700 });
+  // The real writer creates ledger files 0600; the sink refuses to append to
+  // anything looser, so the fixture does the same.
+  fs.writeFileSync(ledgerPath, `${seeded.map((r) => JSON.stringify(r)).join("\n")}\n`, {
+    mode: 0o600,
+  });
+  const before = fs.readFileSync(ledgerPath, "utf8");
+
+  const session = await startOrchestrator({
+    targetDir,
+    runId: "seeded-run",
+    env: () => undefined,
+    warn: () => {},
+    credentials,
+    enabledWorkflows: [],
+    seedLedgerRecords: seeded,
+    startConversation: async (config) => {
+      // startOrchestrator always hands the front a MemoryLedgerSink; the
+      // LedgerSink interface itself is write-only, so read back through the
+      // concrete type the orchestrator guarantees.
+      readBack = (config.ledgerSink as MemoryLedgerSink).records();
+      config.ledgerSink?.write(row("orchestrator", "turn:2", 0.25));
+      return fakeConversation("outer");
+    },
+  });
+  await session.close();
+
+  // The front's view is cumulative: both seeded rows plus its own new row.
+  expect(readBack?.length).toBe(3);
+  // The mirror gained only the genuinely new row: the seeded rows are on it
+  // exactly ONCE (they were there before the restart) and never replayed.
+  const after = fs.readFileSync(ledgerPath, "utf8");
+  const lines = after.split("\n").filter(Boolean);
+  expect(lines).toHaveLength(3);
+  expect(lines.map((l) => (JSON.parse(l) as { step: string }).step)).toEqual([
+    "turn:1",
+    "role:coder",
+    "turn:2",
+  ]);
+  // Byte-exact: the file is precisely what the previous run left plus the new
+  // row -- no duplicated seed, no rewrite.
+  expect(after).toBe(`${before}${JSON.stringify(row("orchestrator", "turn:2", 0.25))}\n`);
 });

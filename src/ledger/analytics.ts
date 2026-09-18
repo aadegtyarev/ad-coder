@@ -61,6 +61,12 @@ export interface LedgerFileStats {
   skippedLines: number;
 }
 
+/** One file's parsed records plus the same line-health accounting the report keeps. */
+export interface LedgerRecordsRead {
+  records: LedgerRecord[];
+  skippedLines: number;
+}
+
 /** The whole reading: one totals projection, per-role and per-model projections, file health. */
 export interface LedgerReport {
   files: LedgerFileStats[];
@@ -112,6 +118,37 @@ function isFiniteNumber(value: unknown): value is number {
 }
 
 /**
+ * Read one ledger JSONL file back into its records -- the same lenient parse
+ * `readLedgerFiles` aggregates, kept separate so a caller that needs the rows
+ * themselves (a resumed front seeding its readable sink from the ledger the
+ * previous process wrote) does not have to re-derive them from a report.
+ *
+ * A line longer than `maxRecordBytes` is skipped like an unparseable one and
+ * counted in `skippedLines` rather than loaded; 0 (the default) bounds
+ * nothing, matching the write-side sink where 0 also disables its limit.
+ */
+export function readLedgerRecords(filePath: string, maxRecordBytes = 0): LedgerRecordsRead {
+  const text = fs.readFileSync(filePath, "utf8");
+  const records: LedgerRecord[] = [];
+  let skippedLines = 0;
+  for (const line of text.split("\n")) {
+    if (maxRecordBytes > 0 && Buffer.byteLength(line, "utf8") > maxRecordBytes) {
+      // The row exists but cannot be trusted at this size; skipping it keeps
+      // the reader bounded and the read non-fatal.
+      skippedLines++;
+      continue;
+    }
+    const record = parseLedgerLine(line);
+    if (record === undefined) {
+      if (line.trim().length > 0) skippedLines++;
+      continue;
+    }
+    records.push(record);
+  }
+  return { records, skippedLines };
+}
+
+/**
  * Read one or more ledger JSONL files and derive the report.
  *
  * Files that cannot be opened raise immediately: an operator who spelled a
@@ -122,19 +159,9 @@ export function readLedgerFiles(paths: string[]): LedgerReport {
   const records: LedgerRecord[] = [];
   const files: LedgerFileStats[] = [];
   for (const filePath of paths) {
-    const text = fs.readFileSync(filePath, "utf8");
-    let recordsInFile = 0;
-    let skipped = 0;
-    for (const line of text.split("\n")) {
-      const record = parseLedgerLine(line);
-      if (record === undefined) {
-        if (line.trim().length > 0) skipped++;
-        continue;
-      }
-      recordsInFile++;
-      records.push(record);
-    }
-    files.push({ path: filePath, records: recordsInFile, skippedLines: skipped });
+    const read = readLedgerRecords(filePath);
+    records.push(...read.records);
+    files.push({ path: filePath, records: read.records.length, skippedLines: read.skippedLines });
   }
   return aggregateLedgerRecords(records, files);
 }

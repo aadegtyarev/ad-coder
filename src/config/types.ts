@@ -1,6 +1,3 @@
-import type { Complexity } from "../orchestration/types";
-import type { ProfileRole } from "../profiles/types";
-
 /**
  * The two operator-edited config documents under
  * `(XDG_CONFIG_HOME ?? ~/.config)/ad-coder`, as validated plain data.
