@@ -13,6 +13,8 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.64.0] - 2026-09-18
+
 ### Fixed
 - **The chat front's `resume_pipeline` no longer clears only the stage ceiling
   pauses** (issue #315's resumable class). An explicit resume act -- the
@@ -31,6 +33,36 @@ enforces that dated release headings go in non-increasing date order
   (`PAUSES_CLEARED_BY_AN_EXPLICIT_ACT` in run-coordinator.ts) is the single
   source of truth, with a drift-alarm test so the table and the guard cannot
   diverge again.
+
+### Added
+- **`tracker-work`**, a shipped orchestrator skill for the issue tracker: search
+  before filing, claim before starting (assignee, `in-progress` label, one
+  comment naming the run), labels as the vocabulary -- `epic` groups,
+  `priority:*` orders -- and close the issue when the change lands rather than
+  when someone remembers (issues #293, #335).
+
+### Changed
+- **The dispatcher's obligations now live in the orchestrator prompt, where they
+  cannot be skipped** (issues #307, #330, #316). The prompt requires sizing the
+  work before dispatch -- with `run_role researcher` for unfamiliar ground or a
+  genuinely open scale -- saying the shape and the order out loud before a run
+  starts, delegating external and third-party research instead of reading it
+  into the context that still has a whole run to carry, and treating "I cannot
+  name the files this touches" as planner or researcher work rather than
+  reconnaissance on the coder's budget. The `coder.md` file-list rule was
+  conditional on a plan the planner often does not produce, so it licensed
+  exactly the exploration it meant to prevent: the obligation is now stated
+  from the rule's side.
+- **Git discipline carries the one-writer rule and the branch rule** (issues
+  #334, #293): a working tree has one writer at a time, so independent mutable
+  work takes its own worktree and the shared tree keeps the branch its owner
+  left it on; work lands through a branch and a pull request. The same skill
+  states the long-command rule -- run it in the foreground and let the call
+  block, rather than backgrounding it and guessing an interval (issue #249).
+- `role-selection` (v3) and `delivery-calibration` (v2): a description now says
+  when the skill applies, not only what it contains, because the catalogue
+  description is the only surface a model reads before deciding to load the
+  file.
 
 ## [0.63.0] - 2026-09-18
 

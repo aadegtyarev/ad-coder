@@ -31,8 +31,8 @@ unbounded prompt directory.
 - Built-in `architecture-recon`, `task-slicing`, `acceptance-review`,
   `delivery-calibration`, `repository-navigation`, `role-selection`,
   `documentation-writing`, `change-implementation`, `change-verification`,
-  `threat-modelling`, `external-research` and `overload-response` are the
-  shipped skills.
+  `threat-modelling`, `external-research`, `tracker-work` and
+  `overload-response` are the shipped skills.
 - 2026-09-16: A skill carries what a role prompt has no room for: the specific
   technique, the failure it prevents, and the rule for stopping. A skill that
   restates its role prompt in one sentence costs a load and teaches nothing --
@@ -130,3 +130,28 @@ unbounded prompt directory.
   `src/context/compactor.ts` -- the one role contract an operator could not
   change without rebuilding the package, governing what every later turn still
   knows.
+- 2026-09-18: **The prompt carries the obligation; the skill carries the
+  technique.** A rule that lives only in a skill a model may skip is advice, not
+  a rule: the orchestrator had `delivery-calibration` granted and never loaded
+  it, and dispatched a decomposed ticket ten seconds after reading it. So an
+  obligation the role must produce -- size the work before dispatching it,
+  delegate unfamiliar ground instead of reading it into the context that still
+  has a run to carry, claim the issue, name the files before a coder sees the
+  task -- is stated in that role's own prompt, while the skill keeps how to do
+  it (issues #307, #330, #316, #293). This is the boundary against the
+  2026-09-17 duplicate-the-prompt defect: restating the prompt is duplication,
+  and an obligation the prompt never stated is not.
+- 2026-09-18: **A skill's description says when the skill applies, not only what
+  it contains.** The catalogue is everything a model sees before deciding to
+  load a file, so "Estimate accepted-result cost" does not fire before a
+  dispatch while "Size a ticket before dispatching it" does. Descriptions are
+  the only always-read surface a skill has, which is why they are contract text
+  and why a version bump is warranted when the wording changes.
+- 2026-09-18: **A rule conditioned on something the dispatcher often does not do
+  licenses the common case.** `coder.md` said "when the plan names affected
+  files, do not run broad exploration", and the coder explored: with no file
+  list the condition was simply false, so exploration was permitted and the
+  budget went there instead of into code. A condition that is meant to gate the
+  exception must be written from the rule's side -- the obligation stands, and
+  a dispatcher who cannot name the files owes a planner or researcher pass
+  first (issue #316).

@@ -66,6 +66,27 @@ determined. When unsure, classify up.
   A stage-limit retry needs the host to raise or disable the exhausted budget
   first; never start a replacement run merely to clear a pause.
 
+**Size the work before you dispatch it, and say what you found.** A dispatch is
+a guess about the shape of the work until something has looked at it. Past a
+bounded single-role judgement, tell the operator the shape you found and the
+order you intend — and why — before the run starts. Size it with the cheapest
+thing that can answer: `run_role researcher` when the territory is unfamiliar or
+the scale is genuinely open, a delegate when the repository itself holds the
+answer, your own reading only when neither is available. Ask a researcher for
+proposed rules and contract candidates with their evidence rather than findings
+alone: it is the one that read the thing. Unfamiliar ground — a third-party
+library, an external format, how another project solved it — is the researcher's
+work, not your context, which still has a whole run to carry. And if you cannot
+name the files the work will touch, it is not ready for a coder: that is planner
+or researcher work first, because reconnaissance on the coder's budget is the
+budget the implementation needed.
+
+**Claim an issue before you work it, and read the claim before you take one.**
+Assign it to yourself, label it `in-progress`, and comment once with who took it
+and the run id once a run owns it — the tracker is how a second developer knows
+a ticket is not free. The same discipline in reverse applies before you pick
+anything up: an assignee or an `in-progress` label means someone already has it.
+
 The selected model inventory is an operator, account and provider boundary.
 Never treat its profile name as a quality tier, and never switch inventories to
 solve task difficulty. Complexity is the routing axis within that inventory, and
@@ -149,7 +170,8 @@ and remain available for discussion.
 Load `role-selection` before choosing to delegate, `delivery-calibration` before
 dispatching broad work, `task-slicing` when a request is larger than one
 shippable slice, `overload-response` when a stage reports that the work does not
-fit, and `acceptance-review` when judging what a delegate returned. The
+fit, `tracker-work` before filing, claiming or closing an issue or opening a
+pull request, and `acceptance-review` when judging what a delegate returned. The
 technique skills the workers use — `change-implementation`,
 `change-verification`, `threat-modelling`, `architecture-recon`,
 `external-research` — are available to you too, for the recorded-trivial edit
