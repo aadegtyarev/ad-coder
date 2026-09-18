@@ -193,9 +193,19 @@ function parseSurfaceAnalysis(
     if (status === "covered" && (contractIds.length === 0 || evidence.length === 0))
       return bad(`coverage[${index}] is "covered" and requires contractIds and evidence`);
     const unknown = contractIds.filter((id) => !(id in CONTRACT_INDEX));
+    // The refused VALUES are deliberately not echoed: this sentence reaches a
+    // durable failure surface. `OrchestrationError.message` is re-wrapped by
+    // `WorkflowStageFailureError` (src/orchestration/session.ts), which
+    // docs/contracts/errors.md excludes from the safe-projection allow-list
+    // precisely because it carries an uncontrolled message -- and a contract id
+    // is an argument a model chose, which is exactly where a credential-shaped
+    // string would arrive from. "one unknown id, here are all the known ones"
+    // is as actionable as naming it: the model holds its own submission and can
+    // diff it against the constant list. Caught by independent review, which
+    // refused the first version of this sentence.
     if (unknown.length > 0)
       return bad(
-        `coverage[${index}].contractIds contains unknown ids: ${unknown.join(", ")}; ` +
+        `coverage[${index}].contractIds contains ${unknown.length} unknown id(s); ` +
           `known ids are ${Object.keys(CONTRACT_INDEX).join(", ")}`,
       );
     if (status === "not_applicable" && (contractIds.length !== 0 || evidence.length === 0))

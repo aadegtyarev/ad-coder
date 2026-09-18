@@ -39,7 +39,16 @@ enforces that dated release headings go in non-increasing date order
   one-sentence-four-fields refusal is split per field, matching the corrective
   messages already beside it. The submitted value is deliberately never echoed
   back: these sentences reach a durable ledger, and an argument a model chose is
-  where a credential-shaped string would arrive from.
+  where a credential-shaped string would arrive from. The first version of the
+  contract-id sentence broke that rule -- it listed the unknown ids it had been
+  handed -- and independent review refused it, correctly: `parsePlan`'s message
+  is re-wrapped by `WorkflowStageFailureError` into a durable failure surface,
+  and `docs/contracts/errors.md` excludes that class from the safe-projection
+  allow-list for exactly this reason. It now names the entry, the count and the
+  constant list of known ids; `verdict.ts` already refused an unknown
+  `surfaceId` without echoing it, so the plan side was the odd one out. A test
+  submits a credential-shaped value into four refusal paths and asserts that
+  none of the four messages contains it.
 - **The submission schemas state their vocabulary where a model reads it**
   (issue #359). The enum leaves stay bare strings -- `parsePlan` and
   `parseVerdict` are the gates, and `follow-up.ts` records why a union of

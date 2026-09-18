@@ -2530,9 +2530,42 @@ test("a refused coverage entry names the entry, the field, and the vocabulary it
   expect(refusedWith(planWith({ ...entry, contractIds: [] }))).toBe(
     'coverage[0] is "covered" and requires contractIds and evidence',
   );
-  expect(refusedWith(planWith({ ...entry, contractIds: ["cli:invented"] }))).toContain(
-    "coverage[0].contractIds contains unknown ids: cli:invented",
-  );
+  // The refused VALUE is not echoed. This sentence reaches a durable failure
+  // surface, and a contract id is an argument a model chose -- the place a
+  // credential-shaped string would arrive from. The count plus the constant
+  // list is as actionable as naming it: the model still holds its submission.
+  // Independent review refused the version that echoed it.
+  const unknownId = refusedWith(planWith({ ...entry, contractIds: ["cli:invented"] }));
+  expect(unknownId).toContain("coverage[0].contractIds contains 1 unknown id(s)");
+  expect(unknownId).toContain("known ids are ");
+  expect(unknownId).not.toContain("cli:invented");
+  // A refusal names the field, never the value that filled it. `parsePlan`'s
+  // message is re-wrapped by `WorkflowStageFailureError` into a durable failure
+  // surface (docs/contracts/errors.md excludes that class from the
+  // safe-projection allow-list for exactly this reason), so an argument a model
+  // chose must not ride along -- that is where a credential-shaped string would
+  // arrive from. `verdict.ts` already refused an unknown surfaceId without
+  // echoing it; this pins the same discipline on the plan side and keeps it
+  // pinned, because the first version of the contract-id sentence did echo.
+  const secret = "opaque-submitted-value-7c1f";
+  // Opaque rather than credential-shaped on purpose. A token-shaped literal in a
+  // tracked file is refused by this repository's own `smoke:artifact` scanner
+  // (scripts/artifact-smoke.ts) -- the same discipline one level up. The shape of
+  // the value changes nothing about the code under test, only about the ledger
+  // it would reach.
+  const refusals = [
+    refusedWith(planWith({ ...entry, contractIds: [secret] })),
+    refusedWith(planWith({ ...entry, status: secret })),
+    refusedWith(planWith({ ...entry, surfaceId: secret })),
+    refusedWith({
+      ...planWith(entry),
+      surfaceAnalysis: {
+        ...planWith(entry).surfaceAnalysis,
+        surfaces: [{ id: secret, name: "CLI", rationale: "changed" }],
+      },
+    }),
+  ];
+  for (const refusal of refusals) expect(refusal).not.toContain(secret);
   // A surface is indexed the same way, so the two lists can be read together.
   expect(
     refusedWith({
