@@ -28,7 +28,11 @@ import type { StampRequirement } from "../config/types";
 import { parseLedgerLine } from "../ledger/analytics";
 import { LEDGER_BASE_DIR } from "../ledger/ledger";
 import type { LedgerRecord } from "../ledger/types";
-import { buildDeliverySignature, renderDeliverySignature } from "./delivery-signature";
+import {
+  buildDeliverySignature,
+  DELIVERY_SIGNATURE_LEAD_IN,
+  renderDeliverySignatureStamped,
+} from "./delivery-signature";
 import { checkReviewStamps, type ReviewStampFailure } from "./record-review-stamp";
 
 /** Read ledger files leniently: one parseable record per line, blanks skipped. */
@@ -57,10 +61,10 @@ export function ledgerRecordSources(targetDir: string, files: readonly string[])
   return entries;
 }
 
-/** The whole delivery signature block text, from ledger paths alone. */
+/** The published PR form -- prose lead-in plus one fenced block -- from ledger paths alone. */
 export function stampDeliveryText(targetDir: string, files: readonly string[] = []): string {
   const records = readLedgerRecords(ledgerRecordSources(targetDir, files));
-  return renderDeliverySignature(buildDeliverySignature(records));
+  return renderDeliverySignatureStamped(buildDeliverySignature(records));
 }
 
 /**
@@ -79,11 +83,13 @@ export function stampCheckErrors(
  * rendered from the ledger NOW, verbatim -- a hand-composed or stale block
  * defeats the point of rendering cost from evidence.
  *
- * Presence is a substring check of the freshly rendered block (trimmed), so
- * sentence wrapping and one trailing-newline difference around the block do
- * not matter. A body that carries a similar block -- a `runs ` header line --
- * that is NOT the fresh rendering is stale, not absent: the fix is to re-run
- * the render command and replace the block verbatim.
+ * Presence is a substring check of the freshly rendered published form (the
+ * prose lead-in plus the fenced block, trimmed), so sentence wrapping and one
+ * trailing-newline difference around the form do not matter. A body that
+ * carries a similar block -- a `runs=`-headed line or the prose lead-in (the
+ * two shape markers of the published form, issue #435), both whitespace-
+ * tolerant -- that is NOT the fresh rendering is stale, not absent: the fix is
+ * to re-run the render command and replace the whole form verbatim.
  */
 export function stampBodyCheckErrors(
   bodyPath: string,
@@ -93,20 +99,23 @@ export function stampBodyCheckErrors(
   const block = stampDeliveryText(targetDir, files).trim();
   const body = fs.readFileSync(bodyPath, "utf8");
   if (body.includes(block)) return [];
-  const hasSimilarBlock = body.split("\n").some((line) => line.startsWith("runs "));
+  const hasSimilarBlock = body.split("\n").some((line) => {
+    const trimmed = line.trim();
+    return trimmed.startsWith("runs=") || trimmed === DELIVERY_SIGNATURE_LEAD_IN;
+  });
   if (hasSimilarBlock)
     return [
       {
-        reason: `${bodyPath}: the delivery block is stale (rendered cost differs from the ledger now)`,
+        reason: `${bodyPath}: the delivery block is stale (a prose lead-in with a fenced runs= block, but its totals differ from the ledger now)`,
         action:
-          're-run "ad-coder stamp delivery" and paste the fresh block into the pull-request body verbatim',
+          're-run "ad-coder stamp delivery" and paste the whole form -- the prose lead-in plus the fenced runs= block -- into the pull-request body verbatim',
       },
     ];
   return [
     {
-      reason: `${bodyPath}: the generated delivery block is absent`,
+      reason: `${bodyPath}: the generated delivery form is absent (expect the prose lead-in followed by the fenced block whose first line starts with runs=)`,
       action:
-        'render it with "ad-coder stamp delivery" (never compose one) and paste the block verbatim',
+        'render it with "ad-coder stamp delivery" (never compose one) and paste the whole form verbatim',
     },
   ];
 }

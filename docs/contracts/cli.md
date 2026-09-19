@@ -64,7 +64,10 @@ Rules for ad-coder's command-line front. A violation is always blocking.
   `.ad-coder/ledger/*.jsonl` when none are named; `--target-dir` selects the
   project whose ledger is read (defaults to the current directory), matching
   `cost status`. The command is a READ: it refuses (usage error, path named)
-  when no ledger exists, and never writes anything. `ad-coder stamp check`
+  when no ledger exists, and never writes anything. Since issue #435 it prints
+  the published form the PR body carries: a prose lead-in followed by ONE
+  fenced block whose first line starts with `runs=<count>`. `ad-coder stamp
+  check`
   is the review-stamp gate (issue #239): the newest stamp in the marker-
   configured log must parse, carry an approved verdict, and name the current
   working-tree digest — anything else fails loudly with the reason. Both
@@ -73,11 +76,14 @@ Rules for ad-coder's command-line front. A violation is always blocking.
 - 2026-09-18: `ad-coder stamp body-check <body.md> [files...]` is the stamp
   family's third surface and the pull-request-body gate (issue #335). The FIRST
   positional is the body file and the rest are ledger paths, read exactly as
-  `stamp delivery` reads them; the body must carry the delivery block as the
-  current ledger renders it, verbatim, and presence is that substring. A block
-  that is absent, or present but no longer equal to the fresh rendering, fails
-  with the body file named and the render command to re-run; a matching body
-  passes and nothing is written. It is read-only like its siblings, `ad-coder
+  `stamp delivery` reads them; the body must carry the generated form -- the
+  prose lead-in plus the fenced `runs=` block (#435) -- as the current ledger
+  renders it, verbatim, and presence is that substring. A stale paste is
+  recognized by shape, whitespace-tolerantly: any `runs=`-headed line or the
+  prose lead-in that is not the fresh rendering fails as stale. A form that is
+  absent or stale fails with the body file named and the render command to
+  re-run; a matching body passes and nothing is written. It is read-only like
+  its siblings, `ad-coder
   stamp --help` states its arguments, and the shape a body carries is stated by
   `.github/pull_request_template.md`.
 - 2026-09-18: `ad-coder console --resume [<run-id>]` continues a previous

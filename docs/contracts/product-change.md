@@ -35,8 +35,14 @@ structural moves from behavior changes.
   the ledger `src/stamp/delivery-signature.ts` reads back (per-role calls,
   tokens, provider-reported cost; a role that did not run renders "did not
   run", never blank); the review stamp is derived from the settled verdict,
-  per-stage model, and run ids. `ad-coder stamp delivery` prints the PR
-  block. The stamp is written by the mechanism that already knows the run
+  per-stage model, and run ids. `ad-coder stamp delivery` prints the PR form;
+  its published shape is fixed by one constant set in the renderer (#435,
+  2026-09-19): a prose lead-in, a blank line, then ONE fenced block whose
+  first line is `runs=<count>` of unique runs and whose role rows are
+  unchanged. The body gate's similarity rule recognizes that shape (a
+  `runs=`-headed line or the lead-in) and its reasons name it, so gate and
+  render cannot drift apart. The stamp is written by the mechanism that
+  already knows the run
   finished -- `runPipeline`'s settle path -- never by a model deciding to
   mention it; the gate (`bun run stamp:check`) is the operator's pre-merge
   check and fails without a fresh stamp,
