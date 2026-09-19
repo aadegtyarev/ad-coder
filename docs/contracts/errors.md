@@ -264,3 +264,17 @@ for machines?
   `compaction_declined` and `structural_interrupted` only, and it is STICKY:
   the spent session refuses every later turn before any provider dispatch,
   rather than re-dispatching into the same wall.
+- 2026-09-20 (issue #430): A durable-read failure of one background run's
+  persisted state does not take down the calling console turn. A stale or
+  unreadable record re-fails loudly at the strict reader, but the wake pump's
+  fire-and-forget drain (`pendingWakes()` behind `void this.drain()`) is not a
+  caller path: one untyped escape there used to end a 0-second wake turn with
+  an empty ledger, so reading a durable artifact killed a console turn that was
+  not reading it. The rule follows the same containment the 2026-09-19 entries
+  require: explicit typed paths (`status()`, `result()`, `events()`) keep the
+  strict typed rejection, while the unobserved drain boundary contains the
+  failure in one bounded, identifier-only stderr line (run id and failure code,
+  never record content) and leaves the wake durably pending for the next nudge
+  (`src/orchestration/wake.ts`). Silent catches and success-shaped fallbacks
+  remain violations; containment here means one loud, bounded, attributed line
+  -- not hiding the failure.

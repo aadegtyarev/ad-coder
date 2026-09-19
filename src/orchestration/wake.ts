@@ -1,3 +1,4 @@
+import { PROVIDER_ERROR_CODE_BOUND } from "../runner/errors";
 import type { PendingWake, WakeKind } from "./background-runs";
 import { RESUME_PIPELINE_DETAIL } from "./background-runs";
 
@@ -48,6 +49,43 @@ export function buildWakeTurnPrompt(wakes: readonly PendingWake[]): string {
   );
   lines.push(RESUME_PIPELINE_DETAIL);
   return lines.join("\n");
+}
+
+/**
+ * The typed code only (an identifier, never content): the read is TOTAL and the
+ * value is BOUNDED.
+ *
+ * Total: a poisoned `code` getter (or a Proxy that refuses `has`/`get`) degrades
+ * to `unknown` instead of escaping through the boundary itself.
+ *
+ * Bounded: the line this feeds is documented as "one bounded, identifier-only
+ * stderr line" (`docs/contracts/errors.md`, 2026-09-20 issue #430), so an
+ * arbitrary `code` -- long, whitespace-laden, or an embedded newline -- must not
+ * reach it. The rule is the project's own (2026-09-19 issue #418): a code that
+ * fails its bound is DROPPED, never truncated, and a non-string is dropped too
+ * (`String(...)` would render `[object Object]`-shaped junk). The bound below is
+ * the canonical one from `src/runner/errors.ts`, reused rather than re-invented.
+ */
+function safeErrorCode(error: unknown): string {
+  try {
+    if (typeof error === "object" && error !== null && "code" in error) {
+      const code: unknown = (error as { code: unknown }).code;
+      if (typeof code === "string" && PROVIDER_ERROR_CODE_BOUND.test(code)) return code;
+    }
+  } catch {
+    // Fall through to the "unknown" default.
+  }
+  return "unknown";
+}
+
+/**
+ * One bounded, identifier-only failure line for a contained drain boundary:
+ * the typed code only (identifier, never content), plus the action that state
+ * allows -- retrying on the next nudge, since nothing was marked handled.
+ */
+function drainErrorLine(error: unknown): string {
+  const code = safeErrorCode(error);
+  return `failed to read pending wakes (${code}); the wakes stay unhandled and drain on the next nudge`;
 }
 
 export interface WakePumpDeps {
@@ -114,8 +152,23 @@ export class WakePump {
     if (this.inFlight) return;
     this.inFlight = true;
     let succeeded = false;
+    // Reading durable wake state (`listPending` -> `pendingWakes` -> `refresh`)
+    // is typed, but this method is entered through `void this.drain()` with
+    // nothing above it to catch (issue #430): a `state_unavailable` failure
+    // reading one run record surfaced as an unhandled rejection and killed the
+    // console's 0-second wake turn with an empty ledger. Every boundary here --
+    // the initial read, the batch turn, the handled mark, and the post-drain
+    // re-read -- is contained: one bounded, code-first stderr line, `inFlight`
+    // reset in `finally`, and the wakes stay durably unhandled for the next
+    // nudge (never hot-looped, never lost).
     try {
-      const pending = this.deps.listPending();
+      let pending: PendingWake[];
+      try {
+        pending = this.deps.listPending();
+      } catch (error) {
+        console.error(`ad-coder: wake state unavailable; ${drainErrorLine(error)}`);
+        pending = [];
+      }
       if (pending.length === 0) return;
       const batch = pending.slice(0, this.maxWakesPerTurn);
       const step = `wake:${++this.turnCounter}`;
@@ -126,21 +179,36 @@ export class WakePump {
         // escape through `void this.drain()` as an unhandled rejection, and must
         // not hot-loop: mark NOTHING handled, report one bounded line to stderr,
         // and leave the batch unhandled for the next nudge.
-        const message = error instanceof Error ? error.message : String(error);
-        console.error(`ad-coder: wake turn failed (${step}): ${message}`.slice(0, 200));
+        // Identifier-only stderr (round 2, issue #430): never the error
+        // message -- it may carry user data; the code is the safe identifier.
+        console.error(`ad-coder: wake turn failed (${step}); code=${safeErrorCode(error)}`);
         return;
       }
       // Mark handled only after the turn resolves, so a failed turn leaves the
       // wakes unhandled for the next drain.
-      for (const wake of batch) this.deps.markHandled(wake.runId, [wake.kind]);
+      try {
+        for (const wake of batch) this.deps.markHandled(wake.runId, [wake.kind]);
+      } catch (error) {
+        // Marking handled touches the same durable state; a failure here leaves
+        // the batch to the next nudge, exactly like a failed turn.
+        console.error(`ad-coder: wake mark failed; ${drainErrorLine(error)}`);
+        return;
+      }
       succeeded = true;
     } finally {
       this.inFlight = false;
       // After a SUCCESSFUL drain, reschedule only if unhandled windows remain
       // (the per-turn cap left some behind). A FAILED drain leaves everything
       // unhandled on purpose and must stay quiescent until the next nudge, so
-      // it never hot-loops.
-      if (succeeded && this.deps.listPending().length > 0) {
+      // it never hot-loops. The re-read is itself a durable read and is
+      // contained the same way as the initial one.
+      let remaining = false;
+      try {
+        remaining = succeeded && this.deps.listPending().length > 0;
+      } catch (error) {
+        console.error(`ad-coder: wake state unavailable; ${drainErrorLine(error)}`);
+      }
+      if (remaining) {
         this.schedule();
       } else if (this.idleResolver !== undefined) {
         const resolve = this.idleResolver;

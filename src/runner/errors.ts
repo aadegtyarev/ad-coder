@@ -81,8 +81,14 @@ export class EmptyTurnError extends Error {
   }
 }
 
-/** A strict-charset provider error-code token; anything else is dropped, never truncated. */
-const PROVIDER_ERROR_CODE_BOUND = /^[A-Za-z0-9_.-]{1,64}$/;
+/**
+ * A strict-charset provider error-code token; anything else is dropped, never
+ * truncated (`docs/contracts/errors.md`, 2026-09-19 issue #418). Exported as
+ * the CANONICAL bound: every other boundary that renders a typed `code` into a
+ * bounded line reuses this one instead of inventing a second bound (the wake
+ * drain in `src/orchestration/wake.ts`).
+ */
+export const PROVIDER_ERROR_CODE_BOUND = /^[A-Za-z0-9_.-]{1,64}$/;
 
 /**
  * A provider response settled as a deferred suspension instead of a settled
