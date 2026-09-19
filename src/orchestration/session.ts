@@ -57,6 +57,7 @@ import type {
   RoleSpec,
   StepResult,
   VerdictIssue,
+  WorkflowPhase,
   WorkflowState,
 } from "./types";
 import { OrchestrationError } from "./types";
@@ -160,6 +161,33 @@ async function safeChangedFilesWithConfig(config: PipelineConfig): Promise<{
 interface ResearchResult {
   summary: string;
   resolvedSurfaceIds: string[];
+}
+
+/**
+ * Append the recorded failure of the previous attempt of this stage (issue
+ * #363), so the retrying stage converges on the reason instead of repeating
+ * an identical rejected submission blind. Fixed structure plus the
+ * coordinator's own bounded record -- the typed code plus its harness-authored
+ * message, never model or provider text. Without a record (or for another
+ * stage's record) the prompt is byte-identical to what it was before.
+ */
+function withStageFailureCarryOver(
+  state: WorkflowState,
+  phase: WorkflowPhase,
+  prompt: string,
+): string {
+  const failure = state.lastStageFailure;
+  if (failure === undefined || failure.phase !== phase) return prompt;
+  const reason = failure.message ?? "no further detail was recorded";
+  const repeated =
+    failure.recurrence > 0
+      ? ` This same failure has now been recorded ${failure.recurrence + 1} consecutive times on this stage.`
+      : "";
+  return (
+    `${prompt}\n\n` +
+    `The previous attempt of this stage failed before completing (${failure.code}): ${reason}.${repeated} ` +
+    "This attempt starts fresh: correct that failure and complete the stage normally -- do not repeat the identical rejected submission."
+  );
 }
 
 function jsonDepth(value: unknown, depth = 0): number {
@@ -767,7 +795,11 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       "Your preceding response did not call submit_plan. Call submit_plan now with the complete required object, then stop.";
     let followUps: FollowUp[] = [];
     let accumulatedState = state;
-    const prompt = `${config.task}\n\n${formatPlannerInstruction()}`;
+    const prompt = withStageFailureCarryOver(
+      state,
+      "plan",
+      `${config.task}\n\n${formatPlannerInstruction()}`,
+    );
     const selection = pickSelection("planner", planner, state.preComplexity);
     const plannerWithRequiredTool: RoleSpec = {
       ...planner,
@@ -881,6 +913,9 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       }),
     };
     delete nextState.activeStage;
+    // The stage completed: its recorded failure must not leak into a later
+    // attempt (issue #363).
+    delete nextState.lastStageFailure;
     const transitions: AvailableTransition[] = [
       {
         kind: "advance",
@@ -1150,9 +1185,13 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     }
     const attempt = stageAttempt(state, "security", "security");
     const { runId } = attempt.stage;
-    const prompt = composeSecurityPrompt(
-      config.task,
-      appendContractRequirements(state.planSummary, state.contractRequirements),
+    const prompt = withStageFailureCarryOver(
+      state,
+      "security",
+      composeSecurityPrompt(
+        config.task,
+        appendContractRequirements(state.planSummary, state.contractRequirements),
+      ),
     );
     const selection = pickSelection("security", security, state.effective);
     const { text, followUps, metrics } = await runWorkflowTurn(
@@ -1175,6 +1214,9 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       ...settled,
     };
     delete nextState.activeStage;
+    // The stage completed: its recorded failure must not leak into a later
+    // attempt (issue #363).
+    delete nextState.lastStageFailure;
     const transitions: AvailableTransition[] = [
       { kind: "advance", isDefault: defaults.autoAdvance, toPhase: "code", toRound: state.round },
       { kind: "stop", isDefault: !defaults.autoAdvance, toPhase: "done", toRound: state.round },
@@ -1236,9 +1278,13 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
             ]
               .filter((part) => part !== undefined)
               .join("\n\n");
-    const context = composeCoderPrompt(
-      config.task,
-      appendContractRequirements(handoff, state.contractRequirements),
+    const context = withStageFailureCarryOver(
+      state,
+      "code",
+      composeCoderPrompt(
+        config.task,
+        appendContractRequirements(handoff, state.contractRequirements),
+      ),
     );
     const selection = pickSelection("coder", config.roles.coder, state.effective);
     const {
@@ -1285,6 +1331,9 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       },
     };
     delete nextState.activeStage;
+    // The stage completed: its recorded failure must not leak into a later
+    // attempt (issue #363).
+    delete nextState.lastStageFailure;
     const transitions: AvailableTransition[] = [
       // Gates sit after the coder and before review whenever a declared-gate
       // set is configured (qualityGates). Without them the graph is the
@@ -1376,7 +1425,9 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
         state.pipelineContext?.riskFingerprint !== undefined &&
         state.pipelineContext.riskFingerprint !== currentRiskFingerprint,
     });
-    const prompt =
+    const prompt = withStageFailureCarryOver(
+      state,
+      "review",
       decision.selection === "focused"
         ? composeFocusedReviewerPrompt(
             state.verdicts[state.verdicts.length - 1],
@@ -1398,7 +1449,8 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
             coderMetrics,
             changed,
             formatGateEvidence(state.lastGateReport),
-          );
+          ),
+    );
     const selection = pickSelection("reviewer", config.roles.reviewer, state.effective);
     // ONE MORE ATTEMPT WHEN THE VERDICT NEVER ARRIVED (issue #278).
     //
@@ -1486,6 +1538,9 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       },
     };
     delete nextState.activeStage;
+    // The stage completed: its recorded failure must not leak into a later
+    // attempt (issue #363).
+    delete nextState.lastStageFailure;
 
     let transitions: AvailableTransition[];
     if (verdict.status === "approved") {

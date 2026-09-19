@@ -5,8 +5,12 @@ import { clearsOnExplicitAct } from "../project-operations/run-coordinator";
 import { ProjectStore } from "../project-store/project-store";
 import { ProjectStoreError } from "../project-store/types";
 import type { RunPipelineResult, StepCost } from "./orchestrator";
-import type { PipelinePause } from "./types";
-import { PipelinePauseError } from "./types";
+import type { PipelinePause, PipelinePauseCause } from "./types";
+import {
+  MAX_PAUSE_CAUSE_CODE_CHARS,
+  MAX_PAUSE_CAUSE_MESSAGE_CHARS,
+  PipelinePauseError,
+} from "./types";
 
 export type BackgroundLifecycle =
   | "requested"
@@ -219,6 +223,11 @@ const MAX_BACKGROUND_EVENT_PAGE_EVENT: BackgroundRunEvent = {
     action: "a".repeat(256),
     limitReason: "cost_unknown",
     limit: Number.MAX_VALUE,
+    cause: {
+      code: "x".repeat(MAX_PAUSE_CAUSE_CODE_CHARS),
+      message: "a".repeat(MAX_PAUSE_CAUSE_MESSAGE_CHARS),
+      recurrence: Number.MAX_SAFE_INTEGER,
+    },
   },
 };
 /** Enough room for every schema-valid event, so cursor polling always advances. */
@@ -449,12 +458,12 @@ export class BackgroundRunManager {
         if (error instanceof PipelinePauseError) {
           entry.lifecycle = "paused";
           entry.metrics = { ...error.metrics };
-          entry.pause = { ...error.pause };
+          entry.pause = copyPause(error.pause);
           this.append(entry, "paused", {
             ...((PHASES as readonly string[]).includes(error.pause.phase)
               ? { stage: error.pause.phase as StepCost["phase"] }
               : {}),
-            pause: { ...error.pause },
+            pause: copyPause(error.pause),
             metrics: { ...entry.metrics },
           });
           return;
@@ -498,6 +507,40 @@ export class BackgroundRunManager {
   }
   async wait(runId: string): Promise<void> {
     await this.owned(runId).promise;
+  }
+
+  /**
+   * Project a FOREGROUND resume's re-pause onto this run's registry entry
+   * (issue #363).
+   *
+   * A foreground resume never runs through `launch`, so its new pause is
+   * recorded only in the coordinator checkpoint; without this projection the
+   * entry kept the EARLIER pause and the registry contradicted the checkpoint
+   * an operator compares it against. Ownership rules apply unchanged: a runId
+   * this manager does not hold (never started here, or a record owned by
+   * another owner) is skipped silently, and an entry with a live worker is
+   * left alone -- the worker's own catch records its pause. A stale terminal
+   * outcome is dropped: a re-paused run is not the terminal thing it was.
+   */
+  projectForegroundPause(
+    runId: string,
+    pause: PipelinePause,
+    metrics: { steps: number; totalCost: number },
+  ): void {
+    if (this.entries.get(runId) === undefined) return;
+    const entry = this.owned(runId);
+    if (entry.active) return;
+    entry.lifecycle = "paused";
+    entry.metrics = { ...metrics };
+    entry.pause = copyPause(pause);
+    entry.outcome = undefined;
+    this.append(entry, "paused", {
+      ...((PHASES as readonly string[]).includes(pause.phase)
+        ? { stage: pause.phase as StepCost["phase"] }
+        : {}),
+      pause: copyPause(pause),
+      metrics: { ...entry.metrics },
+    });
   }
   /**
    * Subscribe to future owner-scoped, content-free lifecycle pages.
@@ -549,7 +592,7 @@ export class BackgroundRunManager {
     // #261): it is durable and resumable, so `not_terminal` would silently
     // hide it from exactly the consumer that must react to the limit.
     if (entry.lifecycle === "paused" && entry.pause !== undefined)
-      return { ...this.statusOf(entry), lifecycle: "paused", pause: { ...entry.pause } };
+      return { ...this.statusOf(entry), lifecycle: "paused", pause: copyPause(entry.pause) };
     throw new BackgroundRunError("not_terminal");
   }
   cancel(runId: string): BackgroundRunStatus {
@@ -598,7 +641,7 @@ export class BackgroundRunManager {
       runId: e.runId,
       lifecycle: e.lifecycle,
       metrics: { ...e.metrics },
-      ...(e.pause === undefined ? {} : { pause: { ...e.pause } }),
+      ...(e.pause === undefined ? {} : { pause: copyPause(e.pause) }),
       recovery: isTerminal(e.lifecycle)
         ? "none"
         : e.lifecycle === "operator_attention" || e.lifecycle === "paused"
@@ -645,7 +688,7 @@ export class BackgroundRunManager {
       events: e.events,
       nextSequence: e.nextSequence,
       metrics: e.metrics,
-      ...(e.pause && { pause: { ...e.pause } }),
+      ...(e.pause && { pause: copyPause(e.pause) }),
       ...(e.lease && { lease: e.lease }),
       ...(e.outcome && { outcome: e.outcome }),
     };
@@ -676,7 +719,7 @@ export class BackgroundRunManager {
     entry.events = persisted.events.map(copyEvent);
     entry.nextSequence = persisted.nextSequence;
     entry.metrics = copyMetrics(persisted.metrics);
-    entry.pause = persisted.pause === undefined ? undefined : { ...persisted.pause };
+    entry.pause = persisted.pause === undefined ? undefined : copyPause(persisted.pause);
     entry.lease = persisted.lease;
     entry.outcome = persisted.outcome === undefined ? undefined : copyOutcome(persisted.outcome);
     if (changed) this.notify(entry);
@@ -808,7 +851,7 @@ export class BackgroundRunManager {
           events: persisted.events.map(copyEvent),
           nextSequence: persisted.nextSequence,
           metrics: copyMetrics(persisted.metrics),
-          ...(persisted.pause === undefined ? {} : { pause: { ...persisted.pause } }),
+          ...(persisted.pause === undefined ? {} : { pause: copyPause(persisted.pause) }),
           ...(persisted.outcome !== undefined
             ? { outcome: copyOutcome(persisted.outcome) }
             : abandoned
@@ -919,7 +962,7 @@ function copyMetrics(value: { steps: number; totalCost: number }): {
   return { steps: value.steps, totalCost: value.totalCost };
 }
 function parsePause(value: unknown): BackgroundRunPause {
-  const object = strictObject(value, ["phase", "code", "action", "limitReason", "limit"]);
+  const object = strictObject(value, ["phase", "code", "action", "limitReason", "limit", "cause"]);
   const pause = enumValue(object.phase, PAUSE_PHASES);
   const limitReason =
     object.limitReason === undefined
@@ -931,6 +974,34 @@ function parsePause(value: unknown): BackgroundRunPause {
     action: requiredString(object.action),
     ...(limitReason === undefined ? {} : { limitReason }),
     ...(object.limit === undefined ? {} : { limit: finiteNumber(object.limit) }),
+    ...(object.cause === undefined ? {} : { cause: parsePauseCause(object.cause) }),
+  };
+}
+
+/** Same bounds the write side clips to (orchestration/types.ts), re-checked on read. */
+function parsePauseCause(value: unknown): PipelinePauseCause {
+  const object = strictObject(value, ["code", "message", "recurrence"]);
+  const code = object.code;
+  const message = object.message;
+  if (typeof code !== "string" || code.length === 0 || code.length > MAX_PAUSE_CAUSE_CODE_CHARS)
+    throw new TypeError("pause cause code is invalid");
+  if (
+    message !== undefined &&
+    (typeof message !== "string" || message.length > MAX_PAUSE_CAUSE_MESSAGE_CHARS)
+  )
+    throw new TypeError("pause cause message is invalid");
+  return {
+    code,
+    ...(message === undefined ? {} : { message }),
+    recurrence: safeInteger(object.recurrence),
+  };
+}
+
+/** A pause copy that owns its cause object, so no two records alias one. */
+function copyPause(pause: PipelinePause): PipelinePause {
+  return {
+    ...pause,
+    ...(pause.cause === undefined ? {} : { cause: { ...pause.cause } }),
   };
 }
 function parseEvent(value: unknown, runId: string): BackgroundRunEvent {
@@ -967,7 +1038,7 @@ function copyEvent(event: BackgroundRunEvent): BackgroundRunEvent {
     lifecycle: event.lifecycle,
     timestamp: event.timestamp,
     ...(event.stage === undefined ? {} : { stage: event.stage }),
-    ...(event.pause === undefined ? {} : { pause: { ...event.pause } }),
+    ...(event.pause === undefined ? {} : { pause: copyPause(event.pause) }),
     ...(event.errorCode === undefined ? {} : { errorCode: event.errorCode }),
     ...(event.metrics === undefined ? {} : { metrics: copyMetrics(event.metrics) }),
   };

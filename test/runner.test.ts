@@ -4,6 +4,7 @@ import { EventEmitter } from "node:events";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
 import type { Api, Model, Models } from "@earendil-works/pi-ai";
 import {
   createModels,
@@ -507,6 +508,55 @@ test("safe diff measurement streams bytes with the exact fixed git argv", async 
     args: ["diff", "--no-ext-diff", "--no-textconv", "HEAD", "--"],
     shell: false,
   });
+});
+
+test("runRole delivers settled text when the diff metric fails on a commit-less target", async () => {
+  // A `git init` with no commits makes `git diff HEAD` exit 128 ("bad revision"),
+  // which is neither 0 (measured) nor 129 (no worktree), so measureSafeGitDiffBytes
+  // throws diff_metric_failed. The diff metric is observability, not the
+  // deliverable (issue #363): a completed coder stage must still deliver its
+  // settled text instead of being destroyed.
+  const repository = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-no-commit-"));
+  execFileSync("git", ["init", "-q"], { cwd: repository });
+  const { faux, models, model, role } = harnessFixture();
+  faux.setResponses([fauxAssistantMessage("the settled coder report")]);
+
+  const result = await runRole({ role, targetDir: repository, models, model, prompt: "fix it" });
+
+  expect(result.result.status).toBe("completed");
+  expect(result.observations?.diffBytes).toBe(0);
+  // The strongest available survival signal, and why: the pre-fix code threw
+  // AFTER the turn settled, so the caller got a RunnerError instead of any
+  // record, and the settled deliverable was unreachable from the return
+  // value. runRole's return shape does not expose the final text
+  // (`OperationResultRecord` carries status/tip ids only), so the deliverable
+  // is read back from the durable session the run wrote: the settled text
+  // itself must have survived, not just a record shell.
+  const store = new ProjectStore(repository);
+  const sessions = await store.listSessions();
+  expect(sessions).toHaveLength(1);
+  const readable = await store.resumeSession(sessions[0]!.id);
+  try {
+    // Mirrors the workflow's own final-text extraction: scan newest-first for
+    // the first assistant message and join its text blocks.
+    const entries = await readable.findEntries(
+      { type: "message", order: "desc", limit: 20 },
+      BACKGROUND_CONTEXT,
+    );
+    let text = "";
+    for (const entry of entries) {
+      if (entry.type !== "message") continue;
+      if (entry.message.role !== "assistant") continue;
+      text = entry.message.content
+        .filter((block): block is { type: "text"; text: string } => block.type === "text")
+        .map((block) => block.text)
+        .join("");
+      break;
+    }
+    expect(text).toContain("the settled coder report");
+  } finally {
+    await readable.close(BACKGROUND_CONTEXT);
+  }
 });
 
 test("runRole does not invoke the summarizer when the turn fits the budget", async () => {

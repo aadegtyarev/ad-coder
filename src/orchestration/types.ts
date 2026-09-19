@@ -570,10 +570,55 @@ export type PipelineOutcome = "approved" | "decomposition_required";
  *   role ran.
  */
 /**
+ * Char ceilings for the bounded cause fields a pause record may carry.
+ *
+ * The code ceiling matches the runner's own error-code vocabulary (the longest
+ * typed code is far below it); the message ceiling fits the longest
+ * harness-authored message a typed error composes (the cost-anomaly block,
+ * which embeds provider/model ids and four numbers) with headroom. These are
+ * WRITE-side bounds: every pause cause is clipped before it is persisted, so
+ * the background event fixture below can upper-bound the serialized event.
+ */
+export const MAX_PAUSE_CAUSE_CODE_CHARS = 64;
+export const MAX_PAUSE_CAUSE_MESSAGE_CHARS = 512;
+
+/**
+ * The recorded cause of a harness-side stage failure (issue #363).
+ *
+ * WHY IT EXISTS. The fixed "inspect the provider failure" wording collapsed
+ * every non-provider stage failure into one sentence and dropped the cause
+ * entirely: an operator (and the retrying stage) could not tell a git-diff
+ * measurement failure from a submission refusal from a cost block. The cause
+ * names the failing error's own typed code plus its message WHEN that message
+ * is harness-authored by construction -- typed harness errors are built in
+ * code from fixed phrases and safe tokens, so nothing model- or provider-
+ * authored can enter through it. Numbers and codes only, like every pause
+ * field.
+ */
+export interface PipelinePauseCause {
+  /** The failing error's own typed code -- a fixed harness token, never free text. */
+  code: string;
+  /**
+   * The failing error's own message, clipped to the ceiling. Present only when
+   * the source error is a typed harness error, whose message is harness-authored
+   * by construction; never present for model text or provider response bodies.
+   */
+  message?: string;
+  /**
+   * How many CONSECUTIVE prior pause records named the same stage and code
+   * before this one (0 = first). A recurring identical cause is the loop
+   * signature issue #363 asks to make distinguishable from an underestimate.
+   */
+  recurrence: number;
+}
+
+/**
  * The durable pause a coordinator stops on, carried to a background boundary.
  * `phase`/`code`/`action` are the checkpoint's own pause record -- fixed
  * phrases built in code, never model or provider content. `limitReason` and
  * `limit` are present exactly when the coordinator recorded limit evidence.
+ * `cause` is present exactly when the failing error was a typed harness-side
+ * error, so a harness failure never reads as a provider one.
  */
 export interface PipelinePause {
   phase: WorkflowPhase;
@@ -581,6 +626,17 @@ export interface PipelinePause {
   action: string;
   limitReason?: StageLimitReason;
   limit?: number;
+  cause?: PipelinePauseCause;
+}
+
+/**
+ * The workflowState sibling of a pause cause: which stage failed, with which
+ * recorded cause, and how many consecutive attempts have failed the same way.
+ * `phase` is the failing stage's phase; the rest matches `PipelinePauseCause`
+ * so the coordinator can copy one into the other without re-deriving it.
+ */
+export interface StageFailureRecord extends PipelinePauseCause {
+  phase: WorkflowPhase;
 }
 
 /**
@@ -742,6 +798,16 @@ export interface WorkflowState {
   runIds: string[];
   /** Completed-stage observations, retained in stable execution order. */
   stageMetrics?: PipelineStageMetrics[];
+  /**
+   * The recorded cause of the previous attempt of the CURRENT stage failing
+   * (issue #363). Written by the coordinator when a stage failure leaves a
+   * resumable pause; read by the next attempt's prompt composition, so a
+   * retrying stage converges on the recorded reason instead of repeating an
+   * identical rejected submission blind. Cleared by the session when the stage
+   * completes. Bounded: fixed code, harness-authored message, recurrence
+   * count -- never model or provider text.
+   */
+  lastStageFailure?: StageFailureRecord;
   /** A paused durable role session, resumed before a new role session is admitted. */
   activeStage?: ActiveWorkflowStage;
   /** Most recent safe handoff decision, retained for deterministic resume. */

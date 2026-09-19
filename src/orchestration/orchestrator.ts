@@ -403,7 +403,15 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       // coordinator deletes the pause when a decision resolves, so a pause
       // present here is the live state and must be projected as one.
       const pause = pipelinePauseFromCheckpoint(completed.checkpoint);
-      if (pause !== undefined) throw pause;
+      if (pause !== undefined) {
+        // A foreground resume that re-pauses must reach the background
+        // registry too (issue #363): this orchestrator owns both records, and
+        // the registry otherwise keeps the stale earlier pause. A runId with
+        // no entry here (a run this process never registered) projects
+        // nothing.
+        backgroundRuns.projectForegroundPause(pause.detail, pause.pause, pause.metrics);
+        throw pause;
+      }
       const decision = completed.checkpoint.decisions.find((item) => item.status === "pending");
       throw new ProjectOperationsError(
         "pending_decision",

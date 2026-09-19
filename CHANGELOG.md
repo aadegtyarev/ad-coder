@@ -13,6 +13,41 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.77.0] - 2026-09-19
+
+### Fixed
+- **A stage that fails inside the harness is no longer reported as a provider
+  failure, and the cause reaches the retry** (issue #363). A stage whose
+  post-run git-diff measurement could not run (a git target with no commit,
+  say) destroyed a COMPLETED stage: the runner threw after the turn had
+  settled, the coordinator recorded a generic `stage_failed` pause whose only
+  advice was "inspect the provider failure", and a resume restarted the stage
+  fresh with no memory of why it had failed -- so an unattended retry repeated
+  the identical submission forever. Four changes close that loop. First, the
+  runner no longer destroys a settled turn over its own diff measurement: the
+  lost metric is noted on stderr and recorded as 0 bytes, and the settled text
+  and follow-ups are delivered. Second, the pause names the kind of failure it
+  actually was: every typed harness-side cause (a runner measurement failure,
+  an empty provider turn, a cost-anomaly block, unavailable configured tools,
+  a suspended deferral, a typed submission rejection such as
+  `invalid_follow_up`, an orchestration precondition) is worded as harness
+  work and carries a bounded cause record (typed code, harness-authored
+  message, recurrence count); a provider rejection keeps its own pause and
+  wording, and an untyped error keeps the old generic wording and records
+  nothing. Third, the recorded cause is carried into the NEXT attempt's
+  prompt for that stage (plan, security, code, review), so the retry can
+  converge on the recorded reason instead of repeating the identical rejected
+  submission; the same cause recurring on consecutive attempts is counted and
+  stated in the pause, distinguishable from a stage-ceiling underestimate
+  (which is a `stage_limit` pause with its limit fields). The record is
+  cleared once the stage completes, and a prompt with no recorded failure is
+  byte-identical to before. Fourth, a FOREGROUND resume that re-pauses now
+  updates the background registry entry instead of leaving the stale earlier
+  pause there, so the registry never contradicts the checkpoint. The
+  `review_not_run` and `plan_not_submitted` pauses carry the same cause
+  record, so a reviewer whose verdict submission was refused sees the
+  validator's own wording on the retry.
+
 ## [0.76.0] - 2026-09-19
 
 ### Added

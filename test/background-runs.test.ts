@@ -5,6 +5,7 @@ import * as path from "node:path";
 import {
   BackgroundRunError,
   BackgroundRunManager,
+  DEFAULT_BACKGROUND_RUN_LIMITS,
   MIN_BACKGROUND_EVENT_PAGE_BYTES,
   RESUME_PIPELINE_DETAIL,
   RESUME_PIPELINE_NO_RAISE_DETAIL,
@@ -549,6 +550,65 @@ test("active-run admission rejects excess work and close is finite for a stuck w
 
 import * as crypto from "node:crypto";
 
+test("a pause cause survives the registry round-trip and stays inside the page cap (issue #363)", async () => {
+  const targetDir = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-pause-cause-")),
+  );
+  const cause = {
+    code: "diff_metric_failed",
+    message: "git diff HEAD failed (128)",
+    recurrence: 1,
+  } as const;
+  const manager = new BackgroundRunManager(
+    async (_task, runId) => {
+      throw new PipelinePauseError(
+        runId,
+        {
+          phase: "code",
+          code: "stage_failed",
+          action:
+            "the stage failed inside the harness (diff_metric_failed); resolve the recorded cause, then retry the stage explicitly",
+          cause: { ...cause },
+        },
+        { steps: 2, totalCost: 0.01 },
+      );
+    },
+    {},
+    targetDir,
+  );
+  const { runId } = manager.start("harness cause");
+  await manager.wait(runId);
+  expect(manager.status(runId).pause?.cause).toEqual(cause);
+  // The persisted event carries it too, and a fresh manager reading the same
+  // record accepts the cause field (the schema was extended, not drifted).
+  const persisted = JSON.parse(
+    fs.readFileSync(
+      path.join(targetDir, ".ad-coder", "runs", "background", `${runId}.json`),
+      "utf8",
+    ),
+  ) as {
+    value?: {
+      events: { lifecycle: string; pause?: { cause?: unknown } }[];
+    };
+  };
+  const persistedData =
+    persisted.value ??
+    (persisted as unknown as {
+      events: { lifecycle: string; pause?: { cause?: unknown } }[];
+    });
+  const pausedEvent = persistedData.events.find((event) => event.lifecycle === "paused");
+  expect(pausedEvent?.pause?.cause).toEqual(cause);
+  // The page cap already covers the longest schema-valid event WITH a cause,
+  // so a cause can never push a cursor past the byte ceiling: the minimum
+  // still fits the DEFAULT page budget it protects.
+  expect(MIN_BACKGROUND_EVENT_PAGE_BYTES).toBeLessThanOrEqual(
+    DEFAULT_BACKGROUND_RUN_LIMITS.maxPageBytes,
+  );
+  const page = manager.events(runId, 0, 20);
+  expect(page.events.some((event) => event.pause?.cause?.code === "diff_metric_failed")).toBe(true);
+  await manager.close();
+});
+
 test("a stage pause is reported as paused with real metrics, the limit, and a recovery action (issue #261)", async () => {
   const targetDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-pause-")));
   const manager = new BackgroundRunManager(
@@ -658,6 +718,57 @@ test("a paused run names a recovery the operator can actually perform", () => {
   // tries them first -- which is exactly what happened when this was found.
   expect(detail).toContain("background` has no resume action");
   expect(detail).toContain("control resume` does not read background runs");
+});
+
+test("projectForegroundPause only touches entries this manager holds (issue #363)", async () => {
+  const targetDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-projection-")));
+  const ownerId = crypto.randomUUID();
+  const manager = new BackgroundRunManager(
+    async (_task, runId) => completedResult(runId),
+    {},
+    targetDir,
+    ownerId,
+  );
+  const { runId } = manager.start("owned run");
+  await manager.wait(runId);
+  expect(manager.status(runId).lifecycle).toBe("completed");
+
+  // A runId this manager never held is skipped silently -- no throw, no entry.
+  manager.projectForegroundPause(
+    "never-started-here",
+    { phase: "plan", code: "stage_failed", action: "resume the stage explicitly" },
+    { steps: 0, totalCost: 0 },
+  );
+  expect(manager.status(runId).lifecycle).toBe("completed");
+
+  // A held run that re-paused in the foreground becomes the pause the
+  // checkpoint now carries: the registry never contradicts the checkpoint.
+  manager.projectForegroundPause(
+    runId,
+    {
+      phase: "code",
+      code: "stage_failed",
+      action: "the stage failed inside the harness (empty_turn); resolve the recorded cause",
+      cause: { code: "empty_turn", message: "empty turn", recurrence: 1 },
+    },
+    { steps: 2, totalCost: 0.5 },
+  );
+  const status = manager.status(runId);
+  expect(status.lifecycle).toBe("paused");
+  expect(status.pause?.code).toBe("stage_failed");
+  expect(status.pause?.cause?.recurrence).toBe(1);
+  expect(status.metrics).toEqual({ steps: 2, totalCost: 0.5 });
+  // The persisted record re-parses (a paused entry carries no terminal
+  // outcome) and a fresh manager reads the projected pause.
+  const reconnected = new BackgroundRunManager(
+    async () => completedResult(runId),
+    {},
+    targetDir,
+    ownerId,
+  );
+  expect(reconnected.status(runId).pause?.cause?.code).toBe("empty_turn");
+  await reconnected.close();
+  await manager.close();
 });
 
 test("a non-ceiling resumable pause reports recovery without the ceiling raise wording", async () => {
