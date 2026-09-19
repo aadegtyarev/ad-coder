@@ -45,15 +45,20 @@ Rules the operator declared for ad-coder. A violation is always blocking.
   automatic decomposition itself.
 - 2026-09-13: A model inventory is operator-authored and may contain one or
   multiple providers. Routing must select only models in that inventory.
-- 2026-09-16: Coder and the roles that check its output -- Reviewer and Auditor
-  -- must come from different model families at the same complexity. An author is
-  blind exactly where they erred, and a checker from the same family shares the
-  blindness, so a same-family pairing buys a review that cannot see the defect.
-  Route them together only when the inventory offers no second family; then use
-  different variants recommended for those roles, and record that the constraint
-  was unsatisfiable rather than leaving it looking like a choice. Stated as
-  "may" until 2026-09-16, which is why a seeded matrix put one model on Coder,
-  Reviewer and Auditor at once without anything objecting.
+- 2026-09-16 (corrected 2026-09-20): Coder and Reviewer must come from
+  different model families at the same complexity. An author is blind exactly
+  where they erred, and a checker from the same family shares the blindness, so
+  a same-family pairing buys a review that cannot see the defect. The rule
+  covers the Reviewer only, because the reviewer checks the coder's work; the
+  Auditor does NOT check it -- the auditor looks at the project as a whole and
+  its job is different -- so a same-family coder/auditor pairing is permitted
+  (operator clarification, 2026-09-20). Route Coder and Reviewer together only
+  when the inventory offers no second family; then use different variants
+  recommended for those roles, and record that the constraint was unsatisfiable
+  rather than leaving it looking like a choice. Stated as "may" until
+  2026-09-16, which is why a seeded matrix put one model on Coder, Reviewer and
+  Auditor at once without anything objecting; the shared Coder/Reviewer model is
+  the pairing this rule names, and the Auditor sharing it was never in scope.
 - 2026-09-14: `~/.config/ad-coder/inventories.json` is the single editable
   runtime source for named registry/routing profiles. First CLI use seeds the
   built-in OpenAI profile when the file is absent; upgrades never overwrite an
