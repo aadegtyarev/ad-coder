@@ -18,3 +18,24 @@ jobs:
       - run: bun run check:docs
       - run: bun test
       - run: bun run smoke:artifact
+      # The pre-merge review-stamp gate (issue #295), deliberately LAST: it
+      # certifies the tree the other steps just verified.
+      #
+      # Keep GitHub's DEFAULT checkout -- no ref pin. On a pull_request,
+      # actions/checkout checks out refs/pull/N/merge when the PR is mergeable,
+      # so the digest verified is THE TREE THAT WOULD LAND -- the strongest form
+      # of the gate and exactly the #377 failure class (a rebase-merge landing a
+      # tree nobody reviewed). Intended consequences: a rebase after review
+      # without a fresh re-review is red; a rebase followed by a re-review
+      # passes (the fresh stamp digests the new tree); a stamp taken on a
+      # branch tip that no longer matches after main moved reds. A conflicting
+      # PR creates no merge ref and reds at checkout -- truthful, it cannot
+      # land anyway. On push to main the newest stamp digests main's tree,
+      # because every landing carries its own fresh stamp; a landing that
+      # bypassed the gate turns main's CI red -- a signal, not a false alarm.
+      #
+      # Deliberately NOT an in-run gate (issue #271): DEFAULT_PROJECT_GATES
+      # excludes `stamp:check` (pinned by test/pipeline-gates.test.ts) because
+      # only runPipeline's settle path writes stamps. Nobody "fixes" this step
+      # to a head-sha checkout without re-deciding the property above.
+      - run: bun run stamp:check
