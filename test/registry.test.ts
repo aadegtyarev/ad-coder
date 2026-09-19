@@ -405,6 +405,84 @@ test("an injected store without storedCredentialIds keeps the env-only preflight
   }
 });
 
+// --- preflight scope (issue #414) --------------------------------------------
+
+// p1 carries its key in the env; p2's var is unset and nothing is stored.
+function twoProviderConfig(): RegistryConfig {
+  return {
+    providers: [
+      provider({ models: [model({ name: "m1" })] }),
+      provider({
+        id: "p2",
+        credential: { kind: "env-var", envVar: "P2_KEY" },
+        models: [model({ name: "m2", modelId: "model-2" })],
+      }),
+    ],
+  };
+}
+
+test("a provider outside the preflight set registers without missing_credential", () => {
+  const resolved = resolveRegistry(twoProviderConfig(), {
+    env: fakeEnv({ P1_KEY: "fake-key" }),
+    preflightCredentialIds: new Set(["p1"]),
+  });
+  // Registered and addressable: the key is only needed at dispatch time.
+  expect(resolved.getModel("m2").provider).toBe("p2");
+});
+
+test("a provider outside the preflight set with its key present resolves auth as before", async () => {
+  const resolved = resolveRegistry(twoProviderConfig(), {
+    env: fakeEnv({ P1_KEY: "fake-key", P2_KEY: "fake-key-2" }),
+    preflightCredentialIds: new Set(["p1"]),
+  });
+  const auth = await resolved.models.getAuth("p2");
+  expect(auth?.auth.apiKey).toBe("fake-key-2");
+});
+
+test("a provider inside the preflight set without a key still throws missing_credential, same text", () => {
+  try {
+    resolveRegistry(twoProviderConfig(), {
+      env: fakeEnv({}),
+      preflightCredentialIds: new Set(["p1", "p2"]),
+    });
+    throw new Error("expected throw");
+  } catch (error) {
+    expect(error).toBeInstanceOf(RegistryError);
+    expect((error as RegistryError).code).toBe("missing_credential");
+    expect((error as RegistryError).detail).toBe("P1_KEY");
+    expect((error as RegistryError).message).toBe(
+      'credential for provider "p1" is not stored and environment variable "P1_KEY" is not set',
+    );
+    expect((error as RegistryError).message).not.toContain("fake");
+  }
+});
+
+test("an absent preflightCredentialIds option keeps preflighting every provider", () => {
+  try {
+    resolveRegistry(twoProviderConfig(), { env: fakeEnv({ P1_KEY: "fake-key" }) });
+    throw new Error("expected throw");
+  } catch (error) {
+    expect(error).toBeInstanceOf(RegistryError);
+    expect((error as RegistryError).code).toBe("missing_credential");
+    expect((error as RegistryError).detail).toBe("P2_KEY");
+  }
+});
+
+test("the env accessor is never queried for a provider outside the preflight set", () => {
+  const read: string[] = [];
+  const countingEnv = (name: string): string | undefined => {
+    read.push(name);
+    return name === "P1_KEY" ? "fake-key" : undefined;
+  };
+  resolveRegistry(twoProviderConfig(), {
+    env: countingEnv,
+    preflightCredentialIds: new Set(["p1"]),
+  });
+  // Registration touches no secret for the out-of-set provider: no env read
+  // for P2 at resolve time, so P2's var is read only at dispatch.
+  expect(read).toEqual(["P1_KEY"]);
+});
+
 test("resolveRegistry gives pi Models the exact injected CredentialStore", async () => {
   let reads = 0;
   const credentials: CredentialStore = {

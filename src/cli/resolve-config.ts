@@ -601,6 +601,7 @@ function resolveConfig(
         registry: RegistryConfig;
         profile: Profile;
         name: string;
+        reachableProviders: string[];
         source: "default" | "selection";
       }
     | undefined;
@@ -612,6 +613,7 @@ function resolveConfig(
         registry: projected.registry,
         profile: projected.profile,
         name: projected.name,
+        reachableProviders: projected.reachableProviders,
         source: options.inventoryProfile === undefined ? "default" : "selection",
       };
     } else {
@@ -694,12 +696,49 @@ function resolveConfig(
     throw new Error(`unknown context compaction mode "${String(compactionMode)}"`);
   }
 
+  // PREFLIGHT SCOPE (issue #414). On the models.yaml route the credential
+  // preflight covers only the providers the SELECTED routing actually names:
+  // the profile's reachable providers plus the providers owning any
+  // `--<role>-model` / `--vision-model` override (those COMPOSE with the
+  // selection, config contract #101, so they can reach a provider the profile
+  // itself does not name). Model -> owner resolution goes through the same
+  // validated registry projection the resolver indexes, never the rung's
+  // textual prefix. The inventory (JSON) route scopes itself with a
+  // per-profile registry and keeps resolving every provider: no option there.
+  const preflightCredentialSet = ((): ReadonlySet<string> | undefined => {
+    if (yamlSelection === undefined) return undefined;
+    const ownerOf = (name: string): string | undefined =>
+      registryConfig.providers.find((p) => p.models.some((m) => m.name === name))?.id;
+    const ids = new Set<string>(yamlSelection.reachableProviders);
+    for (const name of [
+      options.orchestratorModel,
+      options.plannerModel,
+      options.researcherModel,
+      options.securityModel,
+      options.coderModel,
+      options.reviewerModel,
+      options.auditorModel,
+      options.summarizerModel,
+      options.visionModel,
+    ]) {
+      if (name === undefined) continue;
+      const owner = ownerOf(name);
+      if (owner !== undefined) ids.add(owner);
+      // An unregistered override name stays absent here: the composed-override
+      // check below raises unknown_model naming the selection and the model.
+    }
+    return ids;
+  })();
+
   const registry: ResolvedRegistry =
     inventory?.registry ??
     resolveRegistry(registryConfig, {
       env,
       credentials,
       ...(storedIds !== undefined && { storedCredentialIds: storedIds }),
+      ...(preflightCredentialSet !== undefined && {
+        preflightCredentialIds: preflightCredentialSet,
+      }),
     });
   for (const configuredProvider of registryConfig.providers) {
     const credentialName =
