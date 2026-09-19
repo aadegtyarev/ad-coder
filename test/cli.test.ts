@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { AuthInteraction, Models } from "@earendil-works/pi-ai";
 import { FileCredentialStore } from "../src/auth/credential-store";
-import { projectCliError, renderCliError } from "../src/cli";
+import { projectCliError, renderCliError, renderConfigShowRow } from "../src/cli";
 import { renderAuthEvent, runAuthCommand } from "../src/cli/auth";
 import { SessionNotAcquiredError } from "../src/conversation/conversation";
 import type { DurableRunRecord } from "../src/orchestration/control-plane";
@@ -1724,4 +1724,110 @@ test("config show's pinned skill row applies the requires filter the run applies
   ]);
   expect(unknown.code).toBe(1);
   expect(unknown.stderr).toContain("skill resolution failed");
+});
+
+test("config show's human skills row prints the enabled state and count, never a placeholder", () => {
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-skills-human-row-"));
+  const human = (...args: string[]) => runCli(["config", "show", "--target-dir", target, ...args]);
+
+  // The built-in catalogue's ids cannot fit one row, so the human line is the
+  // count and the winning layer -- the exact #416 shape. The human row and the
+  // --json row must describe the SAME resolved set: the human front only
+  // renders what the resolver already decided.
+  const unset = human();
+  expect(unset.code).toBe(0);
+  const effective = JSON.parse(human("--json").stdout) as Record<
+    string,
+    { value: unknown; source: string }
+  >;
+  const jsonRow = effective.skills as {
+    value: { enabled: boolean; skills: { id: string }[] };
+    source: string;
+  };
+  expect(jsonRow.value.enabled).toBe(true);
+  const row = unset.stdout.split("\n").find((line) => line.startsWith("skills="));
+  expect(row).toBe(`skills=${jsonRow.value.skills.length} skills enabled (${jsonRow.source})`);
+  // The leak class, asserted over EVERY resolved row: a set-valued capability
+  // without a human renderer reds here instead of printing `[object Object]`.
+  for (const [name, entry] of Object.entries(effective)) {
+    if (typeof entry.value !== "object" || entry.value === null) continue;
+    expect(name).toBe("skills");
+  }
+  expect(unset.stdout).not.toContain("[object Object]");
+
+  // A pin whose ids fit the row budget lists them, the workflows row's
+  // comma-list rule; the layer names the operator's flag as the winner.
+  const pinned = human("--skills", "repository-navigation");
+  expect(pinned.code).toBe(0);
+  expect(pinned.stdout).toContain("skills=1 skills enabled: repository-navigation (cli)");
+
+  // The explicit off says OFF in the human front too, not a silent empty set.
+  const off = human("--no-skills");
+  expect(off.code).toBe(0);
+  expect(off.stdout).toContain("skills=disabled (cli)");
+  expect(off.stdout).not.toContain("[object Object]");
+});
+
+test("renderConfigShowRow renders set-valued rows and fails loudly on one it cannot render", () => {
+  // Scalar rows pass through untouched: the fix is scoped to set-valued values.
+  expect(renderConfigShowRow("workflows", "none", "cli")).toBe("workflows=none (cli)");
+  expect(renderConfigShowRow("maxRounds", 3, "built-in-default")).toBe(
+    "maxRounds=3 (built-in-default)",
+  );
+
+  // Issue #416: a set-valued value used to print as `[object Object]`.
+  expect(
+    renderConfigShowRow("skills", { enabled: true, skills: [{ id: "a" }, { id: "b" }] }, "cli"),
+  ).toBe("skills=2 skills enabled: a,b (cli)");
+  // A known empty reach set says the switch is ON, with its count: an empty
+  // pin must stay distinguishable from the explicit off.
+  expect(renderConfigShowRow("skills", { enabled: true, skills: [] }, "cli")).toBe(
+    "skills=0 skills enabled (cli)",
+  );
+  // No supplied reach set: the switch says ON and claims no count it lacks.
+  expect(renderConfigShowRow("skills", { enabled: true, skills: null }, "built-in-default")).toBe(
+    "skills=enabled (built-in-default)",
+  );
+  // The explicit off says OFF whatever the reach set holds.
+  expect(renderConfigShowRow("skills", { enabled: false, skills: [{ id: "a" }] }, "cli")).toBe(
+    "skills=disabled (cli)",
+  );
+
+  // Ids join the row only while the WHOLE row fits the budget: two 44-char ids
+  // land the row exactly on 120 columns and stay; one more column drops the
+  // ids without truncating them.
+  const rowFor = (ids: string[]): string =>
+    renderConfigShowRow("skills", { enabled: true, skills: ids.map((id) => ({ id })) }, "cli");
+  const exactFit = rowFor(["b".repeat(44), "c".repeat(44)]);
+  expect(exactFit).toBe(`skills=2 skills enabled: ${"b".repeat(44)},${"c".repeat(44)} (cli)`);
+  expect(exactFit.length).toBe(120);
+  expect(rowFor(["b".repeat(45), "c".repeat(44)])).toBe("skills=2 skills enabled (cli)");
+
+  // A future set-valued capability without a branch fails the row loudly,
+  // naming the KEY only -- the value must never reach the diagnostic.
+  const exit = process.exit;
+  const stderrWrite = process.stderr.write;
+  let exitCode: number | undefined;
+  let stderr = "";
+  process.exit = ((code?: number) => {
+    exitCode = code;
+    throw new Error("exit-stub");
+  }) as typeof process.exit;
+  process.stderr.write = ((chunk: unknown) => {
+    stderr += String(chunk);
+    return true;
+  }) as typeof process.stderr.write;
+  try {
+    expect(() =>
+      renderConfigShowRow("futureCapability", { planned: "VALUE-LEAK-MARKER" }, "cli"),
+    ).toThrow("exit-stub");
+  } finally {
+    process.exit = exit;
+    process.stderr.write = stderrWrite;
+  }
+  expect(exitCode).toBe(2);
+  expect(stderr).toContain("futureCapability");
+  expect(stderr).toContain("renderConfigShowRow");
+  expect(stderr).not.toContain("VALUE-LEAK-MARKER");
+  expect(stderr).not.toContain("[object Object]");
 });

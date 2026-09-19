@@ -375,3 +375,19 @@ was shown, under the same overriding rules the banner already answers to.
   and the cost meter, and its failure is attributed in names and numbers.
   `disabled-then-halt` still summarizes nothing and refuses at the effective
   ceiling, and `cache-aware` stays a fail-loud reserved mode.
+
+- 2026-09-20: **The human `config show` front prints ONE primitive row per
+  output line as `name=value (source)`, and a set-valued capability's row
+  states its resolved state and count -- never a placeholder (issue #416).**
+  The skills row prints e.g. `skills=8 skills enabled`, and the explicit off
+  prints `skills=disabled`; a switch whose reach set was never supplied says
+  `enabled` and claims no count it does not know. Member ids join the count
+  with the workflows comma-list name rule (src/cli/resolve-config.ts) only
+  while the WHOLE row fits the documented 120-column line budget
+  (`CONFIG_SHOW_MAX_LINE_LENGTH`, src/cli.ts), so an unbounded catalogue can
+  never flood a terminal. The renderer only FORMATS what the resolver already
+  decided: the human row and the `--json` row describe the same resolved set.
+  A set-valued value with no deliberate renderer branch fails the command
+  loudly, naming the KEY only -- never the value -- so `[object Object]` can
+  never be printed again; the leak-class tripwire over every resolved row
+  lives in test/cli.test.ts.
