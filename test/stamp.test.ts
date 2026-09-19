@@ -148,7 +148,7 @@ test("a stamp naming a digest no longer matching the tree is stale and must not 
   expect(after).not.toBe(before);
   // No new review, no new stamp: the old stamp must no longer pass.
   expect(checkReviewStamps(root).ok).toBe(false);
-  expect(checkReviewStamps(root).errors[0]).toContain("stale");
+  expect(checkReviewStamps(root).failures[0]?.reason).toContain("stale");
 });
 
 function writeMarker(root: string, file: string): void {
@@ -190,7 +190,9 @@ test("a changes_requested verdict blocks the gate, and a fresh digest cannot exc
   });
   const verification = checkReviewStamps(root);
   expect(verification.ok).toBe(false);
-  expect(verification.errors.join("\n")).toContain("changes_requested");
+  expect(verification.failures.map(({ reason }) => reason).join("\n")).toContain(
+    "changes_requested",
+  );
 });
 
 test("a malformed newest stamp fails the gate with the reason", () => {
@@ -265,11 +267,11 @@ test("body-check fails with the absent error when the body carries no block", ()
     fs.writeFileSync(ledger, `${JSON.stringify(record({ ts: 1 }))}\n`);
     const body = path.join(dir, "body.md");
     fs.writeFileSync(body, "## Delivery\n\nNo cost block here at all.\n");
-    const errors = stampBodyCheckErrors(body, dir, [ledger]);
-    expect(errors.length).toBe(1);
-    expect(errors[0]).toContain("the generated delivery block is absent");
-    expect(errors[0]).toContain(body);
-    expect(errors[0]).toContain("ad-coder stamp delivery");
+    const failures = stampBodyCheckErrors(body, dir, [ledger]);
+    expect(failures.length).toBe(1);
+    expect(failures[0]?.reason).toContain("the generated delivery block is absent");
+    expect(failures[0]?.reason).toContain(body);
+    expect(failures[0]?.action).toContain("ad-coder stamp delivery");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -288,10 +290,10 @@ test("body-check fails with the stale error when the body block differs from the
       "runs run-1 | calls=99 | cost=$999.000000 | tokens fresh=0 cached=0 out=0\n" +
         "coder     vendor/small                     calls=1   cost=$0.010000\n",
     );
-    const errors = stampBodyCheckErrors(body, dir, [ledger]);
-    expect(errors.length).toBe(1);
-    expect(errors[0]).toContain("the delivery block is stale");
-    expect(errors[0]).toContain("ad-coder stamp delivery");
+    const failures = stampBodyCheckErrors(body, dir, [ledger]);
+    expect(failures.length).toBe(1);
+    expect(failures[0]?.reason).toContain("the delivery block is stale");
+    expect(failures[0]?.action).toContain("ad-coder stamp delivery");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

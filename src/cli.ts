@@ -200,6 +200,24 @@ let consoleJsonFront = false;
 let machineJsonFront = false;
 const DEFAULT_HEARTBEAT_MS = 10_000;
 
+/**
+ * The stamp gates' failure path (issue #425): a gate failure is a FACT -- the
+ * newest review verdict or a digest mismatch -- with an action that clears it.
+ * It is never a usage mistake, so neither front shows the help: a human gets
+ * the reason then the action as words on stderr, a machine front gets the
+ * stable structured shape with a typed code that is not `usage`.
+ */
+function failGate(reasons: string, action: string): never {
+  if (machineJsonFront) {
+    process.stderr.write(
+      `${JSON.stringify({ error: { code: "gate_failed", text: reasons, retryable: false, nextAction: action } })}\n`,
+    );
+    process.exit(2);
+  }
+  process.stderr.write(`ad-coder: ${reasons}\n${action}\n`);
+  process.exit(2);
+}
+
 function fail(message: string): never {
   // Any machine front gets the structured shape; only a human front gets the
   // help text, which would otherwise corrupt a caller parsing stderr.
@@ -1362,8 +1380,12 @@ function stampCommand(positionals: string[], flags: Record<string, string | unde
     if (bodyPath === undefined)
       fail("stamp body-check requires a pull-request body file path as the first argument");
     const fileArgs = positionals.slice(3);
-    const errors = stampBodyCheckErrors(bodyPath, targetDir, fileArgs);
-    if (errors.length > 0) fail(errors.join("\n"));
+    const failures = stampBodyCheckErrors(bodyPath, targetDir, fileArgs);
+    if (failures.length > 0)
+      failGate(
+        failures.map(({ reason }) => reason).join("\n"),
+        failures.map(({ action }) => action).join("\n"),
+      );
     process.stdout.write("stamp body-check: the delivery block is present and fresh\n");
     return;
   }
@@ -1373,7 +1395,11 @@ function stampCommand(positionals: string[], flags: Record<string, string | unde
   // refuses and an absent file defaults, never a silent switch.
   const requireStamp = resolveStampRequirement(loadSettingsConfigSeam(defaultSettingsPath()));
   const errors = stampCheckErrors(targetDir, requireStamp);
-  if (errors.length > 0) fail(errors.join("\n"));
+  if (errors.length > 0)
+    failGate(
+      errors.map(({ reason }) => reason).join("\n"),
+      [...new Set(errors.map(({ action }) => action))].join("\n"),
+    );
   process.stdout.write("stamp check: the newest review stamp is fresh\n");
 }
 
@@ -3632,6 +3658,10 @@ const COMMANDS: readonly CommandDefinition[] = [
     ],
     options: [
       {
+        name: "--json",
+        description: "Emit a stable JSON error shape; accepted for machine front.",
+      },
+      {
         name: "--target-dir",
         value: "<dir>",
         description: "Project read; defaults to the current directory.",
@@ -3941,7 +3971,10 @@ async function main(argv: string[]): Promise<void> {
     commandName === "background" ||
     commandName === "profile" ||
     // JSON only when asked for it.
-    ((commandName === "update" || commandName === "cost" || commandName === "ledger") &&
+    ((commandName === "update" ||
+      commandName === "cost" ||
+      commandName === "ledger" ||
+      commandName === "stamp") &&
       passedJsonFlag);
   const command = COMMANDS.find(({ name }) => name === commandName);
   if (command === undefined)

@@ -23,11 +23,15 @@ import type { SettingsConfig, StampRequirement } from "../config/types";
 import {
   appendReviewStamp,
   computeTreeDigest,
+  FRESH_STAMP_ACTION,
   type ReviewStamp,
+  type ReviewStampFailure,
   type ReviewStampVerification,
   readReviewStamps,
   verifyReviewStamp,
 } from "./review-stamp";
+
+export type { ReviewStampFailure };
 
 /** The committed marker that turns stamp writing on for one repository. */
 export const STAMPS_MARKER_FILE = "ad-coder.stamps.json";
@@ -170,20 +174,44 @@ export function checkReviewStamps(
   const marker = readStampsMarker(repoRoot);
   // The settings layer may force the gate off; `auto`/absent keeps today's
   // marker-governed read (the marker's file, or the built-in default path).
-  if (requireStampOverride === "off") return { ok: true, errors: [] };
+  if (requireStampOverride === "off") return { ok: true, failures: [] };
   const stampsFile = marker?.file ?? "docs/reviews/stamps.log";
   const stamps = readReviewStamps(repoRoot, stampsFile);
   const newest = stamps[stamps.length - 1];
   if (newest === undefined)
-    return { ok: false, errors: [`no review stamp exists in ${stampsFile}`] };
+    return {
+      ok: false,
+      failures: [
+        {
+          reason: `no review stamp exists in ${stampsFile}`,
+          action: FRESH_STAMP_ACTION,
+        },
+      ],
+    };
   if (typeof newest.parsed === "string")
-    return { ok: false, errors: [`newest stamp line ${newest.index + 1}: ${newest.parsed}`] };
+    return {
+      ok: false,
+      failures: [
+        {
+          reason: `newest stamp line ${newest.index + 1}: ${newest.parsed}`,
+          action: FRESH_STAMP_ACTION,
+        },
+      ],
+    };
   let currentTreeDigest: string;
   try {
     currentTreeDigest = computeTreeDigest(repoRoot, [stampsFile]);
   } catch (error) {
-    return { ok: false, errors: [String(error)] };
+    return {
+      ok: false,
+      failures: [
+        {
+          reason: String(error),
+          action: "resolve the git error above and re-run the gate",
+        },
+      ],
+    };
   }
-  const errors = verifyReviewStamp(newest.parsed, currentTreeDigest);
-  return { ok: errors.length === 0, errors };
+  const failures = verifyReviewStamp(newest.parsed, currentTreeDigest);
+  return { ok: failures.length === 0, failures };
 }
