@@ -230,6 +230,50 @@ function fail(message: string): never {
   process.exit(2);
 }
 
+// Human budget for one `config show` row -- the same 120-column line the docs
+// readability gate uses: ids join the row only while the whole row still fits,
+// so an unbounded catalogue can never flood a terminal.
+const CONFIG_SHOW_MAX_LINE_LENGTH = 120;
+
+/** One resolved skill as `resolvePipelineConfig` writes it into the row. */
+type ResolvedSkillEntry = { id?: unknown };
+
+const skillId = (skill: unknown): string => String((skill as ResolvedSkillEntry).id);
+
+/**
+ * Renders one `config show` row for the human front: `name=value (source)`.
+ * Scalar values print exactly as the resolver resolved them. A set-valued
+ * capability renders its state and count -- ids follow the workflows row's
+ * comma-list rule, but only while the whole row fits the line budget -- so a
+ * set-valued value can never degrade into the `[object Object]` placeholder
+ * of issue #416. The shapes mirror what `resolvePipelineConfig` resolved; the
+ * renderer only formats what the resolver already decided (docs/contracts/
+ * cli.md). An object value with no branch here fails the command loudly,
+ * naming the KEY only, so a value can never leak into a diagnostic.
+ */
+export function renderConfigShowRow(name: string, value: unknown, source: string): string {
+  const row = (rendered: string): string => `${name}=${rendered} (${source})`;
+  if (typeof value !== "object" || value === null) return row(String(value));
+  if (name === "skills") {
+    const { enabled, skills } = value as { enabled?: boolean; skills?: unknown };
+    // The explicit off says OFF; a switch whose reach set was never supplied
+    // says ON and claims no count it does not know; a known empty set is the
+    // empty pin -- still ON, with its count.
+    if (enabled === false) return row("disabled");
+    if (skills === null || skills === undefined) return row("enabled");
+    const entries = Array.isArray(skills) ? skills.map(skillId) : [];
+    const count = `${entries.length} skills enabled`;
+    if (entries.length === 0) return row(count);
+    const ids = entries.join(",");
+    const withIds = row(`${count}: ${ids}`);
+    return withIds.length <= CONFIG_SHOW_MAX_LINE_LENGTH ? withIds : row(count);
+  }
+  fail(
+    `config show: the ${name} row carries a set-valued value with no human renderer; ` +
+      `add a ${name} branch to renderConfigShowRow`,
+  );
+}
+
 function shellArgument(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
@@ -3600,7 +3644,7 @@ const COMMANDS: readonly CommandDefinition[] = [
         process.stdout.write(`${JSON.stringify(effective)}\n`);
       } else {
         for (const [name, entry] of Object.entries(effective))
-          process.stdout.write(`${name}=${entry.value} (${entry.source})\n`);
+          process.stdout.write(`${renderConfigShowRow(name, entry.value, entry.source)}\n`);
       }
       await Promise.resolve();
     },
