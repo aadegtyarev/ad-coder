@@ -11,6 +11,7 @@ import type { Api, Model, Models, TextContent } from "@earendil-works/pi-ai";
 import { closeOpenAICodexWebSocketSessions } from "@earendil-works/pi-ai/api/openai-codex-responses";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { assertCredentialPathOutsideProject, FileCredentialStore } from "./auth/credential-store";
+import { declaredEnvProviderIds } from "./auth/declared-provider";
 import { createCredentialEnvironment } from "./auth/environment-boundary";
 import { resolveBuildInfo } from "./build-info";
 import { runAuthCommand } from "./cli/auth";
@@ -3348,8 +3349,9 @@ const COMMANDS: readonly CommandDefinition[] = [
     options: [
       {
         name: "--provider",
-        value: "<openai-codex|openrouter>",
-        description: "Select the authentication provider; defaults to openai-codex.",
+        value: "<provider-id>",
+        description:
+          "Select the authentication provider (openai-codex, openrouter, or a declared env-var provider); defaults to openai-codex.",
       },
       {
         name: "--credential-path",
@@ -3376,9 +3378,19 @@ const COMMANDS: readonly CommandDefinition[] = [
       if (method !== undefined && method !== "browser" && method !== "device_code")
         fail("--method must be browser or device_code");
       const provider = flags["--provider"];
-      if (provider !== undefined && provider !== "openai-codex" && provider !== "openrouter")
-        fail("--provider must be openai-codex or openrouter");
-      if (provider === "openrouter" && method !== undefined)
+      // A non-built-in `--provider` id must name a DECLARED env-var provider from
+      // the same source routing uses (models.yaml first, else inventories.json).
+      // The error names the IDs only, never a credential value, and never the
+      // operator's config path.
+      if (provider !== undefined && provider !== "openai-codex" && provider !== "openrouter") {
+        const declared = declaredEnvProviderIds();
+        if (!declared.includes(provider)) {
+          fail(
+            `--provider must be openai-codex, openrouter${declared.length > 0 ? `, or a declared env-var provider (${declared.join(", ")})` : ""}`,
+          );
+        }
+      }
+      if (provider !== undefined && provider !== "openai-codex" && method !== undefined)
         fail("--method is only valid for openai-codex");
       await runAuthCommand({
         action,
@@ -3389,6 +3401,8 @@ const COMMANDS: readonly CommandDefinition[] = [
         json: booleans["--json"] === true,
         ...(provider !== undefined && { provider }),
         ...(method !== undefined && { method }),
+        inventoryPath: defaultInventoryPath(),
+        modelsConfigPath: defaultModelsPath(),
       });
     },
   },

@@ -33,6 +33,13 @@ export interface ResolvedModelInventoryConfig extends ModelInventoryConfig {
 export interface ResolveModelInventoryOptions {
   env?: (name: string) => string | undefined;
   credentials?: CredentialStore;
+  /**
+   * Set of provider ids known to have a stored credential in the injected
+   * `credentials` store, passed through to `resolveRegistry` unchanged (see
+   * `ResolveOptions.storedCredentialIds`). Absent = env-only preflight -- the
+   * default for foreign/injected stores without a snapshot.
+   */
+  storedCredentialIds?: ReadonlySet<string>;
 }
 
 /** A safe projection intentionally excluding URLs and credential data. */

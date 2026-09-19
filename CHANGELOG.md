@@ -13,6 +13,24 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.81.0] - 2026-09-19
+
+### Added
+- **Stored credentials for any declared env-var provider** (issue #101). The
+  stored-credential admission gate is now keyed by the resolver's knowledge set
+  for every env-var provider an operator declares -- `auth login`, `auth
+  status`, and `auth logout` cover declared env-var providers sourced
+  `models.yaml`-first then `inventories.json`, not just the shipped
+  `openai-codex` and `openrouter`. A store without a snapshot stays env-only.
+- **Per-role model overrides compose with a selected inventory** (issue #101).
+  Pinning one role's model (`--coder-model`, the rest of the role-model family)
+  keeps the selected registry/profile and overrides only that role, rather than
+  silently disabling the inventory.
+- **Typed rejection of an unregistered override** (issue #101). An override
+  naming a model the selected inventory does not register is a typed
+  `unknown_model` error naming BOTH the inventory/profile and the override
+  model, where it previously surfaced later as a generic failure.
+
 ## [0.80.0] - 2026-09-19
 
 ### Added

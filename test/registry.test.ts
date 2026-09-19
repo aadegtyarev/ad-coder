@@ -355,11 +355,54 @@ test("a stored API key resolves when the environment is empty", async () => {
   };
   const resolved = resolveRegistry(
     { providers: [openrouterPreset()] },
-    { env: fakeEnv({}), credentials },
+    { env: fakeEnv({}), credentials, storedCredentialIds: new Set(["openrouter"]) },
   );
   const auth = await resolved.models.getAuth("openrouter");
   expect(auth?.auth.apiKey).toBe("stored-test-key");
   expect(auth?.source).toBe("stored credential");
+});
+
+test("a stored credential admits any env-var provider named in the knowledge set", async () => {
+  // Same store shape as the openrouter test, but for the plain env-var p1:
+  // stored-credential admission is a property of the knowledge set, not of
+  // one hardcoded provider id.
+  const credentials: CredentialStore = {
+    read: async (providerId) =>
+      providerId === "p1" ? { type: "api_key", key: "stored-test-key" } : undefined,
+    list: async () => [],
+    modify: async (_providerId, fn) => fn(undefined),
+    delete: async () => undefined,
+  };
+  const resolved = resolveRegistry(config(), {
+    env: fakeEnv({}),
+    credentials,
+    storedCredentialIds: new Set(["p1"]),
+  });
+  const auth = await resolved.models.getAuth("p1");
+  expect(auth?.auth.apiKey).toBe("stored-test-key");
+  expect(auth?.source).toBe("stored credential");
+});
+
+test("an injected store without storedCredentialIds keeps the env-only preflight", () => {
+  // The store holds a key for p1, but the resolver is not TOLD so: without the
+  // knowledge set the preflight must stay env-only and fail loud, exactly as
+  // for a foreign store whose async reads the sync resolver cannot consult.
+  const credentials: CredentialStore = {
+    read: async (providerId) =>
+      providerId === "p1" ? { type: "api_key", key: "stored-test-key" } : undefined,
+    list: async () => [],
+    modify: async (_providerId, fn) => fn(undefined),
+    delete: async () => undefined,
+  };
+  try {
+    resolveRegistry(config(), { env: fakeEnv({}), credentials });
+    throw new Error("expected throw");
+  } catch (error) {
+    expect(error).toBeInstanceOf(RegistryError);
+    expect((error as RegistryError).code).toBe("missing_credential");
+    expect((error as RegistryError).detail).toBe("P1_KEY");
+    expect((error as RegistryError).message).not.toContain("stored-test-key");
+  }
 });
 
 test("resolveRegistry gives pi Models the exact injected CredentialStore", async () => {

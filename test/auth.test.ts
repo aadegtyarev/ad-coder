@@ -84,6 +84,45 @@ test("file credentials persist across instances with private directory and file 
   ]);
 });
 
+test("storedProviderIds returns exactly the stored ids and never values or credentials", async () => {
+  const { file } = storePath();
+  const store = new FileCredentialStore({ path: file });
+  await store.modify("openai-codex", async () => oauth);
+  await store.modify("p1", async () => ({ type: "api_key", key: "stored-test-key" }));
+  const ids = store.storedProviderIds();
+  expect([...ids].sort()).toEqual(["openai-codex", "p1"]);
+  // The projection carries ids only: no key material and no credential shape.
+  expect(JSON.stringify([...ids])).not.toContain("stored-test-key");
+  expect(JSON.stringify([...ids])).not.toContain("sentinel-access");
+});
+
+test("storedProviderIds returns an empty set when the credential file is missing", () => {
+  const { file } = storePath();
+  const ids = new FileCredentialStore({ path: file }).storedProviderIds();
+  expect(ids.size).toBe(0);
+});
+
+test("storedProviderIds throws a typed credential_store error that never quotes the file", () => {
+  const { file } = storePath();
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  // Marker stands in for real credential content the parser might quote.
+  const marker = "sentinel-secret-content";
+  fs.writeFileSync(file, `{ broken ${marker}`, { mode: 0o600 });
+  let thrown: unknown;
+  try {
+    new FileCredentialStore({ path: file }).storedProviderIds();
+    throw new Error("expected throw");
+  } catch (error) {
+    thrown = error;
+  }
+  expect(thrown).toBeInstanceOf(AuthError);
+  const err = thrown as AuthError;
+  expect(err.code).toBe("credential_store");
+  expect(err.message).toContain(file);
+  expect(err.message).not.toContain(marker);
+  expect(String((thrown as Error).cause ?? "")).not.toContain(marker);
+});
+
 test("credential mutations serialize and a failed mutation preserves the prior file", async () => {
   const { file } = storePath();
   const store = new FileCredentialStore({ path: file });
