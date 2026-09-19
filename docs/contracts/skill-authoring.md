@@ -159,7 +159,7 @@ existing capture), never an in-run gate. The first corpus slice covers the four 
 - Mandatory opening line -- test over the shipped directory: the identical sentence,
   its own paragraph.
 - Description budget -- test over every shipped `skill.json`: ≤ 1,536 characters.
-- Description trigger shape -- review under this contract; eval-gated once a trigger
-  scorer exists (the gap above).
+- Description trigger shape -- review under this contract; eval-gated via the
+  skill-trigger scorer (see Verification).
 - Obligations stay out of skills; prompts name no skill id -- prompt tests (skills.md,
   2026-09-18).
