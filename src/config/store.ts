@@ -2,8 +2,7 @@ import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { Document as YamlDocument } from "yaml";
-import { parseDocument } from "yaml";
+import { Document, parseDocument, type Document as YamlDocument } from "yaml";
 import { ConfigError } from "./errors";
 import type { ModelsConfig, SettingsConfig } from "./types";
 import { parseModelsConfig, parseSettingsConfig } from "./validate";
@@ -61,6 +60,71 @@ export function saveModelsConfig(file: string, edit: (doc: YamlDocument) => void
   const config = parseModelsConfig(doc.toJS());
   writeAtomically(file, String(doc));
   return config;
+}
+
+/**
+ * Refuse to create a `models.yaml` that already has a name on disk. `lstat`,
+ * not `stat` (and stricter than the seam's `present()`): even a dangling
+ * symlink is a name an operator owns, so a hand-edited file is never clobbered
+ * by a fresh write, whatever kind of entry sits at the path. A clean `ENOENT`
+ * is the only green light; anything else (a permission refusal, an I/O error)
+ * is also a refusal -- the write never fires blind on an unconfirmed target.
+ */
+export function assertModelsFileAbsent(file: string): void {
+  try {
+    fs.lstatSync(file);
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return;
+    throw new ConfigError(
+      "invalid_config",
+      "models.yaml",
+      "cannot confirm the models.yaml target is absent; refusing to write",
+    );
+  }
+  throw new ConfigError(
+    "invalid_config",
+    "models.yaml",
+    "refusing to overwrite an existing models.yaml; move or delete it first, then migrate again",
+  );
+}
+
+/**
+ * Create a FRESH `models.yaml` from already-built config: the counterpart of
+ * `saveModelsConfig`, which only edits an existing document. Used by `config
+ * migrate`, whose whole-file output has no prior document to preserve
+ * comments in. The document is built in the FILE shape (a profile's value is
+ * its routes map -- the parser fills the name from the key -- and the default
+ * profile's key is `default`), validated through the same `parseModelsConfig`
+ * gate BEFORE writing -- a bad projection never lands on disk -- and written
+ * through the atomic recipe. The absence guard runs first, so an existing
+ * file is refused before anything else happens.
+ */
+export function writeFreshModelsConfig(file: string, config: ModelsConfig): void {
+  assertModelsFileAbsent(file);
+  const doc = new Document(toFileShape(config));
+  parseModelsConfig(doc.toJS());
+  writeAtomically(file, String(doc));
+}
+
+/**
+ * The stored-document shape of a `ModelsConfig`: exactly what
+ * `parseModelsConfig` reads back, with the two memory-to-file renames --
+ * `defaultProfile` becomes `default`, and a profile collapses to its routes
+ * map because the key names the profile.
+ */
+function toFileShape(config: ModelsConfig): Record<string, unknown> {
+  return {
+    providers: Object.fromEntries(
+      Object.entries(config.providers).map(([name, provider]) => [
+        name,
+        { ...provider, models: { ...provider.models } },
+      ]),
+    ),
+    ...(config.defaultProfile === undefined ? {} : { default: config.defaultProfile }),
+    profiles: Object.fromEntries(
+      Object.entries(config.profiles).map(([name, profile]) => [name, { ...profile.routes }]),
+    ),
+  };
 }
 
 function readDocument(file: string, name: "models.yaml" | "settings.yaml"): YamlDocument {

@@ -22,6 +22,18 @@
  * report a paid model as free. The unit is whatever the file declares -- this
  * layer carries the number, it does not define a currency.
  *
+ * `cacheRead`/`cacheWrite` are the declared per-token cache prices, like
+ * `input`/`output`: the unit is whatever the file declares -- this layer
+ * carries the number, it does not define a currency. They are optional, and
+ * absent settles at zero in the registry projection -- the only value not
+ * invented (a guessed nonzero rate would corrupt every budget computed from
+ * it).
+ *
+ * `maxTokens` is the per-completion OUTPUT ceiling, distinct from the
+ * `contextWindow` budget (which bounds prompt plus completion together). A
+ * declared value wins in the projection; absent keeps the projection's window
+ * default, because inventing a smaller ceiling would be a guess.
+ *
  * `concurrency` is the one setting a provider also declares: the provider's
  * value is the default, a model's value narrows it. `baseUrl` is the other
  * provider-declares/model-narrows pair: a provider's `baseUrl` is its default
@@ -33,6 +45,9 @@
 export interface ModelConfig {
   input: number;
   output: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  maxTokens?: number;
   baseUrl?: string;
   contextWindow?: number;
   tools?: boolean;

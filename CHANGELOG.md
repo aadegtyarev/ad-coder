@@ -13,6 +13,37 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.80.0] - 2026-09-19
+
+### Added
+- **`ad-coder config migrate` transforms every stored inventory profile into a
+  fresh `models.yaml`, all or nothing (issue #280).** Providers are unioned by
+  id across profiles, and every cell is parity-checked by resolving both sides
+  through the same resolver: a provider conflict, an oauth provider
+  (not expressible), or a parity mismatch prints the report and writes
+  nothing. Model aliases disappear (rows are keyed by provider-native model
+  ids), bare rows equal the trivial tier with `@complexity` overrides for the
+  rest, extras with no models.yaml expression are reported dropped, and an
+  existing models.yaml is refused -- a hand-edited file is never clobbered.
+  Profile names are preserved; renaming a profile to a purpose name is a hand
+  edit.
+
+## [0.79.0] - 2026-09-19
+
+### Added
+- **A model row in `models.yaml` may declare `cacheRead`/`cacheWrite` and
+  `maxTokens`, completing the per-model routing vocabulary the
+  inventories.json migration needs (issue #280).** `cacheRead`/`cacheWrite`
+  are the declared per-token cache prices, in the same declared unit as
+  `input`/`output`; they project into the registry's cost, and absent settles
+  at zero -- the only value not invented. `maxTokens` is the per-completion
+  OUTPUT ceiling, distinct from the `contextWindow` budget: a declared value
+  projects as the registry model's `maxTokens`, and absence keeps the existing
+  default of the model's window (or the shared 200000 ceiling). Both are
+  validated like the existing price fields -- a malformed value is a typed
+  `ConfigError` naming the field path (for example
+  `<provider>.models.<model>.cacheRead`), never a silently ignored key.
+
 ## [0.78.0] - 2026-09-19
 
 ### Fixed

@@ -56,7 +56,14 @@ Rules the operator declared for ad-coder. A violation is always blocking.
   switch, a `credential` env-var NAME, and `models`), `profiles`
   (`role: provider:model`, with a `role@complexity` row REPLACING that tier
   only, and a list-valued row as an IN-ORDER fallback ladder), and an optional
-  `default:` profile. `settings.yaml` carries `review.require-stamp`
+  `default:` profile. A model row carries required `input`/`output` prices and
+  may also declare `cacheRead`/`cacheWrite` (per-token cache prices in the
+  same declared unit; they project into the registry's cost, and absent
+  settles at zero -- the only value not invented) and `maxTokens` (the
+  per-completion OUTPUT ceiling, distinct from the `contextWindow` budget; a
+  declared value projects as the registry model's `maxTokens`, absent keeps
+  the window default -- the model's window or the shared 200000 ceiling).
+  `settings.yaml` carries `review.require-stamp`
   (`on`/`off`/`auto`) and `review.cost-signature`. When `models.yaml` is
   present and no explicit provider/registry/profile/model flag or `--inventory-config`
   is given, it wins WHOLESALE over `inventories.json`; when it is ABSENT the
@@ -264,3 +271,26 @@ was shown, under the same overriding rules the banner already answers to.
   says "other tools" and names the exception instead of commanding a stop the
   same turn contradicts. A stage that granted no submission tool still closes
   out tool-free, exactly as before.
+
+- 2026-09-19: **`config migrate` transforms every stored inventory profile into
+  a fresh `models.yaml`, all or nothing (issue #280).** The pure transform
+  resolves every profile through the production resolver and projects it onto
+  the models.yaml vocabulary, then proves per-cell parity by resolving BOTH
+  sides through the same resolver with a stub environment: env-var NAMES only,
+  and no credential VALUE is ever read. Providers are unioned by id across
+  profiles -- an identical effective declaration merges, a differing
+  api/baseUrl/credential/headers or model fact is a reported conflict with the
+  first declaration standing. Model ALIASES disappear: rows are keyed by the
+  provider-native model id and every rung is rewritten to `provider:modelId`.
+  A bare row equals the trivial tier's rung, and every declared tier that
+  differs gets a `role@complexity` override. Fields with no models.yaml
+  expression (per-cell `maxOutput`/`cacheRetention`/`thinkingLevel`, per-model
+  `api`/`compat`/`headers` hints, display names, catalogs) are REPORTED as
+  dropped, never silently lost; an oauth credential is reported not
+  expressible rather than half-written. Any provider conflict, not-expressible
+  provider, whole-inventory error, or parity mismatch prints the full report
+  and writes NOTHING; success writes ONE fresh file that must not already
+  exist -- an existing models.yaml, a hand-edited one included, is refused,
+  never clobbered -- and the summary notes that profile names are preserved:
+  renaming a profile to a purpose name is a hand edit. The inventory's default
+  becomes `default:` only when that profile actually migrated.

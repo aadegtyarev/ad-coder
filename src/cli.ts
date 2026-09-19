@@ -25,8 +25,9 @@ import type {
 import { resolvePipelineConfig } from "./cli/resolve-config";
 import { resolveResumeRun, resumeOrchestratorConfig, resumeSeedNote } from "./cli/resume";
 import { ToolActivityRenderer } from "./cli/tool-activity";
+import { migrateInventoriesToModels } from "./config/migrate";
 import { loadSettingsConfigSeam } from "./config/seam";
-import { defaultModelsPath, defaultSettingsPath } from "./config/store";
+import { defaultModelsPath, defaultSettingsPath, writeFreshModelsConfig } from "./config/store";
 import type { CompactionPolicy } from "./context/compactor";
 import { CostAnomalyDetector, FileCostAnomalyStore } from "./economics/cost-anomaly";
 import {
@@ -34,6 +35,7 @@ import {
   forecastCost,
   latestCreditBalance,
 } from "./economics/forecast";
+import { defaultInventoryPath, readInventory } from "./inventory/store";
 import { parseModelInventoryConfig } from "./inventory/validate";
 import { readLedgerFiles, renderLedgerReport } from "./ledger/analytics";
 import {
@@ -3251,6 +3253,45 @@ const BACKGROUND_RUN_OPTIONS: CommandDefinition["options"] = [
   },
 ];
 
+/**
+ * `config migrate`: transform every stored inventory profile into a fresh
+ * `models.yaml`, ALL OR NOTHING. The pure transform (`migrateInventoriesToModels`)
+ * never throws on data content -- every anomaly lands in the report, and THIS
+ * caller decides: any provider conflict, a not-expressible provider (oauth),
+ * or a parity failure prints the full report and writes NOTHING. Only a fully
+ * proven migration writes, and only to a path with no file on it -- a
+ * hand-edited models.yaml is never clobbered (`assertModelsFileAbsent`). The
+ * report and the summary carry names only: provider ids, env-var NAMES,
+ * profile names -- never a credential value (the transform never reads one).
+ */
+function runConfigMigrate(flags: Record<string, string | undefined>): void {
+  const inventoryPath = flags["--inventory"] ?? defaultInventoryPath();
+  const outputPath = flags["--output"] ?? defaultModelsPath();
+  const inventory = readInventory(inventoryPath);
+  const { models, report } = migrateInventoriesToModels(inventory);
+  const blocked =
+    report.errors.length > 0 ||
+    report.providerConflicts.length > 0 ||
+    report.notExpressible.length > 0 ||
+    report.parity.some((row) => !row.equal);
+  if (blocked) {
+    // Serializable, names-only (the transform's contract): safe to print whole.
+    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+    process.exit(1);
+  }
+  writeFreshModelsConfig(outputPath, models);
+  const migrated = report.profiles.filter((profile) => profile.status === "migrated");
+  const lines = [
+    `profiles migrated: ${migrated.length} (${migrated.map((p) => p.name).join(", ")})`,
+    ...(report.defaultProfile === undefined ? [] : [`default profile: ${report.defaultProfile}`]),
+    `providers written: ${report.providers.length} (${report.providers.join(", ")})`,
+    `routing rows: ${report.parity.length}`,
+    `dropped extras: ${report.dropped.length}`,
+    "profile names are preserved; renaming a profile to a purpose name is a hand edit.",
+  ];
+  for (const line of lines) process.stdout.write(`${line}\n`);
+}
+
 const COMMANDS: readonly CommandDefinition[] = [
   {
     name: "about",
@@ -3353,17 +3394,40 @@ const COMMANDS: readonly CommandDefinition[] = [
   },
   {
     name: "config",
-    description: "Show effective secret-free configuration and precedence sources.",
-    positionals: [{ name: "<show>", description: "Show resolved configuration." }],
+    description:
+      "Show effective secret-free configuration, or migrate stored inventories into models.yaml.",
+    positionals: [
+      {
+        name: "<show|migrate>",
+        description:
+          "show: resolved configuration. migrate: inventories.json -> fresh models.yaml, all or nothing.",
+      },
+    ],
     options: [
       ...PIPELINE_OPTIONS.map((option) =>
         option.name === "--target-dir" ? { ...option, required: false } : option,
       ),
       { name: "--json", description: "Emit stable JSON." },
+      {
+        name: "--inventory",
+        value: "<path>",
+        description: "migrate: inventories.json to read (default: the standard inventory path).",
+      },
+      {
+        name: "--output",
+        value: "<path>",
+        description:
+          "migrate: models.yaml to create (default: the standard path; an existing file is refused, never clobbered).",
+      },
     ],
     run: async ({ positionals, flags, booleans }) => {
-      if (positionals[1] !== "show" || positionals[2] !== undefined)
-        fail("config requires exactly: config show");
+      const action = positionals[1];
+      if ((action !== "show" && action !== "migrate") || positionals[2] !== undefined)
+        fail("config requires exactly one action: show or migrate");
+      if (action === "migrate") {
+        runConfigMigrate(flags);
+        return;
+      }
       const target = flags["--target-dir"] ?? process.cwd();
       const config = resolvePipelineConfig({
         ...buildConfigOptions(target, flags),

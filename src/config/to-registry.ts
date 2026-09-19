@@ -32,27 +32,26 @@ function modelPart(rung: string): string {
  * file's row key: this layer derives no alias and no catalog, and the registry
  * documents `name` defaulting to `modelId`.
  *
- * The input vocabulary has no `maxTokens` field, so it defaults to the model's
- * declared window (or the shared 200000 ceiling) -- the largest completion a
- * window that size can serve. `maxTokens` is a per-completion OUTPUT ceiling,
- * not the budget, so over-claiming to the window is safe (the budget is
- * derived separately from `contextWindow`); a value smaller than the window
- * would be a guess this layer refuses to invent.
+ * `maxTokens` is the per-completion OUTPUT ceiling a row may declare: a
+ * declared value wins, and absence keeps the window default -- the model's
+ * declared window (or the shared 200000 ceiling), the largest completion a
+ * window that size can serve. It is not the budget, so defaulting to the
+ * window is safe (the budget is derived separately from `contextWindow`).
  */
 function toRegistryModel(name: string, model: ConfigModelConfig): RegistryModelConfig {
   return {
     name,
     modelId: name,
-    maxTokens: model.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
+    maxTokens: model.maxTokens ?? model.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
     cost: {
       input: model.input,
       output: model.output,
-      // models.yaml declares only input/output prices. The registry's cost
-      // shape also requires per-token cache rates, which this vocabulary has
-      // no field for yet -- they settle at zero, the only value not invented
-      // (a guessed nonzero rate would corrupt every budget computed from it).
-      cacheRead: 0,
-      cacheWrite: 0,
+      // cacheRead/cacheWrite are declared per-token cache prices, like
+      // input/output in the file's declared unit. Absent settles at zero, the
+      // only value not invented (a guessed nonzero rate would corrupt every
+      // budget computed from it).
+      cacheRead: model.cacheRead ?? 0,
+      cacheWrite: model.cacheWrite ?? 0,
     },
     ...(model.baseUrl === undefined ? {} : { baseUrl: model.baseUrl }),
     ...(model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow }),
