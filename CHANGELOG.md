@@ -13,6 +13,16 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.76.0] - 2026-09-19
+
+### Added
+- **CI runs the pre-merge review-stamp gate** (issue #295). `.github/workflows/ci.yml`
+  ends with `bun run stamp:check` on push and pull_request. On a pull request
+  GitHub checks out the merge ref, so the gate verifies the newest stamp against
+  the tree that would land -- a rebase after review without a fresh re-review is
+  red. It stays excluded from the in-run declared gates (issue #271); the
+  stamp's writer remains the settle path.
+
 ## [0.74.0] - 2026-09-19
 
 ### Changed

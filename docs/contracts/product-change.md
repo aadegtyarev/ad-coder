@@ -83,8 +83,10 @@ structural moves from behavior changes.
   [ledger...]` reads a pull-request body and fails when the freshly rendered
   block is absent from it or no longer equals it (stale = the ledger moved).
   The rendered block is pasted verbatim, so the check is a plain substring
-  match. CI runs this the way #295's stamp gate will -- not today: the same
-  dependency on a reviewer stamp being obtainable at merge time now. The
+  match. CI still skips this gate for now; the reviewer-stamp obtainability it
+  shared with #295's gate is lifted as of 2026-09-19 -- CI now runs
+  `bun run stamp:check` on pull requests and pushes (issue #295) -- while this
+  body gate stays an operator-side step. The
   repository-opt-in rule above (`ad-coder.stamps.json`) governs in targets;
   this gate reads ad-coder's own ledger files for its own pull request.
 
@@ -115,5 +117,7 @@ canonical backlog instead of hiding it in a completion summary.
   independent review; that half of the rule is what issue #203 asks to make
   checkable, and the paper half is what issue #265 names as self-satisfiable.
   The enforcement is `bun run stamp:check` (quality.md, 2026-09-17) -- no stamp,
-  no merge -- with the caveat issue #295 records: CI does not yet run it, so
-  today it is a step the merging party performs rather than a wall.
+  no merge -- and since 2026-09-19 (issue #295) CI runs it on every pull request
+  and push to main. On a pull request GitHub checks out the merge ref, so the
+  gate verifies the digest against the tree that would land: a rebase after
+  review without a fresh re-review is red.
