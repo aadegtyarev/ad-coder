@@ -2,8 +2,9 @@ import { expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { UpdateCommandRunner, UpdateErrorCode } from "../src/update/updater";
+import type { UpdateCommandRunner, UpdateErrorCode, UpdateResult } from "../src/update/updater";
 import {
+  formatUpdateResult,
   readInstalledManifest,
   readInstalledRevision,
   UpdateError,
@@ -617,4 +618,73 @@ test("an UpdateError defaults to not retryable rather than inviting a doomed ret
   expect(error.retryable).toBe(false);
   expect(error.nextAction).toBeUndefined();
   expect(error.cause).toBeUndefined();
+});
+
+// --- The plain-text update line (formatUpdateResult, issue #364) ------------
+
+function updateResult(overrides: Partial<UpdateResult> = {}): UpdateResult {
+  return {
+    mode: "global-registry",
+    checkoutDir: "/install/global/ad-coder",
+    branch: "latest",
+    upstream: "npm",
+    previousRevision: "0.67.0-dev.23",
+    revision: "0.67.0-dev.23",
+    changed: false,
+    ...overrides,
+  };
+}
+
+test("the update line prints a registry version whole, never a truncation of it", () => {
+  const line = formatUpdateResult(updateResult());
+  // Issue #364: `0.67.0-dev.23` sliced to twelve characters is `0.67.0-dev.2`,
+  // a different well-formed version, so a current install read as a downgrade.
+  expect(line).toBe("ad-coder: already current latest (version 0.67.0-dev.23)");
+  expect(line).not.toContain("(0.67.0-dev.2)");
+});
+
+test("the update line prints a short registry version whole too", () => {
+  expect(formatUpdateResult(updateResult({ revision: "0.67.0" }))).toBe(
+    "ad-coder: already current latest (version 0.67.0)",
+  );
+  expect(formatUpdateResult(updateResult({ revision: "0.67.0", changed: true }))).toBe(
+    "ad-coder: updated latest (version 0.67.0)",
+  );
+});
+
+test("the update line abbreviates a git sha to twelve characters and names it a commit", () => {
+  const revision = "abc0123456789def0123456789abcdef01234567";
+  expect(
+    formatUpdateResult(
+      updateResult({
+        mode: "global-github",
+        branch: "main",
+        upstream: "git@github.com:aadegtyarev/ad-coder.git",
+        revision,
+        changed: true,
+      }),
+    ),
+  ).toBe(`ad-coder: updated main (commit ${revision.slice(0, 12)})`);
+  expect(
+    formatUpdateResult(
+      updateResult({
+        mode: "linked-checkout",
+        branch: "main",
+        upstream: "origin/main",
+        revision,
+        changed: false,
+      }),
+    ),
+  ).toBe(`ad-coder: already current main (commit ${revision.slice(0, 12)})`);
+});
+
+test("a git-mode revision that is not a full sha is printed whole, never sliced", () => {
+  // Only a validated 40-hex sha may be abbreviated; slicing any other shape
+  // risks the same truncation-into-a-different-value failure the registry hit.
+  const revision = "not-a-shape-to-slice-0123456789";
+  expect(
+    formatUpdateResult(
+      updateResult({ mode: "linked-checkout", branch: "main", upstream: "origin/main", revision }),
+    ),
+  ).toBe(`ad-coder: already current main (commit ${revision})`);
 });

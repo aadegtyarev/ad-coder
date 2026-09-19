@@ -136,7 +136,7 @@ import {
 } from "./skills/resolver";
 import { stampBodyCheckErrors, stampCheckErrors, stampDeliveryText } from "./stamp/cli";
 import { recordReviewStampFromResult, resolveStampRequirement } from "./stamp/record-review-stamp";
-import { UpdateError, updateAdCoder } from "./update/updater";
+import { formatUpdateResult, UpdateError, updateAdCoder } from "./update/updater";
 import {
   createDefaultUserProfileStore,
   exportUserProfile,
@@ -3296,7 +3296,7 @@ const COMMANDS: readonly CommandDefinition[] = [
       process.stdout.write(
         booleans["--json"] === true
           ? `${JSON.stringify(result)}\n`
-          : `ad-coder: ${result.changed ? "updated" : "already current"} ${result.branch} (${result.revision.slice(0, 12)})\n`,
+          : `${formatUpdateResult(result)}\n`,
       );
     },
   },
