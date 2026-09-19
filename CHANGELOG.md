@@ -13,6 +13,23 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.73.0] - 2026-09-19
+
+### Fixed
+- **`ad-coder update` no longer prints a truncated version as the revision**
+  (`src/cli.ts`, `src/update/updater.ts`, issue #364). Both update modes were
+  formatted with one expression that sliced the revision to twelve characters --
+  right for the Git mode, where the revision is a 40-character sha and the slice
+  is the conventional abbreviation. The registry mode's revision is a version
+  string, and twelve characters of `0.67.0-dev.23` are the different,
+  well-formed, plausible version `0.67.0-dev.2`, so a current install read as a
+  downgrade resolved and reported as success. The plain-text line is now
+  formatted by `formatUpdateResult`, which abbreviates only a validated
+  full-length sha, prints every other shape whole, and names the parenthesized
+  referent for what it holds -- `version` for a registry install, `commit` for a
+  Git one -- so the word "revision" no longer means a sha in `about` and a
+  version in `update`.
+
 ## [0.70.0] - 2026-09-19
 
 ### Added

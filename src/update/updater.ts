@@ -59,6 +59,24 @@ export interface UpdateResult {
   changed: boolean;
 }
 
+/**
+ * The one plain-text line the update command prints for a finished run: the
+ * outcome, the branch token, and the revision, named for what it holds -- a
+ * whole registry version or an abbreviated Git commit (issue #364). A version
+ * is never sliced: twelve characters of `0.67.0-dev.23` are the different
+ * well-formed version `0.67.0-dev.2`, which read a current install as a
+ * downgrade. Only a validated full-length sha is abbreviated; anything else is
+ * printed whole rather than truncated into a plausible different value.
+ */
+export function formatUpdateResult(result: UpdateResult): string {
+  const status = result.changed ? "updated" : "already current";
+  const referent = result.mode === "global-registry" ? "version" : "commit";
+  const value = SAFE_GIT_REVISION.test(result.revision)
+    ? result.revision.slice(0, 12)
+    : result.revision;
+  return `ad-coder: ${status} ${result.branch} (${referent} ${value})`;
+}
+
 /** The `{name, version}` subset of the running package's package.json. */
 export interface InstalledManifest {
   name?: unknown;
