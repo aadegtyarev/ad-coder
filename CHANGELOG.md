@@ -11,6 +11,20 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.99.0] - 2026-09-19
+
+### Added
+- **Version gate `check:version` (issue #424).** A new pre-merge check runs in
+  `ci.yml` next to the other checks requiring each PR's `package.json` version to
+  be STRICTLY above the base branch's (`origin/main`) and requiring a PR title
+  that names a version in parentheses `(0.99.0)` to match the tree's version.
+  The numeric SemVer comparison (0.95.1 < 0.96.0 < 0.99.0) backs the
+  compatibility contract "every change merged into `main` has a new Semantic
+  Version" with NO exceptions per the any-PR-bumps-version policy -- docs-only
+  and chore PRs raise the version too. It skips on main (push event or local
+  branch), where the base check is meaningless, and passes when no title is
+  available (typical local run).
+
 ## [0.96.0] - 2026-09-19
 
 ## [0.96.1] - 2026-09-19
