@@ -18,11 +18,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { ContextBudgetError } from "../src/context/budget";
 import type { Summarizer } from "../src/context/compactor";
-import {
-  COMPACTION_ATTEMPT_LIMIT,
-  ContextCompactionLostError,
-  SUMMARIZATION_PROMPT,
-} from "../src/context/compactor";
+import { ContextCompactionLostError, SUMMARIZATION_PROMPT } from "../src/context/compactor";
 import { ConversationRefusedError, startConversation } from "../src/conversation/conversation";
 import {
   CostAnomalyBlockedError,
@@ -544,7 +540,7 @@ test("conversation counts tool follow-ups and rethrows a Models-boundary limit",
   }
 });
 
-test("the ContextCompactor is attached once and does not run under budget across turns", async () => {
+test("the summarizer is attached once and does not run under budget across turns", async () => {
   const { faux, models, model, role } = harnessFixture();
   let summarizerCalls = 0;
   const summarizer: Summarizer = async () => {
@@ -558,9 +554,11 @@ test("the ContextCompactor is attached once and does not run under budget across
     await conversation.step("turn one");
     await conversation.step("turn two");
 
-    // Attached once at startConversation, never per turn: under budget it never
-    // fires, so the count does not scale with turns.
+    // Registered once at startConversation, never per turn, and the harness only
+    // asks for a summary at its own threshold -- which two small turns do not
+    // reach. No per-turn cost from having compaction enabled.
     expect(summarizerCalls).toBe(0);
+    expect(faux.state.callCount).toBe(2);
   } finally {
     await conversation.close();
   }
@@ -609,9 +607,12 @@ test("auto compaction consumes a distinct provider summary before the normal res
   }
 });
 
-test("failed compaction reports the smaller runtime window and blocks later provider dispatch", async () => {
-  const { faux, models, model } = harnessFixture();
-  const role = defineRole(
+/** The harness's own summarization prompt, as `pi-agent-core` sends it. */
+const HARNESS_SUMMARY_PROMPT = "context summarization assistant";
+
+/** A role whose budget makes the harness threshold 1000 tokens on a 200k window. */
+function tightRole(model: Model<Api>) {
+  return defineRole(
     {
       name: "coder",
       provider: model.provider,
@@ -623,22 +624,93 @@ test("failed compaction reports the smaller runtime window and blocks later prov
     },
     model,
   );
-  const smallerRuntimeModel = { ...model, contextWindow: 500 } as Model<Api>;
+}
+
+test("a dead summarizer falls back to the role's own model instead of ending the run", async () => {
+  const { faux, models, model } = harnessFixture();
+  const role = tightRole(model);
+  const session = await new MemorySessionRepo().create({}, BACKGROUND_CONTEXT);
   const secret = `compaction-secret:${"z".repeat(4000)}`;
+  const prompts: string[] = [];
+  let asked = 0;
   const summarizer: Summarizer = async () => {
+    asked += 1;
     throw new Error(secret);
   };
-  faux.setResponses(Array.from({ length: 8 }, () => fauxAssistantMessage("reply")));
+  faux.setResponses(
+    Array.from({ length: 24 }, () => (request: { systemPrompt?: string }) => {
+      prompts.push(request.systemPrompt ?? "");
+      return fauxAssistantMessage("reply");
+    }),
+  );
+
   const conversation = await startConversation({
     role,
     targetDir,
     models,
-    model: smallerRuntimeModel,
+    model,
+    session,
+    summarizer,
+  });
+  try {
+    // A dead cheap summarizer is a degraded route, not the end of the session:
+    // the harness summarizes with the role's model and the run continues (#444).
+    for (let turn = 0; turn < 6; turn++) await conversation.step(`${turn}:${"x".repeat(900)}`);
+
+    // Ours was asked first -- the fallback is a fallback, not the default path.
+    expect(asked).toBeGreaterThan(0);
+    // And the fallback really happened, with the harness's own prompt and model.
+    expect(prompts.some((prompt) => prompt.includes(HARNESS_SUMMARY_PROMPT))).toBe(true);
+
+    const compactions = (
+      await session.findEntries({ type: "compaction" }, BACKGROUND_CONTEXT)
+    ).filter((entry) => entry.type === "compaction");
+    expect(compactions.length).toBeGreaterThan(0);
+    // `fromHook: false` is the durable record of WHO summarized: the harness,
+    // because our handler declined.
+    expect(compactions.every((entry) => entry.fromHook === false)).toBe(true);
+    // Leak invariant: the thrown text can carry the evicted conversation, and
+    // the compaction entry is durable.
+    expect(JSON.stringify(compactions)).not.toContain(secret);
+  } finally {
+    await conversation.close();
+  }
+});
+
+test("a harness compaction that fails outright ends the session with a reopen, not a retry", async () => {
+  const { faux, models, model } = harnessFixture();
+  const role = tightRole(model);
+  const session = await new MemorySessionRepo().create({}, BACKGROUND_CONTEXT);
+  // Our summarizer declines (so the harness takes over) and the harness's own
+  // summary request is refused with a NON-retryable cause, so the operation
+  // settles as `summarization_failed` after one attempt.
+  const summarizer: Summarizer = async () => {
+    throw new Error("declined");
+  };
+  faux.setResponses(
+    Array.from(
+      { length: 24 },
+      () => (request: { systemPrompt?: string }) =>
+        request.systemPrompt?.includes(HARNESS_SUMMARY_PROMPT) === true
+          ? fauxAssistantMessage("", {
+              stopReason: "error",
+              errorMessage: "summary request rejected",
+            })
+          : fauxAssistantMessage("reply"),
+    ),
+  );
+
+  const conversation = await startConversation({
+    role,
+    targetDir,
+    models,
+    model,
+    session,
     summarizer,
   });
   try {
     let caught: unknown;
-    for (let turn = 0; turn < 8; turn++) {
+    for (let turn = 0; turn < 6; turn++) {
       try {
         await conversation.step(`${turn}:${"x".repeat(900)}`);
       } catch (error) {
@@ -646,19 +718,19 @@ test("failed compaction reports the smaller runtime window and blocks later prov
         break;
       }
     }
+    // Typed as what it is: the session's context can no longer be summarized,
+    // which is a stop rather than an over-budget turn (issue #391).
     expect(caught).toBeInstanceOf(ContextBudgetError);
-    // Typed as what it is: the session's compaction is spent, which is a stop
-    // rather than an over-budget turn (issue #391).
     expect(caught).toBeInstanceOf(ContextCompactionLostError);
     const error = caught as ContextCompactionLostError;
-    expect(error.effectiveCeiling).toBe(500);
-    expect(error.attempts).toBe(COMPACTION_ATTEMPT_LIMIT);
-    expect(error.message).toContain(`summarization failed ${COMPACTION_ATTEMPT_LIMIT} times`);
-    expect(error.message).toContain("effective ceiling 500");
+    expect(error.effectiveCeiling).toBe(CONTEXT_WINDOW);
+    expect(error.lastFailure?.stopReason).toBe("summarization_failed");
+    expect(error.message).toContain("this session can no longer compact");
     // Reopening the session, not retrying the turn, is the way out.
     expect(error.message).toContain("--resume");
-    expect(error.message).not.toContain(secret);
+    expect(error.message).not.toContain("summary request rejected");
 
+    // The stop is durable: no further provider dispatch happens on this session.
     const providerDispatches = faux.state.callCount;
     await expect(conversation.step(`retry:${"x".repeat(900)}`)).rejects.toBeInstanceOf(
       ContextBudgetError,

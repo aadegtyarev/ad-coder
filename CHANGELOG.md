@@ -11,6 +11,36 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.103.0] - 2026-09-20
+
+### Fixed
+- **Compaction SHRINKS the session instead of rewriting one request (issue
+  #444).** `auto` compaction edited the outgoing request and never wrote back:
+  the model saw a shorter prompt, the durable session kept every token, so the
+  next turn re-summarized the same history, the threshold stayed crossed, and
+  the run spent its budget compacting the same head again and again -- with no
+  ceiling on the attempts and nothing the operator could read. ad-coder now
+  supplies the summary through the harness's `before_compaction` hook and the
+  harness commits the durable `compaction` entry, so the branch really gets
+  shorter and the cost is paid once per eviction. The hook answers one of
+  three ways: a summary (committed), nothing (the harness summarizes with the
+  role's own model, so a cheap summarizer that is down costs tokens rather
+  than the session), or a decline -- reserved for a provider that is
+  unavailable, whose typed admission refusal must survive, and for a threshold
+  compaction with nothing evictable, where the harness would otherwise spend a
+  model call on an empty set. What the summarizer receives is dialogue history
+  alone: the role's system prompt, its tool definitions and the skills
+  catalogue are the byte-identical cached prefix and are never sent to it. The
+  harness reserve is DERIVED from the role's own threshold
+  (`contextWindow - (maxTokens - reserveTokens)`), so both strategies fire at
+  the same measurement instead of Pi's default. A failure that does settle the
+  run is classified from the SETTLED result -- a failed run leaves the previous
+  turn's assistant text on the branch, so reading the text reported failures as
+  completed turns -- typed as `ContextCompactionLostError` for
+  `summarization_failed`, `compaction_declined` and `structural_interrupted`,
+  and STICKY: the spent session refuses later turns before any provider
+  dispatch. Invariants: `docs/contracts/compaction.md`.
+
 ## [0.102.0] - 2026-09-19
 
 ### Changed

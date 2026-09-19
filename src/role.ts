@@ -3,6 +3,8 @@ import type { Api, CacheRetention, Model, Models } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import type { ContextBudget } from "./context/budget";
 import { validateContextBudget } from "./context/budget";
+import type { CompactionMode } from "./context/compactor";
+import { durableCompactionSettings } from "./context/compactor";
 
 const CACHE_RETENTIONS: readonly CacheRetention[] = ["none", "short", "long"];
 const THINKING_LEVELS: readonly ThinkingLevel[] = [
@@ -47,6 +49,12 @@ export interface RoleRunDeps {
   session: Session;
   models: Models;
   model: Model<Api>;
+  /**
+   * The compaction mode the caller resolved. Absent means `auto`, which is what
+   * every existing caller passes; `disabled-then-halt` keeps the harness's own
+   * compaction switched off and leaves the whole budget to the pre-flight.
+   */
+  compactionMode?: CompactionMode;
 }
 
 /**
@@ -132,9 +140,18 @@ export function toHarnessOptions(role: Role, deps: RoleRunDeps): AgentHarnessOpt
         ? { timeoutMs: role.requestTimeoutMs }
         : {}),
     },
-    // Pi's compaction prompt is a hardcoded constant, so the context strategy
-    // stays in ad-coder. All three fields are required even when disabled.
-    compaction: { enabled: false, reserveTokens: 0, keepRecentTokens: 0 },
+    // The harness owns the DECISION and the durable write; ad-coder owns the
+    // summary. Enabling it here is what makes a compaction shrink the SESSION
+    // rather than one request (issue #444): the entry it commits replaces the
+    // summarized prefix on the branch. The summarizer itself is registered as
+    // the `before_compaction` hook by the caller (`attachDurableCompaction`),
+    // so the summary is ad-coder's prompt on ad-coder's summarizer model --
+    // while a disabled role keeps upstream's fields at zero and compacts
+    // nothing at all.
+    compaction:
+      (deps.compactionMode ?? "auto") === "auto"
+        ? durableCompactionSettings(role.contextBudget, deps.model.contextWindow)
+        : { enabled: false, reserveTokens: 0, keepRecentTokens: 0 },
   };
 }
 

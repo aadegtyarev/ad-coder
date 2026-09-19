@@ -358,3 +358,20 @@ was shown, under the same overriding rules the banner already answers to.
   never clobbered -- and the summary notes that profile names are preserved:
   renaming a profile to a purpose name is a hand edit. The inventory's default
   becomes `default:` only when that profile actually migrated.
+
+- 2026-09-20: **The context policy is durable data, and the HARNESS is its
+  writer (issue #444).** `auto` no longer edits the outgoing request: the
+  harness cuts the branch and asks ad-coder for the summary through the
+  `before_compaction` hook, so the committed `compaction` entry is what makes
+  the session smaller and the next request shorter. The three numbers stay the
+  role's -- `maxTokens`, `reserveTokens`, `keepRecentTokens` -- and only the
+  harness reserve is DERIVED, from the role's own threshold, so both strategies
+  fire at the same measurement (`compaction.md`). What the summarizer receives
+  is dialogue history alone: the role's system prompt, its tool definitions and
+  the skills catalogue are the byte-identical cached prefix and are never sent
+  to it, which is the token saving this whole path exists for. The summarizer
+  remains the `summarizer` routing cell (`--summarizer-model` for one run), and
+  it is a generation path like any other: it crosses admission, session limits
+  and the cost meter, and its failure is attributed in names and numbers.
+  `disabled-then-halt` still summarizes nothing and refuses at the effective
+  ceiling, and `cache-aware` stays a fail-loud reserved mode.

@@ -15,14 +15,14 @@ import {
   Type,
 } from "@earendil-works/pi-ai";
 import { ContextBudgetError } from "../src/context/budget";
-import { ContextCompactor, type Summarizer } from "../src/context/compactor";
+import type { Summarizer } from "../src/context/compactor";
 import { CostAnomalyBlockedError, CostAnomalyDetector } from "../src/economics/cost-anomaly";
 import { LEDGER_BASE_DIR } from "../src/ledger/ledger";
 import type { ToolActivityRecord } from "../src/observability/tool-activity";
 import { StageLimitController, StageLimitError } from "../src/orchestration/stage-limits";
 import { ProjectStore } from "../src/project-store/project-store";
 import type { Role } from "../src/role";
-import { defineRole } from "../src/role";
+import { defineRole, toHarnessOptions } from "../src/role";
 import { dumpRequest } from "../src/runner/dump-request";
 import {
   ConfiguredToolsUnavailableError,
@@ -926,8 +926,12 @@ test("runRole does not invoke the summarizer when the turn fits the budget", asy
   expect(result.result.status).toBe("completed");
 });
 
-test("runRole supplies the active runtime context window to the compactor health check", async () => {
-  const { faux, models, model } = harnessFixture();
+test("the harness compaction threshold is derived from the RUNTIME window", () => {
+  // The threshold is what makes a role's own budget meaningful when it is paired
+  // with a model other than the one it was defined against: ad-coder compacts at
+  // `maxTokens - reserveTokens`, the harness at `contextWindow - reserveTokens`,
+  // and only the derived reserve makes the two the same number.
+  const { models, model } = harnessFixture();
   const role = defineRole(
     {
       name: "coder",
@@ -940,28 +944,29 @@ test("runRole supplies the active runtime context window to the compactor health
     },
     model,
   );
-  const smallerRuntimeModel = { ...model, contextWindow: 500 } as Model<Api>;
-  const originalAssertHealthy = ContextCompactor.prototype.assertHealthy;
-  let receivedContextWindow: number | undefined;
-  ContextCompactor.prototype.assertHealthy = function (roleName, contextWindow) {
-    receivedContextWindow = contextWindow;
-    return originalAssertHealthy.call(this, roleName, contextWindow);
-  };
-  faux.setResponses([fauxAssistantMessage("done")]);
-  try {
-    await runRole({
-      role,
-      targetDir,
-      models,
-      model: smallerRuntimeModel,
-      prompt: "small",
-      summarizer: async () => "summary",
-    });
-  } finally {
-    ContextCompactor.prototype.assertHealthy = originalAssertHealthy;
-  }
-  expect(receivedContextWindow).toBe(smallerRuntimeModel.contextWindow);
-  expect(faux.state.callCount).toBe(1);
+  const session = {} as Parameters<typeof toHarnessOptions>[1]["session"];
+  const atOwnWindow = toHarnessOptions(role, { session, models, model });
+  expect(atOwnWindow.compaction).toEqual({
+    enabled: true,
+    // 200_000 - (1100 - 100), so the harness fires at 1000 -- the role's own
+    // threshold, on a window 200x its budget.
+    reserveTokens: 199_000,
+    keepRecentTokens: 250,
+  });
+  const narrower = { ...model, contextWindow: 500 } as Model<Api>;
+  expect(toHarnessOptions(role, { session, models, model: narrower }).compaction).toEqual({
+    enabled: true,
+    // maxTokens - reserve exceeds the runtime window, so the reserve clamps to 0
+    // and the threshold lands AT the window instead of below it.
+    reserveTokens: 0,
+    keepRecentTokens: 250,
+  });
+  // A disabled role compacts nothing: every upstream field is zero, so no
+  // threshold can fire and no entry is ever committed.
+  expect(
+    toHarnessOptions(role, { session, models, model, compactionMode: "disabled-then-halt" })
+      .compaction,
+  ).toEqual({ enabled: false, reserveTokens: 0, keepRecentTokens: 0 });
 });
 
 test("runRole rethrows a shared controller rejection after a tool follow-up", async () => {

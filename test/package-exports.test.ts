@@ -108,6 +108,7 @@ import {
   assertContextFitsBudget,
   assertSummarizerWindow,
   assertTurnFitsBudget,
+  attachDurableCompaction,
   autoDriver,
   BACKLOG_STATES,
   buildDefaultProfile,
@@ -116,8 +117,10 @@ import {
   buildSubmitPlanTool,
   buildSubmitVerdictTool,
   CHOOSE_TRANSITION_TOOL_NAME,
+  COMPACTION_SAFETY_PROMPT,
   ContextBudgetError,
-  ContextCompactor,
+  ContextCompactionLostError,
+  compactionLostErrorFrom,
   copyProjectAttachment,
   createBacklogStore,
   createOrchestrator,
@@ -137,9 +140,11 @@ import {
   defineTool,
   deleteProjectSession,
   deriveContextBudget,
+  describeCompactionFailure,
   detectLdoProject,
   diffUsage,
   driveWorkflow,
+  durableCompactionSettings,
   FileBacklogStore,
   finishRepositoryPublishing,
   GateRunner,
@@ -224,12 +229,17 @@ test("the package is importable by its published name", () => {
   expect(typeof Ledger).toBe("function");
   expect(typeof ToolActivityChannel).toBe("function");
   expect(DEFAULT_TOOL_ACTIVITY_CONFIG.maxEventBytes).toBeGreaterThan(0);
-  expect(typeof ContextCompactor).toBe("function");
+  expect(typeof ContextCompactionLostError).toBe("function");
   expect(typeof ContextBudgetError).toBe("function");
   expect(typeof assertTurnFitsBudget).toBe("function");
   expect(typeof assertContextFitsBudget).toBe("function");
   expect(typeof createSummarizer).toBe("function");
   expect(typeof SUMMARIZATION_PROMPT).toBe("string");
+  expect(typeof attachDurableCompaction).toBe("function");
+  expect(typeof durableCompactionSettings).toBe("function");
+  expect(typeof compactionLostErrorFrom).toBe("function");
+  expect(typeof describeCompactionFailure).toBe("function");
+  expect(typeof COMPACTION_SAFETY_PROMPT).toBe("string");
   expect(typeof GateRunner).toBe("function");
   expect(typeof runRole).toBe("function");
   expect(typeof ProviderLimitError).toBe("function");
