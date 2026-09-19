@@ -3,15 +3,20 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
-import type { Api, CredentialStore, Model } from "@earendil-works/pi-ai";
+import type { Api, Context, CredentialStore, Message, Model } from "@earendil-works/pi-ai";
 import {
   createModels,
   fauxAssistantMessage,
   fauxProvider,
   fauxToolCall,
 } from "@earendil-works/pi-ai";
-import type { FauxProviderHandle } from "@earendil-works/pi-ai/providers/faux";
+import type {
+  FauxProviderHandle,
+  FauxResponseFactory,
+  FauxResponseStep,
+} from "@earendil-works/pi-ai/providers/faux";
 import { startConversation as startConversationImpl } from "../src/conversation/conversation";
+import { CostAnomalyDetector } from "../src/economics/cost-anomaly";
 import { MemoryLedgerSink } from "../src/ledger/ledger";
 import type { LedgerRecord } from "../src/ledger/types";
 import { ToolActivityChannel } from "../src/observability/tool-activity";
@@ -58,6 +63,7 @@ import type {
 import { OrchestrationError } from "../src/orchestration/types";
 import { SUBMIT_VERDICT_TOOL_NAME } from "../src/orchestration/verdict";
 import { buildDefaultProfile } from "../src/profiles/default-profile";
+import type { RunCheckpoint } from "../src/project-operations/run-coordinator";
 import { RunCoordinator } from "../src/project-operations/run-coordinator";
 import { ProjectStore } from "../src/project-store/project-store";
 import { EXPLORE_PROJECT_TOOL_NAME } from "../src/project-tools/explore";
@@ -1496,6 +1502,186 @@ test("resume_pipeline clears a plan_not_submitted pause and re-runs the plan sta
       .readdirSync(path.join(fx.targetDir, ".ad-coder", "runs"))
       .filter((f) => f.startsWith("coordinator-")),
   ).toEqual([`coordinator-${runId}.json`]);
+});
+
+/** The text of the newest user message the provider was called with. */
+function lastUserText(context: Context): string {
+  const messages: Message[] = context.messages;
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i];
+    if (message === undefined || message.role !== "user") continue;
+    if (typeof message.content === "string") return message.content;
+    return message.content
+      .filter((block): block is { type: "text"; text: string } => block.type === "text")
+      .map((block) => block.text)
+      .join("");
+  }
+  return "";
+}
+
+const coderPromptCapture =
+  (prompts: string[], response: FauxResponseStep): FauxResponseFactory =>
+  (context, options, state, model) => {
+    prompts.push(lastUserText(context));
+    return typeof response === "function" ? response(context, options, state, model) : response;
+  };
+
+const reviewerPromptCapture = coderPromptCapture;
+
+test("a retried stage is told why the previous attempt failed (issue #363)", async () => {
+  // A stage_failed resume used to restart the stage FRESH: the failure reason
+  // reached neither the session nor the prompt, so a scripted coder repeated
+  // the identical submission forever. The recorded cause must reach the next
+  // attempt's prompt as fixed structure plus the recorded reason, and must be
+  // cleared once the stage completes.
+  const fx = fixture();
+  const runId = "stage-failure-carry-over";
+  // A blocked cost-anomaly scope makes every model call refuse with the typed
+  // harness-side CostAnomalyBlockedError BEFORE the provider is touched --
+  // deterministic, and it consumes no faux responses. The resume gets a fresh,
+  // unblocked detector so the retry actually runs and its prompt is captured.
+  let configCalls = 0;
+  const buildConfig = (task: string): PipelineConfig => {
+    configCalls += 1;
+    const detector = new CostAnomalyDetector();
+    if (configCalls === 1) {
+      const overbilled = {
+        provider: "faux",
+        model: "faux-1",
+        chargedUsd: 0.006,
+        expectedUsd: 0.002,
+      } as const;
+      detector.observe(overbilled);
+      detector.observe(overbilled);
+    }
+    return {
+      ...fx.buildConfig(task),
+      coordinator: { runId },
+      costAnomalyDetector: detector,
+    };
+  };
+  const core = createOrchestrator({ buildConfig, ledgerSink: fx.sink });
+
+  fx.faux.setResponses([...governedPlanTurn()]);
+  await expect(core.runPipeline("implement X")).rejects.toMatchObject({
+    code: "pipeline_paused",
+    detail: runId,
+    pause: {
+      phase: "plan",
+      code: "stage_failed",
+      cause: { code: "cost_anomaly_blocked", recurrence: 0 },
+    },
+  });
+
+  const plannerPrompts: string[] = [];
+  const plan = fauxAssistantMessage(
+    fauxToolCall(SUBMIT_PLAN_TOOL_NAME, {
+      complexity: "medium",
+      securitySurface: "none",
+      summary: "plan: do X",
+      contractRequirements: [],
+      surfaceAnalysis: {
+        projectType: "test fixture",
+        surfaces: [{ id: "core", name: "core", rationale: "exercise orchestration" }],
+        coverage: [
+          {
+            surfaceId: "core",
+            status: "not_applicable",
+            contractIds: [],
+            evidence: ["fixture changes no product contract surface"],
+            rationale: "orchestrator plumbing only",
+          },
+        ],
+      },
+    }),
+  );
+  fx.faux.setResponses([
+    coderPromptCapture(plannerPrompts, plan),
+    fauxAssistantMessage("plan: do X"),
+    fauxAssistantMessage("coded X"),
+    fauxAssistantMessage(
+      fauxToolCall(SUBMIT_VERDICT_TOOL_NAME, { status: "approved", issues: [], summary: "ok" }),
+    ),
+    fauxAssistantMessage("review complete"),
+  ]);
+  const resumed = await core.resumePipeline("implement X", runId);
+  expect(resumed.result.approved).toBe(true);
+  expect(plannerPrompts).toHaveLength(1);
+  expect(plannerPrompts[0]).toContain("previous attempt of this stage");
+  expect(plannerPrompts[0]).toContain("cost_anomaly_blocked");
+  // The recorded reason is the error's own harness-authored message, which
+  // names the scope and the release action.
+  expect(plannerPrompts[0]).toContain("faux/faux-1 billed");
+  expect(plannerPrompts[0]).toContain("blocked until released");
+
+  // Once the stage completes, the record is cleared: the checkpoint the run
+  // finished on carries no stale failure.
+  const store = new ProjectStore(fx.targetDir);
+  const settled = store.readVersionedJson<RunCheckpoint>(
+    path.join(store.layout.runs, `coordinator-${runId}.json`),
+  ).value;
+  expect(settled.workflowState.lastStageFailure).toBeUndefined();
+  expect(settled.phase).toBe("complete");
+});
+
+test("a rejected closeout verdict reaches the retrying reviewer with the validator's wording (issue #363)", async () => {
+  // A malformed submit_verdict payload is a typed submission rejection: the
+  // reviewer's in-turn retry deliberately does not repeat it, and the
+  // review_not_run resume used to restart the reviewer blind -- repeating the
+  // identical rejected submission. The rejection must reach the next attempt
+  // so it can converge on the field that was refused.
+  const fx = fixture();
+  const runId = "verdict-rejection-carry-over";
+  const buildConfig = (task: string): PipelineConfig => ({
+    ...fx.buildConfig(task),
+    coordinator: { runId },
+  });
+  const core = createOrchestrator({ buildConfig, ledgerSink: fx.sink });
+  const reviewerPrompts: string[] = [];
+
+  fx.faux.setResponses([
+    ...governedPlanTurn(),
+    fauxAssistantMessage("coded X"),
+    reviewerPromptCapture(
+      reviewerPrompts,
+      fauxAssistantMessage(
+        fauxToolCall(SUBMIT_VERDICT_TOOL_NAME, { status: "yes", issues: [], summary: "s" }),
+      ),
+    ),
+    fauxAssistantMessage("review complete"),
+  ]);
+  await expect(core.runPipeline("implement X")).rejects.toMatchObject({
+    code: "pipeline_paused",
+    detail: runId,
+    pause: {
+      phase: "review",
+      code: "review_not_run",
+      cause: { code: "malformed_verdict" },
+    },
+  });
+
+  // The resume starts at the review stage (plan and code completed), so the
+  // second captured reviewer prompt is the carried-over one.
+  fx.faux.setResponses([
+    reviewerPromptCapture(
+      reviewerPrompts,
+      fauxAssistantMessage(
+        fauxToolCall(SUBMIT_VERDICT_TOOL_NAME, { status: "approved", issues: [], summary: "ok" }),
+      ),
+    ),
+    fauxAssistantMessage("review complete"),
+  ]);
+  const resumed = await core.resumePipeline("implement X", runId);
+  expect(resumed.result.approved).toBe(true);
+  expect(reviewerPrompts).toHaveLength(2);
+  const carried = reviewerPrompts[1];
+  expect(carried).toContain("previous attempt of this stage");
+  expect(carried).toContain("malformed_verdict");
+  // The validator's own wording, so the reviewer can correct the field.
+  expect(carried).toContain("verdict.status must be one of");
+  // A prompt with no recorded failure stays byte-identical: the first-run
+  // reviewer prompt names no carry-over.
+  expect(reviewerPrompts[0]).not.toContain("previous attempt of this stage");
 });
 
 const approvedPipeline: PipelineResult = {

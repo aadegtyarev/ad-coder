@@ -741,6 +741,89 @@ test("a harness-side stage failure is worded as harness work and carries its cau
   }
 });
 
+test("a recorded stage failure reaches the next attempt and counts recurrences (issue #363)", async () => {
+  // Criterion 1: a typed submission rejection must reach the next attempt, so
+  // an explicit retry can converge instead of repeating the identical rejected
+  // submission forever. The recorded cause travels in the checkpoint's
+  // workflowState (the session reads it from there), and the SAME cause on the
+  // next attempt is the loop signature -- distinguishable from an
+  // underestimate, which would be a stage_limit pause with limit fields.
+  const target = root();
+  const store = new ProjectStore(target);
+  const base = coordinatorSession(store, []);
+  let attempts = 0;
+  const seenStates: WorkflowState[] = [];
+  const session: WorkflowSession = {
+    ...base,
+    async step(state) {
+      attempts += 1;
+      seenStates.push(state);
+      if (attempts === 1 || attempts === 2) {
+        throw new WorkflowStageFailureError(
+          new ProjectOperationsError(
+            "invalid_follow_up",
+            attempts === 1
+              ? "kind must be one of contract, note, design-doc-drift, backlog"
+              : "evidence must be non-empty",
+          ),
+          "failed-code",
+          { ...failureMetrics },
+        );
+      }
+      if (attempts === 3) {
+        throw new WorkflowStageFailureError(
+          new OrchestrationError(
+            "malformed_plan",
+            "failed-code",
+            "planner JSON handoff is invalid",
+          ),
+          "failed-code",
+          { ...failureMetrics },
+        );
+      }
+      return base.step(state);
+    },
+  };
+  const coordinator = new RunCoordinator(session, store, { runId: "carry-cause" });
+  const first = await coordinator.run();
+  expect(first.checkpoint.workflowState.lastStageFailure).toEqual({
+    phase: "code",
+    code: "invalid_follow_up",
+    message: "invalid_follow_up: kind must be one of contract, note, design-doc-drift, backlog",
+    recurrence: 0,
+  });
+
+  coordinator.resumeStage({ source: "operator", action: "retry" });
+  const second = await coordinator.run();
+  // Same stage + same code: the recorded pause says so -- a recurrence, not a
+  // first failure and not a ceiling underestimate.
+  expect(second.checkpoint.pause?.cause).toMatchObject({
+    code: "invalid_follow_up",
+    recurrence: 1,
+  });
+  expect(second.checkpoint.pause?.action).toContain("consecutive");
+  expect(second.checkpoint.pause?.limitReason).toBeUndefined();
+  expect(second.checkpoint.pause?.limit).toBeUndefined();
+  expect(seenStates[1]?.lastStageFailure).toMatchObject({ code: "invalid_follow_up" });
+
+  coordinator.resumeStage({ source: "operator", action: "retry" });
+  const third = await coordinator.run();
+  // A DIFFERENT code restarts the count.
+  expect(third.checkpoint.pause?.cause).toMatchObject({
+    code: "malformed_plan",
+    recurrence: 0,
+  });
+  expect(third.checkpoint.pause?.action).not.toContain("consecutive");
+  expect(third.checkpoint.workflowState.lastStageFailure).toMatchObject({
+    code: "malformed_plan",
+    recurrence: 0,
+  });
+
+  coordinator.resumeStage({ source: "operator", action: "retry" });
+  expect((await coordinator.run()).status).toBe("complete");
+  expect(attempts).toBe(4);
+});
+
 test("RunCoordinator durably pauses a cooperatively interrupted workflow and resumes it", async () => {
   const target = root();
   const store = new ProjectStore(target);

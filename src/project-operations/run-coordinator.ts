@@ -20,6 +20,7 @@ import type {
   PipelinePauseCause,
   PipelineResult,
   ResearchDispatchIntent,
+  StageFailureRecord,
   StepResult,
   WorkflowPhase,
   WorkflowState,
@@ -131,13 +132,14 @@ export interface RunCheckpoint {
 function stageFailurePause(
   phase: WorkflowState["phase"],
   sourceError: unknown,
+  priorFailure?: StageFailureRecord,
 ): { phase: WorkflowState["phase"]; code: string; action: string; cause?: PipelinePauseCause } {
   // The REVIEW stage failing to run is its OWN outcome (issue #227): an
   // operator skimming a generic stage_failed line is exactly how PR #220's
   // unreviewed branch went quiet. Naming it here is what makes a review that
   // did not happen render differently from any other stage failure.
   if (phase === "review") {
-    const cause = pauseCauseFrom(sourceError, 0);
+    const cause = pauseCauseFrom(sourceError, recurrenceOf(priorFailure, phase, sourceError));
     return {
       phase,
       code: "review_not_run",
@@ -156,7 +158,7 @@ function stageFailurePause(
         "inspect the request this stage sends (model id, tool schemas, parameters), then retry the stage explicitly",
     };
   }
-  const cause = pauseCauseFrom(sourceError, 0);
+  const cause = pauseCauseFrom(sourceError, recurrenceOf(priorFailure, phase, sourceError));
   if (cause === undefined) {
     return {
       phase,
@@ -173,6 +175,46 @@ function stageFailurePause(
           `${cause.recurrence + 1} consecutive times -- resolve it, then retry the stage explicitly`
         : `the stage failed inside the harness (${cause.code}); resolve the recorded cause, then retry the stage explicitly`,
     cause,
+  };
+}
+
+/**
+ * How many consecutive prior records named the same stage and code. The loop
+ * signature issue #363 asks to make distinguishable from an underestimate: a
+ * stage_failed pause whose cause keeps repeating is a loop, not a ceiling an
+ * operator could raise.
+ */
+function recurrenceOf(
+  prior: StageFailureRecord | undefined,
+  phase: WorkflowState["phase"],
+  sourceError: unknown,
+): number {
+  const cause = pauseCauseFrom(sourceError, 0);
+  if (cause === undefined) return 0;
+  return prior !== undefined && prior.phase === phase && prior.code === cause.code
+    ? prior.recurrence + 1
+    : 0;
+}
+
+/**
+ * Copy a recorded pause cause onto the workflowState, so the NEXT attempt of
+ * this stage is told why the previous one failed (issue #363). The phase
+ * travels with it because the record outlives the pause: the retrying attempt
+ * reads it from the checkpoint's workflowState, never from the pause itself.
+ */
+function recordStageFailure(
+  state: WorkflowState,
+  phase: WorkflowState["phase"],
+  cause: PipelinePauseCause,
+): WorkflowState {
+  return {
+    ...state,
+    lastStageFailure: {
+      phase,
+      code: cause.code,
+      ...(cause.message === undefined ? {} : { message: cause.message }),
+      recurrence: cause.recurrence,
+    },
   };
 }
 
@@ -605,14 +647,31 @@ export class RunCoordinator {
         error instanceof WorkflowStageFailureError &&
         checkpoint.workflowState.phase !== "research"
       ) {
+        const pause = stageFailurePause(
+          checkpoint.workflowState.phase,
+          error.sourceError,
+          checkpoint.workflowState.lastStageFailure,
+        );
         this.save({
           ...this.persisted.value,
           workflowState: {
             ...checkpoint.workflowState,
             runIds: [...checkpoint.workflowState.runIds, error.runId],
             stageMetrics: [...(checkpoint.workflowState.stageMetrics ?? []), error.metrics],
+            // The cause reaches the NEXT attempt: the retrying stage reads it
+            // from its prompt and converges instead of repeating the identical
+            // rejected submission (issue #363). Only typed harness-side causes
+            // are recorded -- a provider rejection or an untyped error has
+            // nothing the retrying stage can act on.
+            ...(pause.cause === undefined
+              ? {}
+              : recordStageFailure(
+                  checkpoint.workflowState,
+                  checkpoint.workflowState.phase,
+                  pause.cause,
+                )),
           },
-          pause: stageFailurePause(checkpoint.workflowState.phase, error.sourceError),
+          pause,
         });
         return undefined;
       }
@@ -625,12 +684,24 @@ export class RunCoordinator {
         // missing one: the run pauses with its own code so "review did not
         // happen" never renders like "review ran, no findings", and the
         // explicit operator resume is what re-attempts the review.
+        const cause = pauseCauseFrom(
+          error,
+          recurrenceOf(checkpoint.workflowState.lastStageFailure, "review", error),
+        );
         this.save({
           ...checkpoint,
+          // A rejected verdict submission is exactly the typed rejection
+          // criterion #363(1) names: the retrying reviewer must see WHICH
+          // field was refused or it repeats the identical rejected verdict.
+          workflowState:
+            cause === undefined
+              ? checkpoint.workflowState
+              : recordStageFailure(checkpoint.workflowState, "review", cause),
           pause: {
             phase: "review",
             code: "review_not_run",
             action: `the review stage did not run (${error.code}); inspect the reviewer's registration and configuration, then resume the review explicitly`,
+            ...(cause === undefined ? {} : { cause }),
           },
         });
         return undefined;
@@ -654,12 +725,21 @@ export class RunCoordinator {
         // `stop` with no tool call, then 48 minutes of silence that looked
         // exactly like work in progress. A pause is recoverable; silence is the
         // one outcome a caller cannot act on.
+        const cause = pauseCauseFrom(
+          error,
+          recurrenceOf(checkpoint.workflowState.lastStageFailure, "plan", error),
+        );
         this.save({
           ...checkpoint,
+          workflowState:
+            cause === undefined
+              ? checkpoint.workflowState
+              : recordStageFailure(checkpoint.workflowState, "plan", cause),
           pause: {
             phase: "plan",
             code: "plan_not_submitted",
             action: `the planner did not submit a plan (${error.code}); inspect the planner's registration and configuration, then resume the plan explicitly`,
+            ...(cause === undefined ? {} : { cause }),
           },
         });
         return undefined;

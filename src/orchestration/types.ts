@@ -630,6 +630,16 @@ export interface PipelinePause {
 }
 
 /**
+ * The workflowState sibling of a pause cause: which stage failed, with which
+ * recorded cause, and how many consecutive attempts have failed the same way.
+ * `phase` is the failing stage's phase; the rest matches `PipelinePauseCause`
+ * so the coordinator can copy one into the other without re-deriving it.
+ */
+export interface StageFailureRecord extends PipelinePauseCause {
+  phase: WorkflowPhase;
+}
+
+/**
  * A stage pause reported as a resumable outcome, not a failure (issue #261).
  *
  * WHY A SEPARATE CLASS. A pause had surfaced as `OrchestrationError`
@@ -788,6 +798,16 @@ export interface WorkflowState {
   runIds: string[];
   /** Completed-stage observations, retained in stable execution order. */
   stageMetrics?: PipelineStageMetrics[];
+  /**
+   * The recorded cause of the previous attempt of the CURRENT stage failing
+   * (issue #363). Written by the coordinator when a stage failure leaves a
+   * resumable pause; read by the next attempt's prompt composition, so a
+   * retrying stage converges on the recorded reason instead of repeating an
+   * identical rejected submission blind. Cleared by the session when the stage
+   * completes. Bounded: fixed code, harness-authored message, recurrence
+   * count -- never model or provider text.
+   */
+  lastStageFailure?: StageFailureRecord;
   /** A paused durable role session, resumed before a new role session is admitted. */
   activeStage?: ActiveWorkflowStage;
   /** Most recent safe handoff decision, retained for deterministic resume. */
