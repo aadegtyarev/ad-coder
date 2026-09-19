@@ -96,6 +96,12 @@ cannot.
   `resume_pipeline` carries the role, the exhausted reason and the new value.
   A raise names one role and one reason: raising every ceiling because one was
   hit discards the evidence the pause produced.
+- 2026-09-19 (issue #387): The system's own wake obligation completes this: a
+  state notice (`paused`, `failed`, `operator_attention`, `timed_out`,
+  `completed`, `stage_changed`) is a durable wake record that starts an
+  orchestrator turn so the system raises and records the correction itself,
+  without the operator or a watching coordinator; activity notices stay
+  rendering-only.
 
 ## What the system learns without being told
 

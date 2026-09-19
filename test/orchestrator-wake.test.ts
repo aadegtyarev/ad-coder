@@ -10,7 +10,7 @@ import {
 } from "../src/orchestration/background-runs";
 import type { RunPipelineResult } from "../src/orchestration/orchestrator";
 import { PipelinePauseError } from "../src/orchestration/types";
-import { WakePump, buildWakeTurnPrompt } from "../src/orchestration/wake";
+import { buildWakeTurnPrompt, WakePump } from "../src/orchestration/wake";
 
 function completedResult(runId: string): RunPipelineResult {
   return {
@@ -31,11 +31,17 @@ function completedResult(runId: string): RunPipelineResult {
   };
 }
 
-function readRecord(targetDir: string, runId: string): Record<string, unknown> & {
+function readRecord(
+  targetDir: string,
+  runId: string,
+): Record<string, unknown> & {
   value: { wake?: { entries: WakeEntry[] } };
 } {
   const raw = JSON.parse(
-    fs.readFileSync(path.join(targetDir, ".ad-coder", "runs", "background", `${runId}.json`), "utf8"),
+    fs.readFileSync(
+      path.join(targetDir, ".ad-coder", "runs", "background", `${runId}.json`),
+      "utf8",
+    ),
   );
   return raw;
 }
@@ -151,16 +157,13 @@ test("(c) progress/activity events start no turn and record no wake", async () =
   // `requested`/`started` are NOT turn-initiating. A run in flight (started, no
   // terminal event) must not record any wake.
   const { runId } = manager.start("progress only");
-  const beforeBytes = fs.statSync(
-    path.join(targetDir, ".ad-coder", "runs", "background", `${runId}.json`),
-  ).size;
   await manager.wait(runId);
 
   // The run completed, which IS turn-initiating; to exercise the negative
   // vocabulary cleanly, inspect that only `completed` (and stage events, which
   // wake per the operator) are recorded -- requested/started/cancelled are not.
   const record = readRecord(targetDir, runId).value;
-  const kinds = new Set((record.wake?.entries ?? []).map((w) => w.kind));
+  const kinds = new Set<string>((record.wake?.entries ?? []).map((w) => w.kind));
   expect(kinds.has("requested")).toBe(false);
   expect(kinds.has("started")).toBe(false);
   expect(kinds.has("cancelled")).toBe(false);
@@ -176,7 +179,7 @@ test("(c) progress/activity events start no turn and record no wake", async () =
   manager2.cancel(cancelled.runId);
   await manager2.wait(cancelled.runId);
   const record2 = readRecord(targetDir, cancelled.runId).value;
-  expect((record2.wake?.entries ?? []).some((w) => w.kind === "cancelled")).toBe(false);
+  expect((record2.wake?.entries ?? []).some((w) => String(w.kind) === "cancelled")).toBe(false);
 
   // The tool-activity channel never reaches background notices at all, so a
   // role "reading a file" leaves a run record byte-identical.
@@ -187,19 +190,24 @@ test("(c) progress/activity events start no turn and record no wake", async () =
     ownerId,
   );
   const started = manager3.start("active");
-  const file = path.join(targetDir, ".ad-coder", "runs", "background", `${started.runId}.json`);
-  const sizeBefore = fs.statSync(file).size;
   // Simulate no background event for the activity; assert the WAKE_INITIATING
   // set does not include any tool-activity lifecycle. There is no such
   // lifecycle in the manager: the tool-activity channel is a different surface.
   expect(WAKE_INITIATING_LIFECYCLES).toEqual(
-    expect.arrayContaining(["paused", "operator_attention", "failed", "timed_out", "completed", "stage_changed"]),
+    expect.arrayContaining([
+      "paused",
+      "operator_attention",
+      "failed",
+      "timed_out",
+      "completed",
+      "stage_changed",
+    ]),
   );
   expect(WAKE_INITIATING_LIFECYCLES).toHaveLength(6);
   // Nothing about `started` wrote a wake.
   await manager3.wait(started.runId);
   const record3 = readRecord(targetDir, started.runId).value;
-  expect((record3.wake?.entries ?? []).some((w) => w.kind === "started")).toBe(false);
+  expect((record3.wake?.entries ?? []).some((w) => String(w.kind) === "started")).toBe(false);
 
   await manager.close();
   await manager2.close();

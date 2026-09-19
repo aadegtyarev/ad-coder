@@ -30,6 +30,16 @@ arguments or drowning in implementation noise?
   always preserve explicit cursor polling as reconnect recovery. Console notice
   callbacks are rendering-only: they never enqueue conversational input or call a
   model/session turn, and JSON notices stay on complete stderr lines.
+- 2026-09-19 (issue #387): State notices are turn-initiating for the orchestrator,
+  while activity notices stay rendering-only. The turn-initiating set is `paused`,
+  `operator_attention`, `failed`, `timed_out`, `completed`, and `stage_changed` (a
+  step of the pipeline finished); `requested`, `started`, `cancelled`, and
+  everything on the tool-activity channel remain rendering-only. Wake records are
+  durable (surviving a busy, restarting, or gone console), coalesced per (run,
+  kind) with handled/unhandled state, and drained into bounded turns (at most
+  `maxWakesPerTurn` windows per turn) on a dedicated durable path between
+  orchestrator turns. The notice callbacks themselves remain rendering-only;
+  wake delivery is separate from them.
 - 2026-09-19: A `load_skill` event projects the skill id it TARGETED as `skillId` -- an IDENTIFIER in the
   same class as the tool name the record already carries, never call arguments, never task text, never
   payload -- so the ledger rule "tool NAMES and COUNTS only -- never call arguments" (src/ledger/types.ts)

@@ -250,6 +250,23 @@ enforces that dated release headings go in non-increasing date order
 
 ## [0.82.0] - 2026-09-19
 
+### Added
+- **State notices wake the orchestrator; activity notices stay rendering-only**
+  (issue #387). A background run reaching `paused`, `operator_attention`,
+  `failed`, `timed_out`, `completed`, or `stage_changed` now records a durable,
+  per-(run, kind) coalesced wake window in its private state, and a wake pump
+  drains up to `maxWakesPerTurn` unhandled windows into a single orchestrator
+  turn whose prompt is built from the record's own safe fields, marking each
+  handled after the turn resolves. `requested`/`started`/`cancelled` and the
+  tool-activity channel stay rendering-only. The contract entry
+  (`docs/contracts/tool-observability.md`, 2026-09-19) states the turn-initiating
+  set beside the unchanged rendering-only rule, and `docs/contracts/operator-flow.md`
+  records the system's own wake obligation. Two CLI flags,
+  `--background-max-wake-entries` and `--background-max-wakes-per-turn`, bound
+  retention and drained-turn size.
+
+## [0.82.0] - 2026-09-19
+
 ### Fixed
 - **The detached background worker repeats the credential-source launch
   parameter verbatim (issue #101).** A `--credential-path` typed at the

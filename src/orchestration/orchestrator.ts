@@ -79,6 +79,7 @@ import {
   SUBMIT_VERDICT_TOOL_NAME,
   type VerdictCapture,
 } from "./verdict";
+import { WakePump } from "./wake";
 
 /** The four tool names the orchestrator model drives the workflow through. */
 export const RUN_PIPELINE_TOOL_NAME = "run_pipeline";
@@ -1856,12 +1857,42 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
         costAnomalyDetector: seed.costAnomalyDetector,
       }),
     };
+  // Wake pump: state notices (paused/failed/...) must start an orchestrator
+  // turn even when no front drives one. The pump re-reads durable wake state on
+  // every notify, drains up to maxWakesPerTurn windows into ONE turn, marks them
+  // handled after the turn resolves, and reschedules only if unhandled windows
+  // remain. Wakes are owner-scoped exactly like run records (same manager, same
+  // ownerId-scoped private state).
+  const wakePump = new WakePump({
+    listPending: () => core.backgroundRuns.pendingWakes(),
+    markHandled: (runId, kinds) => core.backgroundRuns.markWakesHandled(runId, kinds),
+    runTurn: async (prompt, step) => {
+      await conversation.step(prompt, { step });
+    },
+    maxWakesPerTurn: core.backgroundRuns.backgroundLimits.maxWakesPerTurn,
+  });
+  const unsubscribeWakes = core.backgroundRuns.subscribe(() => wakePump.notifyChange());
+  // Pick up any wake recorded while this session was gone (restart/reconnect).
+  // Fire-and-forget: the pump is single-flight and drains via the subscription
+  // on later notices too; blocking startOrchestrator on a model turn would hang
+  // startup behind a wake it may not be able to answer yet.
+  void wakePump.startupScan();
+
   return {
     ...conversation,
     ...sharedActivity,
     ledgerPath,
-    step: conversation.step.bind(conversation),
+    step: async (userInput, opts) => {
+      try {
+        return await conversation.step(userInput, opts);
+      } finally {
+        // Every turn -- front-driven or wake -- settles through here, so the
+        // pump re-reads durable state and drains anything left unhandled.
+        wakePump.onTurnSettled();
+      }
+    },
     close: async () => {
+      unsubscribeWakes();
       try {
         await core.backgroundRuns.close();
       } finally {
