@@ -13,6 +13,72 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.91.0] - 2026-09-19
+
+### Changed
+- **Every default stage ceiling moves one bounded step, and the plan stage's
+  takes the number the calibration contract already learned (issue #405).**
+  `docs/contracts/stage-limit-calibration.md` recorded 810000 ms for
+  slice-planning as a deliberate probe on 2026-09-18 (run `4c26d8d9`), but the
+  shipped per-role default stayed at the pre-probe 540000, so the learned number
+  reached only the console that had been handed it by hand. The fleet's 72
+  coordinator run records show why it mattered: 16 duration pauses, **15 of them
+  `phase: plan`**, and 4 input-token pauses, all coder — against zero pauses on
+  model turns, tool turns or cost. Duration and turn ceilings move x1.5 and input
+  x1.6 across both tables: the planner to 810000 ms / 45 model turns / 90 tool
+  turns / 1,200,000 input tokens, the researcher to 1,080,000 / 63 / 144 /
+  1,440,000, security to 810,000 / 45 / 90 / 960,000, the coder to 2,160,000 /
+  90 / 216 / 1,920,000, reviewer and auditor to 1,350,000 / 72 / 180 / 1,680,000,
+  and the global defaults — which now apply only to `orchestrator` — to
+  2,700,000 / 144 / 576 / 2,400,000. Cost ceilings do not move in either table,
+  because cost is the one dimension with no pause evidence and the one no global
+  flag can raise per-role. Two of the steps are measurements rather than
+  symmetry: the planner's duration takes the learned 810000 itself, and its
+  model-turns ceiling follows the closeout reason of the same probe
+  (`reason model_turns, "20/30 model turns used, 12 reserved"`), the wall it
+  would otherwise meet next. This is a probe, not a settled number — if a
+  same-shape plan dispatch pauses again, that is the second observation the
+  contract requires before any further raise.
+
+### Fixed
+- **The help text stated stage-limit defaults the code had stopped using, and
+  said nothing about the ceilings a console actually runs on (issue #405).** The
+  `--stage-max-*` help lines advertised
+  600000 ms / 32 model turns / 128 tool turns / 500000 input tokens / 2 USD
+  against the code's 1800000 / 96 / 384 / 1500000 / 6, and said nothing about
+  the per-role ceilings that are what an unflagged console actually runs on — a
+  role's own value is lower for every dimension that matters. Both numbers are
+  read from `DEFAULT_STAGE_LIMITS` now, and each line states what the flag
+  really does to a role: passing it REPLACES every role's own ceiling for that
+  dimension with the single value passed. It is a flattening tool, not a floor —
+  `--stage-max-cost-usd 6` gives the coder 6 where its own ceiling was 2.4, and
+  every role's own cost ceiling is below that default — so a global flag raises
+  cost for all of them at once. A single role's ceiling is set by a host through
+  `roleStageLimits` in the pipeline config, the last overlay of the four; there
+  is no CLI flag for it.
+- **All four `--stage-final-response-reserve-*` help lines were stale by the
+  same amount and for the same reason (issue #405).** They stated 4 model turns /
+  30000 ms / 8 tool turns / 100000 input tokens against the code's 12 / 90000 /
+  24 / 300000 — the same 2026-09-18 commit that raised the ceilings raised the
+  reserves, and neither the help, nor the README, nor the dated entry in
+  `docs/contracts/config.md` moved with it. All nine `--stage-*` help lines are
+  interpolated from the constant now, and the test that pins them derives the
+  flag-to-constant mapping instead of listing pairs, so a tenth ceiling added
+  with a typed default fails rather than drifts.
+- **The README described a flag the CLI rejects (issue #405).** It documented
+  `--role-stage-limits <file>` as the way to constrain one role; the option has
+  never existed in `src/` and the CLI answers `unknown option`. The paragraph now
+  states the real numbers, the flattening rule, the reserve defaults and the real
+  per-role surface (`roleStageLimits`, programmatic). The README also repeated
+  the pre-raise figures, as did the 2026-09-13 entry in
+  `docs/contracts/config.md`, which a dated 2026-09-19 entry now supersedes.
+- **The two comparative claims the help and the README make about the per-role
+  table are falsified by a test rather than trusted (issue #405).** "A role's own
+  ceiling is lower" than the global, and "every role's own cost ceiling is BELOW
+  this default", are checked over both tables, every role and all five
+  dimensions, so raising a global without raising the role it was meant to bound
+  fails a test instead of breaking a documented promise.
+
 ## [0.88.0] - 2026-09-19
 
 ### Fixed
