@@ -141,7 +141,140 @@ export class ProviderLimitError extends Error {
   }
 }
 
+/**
+ * A provider REFUSED the request because the account's quota/rate limit is
+ * spent -- an HTTP 429 that reached the settled-empty-turn boundary through the
+ * MESSAGE, not through a structured `status`/`statusCode` field or a
+ * `Retry-After` header. Structured 429s are converted to `ProviderLimitError`
+ * earlier; this class is the message-embedded sibling of the same refusal.
+ *
+ * WHY A SEPARATE TYPE. `ProviderLimitError` carries only an optional delay and
+ * is produced by `providerLimitFrom`, which reads ONLY structured
+ * status/retry/retry-after fields. pi-agent-core's `providerError` composes
+ * `{ code, message }` with no status field, so a 429 embedded in the message
+ * (`"429: {"error":{...}}"`) sails past every structured conversion and lands
+ * here instead. Collapsing it into `EmptyTurnError` told the operator to
+ * "verify authentication" about a valid credential whose quota is spent
+ * (#356) -- a wrong cause and an impossible remedy. This class keeps the
+ * refusal distinguishable by code, HTTP status, the provider's own bounded
+ * error token, and the reset window when the provider supplied one.
+ *
+ * CARRIES ONLY BOUNDED FIELDS. `status` is the numeric 429. `providerCode` is
+ * a strict-charset token (`[A-Za-z0-9_.-]{1,64}`) extracted from the response
+ * body's structured error field -- never the body's prose, never a URL, never
+ * a `message` value. `retryAfterMs` is a safe-integer delay bounded by
+ * `MAX_PROVIDER_RETRY_HINT_MS`, read from the same validated structured hints
+ * `providerLimitFrom` accepts. The uncontrolled body is read for those fields
+ * and dropped, exactly as the errors contract requires.
+ */
+export class ProviderQuotaError extends Error {
+  override readonly name = "ProviderQuotaError";
+  readonly code = "provider_quota" as const;
+  readonly status = 429 as const;
+
+  constructor(
+    readonly runId: string,
+    /** The bounded provider error code/type, when one was extractable. */
+    readonly providerCode?: string,
+    /** The reset window the provider supplied, in ms, when one was carried. */
+    readonly retryAfterMs?: number,
+  ) {
+    super(
+      `the provider refused the request with HTTP 429 (quota/rate limit exhausted)` +
+        `${providerCode !== undefined ? ` (provider code ${providerCode})` : ""}` +
+        `${retryAfterMs !== undefined ? `; resets in ${Math.ceil(retryAfterMs / 1_000)}s` : ""}` +
+        "; wait for the reset window, or check the plan and usage, then retry",
+    );
+  }
+}
+
 export const MAX_PROVIDER_RETRY_HINT_MS = 86_400_000;
+
+/**
+ * A settled turn the caller cannot use: the final assistant message carries no
+ * answer text and no tool call -- most often a generation truncated by the
+ * output-length limit, where the model spent the whole budget on reasoning and
+ * was cut off before producing anything (#368: two `run_role coder` dispatches
+ * returned `complete ... (no text)` with `isError: false`, and the failure was
+ * discoverable only by reading the raw session jsonl).
+ *
+ * WHY A TYPED CLASS. The harness settles such a turn as `status: "completed"`
+ * -- the provider answered -- so every existing settled-FAILURE classification
+ * (empty turn, rejection, quota) is gated behind a status check that never
+ * fires, and silence reaches the caller as an empty success. A caller cannot
+ * distinguish "the worker had nothing to say" from "the worker was cut off
+ * mid-thought", and cannot act on either. This class keeps the failure
+ * distinguishable by code, the provider's own bounded stop reason, and the
+ * token counts the truncated message itself reported.
+ *
+ * TWO SETTLE SHAPES REACH IT. When the spent output REACHED the intended
+ * limit, pi-agent-core sees no recoverable length stop and settles the turn
+ * `completed` with whatever content exists -- the #368 incident. When the stop
+ * came BELOW the limit, pi makes one bounded compact-and-retry attempt; a
+ * retry that truncates again settles the turn `failed` with a generic
+ * `assistant_error` -- which the empty-turn fallback would report as "verify
+ * authentication". Both shapes classify here: the second at the same boundary,
+ * after the quota and rejection attributions that own refusals.
+ *
+ * CARRIES ONLY BOUNDED FIELDS. `stopReason` is a strict-charset token
+ * (`[A-Za-z0-9_-]{1,32}`, e.g. `length`) read from the settled message and
+ * dropped when it does not match -- a hostile or foreign transcript value can
+ * never cross. `outputTokens`/`reasoningTokens` are safe non-negative integers
+ * from the message's own usage. Everything else -- the thinking prose, any
+ * other transcript content -- stays where it is.
+ *
+ * RETRYABLE, BUT NOT AS-IS. The same output budget truncates the same
+ * reasoning-heavy turn again; the remedy is a raised output budget or bounded
+ * thinking, then retry.
+ */
+export class GenerationTruncatedError extends Error {
+  override readonly name = "GenerationTruncatedError";
+  readonly code = "generation_truncated" as const;
+  /** The bounded stop reason the settled message carried, when one matched. */
+  readonly stopReason: string | undefined;
+  /** Output tokens the truncated message reported spending, when it carried them. */
+  readonly outputTokens: number | undefined;
+  /** Reasoning tokens the truncated message reported, when the provider split them out. */
+  readonly reasoningTokens: number | undefined;
+
+  constructor(
+    readonly runId: string,
+    stopReason?: string,
+    outputTokens?: number,
+    reasoningTokens?: number,
+  ) {
+    // Every carried field is bounded HERE, at the single point the allow-list
+    // audit (orchestrator safeErrorText) can name: a non-matching stop reason
+    // and a non-integer count are dropped, never truncated and never thrown
+    // about -- the classification itself does not depend on them.
+    const boundedStopReason =
+      stopReason !== undefined && STOP_REASON_TOKEN_RE.test(stopReason) ? stopReason : undefined;
+    const boundedOutput = boundedTokenCount(outputTokens);
+    const boundedReasoning = boundedTokenCount(reasoningTokens);
+    const cause =
+      boundedStopReason === "length"
+        ? `the generation was cut off by the output-token limit` +
+          `${boundedOutput !== undefined ? ` after ${boundedOutput} output tokens` : ""}` +
+          `${boundedReasoning !== undefined ? ` (${boundedReasoning} on reasoning)` : ""}` +
+          " with no answer and no tool call"
+        : `the generation settled with no answer and no tool call` +
+          `${boundedStopReason !== undefined ? ` (stopReason ${boundedStopReason})` : ""}`;
+    // Same advice for every shape: a same-budget retry is expected to truncate
+    // the same reasoning-heavy turn again, so the remedy is a changed budget,
+    // not a blind retry (#368).
+    super(`${cause}; raise the output budget or bound thinking, then retry`);
+    this.stopReason = boundedStopReason;
+    this.outputTokens = boundedOutput;
+    this.reasoningTokens = boundedReasoning;
+  }
+}
+
+/** A strict-charset stop-reason token, e.g. `length`. Anything else never crosses. */
+const STOP_REASON_TOKEN_RE = /^[A-Za-z0-9_-]{1,32}$/;
+
+function boundedTokenCount(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+}
 
 const PROVIDER_LIMIT_CODES = new Set([
   "rate_limit_exceeded",
@@ -164,30 +297,43 @@ export function providerLimitFrom(
   if (status !== 429 && !(typeof rawCode === "string" && PROVIDER_LIMIT_CODES.has(rawCode))) {
     return undefined;
   }
+  const retryAfterMs = boundedRetryHintMs(value as Record<string, unknown>, nowMs);
+  return new ProviderLimitError(retryAfterMs);
+}
+
+/**
+ * Resolve a provider-supplied reset hint into a bounded millisecond delay, or
+ * `undefined` when none of the recognised fields carries a safe value. Shared
+ * by `providerLimitFrom` (structured 429) and `providerQuotaFrom`
+ * (message-embedded 429) so both boundaries validate the same way, and a reset
+ * window can never exceed `MAX_PROVIDER_RETRY_HINT_MS`.
+ */
+function boundedRetryHintMs(value: Record<string, unknown>, nowMs: number): number | undefined {
   const millisecondHint = value.retryAfterMs ?? value.retry_after_ms;
   const secondHint = value.retryAfterSeconds ?? value.retry_after;
   const resetAtMs = value.resetAtMs ?? value.reset_at_ms;
-  let retryAfterMs: number | undefined;
   if (
     typeof millisecondHint === "number" &&
     Number.isSafeInteger(millisecondHint) &&
     millisecondHint > 0 &&
     millisecondHint <= MAX_PROVIDER_RETRY_HINT_MS
   ) {
-    retryAfterMs = millisecondHint;
-  } else if (typeof secondHint === "number" && Number.isFinite(secondHint) && secondHint > 0) {
+    return millisecondHint;
+  }
+  if (typeof secondHint === "number" && Number.isFinite(secondHint) && secondHint > 0) {
     const converted = Math.ceil(secondHint * 1_000);
     if (Number.isSafeInteger(converted) && converted <= MAX_PROVIDER_RETRY_HINT_MS)
-      retryAfterMs = converted;
-  } else if (
+      return converted;
+  }
+  if (
     typeof resetAtMs === "number" &&
     Number.isSafeInteger(resetAtMs) &&
     resetAtMs > nowMs &&
     resetAtMs - nowMs <= MAX_PROVIDER_RETRY_HINT_MS
   ) {
-    retryAfterMs = resetAtMs - nowMs;
+    return resetAtMs - nowMs;
   }
-  return new ProviderLimitError(retryAfterMs);
+  return undefined;
 }
 
 /**
@@ -197,7 +343,9 @@ export function providerLimitFrom(
  * `EmptyTurnError` already names, and re-labelling them "inspect the request"
  * would trade one wrong instruction for another. 5xx is excluded too -- a
  * server fault is not a statement about the request -- and 429 never reaches
- * here because `providerLimitFrom` converts it first.
+ * here because a structured 429 is converted by `providerLimitFrom` first and a
+ * message-embedded 429 is converted by `providerQuotaFrom` first: the quota
+ * boundary runs BEFORE this rejection boundary (#356).
  */
 const PROVIDER_REJECTION_STATUSES = new Set([400, 404, 405, 409, 413, 415, 422]);
 
@@ -251,6 +399,233 @@ export function providerRejectionStatusFrom(error: unknown): number | undefined 
   if (match === null) return undefined;
   const parsed = Number(match[1]);
   return PROVIDER_REJECTION_STATUSES.has(parsed) ? parsed : undefined;
+}
+
+/**
+ * Keys whose string value names the provider's own error code/type, ordered
+ * most-specific-first (see `extractProviderCodeToken`).
+ */
+const PROVIDER_CODE_TOKEN_KEYS = ["code", "error_code", "error_type", "type"] as const;
+
+const PROVIDER_CODE_TOKEN_RE = new RegExp(
+  `"(?:${PROVIDER_CODE_TOKEN_KEYS.join("|")})"\\s*:\\s*"([A-Za-z0-9_.-]{1,64})(?![A-Za-z0-9_.-])\\s*"`,
+  "g",
+);
+
+/**
+ * Extract the provider's own error code/type from an uncontrolled response
+ * body, as a strict-charset token, or `undefined` when no such token exists.
+ *
+ * ONLY a value matching `[A-Za-z0-9_.-]{1,64}` is ever returned: every other
+ * character class -- spaces (prose), `/` and `:` (URLs), quotes and braces
+ * (more body) -- fails the match and is dropped. A token longer than 64 chars
+ * fails the `{1,64}` bound AND the trailing `(?![A-Za-z0-9_.-])` guard, so a
+ * long identifier can never be returned truncated. The body is otherwise never
+ * read: `message` values, URLs, and free prose stay in the body they came from.
+ *
+ * The bare token `"error"` is skipped: in Anthropic's error envelope
+ * (`{"type":"error","error":{...}}`) it is the generic discriminator, not the
+ * provider's code, and reporting it would re-create the `assistant_error`
+ * misattribution this class exists to end. Skipping (not stopping) is what lets
+ * the real nested token (`"error":{"type":"..."}`) be found after it.
+ */
+export function extractProviderCodeToken(body: string): string | undefined {
+  for (const match of body.matchAll(PROVIDER_CODE_TOKEN_RE)) {
+    const token = match[1] as string;
+    if (token !== "error") return token;
+  }
+  return undefined;
+}
+
+/**
+ * What a message-embedded 429 refusal carries past the quota boundary. `status`
+ * is always the literal 429 that produced the classification; `providerCode`
+ * and `retryAfterMs` are present only when the provider actually supplied them
+ * in a structured, bounded form.
+ */
+export interface ProviderQuotaSignal {
+  readonly status: 429;
+  readonly providerCode?: string;
+  readonly retryAfterMs?: number;
+}
+
+/**
+ * Classify a settled provider failure as a quota/rate-limit refusal (HTTP 429),
+ * or `undefined` when the failure is not a 429 at all.
+ *
+ * READ ONLY ABOUT QUOTA. This is the message-embedded sibling of
+ * `providerLimitFrom`: it answers "is this a 429, and what does the provider
+ * name and the reset window?" for a refusal that reached the settled boundary
+ * through the message. A structured `status`/`statusCode` of 429 is also
+ * honoured for symmetry with `providerLimitFrom`, but in practice that case is
+ * converted earlier and never arrives here.
+ *
+ * The status is read from the same two anchored message shapes
+ * `providerRejectionStatusFrom` reads -- shape 1 `"429: <body>"` (and the
+ * prefixed variant) and shape 2 `"429 <body>"` -- plus a structured
+ * status/statusCode equal to 429. 401/403/5xx are simply not 429 and return
+ * `undefined`, leaving those to the credential and rejection boundaries that
+ * already own them. The bounded provider token and the reset window are read
+ * from the body/structured fields and nothing else crosses.
+ */
+export function providerQuotaFrom(
+  error: unknown,
+  nowMs = Date.now(),
+): ProviderQuotaSignal | undefined {
+  if (error === null || typeof error !== "object") return undefined;
+  const value = error as Record<string, unknown>;
+  const structured = value.status ?? value.statusCode;
+  let isStatus429: boolean;
+  if (typeof structured === "number") {
+    isStatus429 = structured === 429;
+  } else {
+    const message = value.message;
+    if (typeof message !== "string") return undefined;
+    const match = /^(?:[^():]{0,64} )?\(?(\d{3})\)?: /.exec(message) ?? /^(\d{3}) /.exec(message);
+    isStatus429 = match !== null && Number(match[1]) === 429;
+  }
+  if (!isStatus429) return undefined;
+  const message = typeof value.message === "string" ? value.message : undefined;
+  const providerCode = message === undefined ? undefined : extractProviderCodeToken(message);
+  const retryAfterMs = boundedRetryHintMs(value as Record<string, unknown>, nowMs);
+  return {
+    status: 429,
+    ...(providerCode !== undefined && { providerCode }),
+    ...(retryAfterMs !== undefined && { retryAfterMs }),
+  };
+}
+
+/**
+ * The structural slice of a settled assistant message the truncation boundary
+ * reads. Deliberately structural -- `unknown` fields with runtime checks -- so
+ * both a live pi-ai `AssistantMessage` and a replayed session entry pass
+ * WITHOUT importing pi-ai into this module, and a hostile transcript shape
+ * (wrong roles, non-string tokens, fractional counts) fails the checks instead
+ * of the type system.
+ */
+export interface SettledTurnMessage {
+  readonly role: unknown;
+  readonly stopReason?: unknown;
+  readonly errorMessage?: unknown;
+  readonly content: readonly (
+    | { readonly type: "text"; readonly text: unknown }
+    | { readonly type: "thinking"; readonly thinking?: unknown }
+    | {
+        readonly type: "toolCall";
+        readonly id?: unknown;
+        readonly name?: unknown;
+        readonly arguments?: unknown;
+      }
+  )[];
+  readonly usage?: { readonly output?: unknown; readonly reasoning?: unknown };
+}
+
+/**
+ * What an unusable settled assistant message carries past the truncation
+ * boundary: every field optional, every field bounded by the constructor of
+ * `GenerationTruncatedError` when it becomes one.
+ */
+export interface GenerationTruncationSignal {
+  readonly stopReason?: string;
+  readonly outputTokens?: number;
+  readonly reasoningTokens?: number;
+}
+
+/**
+ * The marker pi-agent-core stamps on a message committed after its one bounded
+ * compact-and-retry attempt for a length stop failed to produce a usable
+ * generation: the retry truncated again, and `normalizeError` rewrote the
+ * message to an error stop with this constant. Matched by EXACT equality -- it
+ * is a library-authored constant, never provider prose, so a provider wording
+ * its own overflow error differently stays with the failure classifications.
+ */
+const PI_OVERFLOW_RECOVERY_MARKER = "Assistant request exceeded the context window";
+
+/**
+ * Classify the settled turn's final assistant message as an unusable,
+ * truncated generation, or `undefined` when the message carries something the
+ * caller can act on.
+ *
+ * THE TRIGGER IS SILENCE WITH EVIDENCE OF A CUT. A final assistant message
+ * with neither answer text nor a tool call produced nothing the caller can
+ * use. But not every silence is a truncation: an empty settled answer (no
+ * content, or an empty text block, stopped cleanly) is the silent no-op the
+ * workflow layer already classifies, and re-labelling it would move a pinned
+ * boundary. The trigger therefore requires the generation's OWN evidence that
+ * content was cut -- reasoning that ran and never reached an answer
+ * (`thinking` content, the #368 shape), or the provider's own `length` stop.
+ * A text block (even a partial one) or a tool call IS usable content and
+ * returns `undefined` -- a truncated final answer is degraded, not absent,
+ * and stays today's behavior; the ledger's `stopReason` column already
+ * records it.
+ *
+ * FAILURE MARKERS ARE NOT TRUNCATIONS. A message whose stop is `error`,
+ * `aborted`, or `pending` is a failed or unfinished request, not a settled
+ * generation that came up short -- those belong to the settled-FAILURE
+ * classifications (empty turn, rejection, quota) and keep their advice.
+ * Without this exclusion a credential refusal (401/403 arrives as an
+ * error-stopped message) would be re-labelled a truncation. The ONE exception
+ * is pi-agent-core's exhausted length-recovery marker: there the error stop is
+ * the bookkeeping for a generation that RAN twice and produced thinking both
+ * times but no answer -- the truncation is the cause, the marker only proves
+ * it, and the reported stop reason is the `length` the recovery was recovering.
+ *
+ * READS NOTHING BUT THE MESSAGE. No transcript, no ledger, no request state:
+ * the caller supplies the final assistant message and this answers whether it
+ * was usable, with only bounded evidence about why it was not.
+ */
+export function truncatedGenerationFrom(
+  message: SettledTurnMessage | undefined,
+): GenerationTruncationSignal | undefined {
+  if (message === undefined || message.role !== "assistant") return undefined;
+  if (
+    message.stopReason === "error" ||
+    message.stopReason === "aborted" ||
+    message.stopReason === "pending"
+  ) {
+    // pi-agent-core commits an exhausted length-recovery as an error-stopped
+    // message with the generation's own thinking content still on it. That is
+    // a truncated generation -- the tokens were spent on reasoning that never
+    // answered -- so classify it instead of letting the empty-turn fallback
+    // advise "verify authentication" about a credential that is fine (#368).
+    if (
+      message.stopReason === "error" &&
+      message.errorMessage === PI_OVERFLOW_RECOVERY_MARKER &&
+      message.content.some((block) => block.type === "thinking")
+    ) {
+      const outputTokens = boundedTokenCount(message.usage?.output);
+      const reasoningTokens = boundedTokenCount(message.usage?.reasoning);
+      return {
+        stopReason: "length",
+        ...(outputTokens !== undefined && { outputTokens }),
+        ...(reasoningTokens !== undefined && { reasoningTokens }),
+      };
+    }
+    return undefined;
+  }
+  const hasText = message.content.some(
+    (block) => block.type === "text" && typeof block.text === "string" && block.text.trim() !== "",
+  );
+  if (hasText) return undefined;
+  if (message.content.some((block) => block.type === "toolCall")) return undefined;
+  // Silence with no evidence of a cut is the silent no-op the workflow layer
+  // already owns; a truncated generation left reasoning behind, or the
+  // provider named the output limit itself.
+  const lengthStopped = message.stopReason === "length";
+  if (!lengthStopped && !message.content.some((block) => block.type === "thinking")) {
+    return undefined;
+  }
+  const stopReason =
+    typeof message.stopReason === "string" && STOP_REASON_TOKEN_RE.test(message.stopReason)
+      ? message.stopReason
+      : undefined;
+  const outputTokens = boundedTokenCount(message.usage?.output);
+  const reasoningTokens = boundedTokenCount(message.usage?.reasoning);
+  return {
+    ...(stopReason !== undefined && { stopReason }),
+    ...(outputTokens !== undefined && { outputTokens }),
+    ...(reasoningTokens !== undefined && { reasoningTokens }),
+  };
 }
 
 /**

@@ -71,7 +71,12 @@ import { READ_PROJECT_TOOL_NAME } from "../src/project-tools/read";
 import { SEARCH_PROJECT_TOOL_NAME } from "../src/project-tools/search";
 import type { Role } from "../src/role";
 import { defineRole } from "../src/role";
-import { EmptyTurnError, ProviderLimitError } from "../src/runner/errors";
+import {
+  EmptyTurnError,
+  GenerationTruncatedError,
+  ProviderLimitError,
+  ProviderQuotaError,
+} from "../src/runner/errors";
 import type { Tool } from "../src/runner/tool";
 import { SessionLimitController, SessionLimitError } from "../src/session-limits";
 import { LOAD_SKILL_TOOL_NAME } from "../src/skills/load-tool";
@@ -398,6 +403,30 @@ test("run_role projects its thrown errors with reason kept and leak withheld", a
   });
   expect(await callTool(typed, { role: "auditor", task: "x" })).toBe(
     "error: empty_task (or_detail)",
+  );
+  // A quota refusal projects its bounded fields (status, bounded provider
+  // token, reset window) as an authored string, and it is the NEW boundary's
+  // own wording -- never "verify authentication" (#356).
+  const quota = buildRunRoleTool(async () => {
+    throw new ProviderQuotaError("run-abc", "insufficient_quota", 120_000);
+  });
+  expect(await callTool(quota, { role: "auditor", task: "x" })).toBe(
+    "error: provider_quota (the provider refused the request with HTTP 429 (quota/rate limit exhausted) (provider code insufficient_quota); resets in 120s; wait for the reset window, or check the plan and usage, then retry; run run-abc)",
+  );
+  // Uncontrolled body prose never crosses the projection.
+  const leaked = buildRunRoleTool(async () => {
+    throw new ProviderQuotaError("run-abc", "insufficient_quota");
+  });
+  expect(await callTool(leaked, { role: "auditor", task: "x" })).not.toContain(
+    "Weekly usage limit reached",
+  );
+  // A truncated generation projects its bounded counts and its budget remedy;
+  // the thinking prose that was cut off stays in the session (#368).
+  const truncated = buildRunRoleTool(async () => {
+    throw new GenerationTruncatedError("run-abc", "length", 16384, 16347);
+  });
+  expect(await callTool(truncated, { role: "auditor", task: "x" })).toBe(
+    "error: generation_truncated (the generation was cut off by the output-token limit after 16384 output tokens (16347 on reasoning) with no answer and no tool call; raise the output budget or bound thinking, then retry; run run-abc)",
   );
 });
 

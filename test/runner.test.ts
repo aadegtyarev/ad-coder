@@ -10,6 +10,7 @@ import {
   createModels,
   fauxAssistantMessage,
   fauxProvider,
+  fauxThinking,
   fauxToolCall,
   Type,
 } from "@earendil-works/pi-ai";
@@ -25,12 +26,17 @@ import { defineRole } from "../src/role";
 import { dumpRequest } from "../src/runner/dump-request";
 import {
   ConfiguredToolsUnavailableError,
+  extractProviderCodeToken,
+  GenerationTruncatedError,
   ProviderLimitError,
+  ProviderQuotaError,
   ProviderRejectionError,
   providerLimitFrom,
+  providerQuotaFrom,
   providerRejectionStatusFrom,
   RunnerError,
   resolveTargetDir,
+  truncatedGenerationFrom,
 } from "../src/runner/errors";
 import {
   appendSafeUntrackedDiffProjection,
@@ -375,6 +381,298 @@ test("provider rejection is attributed from a status and never carries a body", 
   expect(JSON.stringify({ ...new ProviderRejectionError("run-1", carried ?? 0) })).not.toContain(
     "never-publish-me",
   );
+});
+
+test("a message-embedded 429 is classified as quota from both message shapes", () => {
+  // Shape 1, `formatProviderError`: "<status>: <body>".
+  expect(
+    providerQuotaFrom({
+      code: "assistant_error",
+      message: '429: {"error":{"type":"weekly_usage_limit_exceeded","message":"resets in 2 days"}}',
+    }),
+  ).toEqual({ status: 429, providerCode: "weekly_usage_limit_exceeded" });
+  // Shape 2, the provider SDK's own `APIError.message`: "<status> <body>".
+  expect(
+    providerQuotaFrom({
+      code: "assistant_error",
+      message: '429 {"type":"error","error":{"type":"insufficient_quota","message":"slow down"}}',
+    }),
+  ).toEqual({ status: 429, providerCode: "insufficient_quota" });
+  // A structured status of 429 is also honoured.
+  expect(providerQuotaFrom({ status: 429 })).toEqual({ status: 429 });
+  // Non-429 statuses are not quota. 401/403 stay with the credential wording,
+  // 5xx stays out, and a no-status message is not quota either.
+  expect(providerQuotaFrom({ message: '401: {"error":{"message":"bad key"}}' })).toBeUndefined();
+  expect(providerQuotaFrom({ message: '403: {"error":{"message":"forbidden"}}' })).toBeUndefined();
+  expect(providerQuotaFrom({ message: '503: {"error":{"message":"overloaded"}}' })).toBeUndefined();
+  expect(providerQuotaFrom({ message: "assistant stopped with error" })).toBeUndefined();
+  expect(providerQuotaFrom(undefined)).toBeUndefined();
+  expect(providerQuotaFrom({ status: 400 })).toBeUndefined();
+});
+
+test("quota token extraction returns a bounded token and never body prose", () => {
+  // The real code/type is extracted.
+  expect(extractProviderCodeToken('{"error":{"type":"weekly_usage_limit"}}')).toBe(
+    "weekly_usage_limit",
+  );
+  expect(extractProviderCodeToken('{"error":{"code":"quota_exceeded"}}')).toBe("quota_exceeded");
+  expect(extractProviderCodeToken('{"error_type":"insufficient_quota"}')).toBe(
+    "insufficient_quota",
+  );
+  // The Anthropic envelope discriminator "error" is skipped, and the nested
+  // type is found instead.
+  expect(extractProviderCodeToken('{"type":"error","error":{"type":"rate_limit_error"}}')).toBe(
+    "rate_limit_error",
+  );
+  // Prose, URLs and long identifiers never cross: the value must match the
+  // strict charset exactly and be length-capped.
+  expect(
+    extractProviderCodeToken('{"error":{"message":"You have exceeded your weekly usage limit"}}'),
+  ).toBeUndefined();
+  expect(
+    extractProviderCodeToken('{"error":{"url":"https://example.com/upgrade"}}'),
+  ).toBeUndefined();
+  expect(extractProviderCodeToken(`{"error":{"code":"${"a".repeat(65)}"}}`)).toBeUndefined();
+  // A token exactly at the 64-char bound is kept.
+  expect(extractProviderCodeToken(`{"error":{"code":"${"b".repeat(64)}"}}`)).toBe("b".repeat(64));
+});
+
+test("quota errors are typed, bounded, and carry a reset window when supplied", () => {
+  const quota = new ProviderQuotaError("run-1", "quota_exceeded", 120_000);
+  expect(quota.code).toBe("provider_quota");
+  expect(quota.status).toBe(429);
+  expect(quota.providerCode).toBe("quota_exceeded");
+  expect(quota.retryAfterMs).toBe(120_000);
+  // The message names the status, the provider token, the reset window, and
+  // waits/checks-plan advice -- never "authentication" or "inspect the request".
+  expect(quota.message).toContain("HTTP 429");
+  expect(quota.message).toContain("quota_exceeded");
+  expect(quota.message).toContain("resets in");
+  expect(quota.message).toContain("wait for the reset window");
+  expect(quota.message).not.toContain("authentication");
+  expect(quota.message).not.toContain("inspect the request");
+  // Without a token or reset window the fields are simply absent; the body
+  // that produced them never appears on the error.
+  const bare = new ProviderQuotaError("run-1");
+  expect(bare.providerCode).toBeUndefined();
+  expect(bare.retryAfterMs).toBeUndefined();
+  expect(JSON.stringify(bare)).not.toContain("weekly_usage_limit");
+  expect(JSON.stringify(bare)).not.toContain("resets in 2 days");
+  expect(JSON.stringify(quota)).not.toContain("never-publish-me");
+});
+
+test("#356: a message-embedded 429 quota refusal surfaces as a typed quota outcome", async () => {
+  const { faux, models, model, role } = harnessFixture();
+  // The incident body: a 429 whose structured error names a quota exhaustion
+  // ("insufficient_quota"), which pi-ai classifies non-retryable so it settles
+  // as a failed operation with the message-embedded status -- the exact shape
+  // that was collapsing into EmptyTurnError.
+  faux.setResponses([
+    fauxAssistantMessage("", {
+      stopReason: "error",
+      errorMessage:
+        '429: {"error":{"type":"insufficient_quota","message":"Weekly usage limit reached, resets in 2 days, enable usage from available balance"}}',
+    }),
+  ]);
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-quota-"));
+  await expect(
+    runRole({ role, targetDir: tmp, models, model, prompt: "do it" }),
+  ).rejects.toMatchObject({
+    code: "provider_quota",
+    status: 429,
+    providerCode: "insufficient_quota",
+  });
+});
+
+test("truncatedGenerationFrom classifies silence and spares usable content", () => {
+  // The #368 incident evidence, read as a structural slice: the model spent
+  // ~99.8% of the output budget on thinking, was truncated mid-reasoning, and
+  // emitted no text and no tool call.
+  expect(
+    truncatedGenerationFrom({
+      role: "assistant",
+      stopReason: "length",
+      content: [{ type: "thinking", thinking: "never finished" }],
+      usage: { output: 16384, reasoning: 16347 },
+    }),
+  ).toEqual({ stopReason: "length", outputTokens: 16384, reasoningTokens: 16347 });
+  // Usable content never classifies: answer text (even a partial one) and a
+  // tool call are both something the caller can act on.
+  expect(
+    truncatedGenerationFrom({
+      role: "assistant",
+      stopReason: "stop",
+      content: [{ type: "text", text: "answer" }],
+    }),
+  ).toBeUndefined();
+  expect(
+    truncatedGenerationFrom({
+      role: "assistant",
+      stopReason: "length",
+      content: [{ type: "text", text: "   " }],
+    }),
+  ).toEqual({ stopReason: "length" });
+  expect(
+    truncatedGenerationFrom({
+      role: "assistant",
+      stopReason: "toolUse",
+      content: [{ type: "toolCall", id: "call_1", name: "bash", arguments: {} }],
+    }),
+  ).toBeUndefined();
+  // Failure markers are owned by the settled-FAILURE classifications: an
+  // error/aborted stop is not a settled generation that came up short, and
+  // re-labelling a credential refusal (which arrives error-stopped) as a
+  // truncation would trade one wrong cause for another.
+  expect(
+    truncatedGenerationFrom({ role: "assistant", stopReason: "error", content: [] }),
+  ).toBeUndefined();
+  expect(
+    truncatedGenerationFrom({
+      role: "assistant",
+      stopReason: "aborted",
+      content: [{ type: "thinking", thinking: "cut off" }],
+    }),
+  ).toBeUndefined();
+  // pi-agent-core's exhausted length-recovery marker: the retry truncated
+  // again and the committed message was rewritten to an error stop. That IS
+  // the truncated generation -- thinking ran, no answer -- and the reported
+  // stop reason is the `length` the recovery was recovering.
+  expect(
+    truncatedGenerationFrom({
+      role: "assistant",
+      stopReason: "error",
+      errorMessage: "Assistant request exceeded the context window",
+      content: [{ type: "thinking", thinking: "cut off twice" }],
+      usage: { output: 8000, reasoning: 7963 },
+    }),
+  ).toEqual({ stopReason: "length", outputTokens: 8000, reasoningTokens: 7963 });
+  // The marker needs pi's exact wording AND generation content: a provider's
+  // own overflow wording, or an error-stopped message with nothing on it,
+  // stays with the failure classifications.
+  expect(
+    truncatedGenerationFrom({
+      role: "assistant",
+      stopReason: "error",
+      errorMessage: "prompt is too long: 213462 tokens > 200000 maximum",
+      content: [{ type: "thinking", thinking: "cut off" }],
+    }),
+  ).toBeUndefined();
+  expect(
+    truncatedGenerationFrom({
+      role: "assistant",
+      stopReason: "error",
+      errorMessage: "Assistant request exceeded the context window",
+      content: [],
+    }),
+  ).toBeUndefined();
+  // A non-assistant message and a missing message are not evidence.
+  expect(truncatedGenerationFrom(undefined)).toBeUndefined();
+  expect(
+    truncatedGenerationFrom({ role: "user", stopReason: "length", content: [] }),
+  ).toBeUndefined();
+  // A hostile stop reason never crosses, and fractional/negative counts drop.
+  expect(
+    truncatedGenerationFrom({
+      role: "assistant",
+      stopReason: "length; drop table users",
+      content: [{ type: "thinking", thinking: "cut" }],
+      usage: { output: 1.5, reasoning: -3 },
+    }),
+  ).toEqual({});
+  // Silence WITHOUT evidence of a cut is the silent no-op the workflow layer
+  // already classifies: an empty settled answer with no reasoning and no named
+  // output limit is not a truncation.
+  expect(
+    truncatedGenerationFrom({ role: "assistant", stopReason: "stop", content: [] }),
+  ).toBeUndefined();
+  expect(
+    truncatedGenerationFrom({
+      role: "assistant",
+      stopReason: "stop",
+      content: [{ type: "text", text: "" }],
+    }),
+  ).toBeUndefined();
+  // But the provider's own `length` stop is evidence by itself, even with
+  // nothing to show for the spent budget.
+  expect(truncatedGenerationFrom({ role: "assistant", stopReason: "length", content: [] })).toEqual(
+    { stopReason: "length" },
+  );
+});
+
+test("generation truncation errors are typed, bounded, and name a budget remedy", () => {
+  const truncated = new GenerationTruncatedError("run-1", "length", 16384, 16347);
+  expect(truncated.code).toBe("generation_truncated");
+  expect(truncated.stopReason).toBe("length");
+  expect(truncated.outputTokens).toBe(16384);
+  expect(truncated.reasoningTokens).toBe(16347);
+  // The message names the exhausted budget and a remedy that can work -- never
+  // "verify authentication", and the thinking prose that produced the
+  // truncation is never on the error.
+  expect(truncated.message).toContain("output-token limit");
+  expect(truncated.message).toContain("16384 output tokens");
+  expect(truncated.message).toContain("16347 on reasoning");
+  expect(truncated.message).toContain("raise the output budget or bound thinking, then retry");
+  expect(truncated.message).not.toContain("authentication");
+  // A non-length stop reason and no counts still classify, honestly.
+  const bare = new GenerationTruncatedError("run-1");
+  expect(bare.stopReason).toBeUndefined();
+  expect(bare.outputTokens).toBeUndefined();
+  expect(bare.message).toContain("no answer and no tool call");
+  expect(bare.message).toContain("raise the output budget or bound thinking");
+  // The constructor bounds its own fields: a hostile token and a fractional or
+  // negative count are dropped, never truncated and never carried.
+  const hostile = new GenerationTruncatedError("run-1", "length; drop table users", 1.5, -3);
+  expect(hostile.stopReason).toBeUndefined();
+  expect(hostile.outputTokens).toBeUndefined();
+  expect(hostile.reasoningTokens).toBeUndefined();
+  expect(JSON.stringify(hostile)).not.toContain("drop table");
+});
+
+test("#368: a generation truncated at the output limit surfaces as a typed truncated outcome", async () => {
+  const { faux, models, model, role } = harnessFixture();
+  // The incident shape: the model spent the whole output budget on thinking
+  // (the faux provider estimates output from content, so the thinking below is
+  // long enough to reach the 16384-token limit), was truncated mid-reasoning,
+  // and emitted no text and no tool call. At the limit pi-agent-core sees no
+  // recoverable length stop and settles the turn `completed` -- so the failure
+  // classifications above the boundary never fired and the caller saw an empty
+  // success with isError false.
+  const marker = "reasoning-that-never-finished";
+  faux.setResponses([
+    fauxAssistantMessage([fauxThinking(`${marker} `.repeat(100_000 / 28 + 1))], {
+      stopReason: "length",
+    }),
+  ]);
+  const error = await runRole({ role, targetDir, models, model, prompt: "do it" }).catch(
+    (cause) => cause,
+  );
+  expect(error).toMatchObject({ code: "generation_truncated", stopReason: "length" });
+  expect(error.message).toContain("output-token limit");
+  expect(error.message).toContain("raise the output budget or bound thinking");
+  expect(error.message).not.toContain("authentication");
+  // The truncated thinking is evidence in the session, never on the error.
+  expect(error.message).not.toContain(marker);
+});
+
+test("#368: a length stop pi-agent-core retried into a second truncation is still typed, not an authentication claim", async () => {
+  const { faux, models, model, role } = harnessFixture();
+  // When the stop came BELOW the intended limit, pi-agent-core makes one
+  // bounded compact-and-retry attempt; the queued summary feeds that retry, and
+  // the retry truncates below the limit again, settling the turn `failed` with
+  // the generic `assistant_error`. The empty-turn fallback would have told the
+  // operator to verify authentication about a generation that ran twice.
+  faux.setResponses([
+    fauxAssistantMessage([fauxThinking("first truncated reasoning")], { stopReason: "length" }),
+    fauxAssistantMessage("summary of the conversation so far"),
+    fauxAssistantMessage([fauxThinking("second truncated reasoning")], { stopReason: "length" }),
+  ]);
+  const error = await runRole({ role, targetDir, models, model, prompt: "do it" }).catch(
+    (cause) => cause,
+  );
+  expect(error).toMatchObject({ code: "generation_truncated", stopReason: "length" });
+  expect(error.message).toContain("raise the output budget or bound thinking");
+  expect(error.message).not.toContain("authentication");
+  expect(error.message).not.toContain("second truncated reasoning");
 });
 
 test("runRole rejects missing authentication before provider generation", async () => {

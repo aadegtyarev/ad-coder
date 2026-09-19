@@ -43,18 +43,23 @@ import { toHarnessOptions } from "../role";
 import type { SessionLimitController } from "../session-limits";
 import { createBuiltinTools } from "./builtin-tools";
 import { dumpRequest } from "./dump-request";
+import type { SettledTurnMessage } from "./errors";
 import {
   assertRunId,
   assertUniqueToolNames,
   ConfiguredToolsUnavailableError,
   EmptyTurnError,
+  GenerationTruncatedError,
+  ProviderQuotaError,
   ProviderRejectionError,
   providerLimitFrom,
+  providerQuotaFrom,
   providerRejectionStatusFrom,
   RunInterruptedError,
   RunnerError,
   resolveTargetDir,
   SuspendedRunError,
+  truncatedGenerationFrom,
 } from "./errors";
 import { wrapModelsForToolCallRecovery } from "./native-tool-calls";
 import type { Tool } from "./tool";
@@ -222,6 +227,39 @@ function addUsageInteger(total: number, value: number, field: string): number {
 
 function addUsageNumber(total: number, value: number, field: string): number {
   return boundedUsageNumber(total + boundedUsageNumber(value, field), field);
+}
+
+/**
+ * The newest assistant message in the durable session, or `undefined` when the
+ * session carries none.
+ *
+ * Reimplemented (not imported) per the house convention for this scan: reading
+ * `result.tipId` directly is fragile because a run whose LAST entry is a
+ * tool-result would miss the message, so scan the most recent message entries
+ * newest-first for the first assistant message. Both settled-turn boundaries in
+ * this file read it -- the failed branch for its text (same semantics as the
+ * scan it replaces), the completed gate (#368) for text, stop reason and
+ * usage.
+ */
+async function newestAssistantMessage(
+  session: Session,
+  context: Context,
+): Promise<SettledTurnMessage | undefined> {
+  const entries = await session.findEntries({ type: "message", order: "desc", limit: 20 }, context);
+  for (const entry of entries) {
+    if (entry.type !== "message" || entry.message.role !== "assistant") continue;
+    return entry.message;
+  }
+  return undefined;
+}
+
+/** The answer text of the newest assistant message: its joined text blocks. */
+function assistantMessageText(message: SettledTurnMessage | undefined): string {
+  if (message === undefined) return "";
+  return message.content
+    .filter((part): part is TextContent => part.type === "text")
+    .map((part) => part.text)
+    .join("");
 }
 
 function publicMetricLabel(value: string): string {
@@ -871,33 +909,53 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
         code: "code" in details ? details.code : result.error.code,
       });
       if (providerLimit !== undefined) throw providerLimit;
+      // A message-embedded 429 is a quota/rate-limit refusal the structured
+      // conversions above cannot see: pi-agent-core composes `providerError` as
+      // `{ code, message }` with no status field, so the 429 lives only in the
+      // message body. Classify it HERE, at the settled-error boundary, before
+      // the empty-turn fallback can misattribute it as an authentication
+      // failure (#356). A refusal is a refusal whether or not the prompt's
+      // input tokens were billed.
+      const quota = providerQuotaFrom(result.error);
+      if (quota !== undefined)
+        throw new ProviderQuotaError(runId, quota.providerCode, quota.retryAfterMs);
     }
     if (result.status === "failed") {
       if (result.error?.code === "configured_tools_unavailable") {
         throw new ConfiguredToolsUnavailableError(runId, result.error);
       }
-      const entries = await session.findEntries(
-        { type: "message", order: "desc", limit: 20 },
-        context,
-      );
-      let text = "";
-      for (const entry of entries) {
-        if (entry.type !== "message" || entry.message.role !== "assistant") continue;
-        text = entry.message.content
-          .filter((part): part is TextContent => part.type === "text")
-          .map((part) => part.text)
-          .join("");
-        break;
-      }
+      const finalMessage = await newestAssistantMessage(session, context);
+      const text = assistantMessageText(finalMessage);
       if (text.trim() === "" && usage.freshInput + usage.cachedInput + usage.output === 0) {
         // A settled failure with no text and no usage has two very different
         // causes, and the transcript cannot tell them apart. When the provider
         // named a client-error status it ANSWERED and refused the request, so
         // say that instead of sending the operator to check credentials; only
-        // an unattributed failure keeps the authentication wording.
+        // an unattributed failure keeps the authentication wording. (A
+        // message-embedded 429 was already classified by `providerQuotaFrom`
+        // at the settled-error boundary above, where usage does not gate the
+        // refusal.)
         const rejection = providerRejectionStatusFrom(result.error);
         if (rejection !== undefined) throw new ProviderRejectionError(runId, rejection);
         throw new EmptyTurnError(runId, result.error?.code);
+      }
+      if (text.trim() === "") {
+        // Non-zero usage with no answer text: a generation RAN and produced
+        // nothing usable -- pi-agent-core's one bounded compact-and-retry for a
+        // length stop has already run and failed, so the settled error is the
+        // generic `assistant_error` and the empty-turn fallback's credential
+        // advice would be wrong twice over (#368). A truncated generation is
+        // its own outcome; an error/aborted-stopped message is not a settled
+        // generation and stays with the classifications above.
+        const truncated = truncatedGenerationFrom(finalMessage);
+        if (truncated !== undefined) {
+          throw new GenerationTruncatedError(
+            runId,
+            truncated.stopReason,
+            truncated.outputTokens,
+            truncated.reasoningTokens,
+          );
+        }
       }
     }
     if ("status" in result && result.status === "suspended") {
@@ -906,6 +964,28 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
       // response this convenience path does not resume. Fail loud rather than
       // returning a record the caller would read as settled.
       throw new SuspendedRunError(runId);
+    }
+    if (result.status === "completed") {
+      // A settled-SUCCESS turn whose final assistant message carries no answer
+      // and no tool call is not a completed run (#368): the provider ANSWERED,
+      // so every failure classification above is gated behind a failed status
+      // that never fired, and a generation truncated by the output limit (the
+      // whole budget spent on reasoning) reached the caller as an empty success
+      // with `isError: false` -- discoverable only by reading the raw session
+      // jsonl. A text block or a tool call is usable content; only silence --
+      // thinking-only or empty -- classifies here.
+      const finalMessage = await newestAssistantMessage(session, context);
+      if (assistantMessageText(finalMessage).trim() === "") {
+        const truncated = truncatedGenerationFrom(finalMessage);
+        if (truncated !== undefined) {
+          throw new GenerationTruncatedError(
+            runId,
+            truncated.stopReason,
+            truncated.outputTokens,
+            truncated.reasoningTokens,
+          );
+        }
+      }
     }
     // The diff metric is observability, not the deliverable (issue #363): a
     // git target with no commit (or any other reason `git diff HEAD` cannot

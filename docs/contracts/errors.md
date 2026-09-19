@@ -89,3 +89,49 @@ for machines?
   intermittent empty read is now distinguishable -- by code, message, and the
   run id that locates the ledger -- from a tool-availability failure, a
   provider rejection, and a rate limit.
+- 2026-09-19 (issue #356): A provider quota/rate-limit refusal (HTTP 429) is
+  its own typed classification, distinct from `provider_rejected`, from
+  `empty_turn`, and from a structured capacity signal. A structured 429 (a
+  `status`/`statusCode` field, or a `Retry-After` header via the after-response
+  hook) is `ProviderLimitError` (`provider_limit`, an optional bounded
+  `retryAfterMs`). A message-embedded 429 -- pi-agent-core composes
+  `providerError` as `{ code, message }` with no status field, so the status
+  lives only in the message body -- is `ProviderQuotaError`
+  (`provider_quota`), read at the settled-error boundary BEFORE the empty-turn
+  fallback can misattribute it as an authentication failure. The quota error
+  carries only bounded fields verbatim: the literal HTTP status (429), the
+  provider's own error code/type as a strict-charset token
+  (`[A-Za-z0-9_.-]{1,64}`, length-capped -- an OpenAI `type`/`code` or an
+  Anthropic nested `type`; the bare envelope discriminator `"error"` is
+  skipped), and a reset window as a safe-integer millisecond delay bounded by
+  `MAX_PROVIDER_RETRY_HINT_MS`. The response body is otherwise never
+  propagated: message prose, URLs, and uncontrolled values stay in the body
+  they came from. The advice is retryable but NOT now -- wait for the reset
+  window, or check the plan and usage -- never "verify authentication" and
+  never "inspect the request". `401`/`403` remain `EmptyTurnError` (credential
+  wording), `400`/`404`/`405`/`409`/`413`/`415`/`422` remain
+  `ProviderRejectionError`, preserving the refusal-vs-credential distinction
+  the 2026-09-16 entry required.
+- 2026-09-19 (issue #368): A settled turn whose final assistant message
+  carries no answer text and no tool call is not an empty success. Two shapes
+  reach the caller as `GenerationTruncatedError` (`generation_truncated`): a
+  turn the output-token limit cut off mid-thinking (the provider answered, so
+  the turn settled `completed` and every settled-FAILURE classification was
+  gated behind a status check that never fired -- the whole budget spent on
+  reasoning, discoverable only by reading the raw session jsonl), and a
+  length stop pi-agent-core compact-and-retried into a second truncation
+  (settled `failed` with the generic `assistant_error`, which the empty-turn
+  fallback had misread as "verify authentication"). The error carries only
+  bounded fields, each dropped unless it matches: the provider's own stop
+  reason as a strict-charset token (`[A-Za-z0-9_-]{1,32}`, e.g. `length`), and
+  the truncated message's output/reasoning token counts as safe non-negative
+  integers. The thinking prose and every other transcript value never cross:
+  they stay in the session. Only BOUNDED silence classifies: a text block (even
+  a partial one) or a tool call is usable content and stays today's behavior;
+  an `error`/`aborted`/`pending` stop is a failure marker owned by the
+  existing classifications (the one exception is pi-agent-core's exact
+  length-recovery marker, an error-stopped bookkeeping for a generation that
+  ran twice and answered neither time). The advice is retryable but NOT as-is:
+  the same output budget truncates the same reasoning-heavy turn again, so the
+  remedy is a raised output budget or bounded thinking, then retry -- never
+  "verify authentication" and never a blind retry.
