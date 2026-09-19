@@ -393,3 +393,22 @@ test("a plan that was never submitted is a red pause, not silence", async () => 
   // Recoverable like the review pause: the stage can be attempted again.
   expect(() => coordinator.resumeStage({ source: "operator", action: "retry" })).not.toThrow();
 });
+
+test("ci.yml declares the pre-merge stamp gate exactly once, as the last step (issue #295)", () => {
+  // Configuration is data (issue #227): the workflow's step list is pinned as
+  // text exactly like DEFAULT_PROJECT_GATES is pinned as data. A unit test
+  // cannot execute a GitHub workflow -- this pins the artifact; CI itself is
+  // the real execution and is observed on the pull request.
+  const ci = fs.readFileSync(
+    path.join(import.meta.dir, "..", ".github", "workflows", "ci.yml"),
+    "utf8",
+  );
+  // Exactly one step line, and the command appears nowhere else: the comment
+  // above the step names the gate as `stamp:check`, never the full command.
+  expect(ci.split("- run: bun run stamp:check")).toHaveLength(2);
+  expect(ci.split("bun run stamp:check")).toHaveLength(2);
+  // The pre-merge gate runs LAST, after the artifact smoke (issue #295).
+  expect(ci.indexOf("- run: bun run stamp:check")).toBeGreaterThan(
+    ci.indexOf("- run: bun run smoke:artifact"),
+  );
+});
