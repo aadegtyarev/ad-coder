@@ -13,6 +13,22 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.80.0] - 2026-09-19
+
+### Added
+- **`ad-coder config migrate` transforms every stored inventory profile into a
+  fresh `models.yaml`, all or nothing (issue #280).** Providers are unioned by
+  id across profiles, and every cell is parity-checked by resolving both sides
+  through the same resolver: a provider conflict, an oauth provider
+  (not expressible), or a parity mismatch prints the report and writes
+  nothing. Model aliases disappear (rows are keyed by provider-native model
+  ids), bare rows equal the trivial tier with `@complexity` overrides for the
+  rest, extras with no models.yaml expression are reported dropped, and an
+  existing models.yaml is refused -- a hand-edited file is never clobbered.
+  Profile names are preserved; renaming a profile to a purpose name is a hand
+  edit.
+
+## [0.75.0] - 2026-09-19
 ## [0.79.0] - 2026-09-19
 
 ### Added

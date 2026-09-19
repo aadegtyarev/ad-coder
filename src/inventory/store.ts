@@ -43,7 +43,8 @@ export function readOrCreateDefaultInventory(file = defaultInventoryPath()): Mod
   }
 }
 
-function readInventory(file: string): ModelInventoryConfig {
+/** Read an operator-owned inventory file: regular file only, validated whole. */
+export function readInventory(file: string): ModelInventoryConfig {
   const stat = fs.lstatSync(file);
   if (!stat.isFile() || stat.isSymbolicLink())
     throw new Error("inventory must be a regular file, not a symlink");
