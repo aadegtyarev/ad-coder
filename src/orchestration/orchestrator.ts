@@ -46,7 +46,11 @@ import { recordReviewStampFromResult } from "../stamp/record-review-stamp";
 import { buildWebTools } from "../web/tools";
 import { resolveWorkflowModules } from "../workflows/registry";
 import type { OrchestratorWorkflowModule } from "../workflows/types";
-import { type BackgroundRunLimits, BackgroundRunManager } from "./background-runs";
+import {
+  type BackgroundRunExecutor,
+  type BackgroundRunLimits,
+  BackgroundRunManager,
+} from "./background-runs";
 import { pipelinePauseFromCheckpoint } from "./pipeline";
 import { COMPLEXITY_RUBRIC } from "./plan";
 import type { WorkflowSession } from "./session";
@@ -79,6 +83,7 @@ import {
   SUBMIT_VERDICT_TOOL_NAME,
   type VerdictCapture,
 } from "./verdict";
+import { WakePump } from "./wake";
 
 /** The four tool names the orchestrator model drives the workflow through. */
 export const RUN_PIPELINE_TOOL_NAME = "run_pipeline";
@@ -288,6 +293,8 @@ export interface OrchestratorDeps {
   backgroundOwnerId?: string;
   /** Host-owned detached worker launcher; required by start_pipeline. */
   backgroundHostLauncher?: import("./background-runs").BackgroundHostLauncher;
+  /** Injection seam for tests/embedders to own the background-run executor; defaults to the real pipeline executor. */
+  backgroundRunExecutor?: BackgroundRunExecutor;
 }
 
 /**
@@ -540,7 +547,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     };
   };
   const backgroundRuns = new BackgroundRunManager(
-    executeBackgroundPipeline,
+    deps.backgroundRunExecutor ?? executeBackgroundPipeline,
     deps.backgroundRuns,
     deps.backgroundTargetDir,
     deps.backgroundOwnerId,
@@ -1372,6 +1379,8 @@ export type OrchestratorConfig = Omit<ResolvePipelineConfigOptions, "task"> & {
   backgroundOwnerId?: string;
   /** CLI or embedding host provider for detached start_pipeline work. */
   backgroundHostLauncher?: import("./background-runs").BackgroundHostLauncher;
+  /** Injection seam for tests/embedders to own the background-run executor; defaults to the real pipeline executor. */
+  backgroundRunExecutor?: BackgroundRunExecutor;
   /** Empty by default: the built-in pipeline is shipped but opt-in. */
   enabledWorkflows?: readonly string[];
 };
@@ -1521,6 +1530,9 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
           backgroundOwnerId: ownerId,
           ...(config.backgroundHostLauncher !== undefined && {
             backgroundHostLauncher: config.backgroundHostLauncher,
+          }),
+          ...(config.backgroundRunExecutor !== undefined && {
+            backgroundRunExecutor: config.backgroundRunExecutor,
           }),
         });
   // The session's resolved delegation surface rides on the tool description:
@@ -1856,12 +1868,58 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
         costAnomalyDetector: seed.costAnomalyDetector,
       }),
     };
+  // Wake pump: state notices (paused/failed/...) must start an orchestrator
+  // turn even when no front drives one. The pump re-reads durable wake state on
+  // every notify, drains up to maxWakesPerTurn windows into ONE turn, marks them
+  // handled after the turn resolves, and reschedules only if unhandled windows
+  // remain. Wakes are owner-scoped exactly like run records (same manager, same
+  // ownerId-scoped private state).
+  //
+  // A single `turnBusy` flag owned here tells the pump the TRUTH about whether
+  // a conversation.step is in flight (front OR wake), so a wake landing during
+  // a front turn defers instead of racing `conversation step already active`,
+  // and drains on the front turn's settle.
+  let turnBusy = false;
+  const wakePump = new WakePump({
+    listPending: () => core.backgroundRuns.pendingWakes(),
+    markHandled: (runId, kinds) => core.backgroundRuns.markWakesHandled(runId, kinds),
+    runTurn: async (prompt, step) => {
+      turnBusy = true;
+      try {
+        await conversation.step(prompt, { step });
+      } finally {
+        turnBusy = false;
+      }
+    },
+    turnActive: () => turnBusy,
+    maxWakesPerTurn: core.backgroundRuns.backgroundLimits.maxWakesPerTurn,
+  });
+  const unsubscribeWakes = core.backgroundRuns.subscribe(() => wakePump.notifyChange());
+  // Pick up any wake recorded while this session was gone (restart/reconnect).
+  // Fire-and-forget: the pump is single-flight and drains via the subscription
+  // on later notices too; blocking startOrchestrator on a model turn would hang
+  // startup behind a wake it may not be able to answer yet.
+  void wakePump.startupScan();
+
   return {
     ...conversation,
     ...sharedActivity,
     ledgerPath,
-    step: conversation.step.bind(conversation),
+    step: async (userInput, opts) => {
+      turnBusy = true;
+      try {
+        return await conversation.step(userInput, opts);
+      } finally {
+        // Every turn -- front-driven or wake -- settles through here, so the
+        // pump re-reads durable state and drains anything left unhandled. The
+        // flag is cleared BEFORE the settle's queued drain runs, so the pump
+        // sees the lane free and drains coalesced wakes in one turn.
+        turnBusy = false;
+        wakePump.onTurnSettled();
+      }
+    },
     close: async () => {
+      unsubscribeWakes();
       try {
         await core.backgroundRuns.close();
       } finally {

@@ -1800,6 +1800,8 @@ function backgroundLimits(flags: Record<string, string | undefined>): Partial<Ba
     ...number("--background-max-run-ms", "maxRunMs"),
     ...number("--background-close-drain-ms", "closeDrainMs"),
     ...number("--lease-ms", "leaseMs"),
+    ...number("--background-max-wake-entries", "maxWakeEntriesPerRun"),
+    ...number("--background-max-wakes-per-turn", "maxWakesPerTurn"),
     ...(policy === undefined
       ? {}
       : { sameTargetPolicy: policy as BackgroundRunLimits["sameTargetPolicy"] }),
@@ -3266,6 +3268,16 @@ const BACKGROUND_RUN_OPTIONS: CommandDefinition["options"] = [
     name: "--background-close-drain-ms",
     value: "<n>",
     description: "Shutdown drain deadline.",
+  },
+  {
+    name: "--background-max-wake-entries",
+    value: "<n>",
+    description: "Maximum coalesced wake windows retained per run.",
+  },
+  {
+    name: "--background-max-wakes-per-turn",
+    value: "<n>",
+    description: "Maximum unhandled wake windows one orchestrator turn drains.",
   },
 ];
 

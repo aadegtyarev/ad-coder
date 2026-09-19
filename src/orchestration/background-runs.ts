@@ -24,6 +24,39 @@ export type BackgroundLifecycle =
   | "completed";
 export type BackgroundTerminalLifecycle = "failed" | "cancelled" | "timed_out" | "completed";
 
+/**
+ * Lifecycles that must start an orchestrator turn (issue #387): a state the
+ * orchestrator has to decide on. `stage_changed` is a step finishing (the
+ * operator's "one of its steps"), so it wakes and is coalesced. Not waking:
+ * `requested`/`started` (in-flight), `cancelled` (operator-chosen stop); the
+ * tool-activity channel never reaches this manager at all.
+ */
+export const WAKE_INITIATING_LIFECYCLES = [
+  "paused",
+  "operator_attention",
+  "failed",
+  "timed_out",
+  "completed",
+  "stage_changed",
+] as const;
+export type WakeKind = (typeof WAKE_INITIATING_LIFECYCLES)[number];
+
+/** One coalesced window of a single wake kind on a single run. */
+export interface WakeEntry {
+  kind: WakeKind;
+  firstAt: number;
+  lastAt: number;
+  count: number;
+  handled: boolean;
+  handledAt?: number;
+}
+/** An unhandled wake projected off durable state for the pump to drain. */
+export interface PendingWake extends WakeEntry {
+  runId: string;
+  pause?: BackgroundRunPause;
+  metrics?: { steps: number; totalCost: number };
+}
+
 export interface BackgroundRunEvent {
   sequence: number;
   runId: string;
@@ -157,6 +190,12 @@ export interface BackgroundRunLimits {
   /** Lease heartbeat window used to distinguish a live detached worker from abandonment. */
   leaseMs: number;
   sameTargetPolicy: SameTargetPolicy;
+  /** Maximum coalesced wake windows retained per run. */
+  maxWakeEntriesPerRun: number;
+  /** Maximum unhandled wake windows a single orchestrator turn drains. */
+  maxWakesPerTurn: number;
+  /** Optional closed subset of wake kinds; validated as a subset of the initiating set. */
+  wakeKinds?: readonly WakeKind[];
 }
 /** Hard cap independent of callers: each subscriber retains up to this many pages. */
 export const MAX_BACKGROUND_SUBSCRIBER_QUEUE_CAPACITY = 1_024;
@@ -172,6 +211,8 @@ export const DEFAULT_BACKGROUND_RUN_LIMITS: Readonly<BackgroundRunLimits> = Obje
   closeDrainMs: 0,
   leaseMs: 15_000,
   sameTargetPolicy: "reject",
+  maxWakeEntriesPerRun: 12,
+  maxWakesPerTurn: 8,
 });
 interface PersistedEntry {
   version: 1;
@@ -184,6 +225,7 @@ interface PersistedEntry {
   pause?: BackgroundRunPause | undefined;
   lease?: { workerId: string; heartbeatAt: number } | undefined;
   outcome?: BackgroundRunOutcome | undefined;
+  wake?: { entries: WakeEntry[] } | undefined;
 }
 export interface BackgroundDetachedLaunch {
   runId: string;
@@ -200,6 +242,7 @@ interface Entry extends PersistedEntry {
   pause?: BackgroundRunPause | undefined;
   lease?: { workerId: string; heartbeatAt: number } | undefined;
   leaseTimer?: ReturnType<typeof setInterval>;
+  wake: { entries: WakeEntry[] };
 }
 interface BackgroundSubscriber {
   consumer: BackgroundRunNoticeConsumer;
@@ -262,6 +305,13 @@ function privateStateDirectory(targetDir: string): string {
   return current;
 }
 
+/** The executor a background run invokes to drive its detached pipeline. */
+export type BackgroundRunExecutor = (
+  task: string,
+  runId: string,
+  control: { cancelled: () => boolean; onStage: (step: StepCost) => void },
+) => Promise<RunPipelineResult>;
+
 /** Session-owned durable, content-free projection over isolated pipeline workers. */
 export class BackgroundRunManager {
   private readonly entries = new Map<string, Entry>();
@@ -273,11 +323,7 @@ export class BackgroundRunManager {
   private watcher: fs.FSWatcher | undefined;
   private closed = false;
   constructor(
-    private readonly execute: (
-      task: string,
-      runId: string,
-      control: { cancelled: () => boolean; onStage: (step: StepCost) => void },
-    ) => Promise<RunPipelineResult>,
+    private readonly execute: BackgroundRunExecutor,
     limits: Partial<BackgroundRunLimits> = {},
     targetDir?: string,
     ownerId: string = crypto.randomUUID(),
@@ -295,6 +341,8 @@ export class BackgroundRunManager {
       this.limits.maxRunMs,
       this.limits.closeDrainMs,
       this.limits.leaseMs,
+      this.limits.maxWakeEntriesPerRun,
+      this.limits.maxWakesPerTurn,
     ];
     if (numericLimits.some((value) => !Number.isSafeInteger(value) || value < 0))
       throw new BackgroundRunError("invalid_request");
@@ -303,10 +351,18 @@ export class BackgroundRunManager {
       this.limits.maxPageBytes < MIN_BACKGROUND_EVENT_PAGE_BYTES ||
       this.limits.subscriberQueueCapacity <= 0 ||
       this.limits.subscriberQueueCapacity > MAX_BACKGROUND_SUBSCRIBER_QUEUE_CAPACITY ||
-      this.limits.leaseMs <= 0
+      this.limits.leaseMs <= 0 ||
+      this.limits.maxWakeEntriesPerRun <= 0 ||
+      this.limits.maxWakesPerTurn <= 0
     )
       throw new BackgroundRunError("invalid_request");
     if (!(["allow", "reject", "serialize"] as const).includes(this.limits.sameTargetPolicy))
+      throw new BackgroundRunError("invalid_request");
+    if (
+      this.limits.wakeKinds?.some(
+        (kind) => !(WAKE_INITIATING_LIFECYCLES as readonly string[]).includes(kind),
+      )
+    )
       throw new BackgroundRunError("invalid_request");
     if (!/^[A-Za-z0-9._:-]{1,128}$/.test(ownerId)) throw new BackgroundRunError("invalid_request");
     this.ownerId = ownerId;
@@ -315,6 +371,10 @@ export class BackgroundRunManager {
       this.stateDir = privateStateDirectory(targetDir);
       this.load();
     }
+  }
+  /** The resolved limits this manager runs under (read-only snapshot). */
+  get backgroundLimits(): Readonly<BackgroundRunLimits> {
+    return this.limits;
   }
   start(task: string): { runId: string; lifecycle: "requested" } {
     return this.create(task, false);
@@ -389,6 +449,7 @@ export class BackgroundRunManager {
       active: !detached,
       cancelled: false,
       promise: Promise.resolve(),
+      wake: { entries: [] },
     };
     this.entries.set(runId, entry);
     this.append(entry, "requested");
@@ -605,6 +666,58 @@ export class BackgroundRunManager {
     }
     return this.statusOf(entry);
   }
+  /** Unhandled wake windows, refreshing non-active entries off durable state. */
+  pendingWakes(): PendingWake[] {
+    for (const runId of this.entries.keys()) {
+      const entry = this.entries.get(runId);
+      if (entry !== undefined && !entry.active) this.refresh(runId);
+    }
+    const pending: PendingWake[] = [];
+    for (const entry of this.entries.values()) {
+      const runsOwnerWakes = this.limits.wakeKinds === undefined ? null : this.limits.wakeKinds;
+      for (const w of entry.wake.entries) {
+        if (w.handled) continue;
+        if (runsOwnerWakes !== null && !runsOwnerWakes.includes(w.kind)) continue;
+        pending.push({
+          runId: entry.runId,
+          kind: w.kind,
+          firstAt: w.firstAt,
+          lastAt: w.lastAt,
+          count: w.count,
+          handled: false,
+          ...(entry.pause === undefined ? {} : { pause: { ...entry.pause } }),
+          metrics: { ...entry.metrics },
+        });
+      }
+    }
+    return pending;
+  }
+  /** Mark the named wake kinds handled for a run, on durable state and in memory. */
+  markWakesHandled(runId: string, kinds: readonly WakeKind[]): void {
+    if (this.closed) throw new BackgroundRunError("closed");
+    const entry = this.entries.get(runId);
+    const now = Date.now();
+    if (entry !== undefined) {
+      for (const w of entry.wake.entries)
+        if (kinds.includes(w.kind) && !w.handled) {
+          w.handled = true;
+          w.handledAt = now;
+        }
+    }
+    if (this.stateDir === undefined) {
+      if (entry === undefined) throw new BackgroundRunError("not_found", runId);
+      return;
+    }
+    const file = path.join(this.stateDir, `${runId}.json`);
+    this.store?.mutateVersionedJson<PersistedEntry>(file, (current) => {
+      const value = current?.value;
+      if (value === undefined) throw new BackgroundRunError("not_found", runId);
+      const entries = (value.wake?.entries ?? []).map((w) =>
+        kinds.includes(w.kind) && !w.handled ? { ...w, handled: true, handledAt: now } : w,
+      );
+      return { ...value, wake: { entries } };
+    });
+  }
   async close(preserveWorkers = false): Promise<void> {
     if (this.closed) return;
     this.closed = true;
@@ -674,8 +787,43 @@ export class BackgroundRunManager {
     });
     if (this.limits.maxEventsPerRun > 0 && e.events.length > this.limits.maxEventsPerRun)
       e.events.splice(0, e.events.length - this.limits.maxEventsPerRun);
+    this.coalesceWake(e, lifecycle);
     this.persist(e);
     this.notify(e);
+  }
+
+  /** Record (or extend) a wake window for a turn-initiating lifecycle. */
+  private coalesceWake(e: Entry, lifecycle: BackgroundLifecycle): void {
+    if (!(WAKE_INITIATING_LIFECYCLES as readonly string[]).includes(lifecycle)) return;
+    if (
+      this.limits.wakeKinds !== undefined &&
+      !this.limits.wakeKinds.includes(lifecycle as WakeKind)
+    )
+      return;
+    const now = Date.now();
+    const kind = lifecycle as WakeKind;
+    const existing = [...e.wake.entries].reverse().find((w) => w.kind === kind && !w.handled);
+    if (existing !== undefined) {
+      existing.lastAt = now;
+      existing.count += 1;
+      return;
+    }
+    e.wake.entries.push({ kind, firstAt: now, lastAt: now, count: 1, handled: false });
+    // Evict only the oldest HANDLED windows at the cap; unhandled windows are
+    // the turn-initiating signal and must never be dropped by retention.
+    if (e.wake.entries.length > this.limits.maxWakeEntriesPerRun) {
+      const handled = e.wake.entries.filter((w) => w.handled);
+      const over = e.wake.entries.length - this.limits.maxWakeEntriesPerRun;
+      if (handled.length >= over) {
+        for (let i = 0; i < over; i++) {
+          const evict = handled[i];
+          if (evict !== undefined) {
+            const idx = e.wake.entries.indexOf(evict);
+            if (idx !== -1) e.wake.entries.splice(idx, 1);
+          }
+        }
+      }
+    }
   }
   private persist(e: Entry): void {
     if (this.stateDir === undefined) return;
@@ -691,9 +839,17 @@ export class BackgroundRunManager {
       ...(e.pause && { pause: copyPause(e.pause) }),
       ...(e.lease && { lease: e.lease }),
       ...(e.outcome && { outcome: e.outcome }),
+      wake: { entries: e.wake.entries.map((w) => ({ ...w })) },
     };
     if (this.store !== undefined) {
-      this.store.mutateVersionedJson<PersistedEntry>(file, () => data);
+      // Read-modify-write over the on-disk wake state, so a blind persist (the
+      // lease heartbeat here, or a detached worker's own persist) can never
+      // clobber a handled/unhandled window another writer recorded. `mergeWake`
+      // unions by kind and lets a handled window win over a stale unhandled one.
+      this.store.mutateVersionedJson<PersistedEntry>(file, (current) => {
+        const wake = mergeWake(current?.value?.wake, data.wake);
+        return { ...data, ...(wake === undefined ? {} : { wake }) };
+      });
       return;
     }
     const temp = `${file}.${crypto.randomUUID()}.tmp`;
@@ -722,6 +878,7 @@ export class BackgroundRunManager {
     entry.pause = persisted.pause === undefined ? undefined : copyPause(persisted.pause);
     entry.lease = persisted.lease;
     entry.outcome = persisted.outcome === undefined ? undefined : copyOutcome(persisted.outcome);
+    entry.wake = { entries: (persisted.wake?.entries ?? []).map((w) => ({ ...w })) };
     if (changed) this.notify(entry);
   }
   private ensureWatcher(): void {
@@ -869,6 +1026,7 @@ export class BackgroundRunManager {
           cancelled: false,
           ...(persisted.lease === undefined ? {} : { lease: persisted.lease }),
           promise: Promise.resolve(),
+          wake: { entries: (persisted.wake?.entries ?? []).map((w) => ({ ...w })) },
         };
         this.entries.set(entry.runId, entry);
         if (abandoned) {
@@ -954,6 +1112,73 @@ function requiredString(value: unknown): string {
 function parseMetrics(value: unknown): { steps: number; totalCost: number } {
   const object = strictObject(value, ["steps", "totalCost"]);
   return { steps: safeInteger(object.steps), totalCost: finiteNumber(object.totalCost) };
+}
+function parseWakeEntry(value: unknown): WakeEntry {
+  const object = strictObject(value, [
+    "kind",
+    "firstAt",
+    "lastAt",
+    "count",
+    "handled",
+    "handledAt",
+  ]);
+  const kind = enumValue(object.kind, WAKE_INITIATING_LIFECYCLES);
+  if (typeof object.handled !== "boolean") throw new TypeError("wake handled is invalid");
+  return {
+    kind,
+    firstAt: safeInteger(object.firstAt),
+    lastAt: safeInteger(object.lastAt),
+    count: safeInteger(object.count, 1),
+    handled: object.handled,
+    ...(object.handledAt === undefined ? {} : { handledAt: safeInteger(object.handledAt) }),
+  };
+}
+function parseWake(value: unknown): { entries: WakeEntry[] } {
+  const object = strictObject(value, ["entries"]);
+  if (!Array.isArray(object.entries)) throw new TypeError("wake entries must be an array");
+  return { entries: object.entries.map(parseWakeEntry) };
+}
+/**
+ * Union two wake projections so a blind writer cannot erase another writer's
+ * windows. A window's identity is its kind plus the timestamp that began it
+ * (`firstAt`), NOT its handled state: two observations of the SAME window (one
+ * writer marked it handled, another still holds it unhandled) collapse into
+ * one where handled wins, while a genuinely new window of the same kind (a
+ * later re-pause) keeps its own firstAt and stays distinct, so a blind merge
+ * cannot erase a fresh unhandled window behind an already-handled one. Within
+ * a window, count takes the widest single observation (the events folded into
+ * one window) -- never a sum of two projections of the same window -- and
+ * firstAt/lastAt take the min/max bounds.
+ */
+function mergeWake(
+  a: { entries: WakeEntry[] } | undefined,
+  b: { entries: WakeEntry[] } | undefined,
+): { entries: WakeEntry[] } | undefined {
+  if (a === undefined && b === undefined) return undefined;
+  const byWindow = new Map<string, WakeEntry[]>();
+  for (const w of [...(a?.entries ?? []), ...(b?.entries ?? [])]) {
+    const key = `${w.kind}\u0000${w.firstAt}`;
+    byWindow.set(key, [...(byWindow.get(key) ?? []), w]);
+  }
+  const entries: WakeEntry[] = [];
+  for (const list of byWindow.values()) {
+    const first = list[0];
+    if (first === undefined) continue;
+    const handled = list.some((w) => w.handled);
+    let handledAt: number | undefined;
+    for (const w of list)
+      if (w.handledAt !== undefined)
+        handledAt = handledAt === undefined ? w.handledAt : Math.max(handledAt, w.handledAt);
+    entries.push({
+      kind: first.kind,
+      firstAt: Math.min(...list.map((w) => w.firstAt)),
+      lastAt: Math.max(...list.map((w) => w.lastAt)),
+      count: Math.max(...list.map((w) => w.count)),
+      handled,
+      ...(handledAt === undefined ? {} : { handledAt }),
+    });
+  }
+  return { entries };
 }
 function copyMetrics(value: { steps: number; totalCost: number }): {
   steps: number;
@@ -1100,6 +1325,7 @@ function parsePersistedEntry(value: unknown): PersistedEntry {
     "pause",
     "lease",
     "outcome",
+    "wake",
   ]);
   if (object.version !== 1 || !Array.isArray(object.events))
     throw new TypeError("record schema version is invalid");
@@ -1128,6 +1354,7 @@ function parsePersistedEntry(value: unknown): PersistedEntry {
         })();
   const pause = object.pause === undefined ? undefined : parsePause(object.pause);
   const outcome = object.outcome === undefined ? undefined : parseOutcome(object.outcome, runId);
+  const wake = object.wake === undefined ? undefined : parseWake(object.wake);
   if (outcome !== undefined && outcome.lifecycle !== lifecycle)
     throw new TypeError("outcome lifecycle does not match record");
   if (isTerminal(lifecycle) !== (outcome !== undefined))
@@ -1143,6 +1370,7 @@ function parsePersistedEntry(value: unknown): PersistedEntry {
     ...(pause === undefined ? {} : { pause }),
     ...(lease === undefined ? {} : { lease }),
     ...(outcome === undefined ? {} : { outcome }),
+    ...(wake === undefined ? {} : { wake }),
   };
 }
 function isTerminal(x: BackgroundLifecycle): x is BackgroundTerminalLifecycle {
