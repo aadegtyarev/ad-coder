@@ -29,6 +29,18 @@ enforces that dated release headings go in non-increasing date order
   settled verdicts through the one writer (`recordReviewStampFromResult`); no
   path transcribes a verdict out of prose. Delegations of other roles keep their
   result text unchanged.
+- **The orchestrator core's own pipeline settle paths write the review stamp**
+  (issue #378). `run_pipeline`/`resume_pipeline` and `start_pipeline`/the
+  background lanes reach their settled verdict through the core's
+  `executePipeline`/`executeBackgroundPipeline`, which built the coordinator
+  directly and never reached `runPipeline`'s settle hook -- a gate-satisfying
+  approved run through the conversational tools left no stamp in a marked
+  repository, the same silence #239 closed for the CLI fronts. Both functions
+  now call the same single writer (`recordReviewStampFromResult`) right after
+  the settled-result guard, mirroring that caller: the stamp is still derived
+  only from the structured result, stays a no-op in targets without the
+  `ad-coder.stamps.json` marker, and a paused or pending-decision run writes
+  nothing.
 
 ## [0.73.0] - 2026-09-19
 
