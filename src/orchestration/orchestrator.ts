@@ -794,6 +794,22 @@ export function formatDelegatedRoute(route: DelegatedRoute): string {
   return `${route.source} | complexity "${route.complexity}" | ${groups}${unreachable}`;
 }
 
+/**
+ * The advisory that keeps a run_role review from reading as gate evidence
+ * (issue #376). A delegated conversation delivers by assistant text only -- the
+ * handler registers no submission tools (issue #236) -- so no structured
+ * verdict exists on that path, `recordReviewStampFromResult` is never reached,
+ * and the pre-merge gate `bun run stamp:check` sees no stamp. The description
+ * variant and the result-text framing below must keep naming the gate and the
+ * two settle paths that DO write the stamp; transcribing a verdict out of the
+ * delegated prose would forge the gate's evidence.
+ */
+const RUN_ROLE_REVIEWER_DESCRIPTION_ADVISORY =
+  "A reviewer run through this tool is advisory: it delivers prose, writes no review stamp, and cannot satisfy the pre-merge gate `bun run stamp:check` -- gate-satisfying review rounds must come from a settle path that produces a structured verdict and writes the stamp (the built-in pipeline's review stage, or the standalone `ad-coder role reviewer` CLI).";
+
+const RUN_ROLE_REVIEWER_RESULT_ADVISORY =
+  "review advisory: this run_role review delivered prose only, wrote no review stamp, and cannot satisfy the pre-merge gate `bun run stamp:check` -- gate-satisfying review rounds must come from a settle path that produces a structured verdict and writes the stamp (the built-in pipeline's review stage, or the standalone `ad-coder role reviewer` CLI).";
+
 /** Build general role delegation; unlike workflow tools this remains available with no module. */
 export function buildRunRoleTool(
   runRole: (
@@ -808,7 +824,7 @@ export function buildRunRoleTool(
   // session. Static role knowledge lives in the role-selection skill either way.
   const description =
     sessionFacts === undefined
-      ? "Run one shipped worker role independently and get its result as assistant text. Available roles: planner, researcher, security, coder, reviewer, auditor. This does not start or advance a workflow. Pass the complexity you classified this task at as the optional complexity parameter so the delegate routes on your assessment, not the default."
+      ? `Run one shipped worker role independently and get its result as assistant text. Available roles: planner, researcher, security, coder, reviewer, auditor. This does not start or advance a workflow. Pass the complexity you classified this task at as the optional complexity parameter so the delegate routes on your assessment, not the default. ${RUN_ROLE_REVIEWER_DESCRIPTION_ADVISORY}`
       : `Run one shipped worker role independently and get its result as assistant text. This does not start or advance a workflow. This session runs in ${
           sessionFacts.workflows.length > 0
             ? `roles plus workflow mode (${sessionFacts.workflows.join(", ")})`
@@ -817,7 +833,7 @@ export function buildRunRoleTool(
 
 ${formatDelegatedRoute(sessionFacts.route)}
 
-Only the roles named above are callable; calling a "not configured" role fails with invalid_role. Load the role-selection skill for what each role does, returns, and when delegation is the wrong call. Pass the complexity you classified this task at as the optional complexity parameter (issues #263/#264) so the delegate routes on your assessment, not the default.`;
+Only the roles named above are callable; calling a "not configured" role fails with invalid_role. Load the role-selection skill for what each role does, returns, and when delegation is the wrong call. Pass the complexity you classified this task at as the optional complexity parameter (issues #263/#264) so the delegate routes on your assessment, not the default. ${RUN_ROLE_REVIEWER_DESCRIPTION_ADVISORY}`;
   return defineTool({
     name: RUN_ROLE_TOOL_NAME,
     description,
@@ -850,14 +866,21 @@ Only the roles named above are callable; calling a "not configured" role fails w
         // Do not claim "complete" for a stage that entered its closeout
         // reserve; the reason rides in the text the model reads (issue #327).
         const closeout = result.stageCloseout;
+        // A reviewer delegation is advisory only (issue #376): the delegated
+        // conversation delivers prose with no structured verdict, so nothing
+        // settles and no stamp is written. The advisory rides in BOTH branches
+        // -- a closed-out reviewer has no verdict at all and must never read
+        // as an approval -- while every other role keeps today's text.
+        const reviewAdvisory =
+          result.role === "reviewer" ? `\n${RUN_ROLE_REVIEWER_RESULT_ADVISORY}` : "";
         return {
           content: [
             {
               type: "text",
               text:
                 closeout === undefined
-                  ? `${result.role} complete (cost ${result.cost})\n${result.text || "(no text)"}`
-                  : `${result.role} closed out early (cost ${result.cost}) stage_closeout reason=${closeout.reason} detail=${closeout.detail}\n${result.text || "(no text)"}`,
+                  ? `${result.role} complete (cost ${result.cost})\n${result.text || "(no text)"}${reviewAdvisory}`
+                  : `${result.role} closed out early (cost ${result.cost}) stage_closeout reason=${closeout.reason} detail=${closeout.detail}\n${result.text || "(no text)"}${reviewAdvisory}`,
             },
           ],
           details: undefined,

@@ -432,6 +432,63 @@ test('run_role renders a closed-out stage without claiming "complete" (issue #32
   expect(text).not.toContain("complete");
 });
 
+test("run_role description names the review-stamp advisory in both variants (issue #376)", () => {
+  const fallback = buildRunRoleTool(async (role) => ({ role, text: "", cost: 0 })).description;
+  expect(fallback).toContain("advisory");
+  expect(fallback).toContain("writes no review stamp");
+  expect(fallback).toContain("bun run stamp:check");
+  expect(fallback).toContain("role reviewer");
+  // The advisory is ADDED to the routing facts the variants already carried;
+  // adding it must not delete them.
+  expect(fallback).toContain(
+    "Available roles: planner, researcher, security, coder, reviewer, auditor",
+  );
+  const sessionFacts = buildRunRoleTool(async (role) => ({ role, text: "", cost: 0 }), {
+    route: {
+      source: 'inventory "test-go"',
+      complexity: "medium",
+      groups: [{ model: "flash", roles: ["planner", "researcher"] }],
+      unreachable: ["auditor"],
+    },
+    workflows: ["pipeline"],
+  }).description;
+  expect(sessionFacts).toContain("advisory");
+  expect(sessionFacts).toContain("writes no review stamp");
+  expect(sessionFacts).toContain("bun run stamp:check");
+  expect(sessionFacts).toContain("role reviewer");
+  expect(sessionFacts).toContain("roles plus workflow mode (pipeline)");
+});
+
+test("run_role reviewer result carries the no-stamp advisory in both branches (issue #376)", async () => {
+  const tool = buildRunRoleTool(async (role) => ({ role, text: "focused findings", cost: 0.25 }));
+  const reviewerText = await callTool(tool, { role: "reviewer", task: "review the tree" });
+  expect(reviewerText).toContain("review advisory");
+  expect(reviewerText).toContain("wrote no review stamp");
+  expect(reviewerText).toContain("bun run stamp:check");
+  expect(reviewerText).toContain("role reviewer");
+  // A closed-out reviewer has no verdict at all: the advisory must ride in the
+  // closeout text too, so it can never read as an approval.
+  const closeout = buildRunRoleTool(async (role) => ({
+    role,
+    text: "partial findings",
+    cost: 0.4,
+    stageCloseout: {
+      code: "stage_closeout",
+      reason: "tool_turns",
+      detail: "1/2 tool turns used, 1 reserved",
+    },
+  }));
+  const closeoutText = await callTool(closeout, { role: "reviewer", task: "review the tree" });
+  expect(closeoutText).toContain("review advisory");
+  expect(closeoutText).toContain("wrote no review stamp");
+  expect(closeoutText).toContain("bun run stamp:check");
+});
+
+test("run_role planner result stays free of the review advisory (issue #376)", async () => {
+  const tool = buildRunRoleTool(async (role) => ({ role, text: "focused result", cost: 0.25 }));
+  expect(await callTool(tool, { role: "planner", task: "make a plan" })).not.toContain("advisory");
+});
+
 test("run_role routes the delegate on the orchestrator's classified tier (issues #263/#264)", async () => {
   const targetDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-classified-")));
   const credentials: CredentialStore = {

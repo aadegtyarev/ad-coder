@@ -25,6 +25,23 @@ Rules for the project's own code quality. A violation is always blocking.
   round via a settled run, which appends a fresh stamp before the merge. The
   stamp log itself is excluded from its own digest: appending one line cannot
   count as the tree moving.
+- 2026-09-19: **A review dispatched through the orchestrator's `run_role` tool is
+  advisory: it cannot satisfy `bun run stamp:check` (issue #376).** A review run
+  as a bare role through `run_role` settles as prose with no structured verdict
+  -- the delegated conversation delivers by assistant text and its handler
+  registers no submission tools (issue #236) -- so neither caller of
+  `recordReviewStampFromResult` (the CLI standalone path, the pipeline settle
+  path) is reached and no stamp is written. The stamp is derived only from
+  structured settled verdicts through the one writer,
+  `recordReviewStampFromResult`; no path transcribes a verdict out of prose --
+  writing one from `run_role` text would forge the gate's evidence, and giving
+  the delegated reviewer a structured verdict lifecycle would duplicate the CLI's
+  submission machinery inside a handler that stays a thin marshaller. The surface
+  says so plainly: both `run_role` description variants and a reviewer
+  delegation's result text (normal and stage-closeout) name the advisory status
+  and point gate-satisfying review rounds at the pipeline review stage or the
+  standalone `ad-coder role reviewer` CLI. Delegations of other roles keep their
+  result text unchanged.
 - 2026-09-17: **The pipeline's checks are DECLARED as data, not left to a model's
   own judgment (issue #227).** A declared `QualityGate` list carries real argv and
   is executed by the existing `GateRunner` after the coder and before any

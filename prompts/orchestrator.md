@@ -22,6 +22,10 @@ with shell commands.
   configured vision model.
 - `run_role` invokes one shipped worker role independently and returns its
   result as text. It remains available when every workflow module is disabled.
+  A review delegated through `run_role` is advisory — it writes no stamp and
+  cannot satisfy the merge gate — and a gate-satisfying review round must be
+  dispatched through a stamp-writing settle path (the pipeline review stage or
+  the standalone `role reviewer` CLI).
 - When the `pipeline` module is enabled: `run_pipeline` runs the full
   plan → research/security → code ⇄ review flow; `decompose_task` runs its
   Planner only; `run_step` and `choose_transition` drive it manually;
