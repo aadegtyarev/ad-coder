@@ -14,7 +14,11 @@ import {
 } from "@earendil-works/pi-ai";
 import { ContextBudgetError } from "../src/context/budget";
 import type { Summarizer } from "../src/context/compactor";
-import { SUMMARIZATION_PROMPT } from "../src/context/compactor";
+import {
+  COMPACTION_ATTEMPT_LIMIT,
+  ContextCompactionLostError,
+  SUMMARIZATION_PROMPT,
+} from "../src/context/compactor";
 import { startConversation } from "../src/conversation/conversation";
 import {
   CostAnomalyBlockedError,
@@ -509,10 +513,16 @@ test("failed compaction reports the smaller runtime window and blocks later prov
       }
     }
     expect(caught).toBeInstanceOf(ContextBudgetError);
-    const error = caught as ContextBudgetError;
+    // Typed as what it is: the session's compaction is spent, which is a stop
+    // rather than an over-budget turn (issue #391).
+    expect(caught).toBeInstanceOf(ContextCompactionLostError);
+    const error = caught as ContextCompactionLostError;
     expect(error.effectiveCeiling).toBe(500);
-    expect(error.message).toContain("summarization failed previously");
+    expect(error.attempts).toBe(COMPACTION_ATTEMPT_LIMIT);
+    expect(error.message).toContain(`summarization failed ${COMPACTION_ATTEMPT_LIMIT} times`);
     expect(error.message).toContain("effective ceiling 500");
+    // Reopening the session, not retrying the turn, is the way out.
+    expect(error.message).toContain("--resume");
     expect(error.message).not.toContain(secret);
 
     const providerDispatches = faux.state.callCount;

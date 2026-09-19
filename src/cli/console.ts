@@ -1,3 +1,4 @@
+import { ContextCompactionLostError, describeCompactionFailure } from "../context/compactor";
 import {
   ConsoleControlError,
   type ConsoleControlFailure,
@@ -36,6 +37,7 @@ export type ConsoleExitReason =
   | "turn_failed"
   | "interrupted"
   | "session_limit"
+  | "context_compaction_lost"
   | "close_failed";
 
 export interface RunConsoleParams {
@@ -770,6 +772,36 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
           ),
         );
         reason = "session_limit";
+      } else if (error instanceof ContextCompactionLostError) {
+        // The session's context can no longer be compacted, so every later turn
+        // would fail the same way. That makes this a STOP, and the stop has to
+        // name a way out that actually exists: `--resume` reopens this very
+        // session from its durable store, and `--summarizer-model` picks a
+        // summarizer other than the one that failed. "Retry the prompt" -- what
+        // the generic branch used to say -- can never work here, and the session
+        // stayed alive and deaf behind it (issue #391).
+        params.error.write(
+          renderFailure(
+            {
+              code: "context_compaction_lost",
+              message:
+                `context compaction failed ${error.attempts} times; last: ` +
+                `${describeCompactionFailure(error.lastFailure)}` +
+                (error.lastFailure !== undefined
+                  ? ` (measured ${error.lastFailure.measuredTokens} tokens against threshold ` +
+                    `${error.lastFailure.thresholdTokens}, effective ceiling ${error.effectiveCeiling})`
+                  : ` (effective ceiling ${error.effectiveCeiling})`),
+              action:
+                "restart the console with --resume to reopen this session, adding " +
+                "--summarizer-model <id> when the summarizer itself is what failed",
+              // The same process cannot summarize this context again, and the
+              // session's own compaction is what ran out.
+              retryable: false,
+            },
+            mode,
+          ),
+        );
+        reason = "context_compaction_lost";
       } else if (error instanceof CostAnomalyBlockedError) {
         // The operator decides, in this session: the block names both amounts,
         // the overcharge, and the `/cost release` that accepts the new price,

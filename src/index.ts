@@ -54,14 +54,23 @@ export {
   DEFAULT_CONTEXT_BUDGET_PERCENTS,
   deriveContextBudget,
 } from "./context/budget";
-export type { CompactionMode, CompactionPolicy, Summarizer } from "./context/compactor";
+export type {
+  CompactionFailure,
+  CompactionMode,
+  CompactionPolicy,
+  Summarizer,
+  SummarizerStopReason,
+} from "./context/compactor";
 export {
   assertSummarizerWindow,
+  COMPACTION_ATTEMPT_LIMIT,
   COMPACTION_SAFETY_PROMPT,
+  ContextCompactionLostError,
   ContextCompactor,
   createSummarizer,
   resolveCompactionPolicy,
   SUMMARIZATION_PROMPT,
+  SummarizerUnavailableError,
 } from "./context/compactor";
 export { assertContextFitsBudget, assertTurnFitsBudget } from "./context/preflight";
 export type {

@@ -3,18 +3,36 @@ import type { AgentMessage, Hooks } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { createModels, fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 import { selectRecentTail } from "../src/context/compactor";
-import type { ContextBudget, Summarizer } from "../src/index";
+import type { CompactionFailure, ContextBudget, Summarizer } from "../src/index";
 import {
   assertContextFitsBudget,
   assertTurnFitsBudget,
+  COMPACTION_ATTEMPT_LIMIT,
   ContextBudgetError,
+  ContextCompactionLostError,
   ContextCompactor,
   createSummarizer,
   defineRole,
   resolveCompactionPolicy,
   SessionLimitController,
   SUMMARIZATION_PROMPT,
+  SummarizerUnavailableError,
 } from "../src/index";
+
+/** Run `body` with `process.stderr.write` captured, so warnings are assertions. */
+async function captureStderr<T>(body: () => Promise<T>): Promise<{ result: T; writes: string }> {
+  const writes: string[] = [];
+  const original = process.stderr.write.bind(process.stderr);
+  (process.stderr as { write: unknown }).write = (chunk: string | Uint8Array) => {
+    writes.push(chunk.toString());
+    return true;
+  };
+  try {
+    return { result: await body(), writes: writes.join("") };
+  } finally {
+    (process.stderr as { write: unknown }).write = original;
+  }
+}
 
 // ~4 chars per token in the estimator, so char counts map to rough token sizes.
 function userMessage(text: string): AgentMessage {
@@ -104,28 +122,31 @@ test("over-budget context is summarized once with only the evicted head, tail ve
   expect(result.messages.slice(1)).toEqual(tail); // recent tail preserved verbatim
 });
 
-test("a summarizer that throws leaves messages untransformed and bumps compactionFailures", async () => {
+test("one summarizer failure is survivable; spending the bound is a stop that names its cause", async () => {
   const secret = "z".repeat(4000);
   const summarizer: Summarizer = async () => {
     throw new Error(`boom ${secret}`);
   };
   const budget: ContextBudget = { maxTokens: 2000, reserveTokens: 200, keepRecentTokens: 300 };
-  const compactor = new ContextCompactor({ budget, summarizer });
+  const compactor = new ContextCompactor({
+    budget,
+    summarizer,
+    summarizerScope: { provider: "summary-provider", model: "cheap" },
+  });
   const transform = captureTransform(compactor);
+  const messages = [big(), big(), big(), small("t1"), small("t2")];
 
-  const writes: string[] = [];
-  const original = process.stderr.write.bind(process.stderr);
-  (process.stderr as { write: unknown }).write = (chunk: string | Uint8Array) => {
-    writes.push(chunk.toString());
-    return true;
-  };
-  try {
-    const result = await transform([big(), big(), big(), small("t1"), small("t2")]);
-    expect(result).toBeUndefined();
-  } finally {
-    (process.stderr as { write: unknown }).write = original;
-  }
-  expect(compactor.compactionFailures).toBe(1);
+  const { writes } = await captureStderr(async () => {
+    expect(await transform(messages)).toBeUndefined();
+    expect(compactor.compactionFailures).toBe(1);
+    // ONE failure is not a verdict on the session: the next turn may try again
+    // (issue #391 -- a transient provider refusal used to brick the session).
+    expect(() => compactor.assertHealthy("coder", 500)).not.toThrow();
+    expect(await transform(messages)).toBeUndefined();
+  });
+
+  // The bound is spent, so every later turn is refused -- with the reason.
+  expect(compactor.compactionFailures).toBe(COMPACTION_ATTEMPT_LIMIT);
   let caught: unknown;
   const smallerRuntimeWindow = 500;
   try {
@@ -133,16 +154,105 @@ test("a summarizer that throws leaves messages untransformed and bumps compactio
   } catch (error) {
     caught = error;
   }
-  expect(caught).toBeInstanceOf(ContextBudgetError);
-  const error = caught as ContextBudgetError;
+  expect(caught).toBeInstanceOf(ContextCompactionLostError);
+  const error = caught as ContextCompactionLostError;
+  expect(error).toBeInstanceOf(ContextBudgetError);
+  expect(error.name).toBe("ContextCompactionLostError");
   expect(error.effectiveCeiling).toBe(smallerRuntimeWindow);
-  expect(error.message).toContain("effective ceiling 500");
+  expect(error.attempts).toBe(COMPACTION_ATTEMPT_LIMIT);
+  // Attribution: the class and the model, never the thrown text.
+  expect(error.lastFailure?.errorName).toBe("Error");
+  expect(error.lastFailure?.provider).toBe("summary-provider");
+  expect(error.lastFailure?.model).toBe("cheap");
+  expect(error.lastFailure?.measuredTokens).toBeGreaterThan(
+    error.lastFailure?.thresholdTokens ?? 0,
+  );
+  expect(JSON.stringify(error.failures)).not.toContain(secret);
+  expect(JSON.stringify(error.failures)).not.toContain("boom");
   expect(error.message).not.toContain(secret);
-  // Leak invariant: the warning carries numbers only, never the evicted content.
-  const warning = writes.join("");
-  expect(warning).toContain("compaction failed");
-  expect(warning).not.toContain(secret);
-  expect(warning).not.toContain("boom");
+  expect(error.message).not.toContain("boom");
+  // A spent session is reopened, never retried: the default "then retry" tail
+  // is replaced, because retrying the same prompt cannot succeed.
+  expect(error.message).toContain("cannot succeed");
+  expect(error.message).not.toContain("then retry");
+  // Leak invariant: the warning carries numbers and names only, never content.
+  expect(writes).toContain("compaction failed");
+  expect(writes).toContain(`attempt 1 of ${COMPACTION_ATTEMPT_LIMIT}`);
+  expect(writes).not.toContain(secret);
+  expect(writes).not.toContain("boom");
+});
+
+test("a summarizer that recovers clears the failure record", async () => {
+  let failing = true;
+  const summarizer: Summarizer = async () => {
+    if (failing) throw new Error("first attempt fails");
+    return "SUMMARY";
+  };
+  const budget: ContextBudget = { maxTokens: 2000, reserveTokens: 200, keepRecentTokens: 300 };
+  const compactor = new ContextCompactor({ budget, summarizer });
+  const transform = captureTransform(compactor);
+  const messages = [big(), big(), big(), small("t1"), small("t2")];
+
+  const { result } = await captureStderr(async () => {
+    await transform(messages);
+    expect(compactor.compactionFailures).toBe(1);
+    failing = false;
+    return (await transform(messages)) as { messages: AgentMessage[] };
+  });
+
+  expect(result.messages.length).toBe(3); // summary + the two kept tail messages
+  expect(compactor.compactionFailures).toBe(0);
+  expect(compactor.compactionFailureDetail).toEqual([]);
+  expect(() => compactor.assertHealthy("coder")).not.toThrow();
+});
+
+test("a summarizer failure is attributed by class, status and provider code, never by message", async () => {
+  const secret = "s".repeat(2000);
+  class ProviderBoom extends Error {
+    override readonly name = "ProviderBoom";
+    readonly status = 529;
+    readonly providerCode = "overloaded";
+  }
+  const summarizer: Summarizer = async () => {
+    throw new ProviderBoom(`refused a request carrying ${secret}`);
+  };
+  const budget: ContextBudget = { maxTokens: 2000, reserveTokens: 200, keepRecentTokens: 300 };
+  const compactor = new ContextCompactor({ budget, summarizer });
+
+  await captureStderr(async () => {
+    await captureTransform(compactor)([big(), big(), big(), small("t1"), small("t2")]);
+  });
+
+  const failure = compactor.compactionFailureDetail[0] as CompactionFailure;
+  expect(failure.attempt).toBe(1);
+  expect(failure.errorName).toBe("ProviderBoom");
+  expect(failure.status).toBe(529);
+  expect(failure.providerCode).toBe("overloaded");
+  expect(failure.measuredTokens).toBeGreaterThan(failure.thresholdTokens);
+  expect(JSON.stringify(failure)).not.toContain(secret);
+});
+
+test("createSummarizer types a refused provider turn instead of leaking its text", async () => {
+  const faux = fauxProvider({ provider: "summary", models: [{ id: "cheap" }] });
+  const models = createModels();
+  models.setProvider(faux.provider);
+  const summarizer = createSummarizer(models, faux.getModel() as Model<Api>);
+  faux.setResponses([
+    fauxAssistantMessage("", { stopReason: "error", errorMessage: "529 overloaded, retry later" }),
+  ]);
+
+  let caught: unknown;
+  try {
+    await summarizer([small("source")]);
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught).toBeInstanceOf(SummarizerUnavailableError);
+  const error = caught as SummarizerUnavailableError;
+  expect(error.stopReason).toBe("provider_error");
+  expect(error.provider).toBe("summary");
+  expect(error.model).toBe("cheap");
+  expect(error.message).not.toContain("overloaded, retry later");
 });
 
 test("tool-derived instructions remain attributed as an untrusted compaction summary", async () => {
@@ -298,7 +408,16 @@ test("createSummarizer rejects custom messages and empty provider output", async
     ]),
   ).rejects.toThrow("unsupported custom message shape");
   faux.setResponses([fauxAssistantMessage("")]);
-  await expect(summarizer([small("source")])).rejects.toThrow("empty summary");
+  let caught: unknown;
+  try {
+    await summarizer([small("source")]);
+  } catch (error) {
+    caught = error;
+  }
+  // Typed, not just worded: an empty summary is a distinguishable cause.
+  expect(caught).toBeInstanceOf(SummarizerUnavailableError);
+  expect((caught as SummarizerUnavailableError).stopReason).toBe("empty_summary");
+  expect((caught as Error).message).toContain("empty summary");
 });
 
 test("assertContextFitsBudget reports the runtime window for disabled compaction", () => {

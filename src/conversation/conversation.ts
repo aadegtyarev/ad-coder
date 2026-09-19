@@ -296,6 +296,14 @@ export async function startConversation(config: ConversationConfig): Promise<Con
       ? new ContextCompactor({
           budget: config.role.contextBudget,
           summarizer: compaction.summarizer as Summarizer,
+          // Names only: recorded on the failure so a compaction failure says
+          // WHICH model refused it (issue #391).
+          ...(compaction.summarizerModel !== undefined && {
+            summarizerScope: {
+              provider: compaction.summarizerModel.provider,
+              model: compaction.summarizerModel.id,
+            },
+          }),
         })
       : undefined;
   compactor?.attach(harness.hooks);
