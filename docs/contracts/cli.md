@@ -130,7 +130,9 @@ Rules for ad-coder's command-line front. A violation is always blocking.
   operator just sent -- a front rendering it as the reply to a new question would
   attribute an old answer to a new prompt. Recovery is attributed rather than
   silent: the settlement runs inside the turn's own ledger bridge, so its tokens
-  land on the turn that performed it (the `turn:N` step the conversation always
-  writes) under the conversation's own run id, and the settlement's own
-  operation id survives in the durable session -- the cost is neither dropped nor
-  merged into an unidentified row.
+  land on the turn that performed it -- the row carries the `turn:N` step the
+  conversation always writes, and its `runId` is the RECOVERED operation's own id
+  (the id installed when the process died, which `lane.resume` continues rather
+  than replacing), so the settlement's cost is distinguishable from the cost of
+  the prompt that follows it. The cost is neither dropped nor merged into an
+  unidentified row.

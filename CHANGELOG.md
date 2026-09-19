@@ -32,7 +32,7 @@ enforces that dated release headings go in non-increasing date order
   `SuspendedRunError` instead of hiding it. The recovered turn's own answer
   stays in the durable history and the ledger and is never returned as the reply
   to the input that followed it; the settlement's cost is attributed to the turn
-  that performed it. A turn that dies before the provider is reached now names
+  that performed it, on a row naming the recovered operation's own id. A turn that dies before the provider is reached now names
   the failing error's CLASS in the fallback message, so the next occurrence is
   diagnosable from the console alone: the classifier is total (an anonymous
   subclass renders `(Error)`, a non-Error throw renders `(non-error <typeof>)`)
