@@ -40,6 +40,7 @@ import {
 } from "./config/store";
 import type { ProviderAdmissionSettings, SettingsConfig } from "./config/types";
 import type { CompactionPolicy } from "./context/compactor";
+import { SessionNotAcquiredError } from "./conversation/conversation";
 import { CostAnomalyDetector, FileCostAnomalyStore } from "./economics/cost-anomaly";
 import {
   type CalibrationCostSample,
@@ -4026,6 +4027,19 @@ export function projectCliError(error: unknown): Record<string, unknown> {
       nextAction: error.nextAction,
     };
   if (error instanceof UserProfileError) return { code: error.code, detail: error.detail };
+  // A conversation whose durable session could not be seated (issue #428). The
+  // class message and action are AUTHORED constants (src/conversation/
+  // conversation.ts), and `runId` is a validated file-name-safe token, so all
+  // three fields are fixed text that carries no request, prompt, or provider
+  // payload across the front boundary.
+  if (error instanceof SessionNotAcquiredError)
+    return {
+      code: error.code,
+      detail: error.runId,
+      text: error.message,
+      retryable: false,
+      nextAction: SessionNotAcquiredError.NEXT_ACTION,
+    };
   if (error instanceof ProjectOperationsError) return { code: error.code, detail: error.detail };
   if (error instanceof ProjectStoreError) return { code: error.code, detail: error.path };
   if (error instanceof BackgroundRunError) return { code: error.code, detail: error.detail };
@@ -4039,7 +4053,9 @@ export function renderCliError(error: unknown): string {
       ? error.nextAction
       : error instanceof QueueSaturatedError || error instanceof AdmissionCancelledError
         ? error.nextAction
-        : undefined;
+        : error instanceof SessionNotAcquiredError
+          ? SessionNotAcquiredError.NEXT_ACTION
+          : undefined;
   return `ad-coder: ${errorMessage(error)}${action === undefined ? "" : `; ${action}`}\n`;
 }
 

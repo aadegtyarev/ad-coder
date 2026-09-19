@@ -6,6 +6,7 @@ import type { AuthInteraction, Models } from "@earendil-works/pi-ai";
 import { FileCredentialStore } from "../src/auth/credential-store";
 import { projectCliError, renderCliError } from "../src/cli";
 import { renderAuthEvent, runAuthCommand } from "../src/cli/auth";
+import { SessionNotAcquiredError } from "../src/conversation/conversation";
 import type { DurableRunRecord } from "../src/orchestration/control-plane";
 import { ProjectStore } from "../src/project-store/project-store";
 import { UpdateError } from "../src/update/updater";
