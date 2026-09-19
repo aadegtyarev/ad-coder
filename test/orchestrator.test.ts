@@ -71,7 +71,12 @@ import { READ_PROJECT_TOOL_NAME } from "../src/project-tools/read";
 import { SEARCH_PROJECT_TOOL_NAME } from "../src/project-tools/search";
 import type { Role } from "../src/role";
 import { defineRole } from "../src/role";
-import { EmptyTurnError, ProviderLimitError, ProviderQuotaError } from "../src/runner/errors";
+import {
+  EmptyTurnError,
+  GenerationTruncatedError,
+  ProviderLimitError,
+  ProviderQuotaError,
+} from "../src/runner/errors";
 import type { Tool } from "../src/runner/tool";
 import { SessionLimitController, SessionLimitError } from "../src/session-limits";
 import { LOAD_SKILL_TOOL_NAME } from "../src/skills/load-tool";
@@ -414,6 +419,14 @@ test("run_role projects its thrown errors with reason kept and leak withheld", a
   });
   expect(await callTool(leaked, { role: "auditor", task: "x" })).not.toContain(
     "Weekly usage limit reached",
+  );
+  // A truncated generation projects its bounded counts and its budget remedy;
+  // the thinking prose that was cut off stays in the session (#368).
+  const truncated = buildRunRoleTool(async () => {
+    throw new GenerationTruncatedError("run-abc", "length", 16384, 16347);
+  });
+  expect(await callTool(truncated, { role: "auditor", task: "x" })).toBe(
+    "error: generation_truncated (the generation was cut off by the output-token limit after 16384 output tokens (16347 on reasoning) with no answer and no tool call; raise the output budget or bound thinking, then retry; run run-abc)",
   );
 });
 

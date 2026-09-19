@@ -10,6 +10,7 @@ import {
   createModels,
   fauxAssistantMessage,
   fauxProvider,
+  fauxThinking,
   fauxToolCall,
   Type,
 } from "@earendil-works/pi-ai";
@@ -26,6 +27,7 @@ import { dumpRequest } from "../src/runner/dump-request";
 import {
   ConfiguredToolsUnavailableError,
   extractProviderCodeToken,
+  GenerationTruncatedError,
   ProviderLimitError,
   ProviderQuotaError,
   ProviderRejectionError,
@@ -34,6 +36,7 @@ import {
   providerRejectionStatusFrom,
   RunnerError,
   resolveTargetDir,
+  truncatedGenerationFrom,
 } from "../src/runner/errors";
 import {
   appendSafeUntrackedDiffProjection,
@@ -479,6 +482,197 @@ test("#356: a message-embedded 429 quota refusal surfaces as a typed quota outco
     status: 429,
     providerCode: "insufficient_quota",
   });
+});
+
+test("truncatedGenerationFrom classifies silence and spares usable content", () => {
+  // The #368 incident evidence, read as a structural slice: the model spent
+  // ~99.8% of the output budget on thinking, was truncated mid-reasoning, and
+  // emitted no text and no tool call.
+  expect(
+    truncatedGenerationFrom({
+      role: "assistant",
+      stopReason: "length",
+      content: [{ type: "thinking", thinking: "never finished" }],
+      usage: { output: 16384, reasoning: 16347 },
+    }),
+  ).toEqual({ stopReason: "length", outputTokens: 16384, reasoningTokens: 16347 });
+  // Usable content never classifies: answer text (even a partial one) and a
+  // tool call are both something the caller can act on.
+  expect(
+    truncatedGenerationFrom({
+      role: "assistant",
+      stopReason: "stop",
+      content: [{ type: "text", text: "answer" }],
+    }),
+  ).toBeUndefined();
+  expect(
+    truncatedGenerationFrom({
+      role: "assistant",
+      stopReason: "length",
+      content: [{ type: "text", text: "   " }],
+    }),
+  ).toEqual({ stopReason: "length" });
+  expect(
+    truncatedGenerationFrom({
+      role: "assistant",
+      stopReason: "toolUse",
+      content: [{ type: "toolCall", id: "call_1", name: "bash", arguments: {} }],
+    }),
+  ).toBeUndefined();
+  // Failure markers are owned by the settled-FAILURE classifications: an
+  // error/aborted stop is not a settled generation that came up short, and
+  // re-labelling a credential refusal (which arrives error-stopped) as a
+  // truncation would trade one wrong cause for another.
+  expect(
+    truncatedGenerationFrom({ role: "assistant", stopReason: "error", content: [] }),
+  ).toBeUndefined();
+  expect(
+    truncatedGenerationFrom({
+      role: "assistant",
+      stopReason: "aborted",
+      content: [{ type: "thinking", thinking: "cut off" }],
+    }),
+  ).toBeUndefined();
+  // pi-agent-core's exhausted length-recovery marker: the retry truncated
+  // again and the committed message was rewritten to an error stop. That IS
+  // the truncated generation -- thinking ran, no answer -- and the reported
+  // stop reason is the `length` the recovery was recovering.
+  expect(
+    truncatedGenerationFrom({
+      role: "assistant",
+      stopReason: "error",
+      errorMessage: "Assistant request exceeded the context window",
+      content: [{ type: "thinking", thinking: "cut off twice" }],
+      usage: { output: 8000, reasoning: 7963 },
+    }),
+  ).toEqual({ stopReason: "length", outputTokens: 8000, reasoningTokens: 7963 });
+  // The marker needs pi's exact wording AND generation content: a provider's
+  // own overflow wording, or an error-stopped message with nothing on it,
+  // stays with the failure classifications.
+  expect(
+    truncatedGenerationFrom({
+      role: "assistant",
+      stopReason: "error",
+      errorMessage: "prompt is too long: 213462 tokens > 200000 maximum",
+      content: [{ type: "thinking", thinking: "cut off" }],
+    }),
+  ).toBeUndefined();
+  expect(
+    truncatedGenerationFrom({
+      role: "assistant",
+      stopReason: "error",
+      errorMessage: "Assistant request exceeded the context window",
+      content: [],
+    }),
+  ).toBeUndefined();
+  // A non-assistant message and a missing message are not evidence.
+  expect(truncatedGenerationFrom(undefined)).toBeUndefined();
+  expect(
+    truncatedGenerationFrom({ role: "user", stopReason: "length", content: [] }),
+  ).toBeUndefined();
+  // A hostile stop reason never crosses, and fractional/negative counts drop.
+  expect(
+    truncatedGenerationFrom({
+      role: "assistant",
+      stopReason: "length; drop table users",
+      content: [{ type: "thinking", thinking: "cut" }],
+      usage: { output: 1.5, reasoning: -3 },
+    }),
+  ).toEqual({});
+  // Silence WITHOUT evidence of a cut is the silent no-op the workflow layer
+  // already classifies: an empty settled answer with no reasoning and no named
+  // output limit is not a truncation.
+  expect(
+    truncatedGenerationFrom({ role: "assistant", stopReason: "stop", content: [] }),
+  ).toBeUndefined();
+  expect(
+    truncatedGenerationFrom({
+      role: "assistant",
+      stopReason: "stop",
+      content: [{ type: "text", text: "" }],
+    }),
+  ).toBeUndefined();
+  // But the provider's own `length` stop is evidence by itself, even with
+  // nothing to show for the spent budget.
+  expect(truncatedGenerationFrom({ role: "assistant", stopReason: "length", content: [] })).toEqual(
+    { stopReason: "length" },
+  );
+});
+
+test("generation truncation errors are typed, bounded, and name a budget remedy", () => {
+  const truncated = new GenerationTruncatedError("run-1", "length", 16384, 16347);
+  expect(truncated.code).toBe("generation_truncated");
+  expect(truncated.stopReason).toBe("length");
+  expect(truncated.outputTokens).toBe(16384);
+  expect(truncated.reasoningTokens).toBe(16347);
+  // The message names the exhausted budget and a remedy that can work -- never
+  // "verify authentication", and the thinking prose that produced the
+  // truncation is never on the error.
+  expect(truncated.message).toContain("output-token limit");
+  expect(truncated.message).toContain("16384 output tokens");
+  expect(truncated.message).toContain("16347 on reasoning");
+  expect(truncated.message).toContain("raise the output budget or bound thinking, then retry");
+  expect(truncated.message).not.toContain("authentication");
+  // A non-length stop reason and no counts still classify, honestly.
+  const bare = new GenerationTruncatedError("run-1");
+  expect(bare.stopReason).toBeUndefined();
+  expect(bare.outputTokens).toBeUndefined();
+  expect(bare.message).toContain("no answer and no tool call");
+  expect(bare.message).toContain("raise the output budget or bound thinking");
+  // The constructor bounds its own fields: a hostile token and a fractional or
+  // negative count are dropped, never truncated and never carried.
+  const hostile = new GenerationTruncatedError("run-1", "length; drop table users", 1.5, -3);
+  expect(hostile.stopReason).toBeUndefined();
+  expect(hostile.outputTokens).toBeUndefined();
+  expect(hostile.reasoningTokens).toBeUndefined();
+  expect(JSON.stringify(hostile)).not.toContain("drop table");
+});
+
+test("#368: a generation truncated at the output limit surfaces as a typed truncated outcome", async () => {
+  const { faux, models, model, role } = harnessFixture();
+  // The incident shape: the model spent the whole output budget on thinking
+  // (the faux provider estimates output from content, so the thinking below is
+  // long enough to reach the 16384-token limit), was truncated mid-reasoning,
+  // and emitted no text and no tool call. At the limit pi-agent-core sees no
+  // recoverable length stop and settles the turn `completed` -- so the failure
+  // classifications above the boundary never fired and the caller saw an empty
+  // success with isError false.
+  const marker = "reasoning-that-never-finished";
+  faux.setResponses([
+    fauxAssistantMessage([fauxThinking(`${marker} `.repeat(100_000 / 28 + 1))], {
+      stopReason: "length",
+    }),
+  ]);
+  const error = await runRole({ role, targetDir, models, model, prompt: "do it" }).catch(
+    (cause) => cause,
+  );
+  expect(error).toMatchObject({ code: "generation_truncated", stopReason: "length" });
+  expect(error.message).toContain("output-token limit");
+  expect(error.message).toContain("raise the output budget or bound thinking");
+  expect(error.message).not.toContain("authentication");
+  // The truncated thinking is evidence in the session, never on the error.
+  expect(error.message).not.toContain(marker);
+});
+
+test("#368: a length stop pi-agent-core retried into a second truncation is still typed, not an authentication claim", async () => {
+  const { faux, models, model, role } = harnessFixture();
+  // When the stop came BELOW the intended limit, pi-agent-core makes one
+  // bounded compact-and-retry attempt; the queued summary feeds that retry, and
+  // the retry truncates below the limit again, settling the turn `failed` with
+  // the generic `assistant_error`. The empty-turn fallback would have told the
+  // operator to verify authentication about a generation that ran twice.
+  faux.setResponses([
+    fauxAssistantMessage([fauxThinking("first truncated reasoning")], { stopReason: "length" }),
+    fauxAssistantMessage("summary of the conversation so far"),
+    fauxAssistantMessage([fauxThinking("second truncated reasoning")], { stopReason: "length" }),
+  ]);
+  const error = await runRole({ role, targetDir, models, model, prompt: "do it" }).catch(
+    (cause) => cause,
+  );
+  expect(error).toMatchObject({ code: "generation_truncated", stopReason: "length" });
+  expect(error.message).toContain("raise the output budget or bound thinking");
+  expect(error.message).not.toContain("authentication");
+  expect(error.message).not.toContain("second truncated reasoning");
 });
 
 test("runRole rejects missing authentication before provider generation", async () => {

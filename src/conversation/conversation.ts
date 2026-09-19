@@ -34,16 +34,19 @@ import type { ProjectStoreConfig } from "../project-store/types";
 import type { Role } from "../role";
 import { toHarnessOptions } from "../role";
 import { createBuiltinTools } from "../runner/builtin-tools";
+import type { SettledTurnMessage } from "../runner/errors";
 import {
   assertRunId,
   assertUniqueToolNames,
   EmptyTurnError,
+  GenerationTruncatedError,
   ProviderQuotaError,
   ProviderRejectionError,
   providerQuotaFrom,
   providerRejectionStatusFrom,
   resolveTargetDir,
   SuspendedRunError,
+  truncatedGenerationFrom,
 } from "../runner/errors";
 import { wrapModelsForToolCallRecovery } from "../runner/native-tool-calls";
 import type { Tool } from "../runner/tool";
@@ -414,20 +417,53 @@ export async function startConversation(config: ConversationConfig): Promise<Con
         // same discipline as runRole (src/runner/runner.ts).
         throw new SuspendedRunError(runId);
       }
-      const assistantText = await extractFinalText(session, context);
-      if (result.status !== "completed" && assistantText.trim() === "") {
-        // Same attribution rule as runRole: a named client-error status means
-        // the provider answered and refused, which is not an authentication
-        // failure. See ProviderRejectionError for why only the number crosses.
-        // Quota/rate-limit (429) is classified first, for the same reason as
-        // runRole: a spent quota is not a request-shape problem and not a
-        // credential problem (#356).
-        const quota = providerQuotaFrom(result.error);
-        if (quota !== undefined)
-          throw new ProviderQuotaError(runId, quota.providerCode, quota.retryAfterMs);
-        const rejection = providerRejectionStatusFrom(result.error);
-        if (rejection !== undefined) throw new ProviderRejectionError(runId, rejection);
-        throw new EmptyTurnError(runId, result.error?.code);
+      const finalMessage = await newestAssistantMessage(session, context);
+      const assistantText = assistantMessageText(finalMessage);
+      if (assistantText.trim() === "") {
+        if (result.status !== "completed") {
+          // Same attribution rule as runRole: a named client-error status means
+          // the provider answered and refused, which is not an authentication
+          // failure. See ProviderRejectionError for why only the number crosses.
+          // Quota/rate-limit (429) is classified first, for the same reason as
+          // runRole: a spent quota is not a request-shape problem and not a
+          // credential problem (#356).
+          const quota = providerQuotaFrom(result.error);
+          if (quota !== undefined)
+            throw new ProviderQuotaError(runId, quota.providerCode, quota.retryAfterMs);
+          const rejection = providerRejectionStatusFrom(result.error);
+          if (rejection !== undefined) throw new ProviderRejectionError(runId, rejection);
+          // A generation that ran and produced nothing usable is a truncation,
+          // not an empty turn: the provider answered, the tokens were spent, and
+          // "verify authentication" cannot fix either (#368). An error/aborted
+          // stop is a failure marker, not a settled generation, and keeps the
+          // empty-turn wording.
+          const truncated = truncatedGenerationFrom(finalMessage);
+          if (truncated !== undefined) {
+            throw new GenerationTruncatedError(
+              runId,
+              truncated.stopReason,
+              truncated.outputTokens,
+              truncated.reasoningTokens,
+            );
+          }
+          throw new EmptyTurnError(runId, result.error?.code);
+        }
+        // A settled-SUCCESS turn with no answer text is still not a completed
+        // turn when the final assistant message carries nothing usable (#368):
+        // the provider answered, so every failure classification above is gated
+        // behind a status check that never fired, and a generation truncated by
+        // the output limit (whole budget spent on reasoning) reached the caller
+        // as an empty success. A text block or a tool call is usable content;
+        // only silence -- thinking-only or empty -- classifies here.
+        const truncated = truncatedGenerationFrom(finalMessage);
+        if (truncated !== undefined) {
+          throw new GenerationTruncatedError(
+            runId,
+            truncated.stopReason,
+            truncated.outputTokens,
+            truncated.reasoningTokens,
+          );
+        }
       }
       cumulativeDropped += ledger.droppedRecords;
       return {
@@ -519,15 +555,20 @@ export async function startConversation(config: ConversationConfig): Promise<Con
 }
 
 /**
- * The newest assistant text on the live session branch.
+ * The newest assistant message on the live session branch, or `undefined` when
+ * the session carries none.
  *
- * Reimplemented (not imported) from the private `extractFinalText` in
+ * Reimplemented (not imported) from the private scan in
  * src/orchestration/pipeline.ts: reading `result.tipId` directly is fragile
- * because a run whose LAST entry is a tool-result would miss the text, so we
+ * because a run whose LAST entry is a tool-result would miss the message, so we
  * scan the most recent message entries newest-first for the first assistant
- * message and join its `{ type: 'text' }` blocks, returning `''` when none.
+ * message. The settled-turn boundary reads BOTH the message's text and its
+ * stop reason/usage (#368), so it needs the message, not only its text.
  */
-async function extractFinalText(session: Session, context: Context): Promise<string> {
+async function newestAssistantMessage(
+  session: Session,
+  context: Context,
+): Promise<SettledTurnMessage | undefined> {
   const entries = await session.findEntries({ type: "message", order: "desc", limit: 20 }, context);
   for (const entry of entries) {
     if (entry.type !== "message") {
@@ -537,10 +578,18 @@ async function extractFinalText(session: Session, context: Context): Promise<str
     if (message.role !== "assistant") {
       continue;
     }
-    return message.content
-      .filter((block): block is TextContent => block.type === "text")
-      .map((block) => block.text)
-      .join("");
+    return message;
   }
-  return "";
+  return undefined;
+}
+
+/** The answer text of the newest assistant message: its joined text blocks. */
+function assistantMessageText(message: SettledTurnMessage | undefined): string {
+  if (message === undefined) {
+    return "";
+  }
+  return message.content
+    .filter((block): block is TextContent => block.type === "text")
+    .map((block) => block.text)
+    .join("");
 }

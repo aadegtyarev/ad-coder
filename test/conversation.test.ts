@@ -8,6 +8,7 @@ import {
   createModels,
   fauxAssistantMessage,
   fauxProvider,
+  fauxThinking,
   fauxToolCall,
   Type,
 } from "@earendil-works/pi-ai";
@@ -123,6 +124,52 @@ test("a message-embedded 429 quota refusal surfaces as a typed quota outcome thr
       status: 429,
       providerCode: "insufficient_quota",
     });
+  } finally {
+    await conversation.close();
+  }
+});
+
+test("#368: a generation truncated at the output limit surfaces as a typed truncated outcome through conversation", async () => {
+  const { faux, models, model, role } = harnessFixture();
+  const session = await new MemorySessionRepo().create({}, BACKGROUND_CONTEXT);
+  // The incident shape through the multi-turn loop: the whole output budget
+  // spent on thinking (the faux provider estimates output from content, so the
+  // thinking must reach the 16384-token limit), truncated mid-reasoning, no
+  // text, no tool call -- settled `completed`, which the pre-fix boundary read
+  // as an empty success and returned to the caller.
+  faux.setResponses([
+    fauxAssistantMessage([fauxThinking("reasoning ".repeat(8000))], {
+      stopReason: "length",
+    }),
+  ]);
+  const conversation = await startConversation({ role, targetDir, models, model, session });
+  try {
+    await expect(conversation.step("do it")).rejects.toMatchObject({
+      code: "generation_truncated",
+      stopReason: "length",
+    });
+  } finally {
+    await conversation.close();
+  }
+});
+
+test("#368: a length stop retried into a second truncation is typed through conversation, never an authentication claim", async () => {
+  const { faux, models, model, role } = harnessFixture();
+  const session = await new MemorySessionRepo().create({}, BACKGROUND_CONTEXT);
+  // pi-agent-core's bounded compact-and-retry for a length stop: the queued
+  // summary feeds the retry, the retry truncates again, and the turn settles
+  // `failed` with the generic assistant_error -- which the pre-fix boundary
+  // misattributed to EmptyTurnError ("verify authentication").
+  faux.setResponses([
+    fauxAssistantMessage([fauxThinking("first truncated reasoning")], { stopReason: "length" }),
+    fauxAssistantMessage("summary of the conversation so far"),
+    fauxAssistantMessage([fauxThinking("second truncated reasoning")], { stopReason: "length" }),
+  ]);
+  const conversation = await startConversation({ role, targetDir, models, model, session });
+  try {
+    const error = await conversation.step("do it").catch((cause) => cause);
+    expect(error).toMatchObject({ code: "generation_truncated", stopReason: "length" });
+    expect(error.message).not.toContain("authentication");
   } finally {
     await conversation.close();
   }

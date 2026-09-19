@@ -15,7 +15,12 @@ import { TurnInterruptedError } from "../conversation/conversation";
 import { CostAnomalyBlockedError } from "../economics/cost-anomaly";
 import type { ToolActivityConfig } from "../observability/tool-activity";
 import type { BackgroundRunManager, BackgroundRunNotice } from "../orchestration/background-runs";
-import { EmptyTurnError, ProviderQuotaError, ProviderRejectionError } from "../runner/errors";
+import {
+  EmptyTurnError,
+  GenerationTruncatedError,
+  ProviderQuotaError,
+  ProviderRejectionError,
+} from "../runner/errors";
 import { SessionLimitError } from "../session-limits";
 import { loadTaskFile } from "./task-file";
 import { ToolActivityRenderer } from "./tool-activity";
@@ -810,6 +815,31 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
                 `provider refused the request with HTTP 429 (quota/rate limit exhausted)` +
                 (error.providerCode !== undefined ? ` (provider code ${error.providerCode})` : ""),
               action: `${reset}, or check the plan and usage, then retry`,
+              retryable: true,
+            },
+            mode,
+          ),
+        );
+        reason = "turn_failed";
+      } else if (error instanceof GenerationTruncatedError) {
+        // A truncated generation is retryable, but NOT with the same budget: the
+        // same output cap truncates the same reasoning-heavy turn again (#368).
+        // The advice names the budget change; never a blind retry, never a
+        // credential, never the request.
+        params.error.write(
+          renderFailure(
+            {
+              code: "generation_truncated",
+              message:
+                `the generation ended with no answer and no tool call` +
+                (error.stopReason !== undefined ? ` (stopReason ${error.stopReason})` : "") +
+                (error.outputTokens !== undefined
+                  ? ` after ${error.outputTokens} output tokens` +
+                    (error.reasoningTokens !== undefined
+                      ? ` (${error.reasoningTokens} on reasoning)`
+                      : "")
+                  : ""),
+              action: "raise the output budget or bound thinking, then retry",
               retryable: true,
             },
             mode,

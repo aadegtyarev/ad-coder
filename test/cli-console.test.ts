@@ -32,7 +32,12 @@ import {
 } from "../src/orchestration/background-runs";
 import { ProjectStoreError } from "../src/project-store/types";
 import { defineRole, type Role } from "../src/role";
-import { EmptyTurnError, ProviderQuotaError, ProviderRejectionError } from "../src/runner/errors";
+import {
+  EmptyTurnError,
+  GenerationTruncatedError,
+  ProviderQuotaError,
+  ProviderRejectionError,
+} from "../src/runner/errors";
 import { SessionLimitError } from "../src/session-limits";
 
 class Capture extends Writable {
@@ -467,6 +472,27 @@ test("a quota refusal advises waiting on the reset window, never authentication"
   // An authentication command is configured and must still NOT be offered, and
   // the request is not the thing to inspect: the credential is valid, only the
   // quota is spent (#356).
+  expect(error.text()).not.toContain("auth login");
+  expect(error.text()).not.toContain("inspect the request");
+});
+
+test("a truncated generation names the output budget and a budget remedy, never authentication", async () => {
+  const error = new Capture();
+  await runConsole({
+    session: fakeSession({
+      stepError: new GenerationTruncatedError("run", "length", 16384, 16347),
+    }),
+    input: ttyFrom("hello\n"),
+    output: new Capture(),
+    error,
+    authenticationCommand: "ad-coder auth login --provider openrouter --target-dir '/tmp/project'",
+  });
+  expect(error.text()).toContain("no answer and no tool call");
+  expect(error.text()).toContain("16384 output tokens");
+  expect(error.text()).toContain("16347 on reasoning");
+  expect(error.text()).toContain("raise the output budget or bound thinking");
+  // A credential command and a request inspection are both wrong here: the
+  // generation ran and was cut off by the output budget (#368).
   expect(error.text()).not.toContain("auth login");
   expect(error.text()).not.toContain("inspect the request");
 });

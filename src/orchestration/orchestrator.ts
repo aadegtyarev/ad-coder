@@ -25,6 +25,7 @@ import { defineRole } from "../role";
 import {
   ConfiguredToolsUnavailableError,
   EmptyTurnError,
+  GenerationTruncatedError,
   ProviderLimitError,
   ProviderQuotaError,
   ProviderRejectionError,
@@ -743,6 +744,15 @@ const SAFE_HOUSE_ERRORS = [
   // `assertRunId` before any projection. `message` is an AUTHORED string
   // splicing only those bounded fields.
   ProviderQuotaError,
+  // Field-by-field audit (errors contract 2026-09-19): `code` is the authored
+  // literal `generation_truncated`; `stopReason` is a strict-charset token
+  // (`[A-Za-z0-9_-]{1,32}`) bounded by the constructor, which DROPS a
+  // non-matching value; `outputTokens`/`reasoningTokens` are safe
+  // non-negative integers, likewise dropped otherwise; `runId` is validated by
+  // `assertRunId` before any projection. `message` is an AUTHORED string
+  // splicing only those bounded fields. The thinking prose and every other
+  // transcript value stay in the session.
+  GenerationTruncatedError,
   ConfiguredToolsUnavailableError,
   ProviderLimitError,
   RunInterruptedError,

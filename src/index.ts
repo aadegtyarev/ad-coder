@@ -542,11 +542,16 @@ export {
   MAX_REPORTED_OCCURRENCES,
   wrapEditToolWithDiagnostics,
 } from "./runner/builtin-tools";
-export type { RunnerErrorCode } from "./runner/errors";
+export type {
+  GenerationTruncationSignal,
+  RunnerErrorCode,
+  SettledTurnMessage,
+} from "./runner/errors";
 export {
   ConfiguredToolsUnavailableError,
   EmptyTurnError,
   extractProviderCodeToken,
+  GenerationTruncatedError,
   ProviderLimitError,
   ProviderQuotaError,
   ProviderRejectionError,
