@@ -713,10 +713,59 @@ test("an untyped turn failure names a bounded class token and nothing else", asy
       thrown: Object.assign(new Error("boom"), { constructor: { name: "Mislead" } }),
       expected: "console turn failed (Error)",
     },
+    // Neither can an OWN `name` -- the field a forged class would be supplied
+    // through. No on-property of the thrown value is consulted at all.
+    {
+      thrown: Object.assign(new Error("boom"), { name: "ForgedIdentifier" }),
+      expected: "console turn failed (Error)",
+    },
+    // ... so an accessor that refuses to answer is never even called.
+    {
+      thrown: Object.defineProperty(new Error("boom"), "name", {
+        get() {
+          throw new Error("trap");
+        },
+      }),
+      expected: "console turn failed (Error)",
+    },
+    // A prototype whose constructor name is not a string is not a class name.
+    {
+      thrown: Object.setPrototypeOf(
+        new Error("boom"),
+        Object.assign(Object.create(Error.prototype), { constructor: { name: 42 } }),
+      ),
+      expected: "console turn failed (Error)",
+    },
     // A forged `name` carrying a newline and a fake record never renders.
     {
       thrown: Object.assign(new Error("boom"), { name: 'Evil\n{"code":"ok"}' }),
       expected: "console turn failed (Error)",
+    },
+    // Every read the classifier makes can THROW instead of answering when the
+    // thrown value is a Proxy. The escape used to replace the turn's own failure
+    // with the classifier's (reported as `input_failed`); it now renders a fixed
+    // label, because a diagnostic that dies while describing a failure is worse
+    // than a generic one.
+    {
+      thrown: new Proxy(new Error("boom"), {
+        getPrototypeOf() {
+          throw new Error("trap");
+        },
+      }),
+      expected: "console turn failed (unclassified)",
+    },
+    {
+      // The prototype itself answers with an accessor that refuses.
+      thrown: Object.create(
+        Object.create(Error.prototype, {
+          constructor: {
+            get() {
+              throw new Error("trap");
+            },
+          },
+        }),
+      ),
+      expected: "console turn failed (unclassified)",
     },
     { thrown: null, expected: "console turn failed (non-error null)" },
     { thrown: undefined, expected: "console turn failed (non-error undefined)" },

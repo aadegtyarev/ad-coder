@@ -122,27 +122,69 @@ const CLOSE_FAILED_FAILURE = {
 const ERROR_CLASS_TOKEN = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
 
 /**
+ * `value instanceof ctor`, total. `instanceof` is not a safe operation on an
+ * untrusted value: it walks the prototype chain, so a Proxy (or an accessor on
+ * the chain) can THROW instead of answering -- and every `instanceof` in the
+ * failure-classification chain below would then throw in turn, replacing the
+ * turn's own failure with a bogus one (measured: the escape surfaced as
+ * `input_failed`, whose advice is to restart the console because the input
+ * stream is gone). A value that refuses the question is not an instance of
+ * anything this front knows, which lands it on the untyped fallback -- where it
+ * is described safely. Narrowing is preserved, so callers read the typed fields
+ * exactly as before.
+ */
+function probeInstanceOf<T>(
+  value: unknown,
+  ctor: abstract new (...args: never[]) => T,
+): boolean | undefined {
+  try {
+    return value instanceof ctor;
+  } catch {
+    // `undefined`, not `false`: "this is not an X" and "this will not say" are
+    // different answers, and only the second one needs its own label.
+    return undefined;
+  }
+}
+
+/** Boolean form for the classification chain: a value that will not answer is no match. */
+function isInstanceOf<T>(value: unknown, ctor: abstract new (...args: never[]) => T): value is T {
+  return probeInstanceOf(value, ctor) === true;
+}
+
+/**
  * The failing error's class name as ONE bounded token, for the untyped-failure
  * fallback -- or a fixed label when there is no class to name.
  *
- * No part of an error object is trusted here, because the name is the only
+ * No OWN property of the thrown value is consulted, because the name is the only
  * attribution an untyped failure can offer and it must not become a channel for
  * the message the projection deliberately withholds: `constructor` and `name`
- * are ORDINARY properties, so a crafted error can set either to arbitrary text.
- * So the name is read from the PROTOTYPE (an own `constructor` cannot spoof it),
- * accepted only when it matches `ERROR_CLASS_TOKEN`, and the inherited
- * `Error.prototype.name` is the fallback for an anonymous subclass -- which has
- * an empty `constructor.name` and is still, truthfully, an Error. A thrown value
- * that is not an Error at all is labelled by `typeof`, with `null` named
- * explicitly because `typeof null` is "object". Total by construction: every
- * input yields one token from a closed set (docs/contracts/errors.md).
+ * are ordinary, writable properties, so a crafted error can set either to
+ * arbitrary text (and an own `name` is exactly how one would forge another
+ * class). The name is therefore read from the PROTOTYPE's constructor, which no
+ * own property can spoof, and accepted only as a bounded identifier. An
+ * anonymous subclass has an empty `constructor.name` and still IS an Error, so
+ * it renders the base label; a thrown value that is not an Error is labelled by
+ * `typeof` (`null` named explicitly, since `typeof null` is "object").
+ *
+ * Every read here can THROW rather than answer -- `instanceof`, the prototype
+ * lookup, and the `constructor` access all run through a Proxy trap if the
+ * thrown value is one -- and a diagnostic that fails while describing a failure
+ * would replace the turn's own failure with its own, so every refusal renders
+ * the fixed label `unclassified` instead of propagating. Total by construction:
+ * every input yields one token from a closed set (docs/contracts/errors.md).
  */
 function describeErrorClass(error: unknown): string {
-  if (!(error instanceof Error)) return `non-error ${error === null ? "null" : typeof error}`;
-  const prototypeName: unknown = Object.getPrototypeOf(error)?.constructor?.name;
-  if (typeof prototypeName === "string" && ERROR_CLASS_TOKEN.test(prototypeName))
-    return prototypeName;
-  return ERROR_CLASS_TOKEN.test(error.name) ? error.name : "Error";
+  const isError = probeInstanceOf(error, Error);
+  if (isError === undefined) return "unclassified";
+  if (!isError) return `non-error ${error === null ? "null" : typeof error}`;
+  try {
+    const prototypeName: unknown = Object.getPrototypeOf(error)?.constructor?.name;
+    if (typeof prototypeName === "string" && ERROR_CLASS_TOKEN.test(prototypeName))
+      return prototypeName;
+    return "Error";
+  } catch {
+    return "unclassified";
+  }
 }
 
 /**
@@ -769,13 +811,13 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
           ),
         );
         reason = "interrupted";
-      } else if (error instanceof ConsoleControlError) {
+      } else if (isInstanceOf(error, ConsoleControlError)) {
         // The guidance is derived from the command registry, so it always names
         // the failed command and one next action (docs/contracts/errors.md).
         params.error.write(renderFailure(error.failure, mode));
         if (mode === "formatted") params.output.write("ad-coder> ");
         return;
-      } else if (error instanceof TurnInterruptedError) {
+      } else if (isInstanceOf(error, TurnInterruptedError)) {
         params.error.write(
           renderFailure(
             {
@@ -789,7 +831,7 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
         );
         if (mode === "formatted") params.output.write("ad-coder> ");
         return;
-      } else if (error instanceof SessionLimitError) {
+      } else if (isInstanceOf(error, SessionLimitError)) {
         params.error.write(
           renderFailure(
             {
@@ -803,7 +845,7 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
           ),
         );
         reason = "session_limit";
-      } else if (error instanceof ContextCompactionLostError) {
+      } else if (isInstanceOf(error, ContextCompactionLostError)) {
         // The session's context can no longer be compacted, so every later turn
         // would fail the same way. That makes this a STOP, and the stop has to
         // name a way out that actually exists: `--resume` reopens this very
@@ -833,7 +875,7 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
           ),
         );
         reason = "context_compaction_lost";
-      } else if (error instanceof CostAnomalyBlockedError) {
+      } else if (isInstanceOf(error, CostAnomalyBlockedError)) {
         // The operator decides, in this session: the block names both amounts,
         // the overcharge, and the `/cost release` that accepts the new price,
         // and input stays open so they can type it. Collapsing this into the
@@ -861,7 +903,7 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
         // the console keeps reading input rather than tearing down.
         if (mode === "formatted") params.output.write("ad-coder> ");
         return;
-      } else if (error instanceof ProviderQuotaError) {
+      } else if (isInstanceOf(error, ProviderQuotaError)) {
         // Quota/rate-limit is retryable but NOT now, and never: the credential
         // is valid, the request shape is fine, only the account is out of
         // quota (#356). The advice names the reset window and points at the
@@ -884,7 +926,7 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
           ),
         );
         reason = "turn_failed";
-      } else if (error instanceof GenerationTruncatedError) {
+      } else if (isInstanceOf(error, GenerationTruncatedError)) {
         // A truncated generation is retryable, but NOT with the same budget: the
         // same output cap truncates the same reasoning-heavy turn again (#368).
         // The advice names the budget change; never a blind retry, never a
@@ -909,7 +951,7 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
           ),
         );
         reason = "turn_failed";
-      } else if (error instanceof ProviderRejectionError) {
+      } else if (isInstanceOf(error, ProviderRejectionError)) {
         // Never offer the authentication command here: the provider answered.
         params.error.write(
           renderFailure(
@@ -923,7 +965,7 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
           ),
         );
         reason = "turn_failed";
-      } else if (error instanceof EmptyTurnError) {
+      } else if (isInstanceOf(error, EmptyTurnError)) {
         const recovery =
           params.authenticationCommand === undefined
             ? "verify authentication and retry"

@@ -34,11 +34,13 @@ enforces that dated release headings go in non-increasing date order
   to the input that followed it; the settlement's cost is attributed to the turn
   that performed it, on a row naming the recovered operation's own id. A turn that dies before the provider is reached now names
   the failing error's CLASS in the fallback message, so the next occurrence is
-  diagnosable from the console alone: the classifier is total (an anonymous
-  subclass renders `(Error)`, a non-Error throw renders `(non-error <typeof>)`)
-  and cannot be spoofed, because the name is read from the prototype rather than
-  an own `constructor` property and accepted only as a bounded identifier --
-  a message can never ride out through the field that replaces it.
+  diagnosable from the console alone: the classifier is total -- an anonymous
+  subclass renders `(Error)`, a non-Error throw renders `(non-error <typeof>)`,
+  and an error that throws while being described (a Proxy trap, an accessor that
+  refuses) renders `(unclassified)` instead of replacing the turn's failure with
+  its own -- and it consults no own property of the thrown value, so a forged
+  `name` or `constructor` cannot supply a class and a message can never ride out
+  through the field that replaces the withheld one.
 
 ## [0.93.0] - 2026-09-19
 

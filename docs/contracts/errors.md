@@ -174,14 +174,28 @@ for machines?
   properties that any thrown object can set to anything: an anonymous subclass
   has an empty `constructor.name` (rendering as an empty pair of parentheses), a
   thrown non-Error has no class at all, and a crafted error can point either
-  field at text that would forge a second record or a message into a projection
-  that is meant to be one bounded line. So the classifier (1) reads the class
-  name from the PROTOTYPE, which an own `constructor` property cannot spoof, (2)
-  accepts it only when it is a plain identifier of bounded length, (3) falls back
-  to the inherited `Error.prototype.name` for the anonymous case, which is
-  truthfully an Error, and (4) labels a thrown non-Error by its `typeof`, naming
-  `null` explicitly because `typeof null` is "object". The rule is deterministic
-  and total: every input yields one token from a closed set, the same failure
+  field at text that would forge another class, a second record, or a message
+  into a projection that is meant to be one bounded line. So it consults NO own
+  property of the thrown value at all -- an own `name` or an own `constructor` is
+  exactly how a forged class would be supplied, and neither is read: (1) the name
+  comes from the PROTOTYPE's constructor, (2) it is accepted only when it is a
+  plain identifier of bounded length, (3) anything else that IS an Error renders
+  the base label `Error` (an anonymous subclass has an empty `constructor.name`
+  and is still, truthfully, an Error), and (4) a thrown non-Error renders
+  `non-error <typeof>`, with `null` named explicitly because `typeof null` is
+  "object". Totality is part of the rule, not an aspiration, and it covers the
+  WHOLE classification of a caught value: every read made of it -- `instanceof`,
+  `[[GetPrototypeOf]]`, the `constructor` access -- runs through a Proxy's traps
+  when the thrown value is one, and each of them can therefore THROW rather than
+  answer. A diagnostic that dies while describing a failure replaces the turn's
+  failure with its own (measured: the escape left the turn's catch and was
+  rendered as `input_failed`, whose advice is to restart a console whose input
+  stream is fine), so no classification step is allowed to propagate one: the
+  typed checks ask through a total `instanceof` that treats a refusal as "not
+  this type", and the classifier reports any refusal of its own reads as the
+  fixed label `unclassified`. The result is total and deterministic: every input
+  -- including a hostile one -- yields one token from the closed set {bounded
+  identifier, `Error`, `non-error <typeof>`, `unclassified`}, the same failure
   always renders the same line, and no message, stack, or provider payload can
   reach the reader through the class field. Class names and `typeof` labels only
   -- never a message, never an anonymous blank.
