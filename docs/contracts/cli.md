@@ -136,3 +136,20 @@ Rules for ad-coder's command-line front. A violation is always blocking.
   than replacing), so the settlement's cost is distinguishable from the cost of
   the prompt that follows it. The cost is neither dropped nor merged into an
   unidentified row.
+- 2026-09-19 (issue #425): a stamp-gate failure is a FACT with an action, and
+  its fronts say both instead of shorthand-ing into a usage error. `ad-coder
+  stamp check` and `stamp body-check` route gate failures (stale digest,
+  changes_requested verdict, absent or stale delivery block, malformed or
+  missing newest stamp) through their own `failGate` path: the human front
+  prints the reason then the recovery action on stderr with NO derived-help
+  render, and the machine front (`--json`) prints the structured shape
+  `{ error: { code: "gate_failed", text, retryable: false, nextAction } }`
+  -- never the `usage` code, because a stale stamp is not a commandline
+  mistake. The reason names what failed AND why (the reviewed tree moved;
+  any later commit, dependency bumps and the CHANGELOG heading included,
+  makes the stamp stale), the action names the recovery (a fresh review
+  round over the CURRENT tree via a settled run, whose run-finish hook
+  `recordReviewStampFromResult` appends the stamp; the stamp is never
+  written by hand). Argument errors -- unknown flag, unknown action, extra
+  positional -- stay on the `fail()` path: derived help on the human front,
+  `usage` code on the machine front, unchanged.

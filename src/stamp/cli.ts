@@ -13,6 +13,9 @@
  * `stampBodyCheckErrors` is the pull-request-body gate (issue #335): it
  * verifies that a PR body carries the freshly rendered delivery block
  * verbatim -- absent or stale bodies fail with the render command named.
+ * Both gates return TYPED failures -- reason plus the action that clears it
+ * -- so the CLI fronts name both, and a machine front gets a structured
+ * `gate_failed` projection rather than shorthand usage (issue #425).
  *
  * Ad-hoc writers use the library entry points directly; no CLI write path is
  * offered, because a stamp the orchestrator hand-writes into the committed
@@ -26,7 +29,7 @@ import { parseLedgerLine } from "../ledger/analytics";
 import { LEDGER_BASE_DIR } from "../ledger/ledger";
 import type { LedgerRecord } from "../ledger/types";
 import { buildDeliverySignature, renderDeliverySignature } from "./delivery-signature";
-import { checkReviewStamps } from "./record-review-stamp";
+import { checkReviewStamps, type ReviewStampFailure } from "./record-review-stamp";
 
 /** Read ledger files leniently: one parseable record per line, blanks skipped. */
 export function readLedgerRecords(paths: readonly string[]): LedgerRecord[] {
@@ -60,9 +63,15 @@ export function stampDeliveryText(targetDir: string, files: readonly string[] = 
   return renderDeliverySignature(buildDeliverySignature(records));
 }
 
-/** Reasons the branch may not merge; empty list means the stamp gate passes. */
-export function stampCheckErrors(targetDir: string, requireStamp?: StampRequirement): string[] {
-  return checkReviewStamps(targetDir, requireStamp).errors;
+/**
+ * Review-stamp gate failures: typed reasons with the action that clears each
+ * (issue #425). Empty list means the stamp gate passes.
+ */
+export function stampCheckErrors(
+  targetDir: string,
+  requireStamp?: StampRequirement,
+): ReviewStampFailure[] {
+  return checkReviewStamps(targetDir, requireStamp).failures;
 }
 
 /**
@@ -80,16 +89,24 @@ export function stampBodyCheckErrors(
   bodyPath: string,
   targetDir: string,
   files: readonly string[],
-): string[] {
+): ReviewStampFailure[] {
   const block = stampDeliveryText(targetDir, files).trim();
   const body = fs.readFileSync(bodyPath, "utf8");
   if (body.includes(block)) return [];
   const hasSimilarBlock = body.split("\n").some((line) => line.startsWith("runs "));
   if (hasSimilarBlock)
     return [
-      `${bodyPath}: the delivery block is stale (rendered cost differs from the ledger now); re-run "ad-coder stamp delivery" and replace the block verbatim`,
+      {
+        reason: `${bodyPath}: the delivery block is stale (rendered cost differs from the ledger now)`,
+        action:
+          're-run "ad-coder stamp delivery" and paste the fresh block into the pull-request body verbatim',
+      },
     ];
   return [
-    `${bodyPath}: the generated delivery block is absent (render it with "ad-coder stamp delivery", never compose one)`,
+    {
+      reason: `${bodyPath}: the generated delivery block is absent`,
+      action:
+        'render it with "ad-coder stamp delivery" (never compose one) and paste the block verbatim',
+    },
   ];
 }

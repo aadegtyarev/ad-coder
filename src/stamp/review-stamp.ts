@@ -161,25 +161,56 @@ export function computeTreeDigest(repoRoot: string, excludePaths: readonly strin
 
 export interface ReviewStampVerification {
   ok: boolean;
-  /** Human-readable reasons the stamp does NOT pass; empty when ok. */
-  errors: string[];
+  /** Typed failures: reason (what and why) plus the action that clears it. */
+  failures: ReviewStampFailure[];
 }
+
+/**
+ * One typed gate failure: the reason (what failed and why) plus the action
+ * that clears it. The gate's fronts -- human and machine -- must carry BOTH
+ * verbatim; a reason without an action leaves the operator guessing, and an
+ * action without a reason asks them to trust it (issue #425).
+ */
+export interface ReviewStampFailure {
+  reason: string;
+  action: string;
+}
+
+/**
+ * The recovery action EVERY stale or disapproved stamp leads to, spelled once
+ * here so the messages and the fronts cannot drift apart. The stamp is never
+ * written by hand: the run-finish hook derives it from the settled result.
+ */
+export const FRESH_STAMP_ACTION =
+  "ask an independent reviewer for a fresh review round over the CURRENT tree, via a settled run; the run-finish hook (recordReviewStampFromResult) appends the fresh stamp -- never write one by hand";
 
 /**
  * Verify one stamp against the tree the gate is running over.
  *
  * A stamp whose digest no longer matches the CURRENT tree is stale and must
  * not pass -- this re-read, not the review verdict, is the freshness gate.
+ *
+ * The stale reason states WHY a stamp can be stale: the reviewed tree moved,
+ * and ANY commit after the review makes it stale -- dependency bumps and
+ * changelog headings included; those are commits like any other, and the
+ * gate does not grade them smaller.
  */
-export function verifyReviewStamp(stamp: ReviewStamp, currentTreeDigest: string): string[] {
-  const errors: string[] = [];
+export function verifyReviewStamp(
+  stamp: ReviewStamp,
+  currentTreeDigest: string,
+): ReviewStampFailure[] {
+  const failures: ReviewStampFailure[] = [];
   if (stamp.verdict === "changes_requested")
-    errors.push("the newest review verdict is changes_requested; merge is blocked");
+    failures.push({
+      reason: "the newest review verdict is changes_requested; merge is blocked",
+      action: FRESH_STAMP_ACTION,
+    });
   if (stamp.treeDigest !== currentTreeDigest)
-    errors.push(
-      `stamp is stale: it names digest ${stamp.treeDigest.slice(0, 12)}…, the tree now hashes ${currentTreeDigest.slice(0, 12)}…`,
-    );
-  return errors;
+    failures.push({
+      reason: `stamp is stale: it names digest ${stamp.treeDigest.slice(0, 12)}…, the tree now hashes ${currentTreeDigest.slice(0, 12)}…; the tree moved after the review -- any later commit makes the stamp stale, package.json and the CHANGELOG heading included`,
+      action: FRESH_STAMP_ACTION,
+    });
+  return failures;
 }
 
 /** Append one stamp line to the log file, creating the directory if needed. */

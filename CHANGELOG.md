@@ -11,6 +11,31 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.100.0] - 2026-09-19
+
+### Changed
+- **A failing stamp gate states the fact AND the action, instead of shorthanding
+  into a usage error (issue #425).** Both gate surfaces -- `ad-coder stamp
+  check` and `stamp body-check` -- used to pass their reasons through
+  `fail()`, which rendered the root help on top of them and gave machine
+  fronts the `usage` code, so a stale or disapproved stamp read as a
+  commandline mistake. The gates now have their OWN failure path
+  (`failGate`): the human front prints the reason (what is stale -- the
+  stamp's digest versus the tree's, and why -- the reviewed tree moved, any
+  later commit package.json and the CHANGELOG heading included, or a
+  changes_requested verdict) followed by the action (a fresh review round
+  over the CURRENT tree via a settled run, whose run-finish hook
+  `recordReviewStampFromResult` appends the stamp -- never a hand write), and
+  the machine front (`--json`) prints the structured shape with the typed
+  code `gate_failed`, `retryable: false` and `nextAction`, with no help
+  render on either front. Argument errors (unknown flag, unknown action,
+  extra path) keep the usage path unchanged: the derived help and the
+  `usage` code through `fail()`. The gate's typed failures (`reason` +
+  `action`) replace the string list in `checkReviewStamps`,
+  `stampCheckErrors` and `stampBodyCheckErrors`; verdict and digest logic
+  is untouched. \#425 additionally accepts `stamp --json` as an alias for
+  the machine front.
+>>>>>>> 4fb49d0 (feat(#425): stamp gate failures state the fact and the action, not usage)
 ## [0.99.0] - 2026-09-19
 
 ### Added
