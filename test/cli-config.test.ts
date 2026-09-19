@@ -3,7 +3,12 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { CredentialStore } from "@earendil-works/pi-ai";
-import { resolveOrchestratorSeed, resolvePipelineConfig } from "../src/cli/resolve-config";
+import {
+  DEFAULT_ROLE_STAGE_LIMITS,
+  DEFAULT_STAGE_LIMITS,
+  resolveOrchestratorSeed,
+  resolvePipelineConfig,
+} from "../src/cli/resolve-config";
 import { deriveContextBudget } from "../src/context/budget";
 import {
   COST_ANOMALY_STATE_PATH,
@@ -994,10 +999,10 @@ test("stage budgets have finite defaults, expose provenance, and are zero-disabl
   } as const;
   const defaults = resolvePipelineConfig(base);
   expect(defaults.stageLimits).toEqual({
-    maxDurationMs: 1_800_000,
-    maxModelTurns: 96,
-    maxToolTurns: 384,
-    maxInputTokens: 1_500_000,
+    maxDurationMs: 2_700_000,
+    maxModelTurns: 144,
+    maxToolTurns: 576,
+    maxInputTokens: 2_400_000,
     maxCostUsd: 6,
     finalResponseReserveModelTurns: 12,
     finalResponseReserveDurationMs: 90_000,
@@ -1005,7 +1010,7 @@ test("stage budgets have finite defaults, expose provenance, and are zero-disabl
     finalResponseReserveInputTokens: 300_000,
   });
   expect(defaults.effectiveConfig?.["stageLimits.maxDurationMs"]).toEqual({
-    value: 1_800_000,
+    value: 2_700_000,
     source: "built-in-default",
   });
   const disabled = resolvePipelineConfig({
@@ -1051,9 +1056,45 @@ test("role stage-budget overlays inherit global limits and preserve explicit zer
   expect(config.roleStageLimits?.reviewer).toMatchObject({
     maxModelTurns: 3,
     maxToolTurns: 0,
-    maxDurationMs: 900_000,
+    // A role's own shipped ceiling, untouched by the two global values passed
+    // above -- the overlay only replaces the dimensions a caller names.
+    maxDurationMs: 1_350_000,
+    maxInputTokens: 1_680_000,
   });
+  // The other half of that rule, and the one `--help` used to hide: a global
+  // flag DOES replace the role's own ceiling for that dimension, so passing
+  // --stage-max-tool-turns takes the planner from its own 90 down to 10.
   expect(config.roleStageLimits?.planner?.maxToolTurns).toBe(10);
+  expect(DEFAULT_ROLE_STAGE_LIMITS.planner?.maxToolTurns).toBe(90);
+});
+
+test("every role's own ceiling is below the global default, which the help and README both claim", () => {
+  // `--help` says "A role's own ceiling is lower unless this flag is passed"
+  // and "every role's own cost ceiling is BELOW this default"; the README says
+  // every role except orchestrator overrides the globals with tighter values.
+  // Those are falsifiable claims about the two tables, so they are falsified
+  // here rather than trusted: raising a global without raising the role it was
+  // meant to bound, or a role entry that overshoots, breaks a documented
+  // promise instead of merely changing a number.
+  const dimensions = [
+    "maxDurationMs",
+    "maxModelTurns",
+    "maxToolTurns",
+    "maxInputTokens",
+    "maxCostUsd",
+  ] as const;
+  const roles = Object.keys(DEFAULT_ROLE_STAGE_LIMITS);
+  expect(roles.length).toBeGreaterThan(0);
+  for (const role of roles) {
+    for (const dimension of dimensions) {
+      const own =
+        DEFAULT_ROLE_STAGE_LIMITS[role as keyof typeof DEFAULT_ROLE_STAGE_LIMITS]?.[dimension];
+      expect(own, `${role}.${dimension} must be defined`).toBeDefined();
+      expect(own, `${role}.${dimension} is not below the global default`).toBeLessThan(
+        DEFAULT_STAGE_LIMITS[dimension],
+      );
+    }
+  }
 });
 
 test("named inventory selects one atomic registry/profile pair and rejects source mixing", () => {

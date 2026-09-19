@@ -23,7 +23,7 @@ import type {
   ResolvableProvider,
   ResolvePipelineConfigOptions,
 } from "./cli/resolve-config";
-import { resolvePipelineConfig } from "./cli/resolve-config";
+import { DEFAULT_STAGE_LIMITS, resolvePipelineConfig } from "./cli/resolve-config";
 import { resolveResumeRun, resumeOrchestratorConfig, resumeSeedNote } from "./cli/resume";
 import { ToolActivityRenderer } from "./cli/tool-activity";
 import { migrateInventoriesToModels } from "./config/migrate";
@@ -2910,8 +2910,7 @@ const PIPELINE_OPTIONS: CommandDefinition["options"] = [
   {
     name: "--stage-final-response-reserve-input-tokens",
     value: "<n>",
-    description:
-      "Input tokens protected from further tool calls for stage closeout; defaults to 100000, 0 disables.",
+    description: `Input tokens protected from further tool calls for stage closeout; defaults to ${DEFAULT_STAGE_LIMITS.finalResponseReserveInputTokens}, 0 disables.`,
   },
   {
     name: "--credential-path",
@@ -3010,49 +3009,65 @@ const PIPELINE_OPTIONS: CommandDefinition["options"] = [
     value: "<n>",
     description: "Provider request timeout; defaults to 120000, 0 disables.",
   },
+  // The numbers below are interpolated from DEFAULT_STAGE_LIMITS rather than typed, and each says
+  // what passing the flag actually does to a role's own ceiling. Both halves are #405: the help
+  // text stated defaults the code did not use -- the five stage ceilings (600000/32/128/500000/2
+  // against 1800000/96/384/1500000/6) and, from the same raise, all four closeout reserves
+  // (4/30000/8/100000 against 12/90000/24/300000) -- and it never mentioned that most roles carry a
+  // LOWER ceiling of their own, so the only place a user could read these numbers printed wrong
+  // ones. Interpolating is what keeps the next raise from leaving the text behind again.
   {
     name: "--stage-max-duration-ms",
     value: "<n>",
-    description: "Cumulative whole-stage time across resumes; defaults to 600000, 0 disables.",
+    description:
+      `Cumulative whole-stage time across resumes; defaults to ${DEFAULT_STAGE_LIMITS.maxDurationMs} ` +
+      "for roles without their own ceiling, 0 disables. A role's own ceiling is lower unless this " +
+      "flag is passed, and passing it replaces EVERY role's, not just the one you are thinking of.",
   },
   {
     name: "--stage-max-model-turns",
     value: "<n>",
-    description: "Cumulative model calls across stage resumes; defaults to 32, 0 disables.",
+    description:
+      `Cumulative model calls across stage resumes; defaults to ${DEFAULT_STAGE_LIMITS.maxModelTurns}, ` +
+      "0 disables. Passing it replaces every role's own ceiling.",
   },
   {
     name: "--stage-max-tool-turns",
     value: "<n>",
-    description: "Cumulative tool calls across stage resumes; defaults to 128, 0 disables.",
+    description:
+      `Cumulative tool calls across stage resumes; defaults to ${DEFAULT_STAGE_LIMITS.maxToolTurns}, ` +
+      "0 disables. Passing it replaces every role's own ceiling.",
   },
   {
     name: "--stage-max-input-tokens",
     value: "<n>",
     description:
-      "Cumulative provider-reported input across resumes; defaults to 500000, 0 disables.",
+      `Cumulative provider-reported input across resumes; defaults to ${DEFAULT_STAGE_LIMITS.maxInputTokens}, ` +
+      "0 disables. Passing it replaces every role's own ceiling.",
   },
   {
     name: "--stage-max-cost-usd",
     value: "<n>",
     description:
-      "Cumulative provider-reported stage cost across resumes; defaults to 2, 0 disables.",
+      `Cumulative provider-reported stage cost across resumes; defaults to ${DEFAULT_STAGE_LIMITS.maxCostUsd}, ` +
+      "0 disables. Passing it replaces every role's own ceiling, and every role's own cost ceiling " +
+      "is BELOW this default, so the flag raises cost for all of them at once — one role cannot be " +
+      "raised alone.",
   },
   {
     name: "--stage-final-response-reserve-tool-turns",
     value: "<n>",
-    description: "Tool turns protected for stage closeout; defaults to 8, 0 disables.",
+    description: `Tool turns protected for stage closeout; defaults to ${DEFAULT_STAGE_LIMITS.finalResponseReserveToolTurns}, 0 disables.`,
   },
   {
     name: "--stage-final-response-reserve-duration-ms",
     value: "<n>",
-    description:
-      "Milliseconds protected from further tool calls for stage closeout; defaults to 30000, 0 disables.",
+    description: `Milliseconds protected from further tool calls for stage closeout; defaults to ${DEFAULT_STAGE_LIMITS.finalResponseReserveDurationMs}, 0 disables.`,
   },
   {
     name: "--stage-final-response-reserve-model-turns",
     value: "<n>",
-    description:
-      "Model turns protected from further tool calls for stage closeout; defaults to 4, 0 disables.",
+    description: `Model turns protected from further tool calls for stage closeout; defaults to ${DEFAULT_STAGE_LIMITS.finalResponseReserveModelTurns}, 0 disables.`,
   },
   {
     name: "--heartbeat-ms",

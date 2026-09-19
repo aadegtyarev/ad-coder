@@ -47,3 +47,51 @@ stage. What never appears is the sliced project tools: the probe's plan stage cl
 turns with `readFiles: []` while its continuation transcript (17-31-01-911Z) shows its reads
 through read_project and search_project with no literal-read call — an empty `readFiles` is
 **not** evidence of zero reconnaissance. Weigh fresh-input accumulation and turn pace first.
+
+## 2026-09-19 (issue #405): the learned numbers reach the shipped defaults
+
+The plan-stage ceiling this contract learned on 2026-09-18 (810000 ms, run
+`4c26d8d9`) never reached anyone who did not pass `--stage-max-duration-ms` by hand: the shipped
+per-role default stayed at the pre-probe 540000 ms, and the probe's own console had been given the
+learned value as a flag. Measured over the fleet's 72 coordinator run records on 2026-09-19: 16
+duration pauses (**15 of them `phase: plan`**) and 4 input-token pauses (all coder), against
+**zero** pauses on model turns, tool turns or cost.
+
+The defaults move one bounded step (duration and turns x1.5, input x1.6; cost unchanged) and the
+planner's duration takes the learned 810000 itself, with its model-turns ceiling following the
+closeout reason of the same probe (`reason model_turns, "20/30 model turns used, 12 reserved"`).
+The rule from the top of this contract still governs: this is a probe, not a settled number. If a
+same-shape plan dispatch pauses again, that is the second observation, and the next step is chosen
+from the snapshot rather than from this table — classify loop vs too-large first.
+
+Two properties of the per-role table are worth stating plainly, because the `--help` text did not:
+
+- A global `--stage-max-*` flag **replaces every role's own ceiling** for that dimension with the
+  one value passed. It is a flattening tool, not a floor and not an offset: `--stage-max-cost-usd 6`
+  gives the coder 6 where its own ceiling was 2.4, and gives the planner 6 where its own deliberate
+  ceiling was 0.3. There is no way to raise ONE role's ceiling from the command line, which is why
+  cost cannot be "raised a little" this way and why the numbers above are edited in the table
+  instead.
+- The global defaults therefore only apply to dimensions a role does not override, and to
+  `orchestrator`, the one role with no entry of its own. A host embedding the pipeline can still
+  move one role alone — `roleStageLimits` in the pipeline config is the LAST spread, so it wins over
+  both the role's default and a global flag — and so can the orchestrator's own pause/raise path.
+  What does not exist is a CLI flag for it.
+
+## 2026-09-19 (issue #405, second pass): the same drift in the reserves and the README
+
+The help-text defect was not five lines. Parsing the rendered help against the constants turned up
+four more: all four `--stage-final-response-reserve-*` lines stated the pre-raise values
+(4 model turns / 30000 ms / 8 tool turns / 100000 input tokens) against the code's 12 / 90000 / 24 /
+300000. Both sets moved in one commit on 2026-09-18 (`d4407b2`, PR #325) — the ceilings from
+600000/32/128/500000/2 and the reserves together — and neither the help, nor the README, nor the
+dated entry in `docs/contracts/config.md` moved with them. The README repeated the pre-raise
+figures and added one more claim that was never true: it documented `--role-stage-limits <file>` as
+the way to constrain a single role, and the CLI rejects that option as unknown — the string has
+appeared only in the README since the commit that wrote it, never in `src/`. All nine help lines
+are interpolated from `DEFAULT_STAGE_LIMITS` now, and the README states the flattening rule, the
+reserve defaults and the real per-role surface.
+
+The lesson worth keeping: a default that is read from a constant cannot drift, and a default typed
+into prose will. The three surfaces that drifted were exactly the three that spelled the numbers
+out by hand.
