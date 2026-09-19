@@ -35,7 +35,6 @@ enforces that dated release headings go in non-increasing date order
   `stampCheckErrors` and `stampBodyCheckErrors`; verdict and digest logic
   is untouched. \#425 additionally accepts `stamp --json` as an alias for
   the machine front.
->>>>>>> 4fb49d0 (feat(#425): stamp gate failures state the fact and the action, not usage)
 ## [0.99.0] - 2026-09-19
 
 ### Added
