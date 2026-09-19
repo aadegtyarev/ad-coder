@@ -13,6 +13,27 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.78.0] - 2026-09-19
+
+### Fixed
+- **A generation truncated by the output limit is its own typed failure, not an
+  empty success or a credential claim** (issue #368). When the model spent the
+  whole output budget on reasoning and was cut off before producing an answer
+  or a tool call, the run returned `complete ... (no text)` with `isError:
+  false` -- discoverable only by reading the raw session jsonl -- because the
+  provider had answered and settled the turn `completed`, so every
+  settled-failure classification was gated behind a status check that never
+  fired. A length stop retried into a second truncation settled `failed` and
+  was misread as "verify authentication". Both shapes now classify as
+  `GenerationTruncatedError` (`generation_truncated`) at the runner and
+  conversation boundaries: the error carries only bounded fields (a
+  strict-charset stop-reason token and the truncated message's safe token
+  counts), the thinking prose stays in the session, and the advice is a raised
+  output budget or bounded thinking, then retry -- never a blind retry and
+  never "verify authentication". A text block or a tool call stays usable
+  content; an `error`/`aborted`/`pending` stop stays with the existing
+  failure classifications.
+
 ## [0.77.0] - 2026-09-19
 
 ### Fixed
@@ -47,23 +68,6 @@ enforces that dated release headings go in non-increasing date order
   `review_not_run` and `plan_not_submitted` pauses carry the same cause
   record, so a reviewer whose verdict submission was refused sees the
   validator's own wording on the retry.
-- **A generation truncated by the output limit is its own typed failure, not an
-  empty success or a credential claim** (issue #368). When the model spent the
-  whole output budget on reasoning and was cut off before producing an answer
-  or a tool call, the run returned `complete ... (no text)` with `isError:
-  false` -- discoverable only by reading the raw session jsonl -- because the
-  provider had answered and settled the turn `completed`, so every
-  settled-failure classification was gated behind a status check that never
-  fired. A length stop retried into a second truncation settled `failed` and
-  was misread as "verify authentication". Both shapes now classify as
-  `GenerationTruncatedError` (`generation_truncated`) at the runner and
-  conversation boundaries: the error carries only bounded fields (a
-  strict-charset stop-reason token and the truncated message's safe token
-  counts), the thinking prose stays in the session, and the advice is a raised
-  output budget or bounded thinking, then retry -- never a blind retry and
-  never "verify authentication". A text block or a tool call stays usable
-  content; an `error`/`aborted`/`pending` stop stays with the existing
-  failure classifications.
 
 ## [0.76.0] - 2026-09-19
 
