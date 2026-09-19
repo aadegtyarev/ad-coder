@@ -1684,6 +1684,97 @@ test("a rejected closeout verdict reaches the retrying reviewer with the validat
   expect(reviewerPrompts[0]).not.toContain("previous attempt of this stage");
 });
 
+test("a foreground resume that re-pauses updates the background registry entry (issue #363)", async () => {
+  // A background run pauses; the operator resumes it in the FOREGROUND; the
+  // resume re-pauses on a DIFFERENT record. The registry entry used to keep
+  // the STALE earlier pause while the checkpoint held the new one -- the two
+  // durable records an operator compares contradicted each other.
+  const fx = fixture();
+  const runId = "registry-repause";
+  let blocked = true;
+  let stageMaxModelTurns = 0;
+  const overbilled = {
+    provider: "faux",
+    model: "faux-1",
+    chargedUsd: 0.006,
+    expectedUsd: 0.002,
+  } as const;
+  const buildConfig = (task: string): PipelineConfig => {
+    const detector = new CostAnomalyDetector();
+    if (blocked) {
+      detector.observe(overbilled);
+      detector.observe(overbilled);
+    }
+    return {
+      ...fx.buildConfig(task),
+      coordinator: { runId },
+      ...(blocked ? { costAnomalyDetector: detector } : {}),
+      ...(stageMaxModelTurns > 0 ? { stageLimits: { maxModelTurns: stageMaxModelTurns } } : {}),
+    };
+  };
+  const core = createOrchestrator({
+    buildConfig,
+    ledgerSink: fx.sink,
+    backgroundTargetDir: fx.targetDir,
+    backgroundOwnerId: "registry-owner",
+  });
+  fx.faux.setResponses([...governedPlanTurn()]);
+  const started = core.backgroundRuns.start("implement X");
+  await core.backgroundRuns.wait(started.runId);
+  const registryPath = path.join(
+    fx.targetDir,
+    ".ad-coder",
+    "runs",
+    "background",
+    `${started.runId}.json`,
+  );
+  const before = JSON.parse(fs.readFileSync(registryPath, "utf8")) as {
+    value?: { lifecycle: string; pause?: { cause?: { code?: string } } };
+  };
+  const beforeEntry =
+    before.value ??
+    (before as unknown as { lifecycle: string; pause?: { cause?: { code?: string } } });
+  expect(beforeEntry.lifecycle).toBe("paused");
+  expect(beforeEntry.pause?.cause?.code).toBe("cost_anomaly_blocked");
+
+  // The foreground resume re-pauses on a DIFFERENT record: the stage ceiling.
+  blocked = false;
+  stageMaxModelTurns = 1;
+  fx.faux.setResponses([...governedPlanTurn()]);
+  await expect(core.resumePipeline("implement X", started.runId)).rejects.toMatchObject({
+    code: "pipeline_paused",
+    detail: started.runId,
+    pause: { phase: "plan", code: "stage_limit", limitReason: "model_turns", limit: 1 },
+  });
+
+  // The registry must now hold the NEW pause, not the stale harness cause.
+  const after = JSON.parse(fs.readFileSync(registryPath, "utf8")) as {
+    value?: {
+      lifecycle: string;
+      pause?: { code?: string; limit?: number; cause?: unknown };
+      events: { lifecycle: string; pause?: { code?: string } }[];
+    };
+  };
+  const entry =
+    after.value ??
+    (after as unknown as {
+      lifecycle: string;
+      pause?: { code?: string; limit?: number; cause?: unknown };
+      events: { lifecycle: string; pause?: { code?: string } }[];
+    });
+  expect(entry.lifecycle).toBe("paused");
+  expect(entry.pause?.code).toBe("stage_limit");
+  expect(entry.pause?.limit).toBe(1);
+  expect(entry.pause?.cause).toBeUndefined();
+  // And the re-pause is appended as its own paused event, newest last.
+  const pausedEvents = (entry.events as { lifecycle: string; pause?: { code?: string } }[]).filter(
+    (event) => event.lifecycle === "paused",
+  );
+  expect(pausedEvents.length).toBe(2);
+  expect(pausedEvents.at(-1)?.pause?.code).toBe("stage_limit");
+  await core.backgroundRuns.close();
+});
+
 const approvedPipeline: PipelineResult = {
   outcome: "approved",
   approved: true,

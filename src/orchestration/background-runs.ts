@@ -508,6 +508,40 @@ export class BackgroundRunManager {
   async wait(runId: string): Promise<void> {
     await this.owned(runId).promise;
   }
+
+  /**
+   * Project a FOREGROUND resume's re-pause onto this run's registry entry
+   * (issue #363).
+   *
+   * A foreground resume never runs through `launch`, so its new pause is
+   * recorded only in the coordinator checkpoint; without this projection the
+   * entry kept the EARLIER pause and the registry contradicted the checkpoint
+   * an operator compares it against. Ownership rules apply unchanged: a runId
+   * this manager does not hold (never started here, or a record owned by
+   * another owner) is skipped silently, and an entry with a live worker is
+   * left alone -- the worker's own catch records its pause. A stale terminal
+   * outcome is dropped: a re-paused run is not the terminal thing it was.
+   */
+  projectForegroundPause(
+    runId: string,
+    pause: PipelinePause,
+    metrics: { steps: number; totalCost: number },
+  ): void {
+    if (this.entries.get(runId) === undefined) return;
+    const entry = this.owned(runId);
+    if (entry.active) return;
+    entry.lifecycle = "paused";
+    entry.metrics = { ...metrics };
+    entry.pause = copyPause(pause);
+    entry.outcome = undefined;
+    this.append(entry, "paused", {
+      ...((PHASES as readonly string[]).includes(pause.phase)
+        ? { stage: pause.phase as StepCost["phase"] }
+        : {}),
+      pause: copyPause(pause),
+      metrics: { ...entry.metrics },
+    });
+  }
   /**
    * Subscribe to future owner-scoped, content-free lifecycle pages.
    *

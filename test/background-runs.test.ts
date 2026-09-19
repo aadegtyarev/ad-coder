@@ -720,6 +720,57 @@ test("a paused run names a recovery the operator can actually perform", () => {
   expect(detail).toContain("control resume` does not read background runs");
 });
 
+test("projectForegroundPause only touches entries this manager holds (issue #363)", async () => {
+  const targetDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-projection-")));
+  const ownerId = crypto.randomUUID();
+  const manager = new BackgroundRunManager(
+    async (_task, runId) => completedResult(runId),
+    {},
+    targetDir,
+    ownerId,
+  );
+  const { runId } = manager.start("owned run");
+  await manager.wait(runId);
+  expect(manager.status(runId).lifecycle).toBe("completed");
+
+  // A runId this manager never held is skipped silently -- no throw, no entry.
+  manager.projectForegroundPause(
+    "never-started-here",
+    { phase: "plan", code: "stage_failed", action: "resume the stage explicitly" },
+    { steps: 0, totalCost: 0 },
+  );
+  expect(manager.status(runId).lifecycle).toBe("completed");
+
+  // A held run that re-paused in the foreground becomes the pause the
+  // checkpoint now carries: the registry never contradicts the checkpoint.
+  manager.projectForegroundPause(
+    runId,
+    {
+      phase: "code",
+      code: "stage_failed",
+      action: "the stage failed inside the harness (empty_turn); resolve the recorded cause",
+      cause: { code: "empty_turn", message: "empty turn", recurrence: 1 },
+    },
+    { steps: 2, totalCost: 0.5 },
+  );
+  const status = manager.status(runId);
+  expect(status.lifecycle).toBe("paused");
+  expect(status.pause?.code).toBe("stage_failed");
+  expect(status.pause?.cause?.recurrence).toBe(1);
+  expect(status.metrics).toEqual({ steps: 2, totalCost: 0.5 });
+  // The persisted record re-parses (a paused entry carries no terminal
+  // outcome) and a fresh manager reads the projected pause.
+  const reconnected = new BackgroundRunManager(
+    async () => completedResult(runId),
+    {},
+    targetDir,
+    ownerId,
+  );
+  expect(reconnected.status(runId).pause?.cause?.code).toBe("empty_turn");
+  await reconnected.close();
+  await manager.close();
+});
+
 test("a non-ceiling resumable pause reports recovery without the ceiling raise wording", async () => {
   // The raise wording was written for the stage-ceiling class, but the
   // coordinator pauses on more classes than that: a run paused
