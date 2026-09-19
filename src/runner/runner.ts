@@ -907,7 +907,21 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
       // returning a record the caller would read as settled.
       throw new SuspendedRunError(runId);
     }
-    const diffBytes = await measureSafeGitDiffBytes(absTargetDir);
+    // The diff metric is observability, not the deliverable (issue #363): a
+    // git target with no commit (or any other reason `git diff HEAD` cannot
+    // run) must not destroy a COMPLETED stage. Catch only the runner's own
+    // typed measurement failure, record 0 bytes, and make the lost measurement
+    // visible on stderr so the settled text/followUps survive.
+    let diffBytes = 0;
+    try {
+      diffBytes = await measureSafeGitDiffBytes(absTargetDir);
+    } catch (error) {
+      if (!(error instanceof RunnerError) || error.code !== "diff_metric_failed") throw error;
+      process.stderr.write(
+        `ad-coder: diff metric unavailable for ${absTargetDir} (git diff metric failed); ` +
+          "recording diffBytes 0\n",
+      );
+    }
     params.stageLimitController?.assertActive();
     // Relay the recorded closeout when the stage entered a reserve (issue #327).
     const stageCloseout = stageLimitController?.closeout();

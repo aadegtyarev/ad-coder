@@ -509,6 +509,23 @@ test("safe diff measurement streams bytes with the exact fixed git argv", async 
   });
 });
 
+test("runRole delivers settled text when the diff metric fails on a commit-less target", async () => {
+  // A `git init` with no commits makes `git diff HEAD` exit 128 ("bad revision"),
+  // which is neither 0 (measured) nor 129 (no worktree), so measureSafeGitDiffBytes
+  // throws diff_metric_failed. The diff metric is observability, not the
+  // deliverable (issue #363): a completed coder stage must still deliver its
+  // settled text instead of being destroyed.
+  const repository = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-no-commit-"));
+  execFileSync("git", ["init", "-q"], { cwd: repository });
+  const { faux, models, model, role } = harnessFixture();
+  faux.setResponses([fauxAssistantMessage("the settled coder report")]);
+
+  const result = await runRole({ role, targetDir: repository, models, model, prompt: "fix it" });
+
+  expect(result.result.status).toBe("completed");
+  expect(result.observations?.diffBytes).toBe(0);
+});
+
 test("runRole does not invoke the summarizer when the turn fits the budget", async () => {
   const { faux, models, model, role } = harnessFixture();
   faux.setResponses([fauxAssistantMessage("done")]);
