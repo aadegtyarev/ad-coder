@@ -11,6 +11,30 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.106.0] - 2026-09-20
+
+### Fixed
+- **Testing: the owner's overtake in a background run is an observable record state, not a 500 ms clock (issue #429).**
+  `test/background-runs.test.ts` ("separate worker process refreshes owner
+  subscription with bounded recovery hints") paused on a fixed 500 ms
+  `Atomics.wait` and waited for `notices.length > 0`: on a slow CI runner the
+  worker's first post-subscribe watch refresh surfaced a pre-retention prefix
+  (exactly 4 written events -- with the owner subscribed while the record
+  already holds the `requested` event, `maxEventsPerRun=3` keeps the last 3,
+  and the owner's subscribe-seeded cursor is `entry.nextSequence - 1 = 1`,
+  while a gap page requires the oldest retained sequence
+  (`nextSequence - maxEventsPerRun`) to exceed `cursor + 1`, which first holds
+  at `nextSequence >= 6`), so the
+  asserted page was contiguous (`gap=false`, `droppedEvents=0`) and the test
+  reddened on CORRECT behaviour -- took main red on commit abbe6a7 (0.96.0) and
+  once again on the #418/#403-era CI (run 35460853873, 1 of the suite's 1087
+  tests). Now the owner waits for the record itself to show the spliced lag --
+  `nextSequence > maxEventsPerRun + 2` read from the durable record file between
+  atomic write chunks -- and only then subscribes: the first watcher refresh is
+  a gap page (`droppedEvents>0`, `gap`, `pending`) by construction, and
+  everything the test already asserts stays unchanged. File:
+  `test/background-runs.test.ts` only.
+
 ## [0.103.0] - 2026-09-20
 
 ### Fixed
