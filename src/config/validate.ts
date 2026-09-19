@@ -34,6 +34,9 @@ const PROVIDER_KEYS = new Set([
 const MODEL_KEYS = new Set([
   "input",
   "output",
+  "cacheRead",
+  "cacheWrite",
+  "maxTokens",
   "baseUrl",
   "contextWindow",
   "tools",
@@ -59,9 +62,10 @@ type Bad = (code: ConfigError["code"], detail: string, message: string) => never
  * UNKNOWN KEYS ARE REFUSED, at the top level and inside a provider and a model.
  * A hand-edited file is where a typo lives, and `contextwindow: 200000` next to
  * `contextWindow: 200000` is not a value the operator gets told about by any
- * later layer -- it is silently inert, forever. The settings the format
- * does NOT allow on a provider but does allow on a model (`contextWindow`,
- * `tools`, `format`) are refused there for the same reason; widening the
+ * later layer -- it is silently inert, forever. The settings the format does
+ * NOT allow on a provider but does allow on a model (`contextWindow`, `tools`,
+ * `format`, the cache prices `cacheRead`/`cacheWrite`, `maxTokens`) are
+ * refused there for the same reason; widening the
  * provider shape is an additive change here plus in `config/types.ts`, not a
  * key quietly ignored today. `baseUrl` IS a provider key (a provider endpoint
  * default, narrowable per model).
@@ -258,6 +262,9 @@ function parseModel(provider: string, name: string, value: unknown, bad: Bad): M
 
   const input = requirePrice(record.input, `${path}.input`, bad);
   const output = requirePrice(record.output, `${path}.output`, bad);
+  const cacheRead = optionalPrice(record.cacheRead, `${path}.cacheRead`, bad);
+  const cacheWrite = optionalPrice(record.cacheWrite, `${path}.cacheWrite`, bad);
+  const maxTokens = optionalMaxTokens(record.maxTokens, `${path}.maxTokens`, bad);
   const baseUrl = optionalString(record.baseUrl, `${path}.baseUrl`, bad);
   const format = optionalString(record.format, `${path}.format`, bad);
   const contextWindow = optionalContextWindow(record.contextWindow, `${path}.contextWindow`, bad);
@@ -270,6 +277,9 @@ function parseModel(provider: string, name: string, value: unknown, bad: Bad): M
   return {
     input,
     output,
+    ...(cacheRead !== undefined ? { cacheRead } : {}),
+    ...(cacheWrite !== undefined ? { cacheWrite } : {}),
+    ...(maxTokens !== undefined ? { maxTokens } : {}),
     ...(baseUrl !== undefined ? { baseUrl } : {}),
     ...(contextWindow !== undefined ? { contextWindow } : {}),
     ...(record.tools !== undefined ? { tools: record.tools as boolean } : {}),
@@ -450,6 +460,29 @@ function refuseUnknownKeys(
 function requirePrice(value: unknown, path: string, bad: Bad): number {
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
     bad("invalid_config", path, `${path} must be a non-negative finite number`);
+  }
+  return value as number;
+}
+
+/** An optional price with exactly `requirePrice`'s checks; absence stays absent. */
+function optionalPrice(value: unknown, path: string, bad: Bad): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  return requirePrice(value, path, bad);
+}
+
+/**
+ * An optional positive completion ceiling. No `maxTokens`-vs-`contextWindow`
+ * cross-field rule on purpose: the epic leaves that check to the operator's
+ * provider, and a positive number is all this layer can honestly assert.
+ */
+function optionalMaxTokens(value: unknown, path: string, bad: Bad): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    bad("invalid_config", path, `${path} must be a positive finite number when present`);
   }
   return value as number;
 }

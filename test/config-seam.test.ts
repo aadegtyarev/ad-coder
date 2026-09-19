@@ -8,7 +8,7 @@ import { loadModelsConfigSeam, loadSettingsConfigSeam } from "../src/config/seam
 import { toRegistryAndProfile } from "../src/config/to-registry";
 import type { SettingsConfig } from "../src/config/types";
 import { parseModelsConfig } from "../src/config/validate";
-import { parseRegistryConfig } from "../src/registry/validate";
+import { DEFAULT_CONTEXT_WINDOW, parseRegistryConfig } from "../src/registry/validate";
 import {
   checkReviewStamps,
   recordReviewStampFromResult,
@@ -532,4 +532,110 @@ test("(c) a role@complexity row replaces that tier only, keeping the bare row el
   expect(cells["coder@trivial"]).toBe("glm-5.3-flash");
   expect(cells["coder@medium"]).toBe("glm-5.3-flash");
   expect(cells["coder@complex"]).toBe("minimax-m3");
+});
+
+// ---------------------------------------------------------------------------
+// (#280) cache prices and maxTokens complete the per-model vocabulary
+
+function oneModel(model: Record<string, unknown>) {
+  return parseModelsConfig({
+    providers: {
+      "opencode-go": {
+        enabled: true,
+        api: "openai-completions",
+        baseUrl: "https://opencode.example.com",
+        credential: "OPENCODE_API_KEY",
+        models: { "glm-5.3-flash": model as never },
+      },
+    },
+    profiles: { daily: { coder: "opencode-go:glm-5.3-flash" } },
+  });
+}
+
+test("(#280) declared cacheRead/cacheWrite project into the registry cost", () => {
+  const { registry } = toRegistryAndProfile(
+    oneModel({ input: 0.15, output: 0.5, cacheRead: 0.02, cacheWrite: 0.04 }),
+    "daily",
+  );
+  expect(registry.providers[0]?.models?.[0]?.cost).toEqual({
+    input: 0.15,
+    output: 0.5,
+    cacheRead: 0.02,
+    cacheWrite: 0.04,
+  });
+});
+
+test("(#280) absent cacheRead/cacheWrite settle at zero, the only value not invented", () => {
+  const { registry } = toRegistryAndProfile(oneModel({ input: 0.15, output: 0.5 }), "daily");
+  expect(registry.providers[0]?.models?.[0]?.cost).toEqual({
+    input: 0.15,
+    output: 0.5,
+    cacheRead: 0,
+    cacheWrite: 0,
+  });
+});
+
+test("(#280) a declared maxTokens projects as the registry model's maxTokens", () => {
+  const { registry } = toRegistryAndProfile(
+    oneModel({ input: 0.15, output: 0.5, contextWindow: 131072, maxTokens: 8192 }),
+    "daily",
+  );
+  expect(registry.providers[0]?.models?.[0]?.maxTokens).toBe(8192);
+});
+
+test("(#280) an absent maxTokens keeps the window default unchanged", () => {
+  const config = oneModel({
+    input: 0.15,
+    output: 0.5,
+    contextWindow: 131072,
+  });
+  const absent = oneModel({ input: 0.15, output: 0.5 });
+  const { registry } = toRegistryAndProfile(config, "daily");
+  const { registry: second } = toRegistryAndProfile(absent, "daily");
+  // A declared window still fills maxTokens; no window at all keeps the shared
+  // 200000 ceiling -- exactly the pre-#280 defaults.
+  expect(registry.providers[0]?.models?.[0]?.maxTokens).toBe(131072);
+  expect(second.providers[0]?.models?.[0]?.maxTokens).toBe(DEFAULT_CONTEXT_WINDOW);
+});
+
+test("(#280) a non-numeric cache price is refused, naming the field path", () => {
+  expect(() => oneModel({ input: 0.15, output: 0.5, cacheRead: "free" })).toThrow(ConfigError);
+  try {
+    oneModel({ input: 0.15, output: 0.5, cacheRead: "free" });
+    expect.unreachable();
+  } catch (error) {
+    expect(error).toBeInstanceOf(ConfigError);
+    const ce = error as ConfigError;
+    expect(ce.code).toBe("invalid_config");
+    expect(ce.detail).toBe("opencode-go.models.glm-5.3-flash.cacheRead");
+    expect(ce.message).toContain("opencode-go.models.glm-5.3-flash.cacheRead");
+  }
+});
+
+test("(#280) a negative cache price is refused, naming the field path", () => {
+  expect(() => oneModel({ input: 0.15, output: 0.5, cacheWrite: -1 })).toThrow(ConfigError);
+  try {
+    oneModel({ input: 0.15, output: 0.5, cacheWrite: -1 });
+    expect.unreachable();
+  } catch (error) {
+    expect(error).toBeInstanceOf(ConfigError);
+    const ce = error as ConfigError;
+    expect(ce.code).toBe("invalid_config");
+    expect(ce.detail).toBe("opencode-go.models.glm-5.3-flash.cacheWrite");
+    expect(ce.message).toContain("opencode-go.models.glm-5.3-flash.cacheWrite");
+  }
+});
+
+test("(#280) a non-positive maxTokens is refused, naming the field path", () => {
+  expect(() => oneModel({ input: 0.15, output: 0.5, maxTokens: 0 })).toThrow(ConfigError);
+  try {
+    oneModel({ input: 0.15, output: 0.5, maxTokens: 0 });
+    expect.unreachable();
+  } catch (error) {
+    expect(error).toBeInstanceOf(ConfigError);
+    const ce = error as ConfigError;
+    expect(ce.code).toBe("invalid_config");
+    expect(ce.detail).toBe("opencode-go.models.glm-5.3-flash.maxTokens");
+    expect(ce.message).toContain("opencode-go.models.glm-5.3-flash.maxTokens");
+  }
 });

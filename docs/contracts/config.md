@@ -56,7 +56,14 @@ Rules the operator declared for ad-coder. A violation is always blocking.
   switch, a `credential` env-var NAME, and `models`), `profiles`
   (`role: provider:model`, with a `role@complexity` row REPLACING that tier
   only, and a list-valued row as an IN-ORDER fallback ladder), and an optional
-  `default:` profile. `settings.yaml` carries `review.require-stamp`
+  `default:` profile. A model row carries required `input`/`output` prices and
+  may also declare `cacheRead`/`cacheWrite` (per-token cache prices in the
+  same declared unit; they project into the registry's cost, and absent
+  settles at zero -- the only value not invented) and `maxTokens` (the
+  per-completion OUTPUT ceiling, distinct from the `contextWindow` budget; a
+  declared value projects as the registry model's `maxTokens`, absent keeps
+  the window default -- the model's window or the shared 200000 ceiling).
+  `settings.yaml` carries `review.require-stamp`
   (`on`/`off`/`auto`) and `review.cost-signature`. When `models.yaml` is
   present and no explicit provider/registry/profile/model flag or `--inventory-config`
   is given, it wins WHOLESALE over `inventories.json`; when it is ABSENT the

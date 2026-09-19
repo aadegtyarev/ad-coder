@@ -13,6 +13,21 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.79.0] - 2026-09-19
+
+### Added
+- **A model row in `models.yaml` may declare `cacheRead`/`cacheWrite` and
+  `maxTokens`, completing the per-model routing vocabulary the
+  inventories.json migration needs (issue #280).** `cacheRead`/`cacheWrite`
+  are the declared per-token cache prices, in the same declared unit as
+  `input`/`output`; they project into the registry's cost, and absent settles
+  at zero -- the only value not invented. `maxTokens` is the per-completion
+  OUTPUT ceiling, distinct from the `contextWindow` budget: a declared value
+  projects as the registry model's `maxTokens`, and absence keeps the existing
+  default of the model's window (or the shared 200000 ceiling). Both are
+  validated like the existing price fields -- a malformed value is a typed
+  `ConfigError` naming the field path (for example
+  `<provider>.models.<model>.cacheRead`), never a silently ignored key.
 ## [0.78.0] - 2026-09-19
 
 ### Fixed
