@@ -63,7 +63,17 @@ function firstModel(provider: ConfigProviderConfig): ConfigModelConfig | undefin
   return Object.values(provider.models)[0];
 }
 
-function toRegistryProvider(id: string, provider: ConfigProviderConfig): RegistryProviderConfig {
+/**
+ * Project one `models.yaml` provider into its registry declaration. Exported
+ * for `auth`'s declared-provider resolution: `auth login --provider <id>` for a
+ * non-built-in provider builds a single-provider `RegistryConfig` from exactly
+ * the same projection routing uses, so a key names the same env-var and
+ * endpoint whether it is being routed to or auth-managed.
+ */
+export function toRegistryProvider(
+  id: string,
+  provider: ConfigProviderConfig,
+): RegistryProviderConfig {
   // CREDENTIAL PROJECTION (three cases). `credential` is a NAME -- the
   // env-var the resolver reads through its injected accessor -- never a value.
   // This boundary is where the string reference becomes the registry's

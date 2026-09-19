@@ -287,6 +287,92 @@ export class FileCredentialStore implements CredentialStore {
     }));
   }
 
+  /**
+   * Synchronous snapshot of which provider ids have a stored credential.
+   *
+   * WHY SYNC. Registry resolution is synchronous and runs before any request,
+   * so its credential preflight can only consult knowledge it can obtain
+   * without awaiting; this is the seam that hands it that knowledge. No lock
+   * is taken: writes publish atomically (temp file + rename), so a lock-free
+   * concurrent read sees the old or the new file, never a truncated one.
+   *
+   * IDS ONLY. The result is a knowledge projection -- keys of the credential
+   * map, never values and never credential objects. Unlike `readAll`, the
+   * values are deliberately neither validated nor materialized here.
+   *
+   * NOFOLLOW DISCIPLINE. The final path component is lstat'd (no follow) and
+   * opened with O_NOFOLLOW, with the checks re-run on the opened descriptor;
+   * the per-component openat walk `readAll` performs is async-only machinery
+   * and is not replicated for this snapshot.
+   *
+   * A missing file (ENOENT) is an empty set. Anything else that prevents the
+   * read -- including invalid JSON, whose own error text can quote file
+   * content -- is re-thrown as a typed `credential_store` AuthError whose
+   * message names the path, never the file's contents.
+   */
+  storedProviderIds(): ReadonlySet<string> {
+    return new Set(this.readStoredIdsSync());
+  }
+
+  private readStoredIdsSync(): string[] {
+    let stat: fs.Stats;
+    try {
+      // lstat, not stat: a symlinked final component is rejected outright.
+      stat = fs.lstatSync(this.path);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw storeError(this.path, "could not read credential store", error);
+    }
+    if (
+      stat.isSymbolicLink() ||
+      !stat.isFile() ||
+      stat.nlink !== 1 ||
+      stat.uid !== process.getuid?.()
+    )
+      throw storeError(this.path, "unsafe credential file");
+    if ((stat.mode & 0o077) !== 0)
+      throw storeError(this.path, "credential file permissions are not private");
+    let fd: number | undefined;
+    try {
+      // O_NOFOLLOW closes the lstat->open symlink swap; the checks are re-run
+      // on the opened descriptor so the file actually read is the file checked.
+      fd = fs.openSync(this.path, fs.constants.O_RDONLY | NOFOLLOW);
+      const opened = fs.fstatSync(fd);
+      if (
+        opened.isSymbolicLink() ||
+        !opened.isFile() ||
+        opened.nlink !== 1 ||
+        opened.uid !== process.getuid?.()
+      )
+        throw storeError(this.path, "unsafe credential file");
+      if ((opened.mode & 0o077) !== 0)
+        throw storeError(this.path, "credential file permissions are not private");
+      const raw = fs.readFileSync(fd, "utf8");
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        // JSON.parse error text can quote the file; throw our own wording so
+        // the message carries the path, never the contents.
+        throw storeError(this.path, "credential store contains invalid JSON");
+      }
+      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+        throw storeError(this.path, "credential store root is not an object");
+      const ids: string[] = [];
+      for (const providerId of Object.keys(parsed)) {
+        validateProviderId(providerId);
+        ids.push(providerId);
+      }
+      return ids;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+      if (error instanceof AuthError) throw error;
+      throw storeError(this.path, "could not read credential store", error);
+    } finally {
+      if (fd !== undefined) fs.closeSync(fd);
+    }
+  }
+
   async modify(
     providerId: string,
     fn: (current: Credential | undefined) => Promise<Credential | undefined>,

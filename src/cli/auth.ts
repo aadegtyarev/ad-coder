@@ -6,9 +6,14 @@ import {
   defaultCredentialPath,
   FileCredentialStore,
 } from "../auth/credential-store";
+import {
+  type DeclaredProviderSource,
+  resolveDeclaredProviderRegistry,
+} from "../auth/declared-provider";
 import { getAuthStatus, login, logout } from "../auth/operations";
 import { openaiCodexPreset, openrouterPreset } from "../registry/presets";
 import { resolveRegistry } from "../registry/resolve";
+import type { RegistryConfig } from "../registry/types";
 
 export type CodexLoginMethod = "browser" | "device_code";
 
@@ -22,7 +27,14 @@ export interface AuthCommandOptions {
   /** Test/embedder seam; normal CLI resolution always uses the persistent registry models. */
   models?: Models;
   providerId?: string;
-  provider?: "openai-codex" | "openrouter";
+  provider?: string;
+  /**
+   * The declared-provider source for a non-built-in `--provider` id: models.yaml
+   * first, else inventories.json. Injectable so tests never read the real home
+   * config; both default to the XDG config home.
+   */
+  inventoryPath?: string;
+  modelsConfigPath?: string;
   write?: (text: string) => void;
 }
 
@@ -86,10 +98,28 @@ export async function runAuthCommand(options: AuthCommandOptions): Promise<void>
   assertCredentialPathOutsideProject(credentialPath, options.targetDir);
   const credentials = new FileCredentialStore({ path: credentialPath });
   const provider = options.provider ?? "openai-codex";
-  const preset = provider === "openrouter" ? openrouterPreset() : openaiCodexPreset();
-  const registry = resolveRegistry({ providers: [preset] }, { credentials });
-  const models = options.models ?? registry.models;
   const providerId = options.providerId ?? provider;
+  const source: DeclaredProviderSource = {
+    ...(options.modelsConfigPath !== undefined && { modelsConfigPath: options.modelsConfigPath }),
+    ...(options.inventoryPath !== undefined && { inventoryPath: options.inventoryPath }),
+  };
+  // Built-in providers resolve from their shipped preset; any other id is a
+  // DECLARED env-var provider resolved from models.yaml-first / inventories.json
+  // (issue #101 item 2). A declared env-var provider's login type is api_key.
+  const isBuiltIn = provider === "openai-codex" || provider === "openrouter";
+  const configured: RegistryConfig = isBuiltIn
+    ? { providers: [provider === "openrouter" ? openrouterPreset() : openaiCodexPreset()] }
+    : resolveDeclaredProviderRegistry(provider, source);
+  const loginType = provider === "openai-codex" ? "oauth" : "api_key";
+  // This registry exists to MANAGE one provider's credential (status/login/
+  // logout), so a missing key is the command's subject, not a preflight
+  // failure: declare knowledge of exactly this id and let status report
+  // "not authenticated" instead of crashing with missing_credential.
+  const registry = resolveRegistry(configured, {
+    credentials,
+    storedCredentialIds: new Set([providerId]),
+  });
+  const models = options.models ?? registry.models;
   if (options.action === "status") {
     const result = await getAuthStatus(models, providerId);
     write(
@@ -122,32 +152,31 @@ export async function runAuthCommand(options: AuthCommandOptions): Promise<void>
             }
           : supplied;
       const baseInteraction = selectedInteraction ?? (ownedInteraction as CloseableAuthInteraction);
+      // Every api_key login (openrouter AND any declared env-var provider) gets
+      // the same guards: an empty key is refused before it is stored, and the
+      // post-login read proves the key actually persisted rather than the
+      // command claiming success on a store that dropped it.
       const interaction: AuthInteraction =
-        provider === "openrouter"
+        loginType === "api_key"
           ? {
               prompt: async (prompt) => {
                 const answer = await baseInteraction.prompt(prompt);
                 if (prompt.type === "secret" && answer.trim().length === 0)
-                  throw new Error("OpenRouter API key cannot be empty");
+                  throw new Error("API key cannot be empty");
                 return answer;
               },
               notify: (event) => baseInteraction.notify(event),
             }
           : baseInteraction;
-      const result = await login(
-        models,
-        providerId,
-        provider === "openrouter" ? "api_key" : "oauth",
-        interaction,
-      );
-      if (provider === "openrouter") {
+      const result = await login(models, providerId, loginType, interaction);
+      if (loginType === "api_key") {
         const retained = await credentials.read(providerId);
         if (
           retained?.type !== "api_key" ||
           retained.key === undefined ||
           retained.key.trim().length === 0
         )
-          throw new Error("OpenRouter API key was not retained; retry login");
+          throw new Error("API key was not retained; retry login");
       }
       write(options.json ? `${JSON.stringify(result)}\n` : `${providerId}: authenticated\n`);
     } finally {

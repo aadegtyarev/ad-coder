@@ -649,6 +649,260 @@ test("auth login rejects an empty OpenRouter API key without claiming success", 
   }
 });
 
+/** A declared env-var provider id shared across the auth declared-provider tests. */
+const DECLARED_PROVIDER_ID = "myprovider";
+
+/** A minimal inventory declaring ONE env-var provider, valid for `parseModelInventoryConfig`. */
+function declaredInventoryFile(dir: string): string {
+  const file = path.join(dir, "inventories.json");
+  const entries = (
+    [
+      "orchestrator",
+      "planner",
+      "researcher",
+      "coder",
+      "reviewer",
+      "auditor",
+      "security",
+      "summarizer",
+    ] as const
+  ).flatMap((role) =>
+    (["trivial", "medium", "complex"] as const).map((complexity) => ({
+      role,
+      complexity,
+      model: "my-model",
+    })),
+  );
+  const inventory = {
+    profiles: [
+      {
+        name: "declared",
+        registry: {
+          providers: [
+            {
+              id: DECLARED_PROVIDER_ID,
+              api: "openai-completions",
+              baseUrl: "https://myprovider.example.com/v1",
+              credential: { kind: "env-var", envVar: "MYPROVIDER_API_KEY" },
+              models: [
+                {
+                  name: "my-model",
+                  modelId: "my-model",
+                  maxTokens: 4096,
+                  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                },
+              ],
+            },
+          ],
+        },
+        profile: { entries },
+      },
+    ],
+    default: "declared",
+  };
+  fs.writeFileSync(file, JSON.stringify(inventory));
+  return file;
+}
+
+/** A minimal models.yaml declaring the same env-var provider. */
+function declaredModelsYamlFile(dir: string): string {
+  const file = path.join(dir, "models.yaml");
+  const routes = [
+    "orchestrator",
+    "planner",
+    "researcher",
+    "coder",
+    "reviewer",
+    "auditor",
+    "security",
+    "summarizer",
+  ]
+    .map((role) => `    ${role}: ${DECLARED_PROVIDER_ID}:my-model`)
+    .join("\n");
+  const yaml = `providers:
+  ${DECLARED_PROVIDER_ID}:
+    enabled: true
+    api: openai-completions
+    baseUrl: https://myprovider.example.com/v1
+    credential: MYPROVIDER_API_KEY
+    models:
+      my-model: {input: 0.1, output: 0.1}
+default: declared
+profiles:
+  declared:
+${routes}
+`;
+  fs.writeFileSync(file, yaml);
+  return file;
+}
+
+test("auth manages a declared env-var provider: login stores, status hides the value, logout removes", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-declared-auth-"));
+  const priorConfigHome = process.env.XDG_CONFIG_HOME;
+  process.env.XDG_CONFIG_HOME = root;
+  const targetDir = path.join(root, "project");
+  const credentialPath = path.join(root, "private", "credentials.json");
+  fs.mkdirSync(targetDir);
+  const inventoryPath = declaredInventoryFile(root);
+  const secret = "sk-test-declared-key";
+  let output = "";
+  try {
+    await runAuthCommand({
+      action: "login",
+      provider: DECLARED_PROVIDER_ID,
+      inventoryPath,
+      credentialPath,
+      targetDir,
+      interaction: { prompt: async () => secret, notify: () => undefined },
+      write: (text) => {
+        output += text;
+      },
+    });
+    // The key was stored under the DECLARED id, and never echoed.
+    expect(output).toContain(`${DECLARED_PROVIDER_ID}: authenticated`);
+    expect(output).not.toContain(secret);
+    const stored = await new FileCredentialStore({ path: credentialPath }).read(
+      DECLARED_PROVIDER_ID,
+    );
+    expect(stored).toEqual({ type: "api_key", key: secret });
+
+    // Status reports the type without exposing any value.
+    output = "";
+    await runAuthCommand({
+      action: "status",
+      provider: DECLARED_PROVIDER_ID,
+      inventoryPath,
+      credentialPath,
+      targetDir,
+      write: (text) => {
+        output += text;
+      },
+    });
+    expect(output).toContain(`${DECLARED_PROVIDER_ID}: authenticated (api_key)`);
+    expect(output).not.toContain(secret);
+
+    // Logout removes the key and reports which provider.
+    output = "";
+    await runAuthCommand({
+      action: "logout",
+      provider: DECLARED_PROVIDER_ID,
+      inventoryPath,
+      credentialPath,
+      targetDir,
+      write: (text) => {
+        output += text;
+      },
+    });
+    expect(output).toContain(`${DECLARED_PROVIDER_ID}: logged out`);
+    expect(
+      await new FileCredentialStore({ path: credentialPath }).read(DECLARED_PROVIDER_ID),
+    ).toBeUndefined();
+  } finally {
+    if (priorConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = priorConfigHome;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("auth resolves a declared provider from models.yaml (models.yaml-first)", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-declared-yaml-auth-"));
+  const priorConfigHome = process.env.XDG_CONFIG_HOME;
+  process.env.XDG_CONFIG_HOME = root;
+  const targetDir = path.join(root, "project");
+  const credentialPath = path.join(root, "private", "credentials.json");
+  fs.mkdirSync(targetDir);
+  const modelsConfigPath = declaredModelsYamlFile(root);
+  const secret = "stored-test-key";
+  try {
+    await runAuthCommand({
+      action: "login",
+      provider: DECLARED_PROVIDER_ID,
+      modelsConfigPath,
+      credentialPath,
+      targetDir,
+      interaction: { prompt: async () => secret, notify: () => undefined },
+      write: () => undefined,
+    });
+    const stored = await new FileCredentialStore({ path: credentialPath }).read(
+      DECLARED_PROVIDER_ID,
+    );
+    expect(stored).toEqual({ type: "api_key", key: secret });
+  } finally {
+    if (priorConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = priorConfigHome;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("auth --provider rejects an unknown id naming the declared ids only", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-unknown-provider-cli-"));
+  const priorConfigHome = process.env.XDG_CONFIG_HOME;
+  process.env.XDG_CONFIG_HOME = root;
+  const targetDir = path.join(root, "project");
+  const credentialPath = path.join(root, "private", "credentials.json");
+  fs.mkdirSync(targetDir);
+  try {
+    // The CLI resolves default paths under `$XDG_CONFIG_HOME/ad-coder`, so the
+    // fixture must live there for the spawned binary to see it.
+    const configDir = path.join(root, "ad-coder");
+    fs.mkdirSync(configDir, { recursive: true });
+    declaredInventoryFile(configDir);
+    const result = runCli([
+      "auth",
+      "status",
+      "--provider",
+      "not-declared",
+      "--target-dir",
+      targetDir,
+      "--credential-path",
+      credentialPath,
+    ]);
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain("openai-codex");
+    expect(result.stderr).toContain("openrouter");
+    expect(result.stderr).toContain(DECLARED_PROVIDER_ID);
+    // ids only -- never a credential value or env-var name leaked.
+    expect(result.stderr).not.toContain("MYPROVIDER_API_KEY");
+  } finally {
+    if (priorConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = priorConfigHome;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("auth --provider validates against models.yaml-declared ids too", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-unknown-yaml-provider-cli-"));
+  const priorConfigHome = process.env.XDG_CONFIG_HOME;
+  process.env.XDG_CONFIG_HOME = root;
+  const targetDir = path.join(root, "project");
+  const credentialPath = path.join(root, "private", "credentials.json");
+  fs.mkdirSync(targetDir);
+  try {
+    const configDir = path.join(root, "ad-coder");
+    fs.mkdirSync(configDir, { recursive: true });
+    declaredModelsYamlFile(configDir);
+    const result = runCli([
+      "auth",
+      "status",
+      "--provider",
+      "not-declared",
+      "--target-dir",
+      targetDir,
+      "--credential-path",
+      credentialPath,
+    ]);
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain("openai-codex");
+    expect(result.stderr).toContain("openrouter");
+    expect(result.stderr).toContain(DECLARED_PROVIDER_ID);
+    expect(result.stderr).not.toContain("MYPROVIDER_API_KEY");
+  } finally {
+    if (priorConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = priorConfigHome;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("operations exposes FollowUp, documentation, and backlog APIs as JSON", () => {
   const target = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-operations-cli-"));
   fs.mkdirSync(path.join(target, "docs"));

@@ -24,6 +24,17 @@ export interface ResolveOptions {
   env?: (name: string) => string | undefined;
   credentials?: CredentialStore;
   /**
+   * Set of provider ids known to have a stored credential in the injected
+   * `credentials` store. Absent = storage unavailable or unknowable (env-only
+   * preflight, exactly as today); a foreign/injected store without a snapshot
+   * stays env-only because its read is async and this resolver is sync. The
+   * set is a claim about which ids MAY resolve a stored key, not a grant of
+   * credential access -- the actual stored-key retrieval is still pi-ai's
+   * `credentials.read(id)` against the injected store, so an id in the set
+   * with nothing actually stored simply fails that read at request time.
+   */
+  storedCredentialIds?: ReadonlySet<string>;
+  /**
    * Value for the `{{session}}` placeholder in declared headers. Defaults to a
    * fresh random identifier; injectable so a test asserts on a known value and
    * a caller that already owns a run identity can reuse it.
@@ -94,6 +105,7 @@ export function resolveRegistry(
       models,
       readEnv,
       options?.credentials !== undefined,
+      options?.storedCredentialIds,
       session,
     );
     for (const model of provider.models) {
@@ -137,6 +149,7 @@ function registerProvider(
   models: ReturnType<typeof createModels>,
   readEnv: (name: string) => string | undefined,
   hasCredentialStore: boolean,
+  storedCredentialIds: ReadonlySet<string> | undefined,
   session: string,
 ): string {
   if (provider.credential.kind === "oauth") {
@@ -147,7 +160,15 @@ function registerProvider(
 
   const envVar = provider.credential.envVar;
   const key = readEnv(envVar);
-  const canUseStoredCredential = hasCredentialStore && provider.id === "openrouter";
+  // The knowledge set is the gate; `hasCredentialStore` only guards that the
+  // set speaks about the injected store (a store without a snapshot must not
+  // widen admission, and `undefined && ...` keeps the env-only preflight). An
+  // id in the set MAY resolve a stored key -- pi-ai's envApiKeyAuth.resolve
+  // still reads the real injected store, so a spoofed id with nothing stored
+  // simply fails that read. An OR here would make ANY injected store admit
+  // EVERY env-var provider and silently kill this preflight.
+  const canUseStoredCredential =
+    hasCredentialStore && storedCredentialIds?.has(provider.id) === true;
   if ((key === undefined || key === "") && !canUseStoredCredential) {
     // Load-bearing: envApiKeyAuth.resolve returns undefined (not throw) on a
     // missing key, so without this preflight a missing key would surface only as

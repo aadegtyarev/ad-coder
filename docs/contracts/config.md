@@ -50,6 +50,22 @@ Rules the operator declared for ad-coder. A violation is always blocking.
   built-in OpenAI profile when the file is absent; upgrades never overwrite an
   existing user-owned file. Explicit provider, registry, profile, or model flags
   remain non-persistent per-run overrides.
+- 2026-09-19: **Stored credentials and per-role overrides for any declared
+  env-var provider (issue #101).** Stored-credential admission is keyed by the
+  resolver's knowledge set for any declared env-var provider: a credential
+  store that produces a snapshot admits exactly the ids it names, and a store
+  without a snapshot stays env-only (its key must arrive via the environment).
+  `ad-coder auth` (login/status/logout) covers declared env-var providers,
+  sourced `models.yaml`-first then `inventories.json` -- the same precedence
+  routing uses -- and a declared env-var provider resolves as an `api_key`
+  login with the same empty-key refusal and post-login retention check as the
+  shipped `openrouter` preset. Per-role model overrides (`--coder-model` and
+  the rest of the role-model family) COMPOSE with a selected inventory: pinning
+  one role's model keeps the selected registry/profile and overrides only that
+  role, instead of being refused or silently disabling the inventory. An
+  override naming a model the selected inventory does not register is a typed
+  `unknown_model` error naming BOTH the inventory/profile name and the override
+  model.
 - 2026-09-19: **The operator-facing routing config is `models.yaml` and the
   behaviour config is `settings.yaml` (issue #280).** `models.yaml` declares
   `providers` (each with an optional provider-level `baseUrl`, an `enabled`
@@ -75,7 +91,8 @@ Rules the operator declared for ad-coder. A violation is always blocking.
   names need no alias table; a credential is declared per provider as an
   env-var NAME and translated at the projection boundary to the registry
   `{ kind: "env-var", envVar }` shape (stored-credential support and `ad-coder
-  auth` coverage remain future work). An enabled provider MUST declare a
+  auth` coverage for declared env-var providers followed in the #101 entry
+  above). An enabled provider MUST declare a
   credential and a resolvable endpoint (a provider-level or model-level
   `baseUrl`); `baseUrl` and `concurrency` both follow provider-declares/
   model-narrows. Only a ladder's FIRST rung is served today (the runtime walk

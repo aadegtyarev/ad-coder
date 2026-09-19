@@ -42,6 +42,7 @@ import { buildReadProjectTool, READ_PROJECT_TOOL_NAME } from "../project-tools/r
 import { buildSearchProjectTool, SEARCH_PROJECT_TOOL_NAME } from "../project-tools/search";
 import { resolvePrompt } from "../prompts/prompts";
 import type { ResearchPurpose, RoleBriefSource } from "../prompts/role-briefs";
+import { RegistryError } from "../registry/errors";
 import { deepseekPreset, openaiCodexPreset, openrouterPreset } from "../registry/presets";
 import { resolveRegistry } from "../registry/resolve";
 import type {
@@ -481,6 +482,12 @@ function resolveConfig(
   if (options.registryConfig !== undefined && options.provider !== undefined) {
     throw new Error("provider cannot be combined with registryConfig");
   }
+  // The `--<role>-model` family COMPOSES with an inventory (issue #101 item 3):
+  // pinning one role's model must not drop the operator's selected registry, so
+  // those flags are deliberately absent from this guard. What stays forbidden
+  // with `inventoryConfig` is everything that REPLACES the inventory wholesale:
+  // provider, profile, the strong/mid/cheap tier names, registryConfig, and raw
+  // `overrides`.
   if (
     options.inventoryConfig !== undefined &&
     [
@@ -490,15 +497,6 @@ function resolveConfig(
       options.strongModel,
       options.midModel,
       options.cheapModel,
-      options.plannerModel,
-      options.researcherModel,
-      options.securityModel,
-      options.coderModel,
-      options.reviewerModel,
-      options.auditorModel,
-      options.orchestratorModel,
-      options.summarizerModel,
-      options.visionModel,
       options.overrides,
     ].some((value) => value !== undefined)
   ) {
@@ -525,6 +523,11 @@ function resolveConfig(
   if (credentials instanceof FileCredentialStore) {
     assertCredentialPathOutsideProject(credentials.path, options.targetDir);
   }
+  // Sync snapshot of the stored-credential knowledge set (ids only). Only the
+  // shipped store can produce it: a foreign/injected store keeps `undefined`,
+  // so every provider it serves keeps the env-only preflight.
+  const storedIds =
+    credentials instanceof FileCredentialStore ? credentials.storedProviderIds() : undefined;
 
   // Behaviour settings (`settings.yaml`) reach BOTH stamp consumers through one
   // resolution, so the settle writer and the `stamp check` gate can never
@@ -536,10 +539,13 @@ function resolveConfig(
   const requireStamp = resolveStampRequirement(settingsConfig);
 
   // THE STORED-CONFIG SEAM (issue #280). YAML-first, never silent. The branch
-  // is entered only when `inventoryConfig` is absent AND no independent model
-  // override is in play (the exact complement of the combination guard above).
-  // `models.yaml` present -> it wins; a present-but-unusable YAML is a typed
-  // error; absent -> the existing `inventories.json` path, unchanged.
+  // is entered only when `inventoryConfig` is absent AND no independent
+  // REPLACE-semantic override is in play (the exact complement of the
+  // combination guard above). The `--<role>-model` family composes instead of
+  // disabling (issue #101 item 3): pinning one role's model keeps the stored
+  // routing config and overrides just that role. `models.yaml` present -> it
+  // wins; a present-but-unusable YAML is a typed error; absent -> the existing
+  // `inventories.json` path, unchanged.
   const useStoredConfig =
     options.inventoryConfig === undefined &&
     options.modelsConfigPath !== undefined &&
@@ -550,15 +556,6 @@ function resolveConfig(
       options.strongModel,
       options.midModel,
       options.cheapModel,
-      options.plannerModel,
-      options.researcherModel,
-      options.securityModel,
-      options.coderModel,
-      options.reviewerModel,
-      options.auditorModel,
-      options.orchestratorModel,
-      options.summarizerModel,
-      options.visionModel,
       options.overrides,
     ].some((value) => value !== undefined);
 
@@ -589,6 +586,7 @@ function resolveConfig(
       inventory = resolveModelInventory(rawInventoryConfig, options.inventoryProfile, {
         env,
         credentials,
+        ...(storedIds !== undefined && { storedCredentialIds: storedIds }),
       });
     }
   } else if (options.inventoryConfig !== undefined) {
@@ -596,6 +594,7 @@ function resolveConfig(
     inventory = resolveModelInventory(options.inventoryConfig, options.inventoryProfile, {
       env,
       credentials,
+      ...(storedIds !== undefined && { storedCredentialIds: storedIds }),
     });
   }
 
@@ -656,7 +655,12 @@ function resolveConfig(
   }
 
   const registry: ResolvedRegistry =
-    inventory?.registry ?? resolveRegistry(registryConfig, { env, credentials });
+    inventory?.registry ??
+    resolveRegistry(registryConfig, {
+      env,
+      credentials,
+      ...(storedIds !== undefined && { storedCredentialIds: storedIds }),
+    });
   for (const configuredProvider of registryConfig.providers) {
     const credentialName =
       configuredProvider.credential.kind === "env-var"
@@ -732,6 +736,39 @@ function resolveConfig(
   const overrides = { ...options.overrides };
   for (const [role, model] of Object.entries(explicitModels)) {
     overrides[role as ProfileRole] = { model };
+  }
+
+  // Per-role model overrides COMPOSE with an inventory, so an override naming a
+  // model the selected inventory's registry does not register must fail HERE,
+  // naming both the inventory/profile and the override model, instead of
+  // surfacing later as the generic `unknown_model` (which no longer names the
+  // selection that made the name wrong). The preset path (no inventory) keeps
+  // the registry's own error, unchanged.
+  const inventorySelectionName = inventory?.name ?? yamlSelection?.name;
+  if (inventorySelectionName !== undefined) {
+    const registered = (name: string): boolean => {
+      try {
+        registry.getModel(name);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    for (const [role, override] of Object.entries(overrides)) {
+      if (override === undefined || registered(override.model)) continue;
+      throw new RegistryError(
+        "unknown_model",
+        override.model,
+        `override model "${override.model}" for role "${role}" is not registered by the selected inventory "${inventorySelectionName}"`,
+      );
+    }
+    if (options.visionModel !== undefined && !registered(options.visionModel)) {
+      throw new RegistryError(
+        "unknown_model",
+        options.visionModel,
+        `override model "${options.visionModel}" for role "vision" is not registered by the selected inventory "${inventorySelectionName}"`,
+      );
+    }
   }
 
   // Every role resolves through here, so the banner reports exactly the route

@@ -1,6 +1,12 @@
 import { expect, test } from "bun:test";
+import type { CredentialStore } from "@earendil-works/pi-ai";
 import type { ModelInventoryConfig, Profile, RegistryConfig } from "ad-coder";
-import { ModelInventoryError, parseModelInventoryConfig, resolveModelInventory } from "ad-coder";
+import {
+  ModelInventoryError,
+  parseModelInventoryConfig,
+  RegistryError,
+  resolveModelInventory,
+} from "ad-coder";
 
 function registry(name = "model-a", envVar = "INVENTORY_TEST_KEY"): RegistryConfig {
   return {
@@ -53,6 +59,38 @@ test("validates and resolves a named atomic registry/profile pair", () => {
   });
   expect(JSON.stringify(resolved.summary)).not.toContain("secret-value");
   expect(JSON.stringify(resolved.summary)).not.toContain("BACKUP_KEY");
+});
+
+test("storedCredentialIds threads through to the registry preflight", async () => {
+  // Direct callers of resolveModelInventory own the same seam resolveConfig
+  // does: without the knowledge set the injected store's async read is
+  // invisible to the sync preflight and the resolution must fail loud.
+  const credentials: CredentialStore = {
+    read: async (providerId) =>
+      providerId === "provider-model-a" ? { type: "api_key", key: "stored-test-key" } : undefined,
+    list: async () => [],
+    modify: async (_providerId, fn) => fn(undefined),
+    delete: async () => undefined,
+  };
+  const admitted = resolveModelInventory(inventory(), undefined, {
+    env: () => undefined,
+    credentials,
+    storedCredentialIds: new Set(["provider-model-a"]),
+  });
+  const auth = await admitted.registry.models.getAuth("provider-model-a");
+  expect(auth?.auth.apiKey).toBe("stored-test-key");
+  expect(auth?.source).toBe("stored credential");
+
+  let thrown: unknown;
+  try {
+    resolveModelInventory(inventory(), undefined, { env: () => undefined, credentials });
+    throw new Error("expected throw");
+  } catch (error) {
+    thrown = error;
+  }
+  expect(thrown).toBeInstanceOf(RegistryError);
+  expect((thrown as RegistryError).code).toBe("missing_credential");
+  expect((thrown as RegistryError).detail).toBe("INVENTORY_TEST_KEY");
 });
 
 test("uses the optional default and requires selection when absent", () => {

@@ -8,6 +8,8 @@ import { loadModelsConfigSeam, loadSettingsConfigSeam } from "../src/config/seam
 import { toRegistryAndProfile } from "../src/config/to-registry";
 import type { SettingsConfig } from "../src/config/types";
 import { parseModelsConfig } from "../src/config/validate";
+import { RegistryError } from "../src/registry/errors";
+import type { RegistryConfig } from "../src/registry/types";
 import { DEFAULT_CONTEXT_WINDOW, parseRegistryConfig } from "../src/registry/validate";
 import {
   checkReviewStamps,
@@ -25,6 +27,29 @@ const silent = (): void => {};
 
 function fakeEnv(vars: Record<string, string>): (name: string) => string | undefined {
   return (name: string) => vars[name];
+}
+
+/** A minimal standalone registry for the no-inventory (preset) path. */
+function defaultRegistry(): RegistryConfig {
+  return {
+    providers: [
+      {
+        id: "local",
+        api: "openai-completions",
+        baseUrl: "https://localhost.example/v1",
+        credential: { kind: "env-var", envVar: "LOCAL_KEY" },
+        models: [
+          {
+            name: "local-model",
+            modelId: "local-model",
+            contextWindow: 32000,
+            maxTokens: 4096,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          },
+        ],
+      },
+    ],
+  };
 }
 
 /**
@@ -475,6 +500,85 @@ test("(a) only-JSON keeps the existing inventory path when models.yaml is absent
     expect(config.delegatedRoute?.source).toBe('inventory "json-profile"');
     expect(config.effectiveConfig?.inventoryProfile?.source).toBe("default");
     expect(config.effectiveConfig?.inventoryProfile?.value).toBe("json-profile");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("(a2) a role-model flag keeps the models.yaml seam entered, overriding just that role", () => {
+  const dir = scratch();
+  try {
+    // Two models so the coder override lands on a model the daily profile does
+    // not otherwise route: composition must not disable the stored seam.
+    const twoModels = modelsYaml().replace(
+      "models:\n      glm-5.3-flash: {input: 0.15, output: 0.5}\n",
+      "models:\n      glm-5.3-flash: {input: 0.15, output: 0.5}\n      glm-5.3-pro: {input: 0.5, output: 2.0}\n",
+    );
+    const modelsPath = writeModels(dir, twoModels);
+    writeInventory(dir, "json-profile");
+    const config = resolvePipelineConfig({
+      task: "x",
+      targetDir: dir,
+      modelsConfigPath: modelsPath,
+      inventoryPath: path.join(dir, "inventories.json"),
+      settingsConfigPath: path.join(dir, "settings.yaml"),
+      coderModel: "glm-5.3-pro",
+      env: fakeEnv({ OPENCODE_API_KEY: "k" }),
+      warn: silent,
+    });
+    // The seam stays ENTERED (models.yaml won), not disabled by the role flag.
+    expect(config.delegatedRoute?.source).toBe('models.yaml "daily"');
+    expect(config.effectiveConfig?.inventoryProfile?.source).toBe("models.yaml");
+    // The override pinches just the coder cell; the planner still takes the
+    // profile's own route.
+    expect(config.roles.coder.model.name).toBe("glm-5.3-pro");
+    expect(config.roles.planner?.model.name).toBe("glm-5.3-flash");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("(a3) an override naming an unregistered model with an inventory selected is a typed error naming both", () => {
+  const dir = scratch();
+  try {
+    const inventoryPath = writeInventory(dir, "json-profile");
+    try {
+      resolvePipelineConfig({
+        task: "x",
+        targetDir: dir,
+        inventoryConfig: JSON.parse(fs.readFileSync(inventoryPath, "utf8")),
+        coderModel: "not-registered",
+        env: fakeEnv({ JSON_KEY: "k" }),
+        warn: silent,
+      });
+      expect.unreachable();
+    } catch (error) {
+      // Typed `unknown_model` naming BOTH the inventory/profile and the override.
+      expect(error).toBeInstanceOf(RegistryError);
+      const re = error as RegistryError;
+      expect(re.code).toBe("unknown_model");
+      expect(re.detail).toBe("not-registered");
+      expect(re.message).toContain('inventory "json-profile"');
+      expect(re.message).toContain('"not-registered"');
+    }
+    // The preset path (no inventory) keeps the registry's own error, which does
+    // NOT name an inventory: it is the existing generic `unknown_model`/profile
+    // refusal, unchanged.
+    try {
+      resolvePipelineConfig({
+        task: "x",
+        targetDir: dir,
+        registryConfig: defaultRegistry(),
+        coderModel: "not-registered",
+        env: fakeEnv({ LOCAL_KEY: "k" }),
+        warn: silent,
+      });
+      expect.unreachable();
+    } catch (error) {
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).not.toContain("inventory");
+      expect((error as Error).message).toContain("not-registered");
+    }
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

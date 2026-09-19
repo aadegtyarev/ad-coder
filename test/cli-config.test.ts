@@ -1057,16 +1057,37 @@ test("named inventory selects one atomic registry/profile pair and rejects sourc
       warn: silent,
     }),
   ).toThrow("cannot be combined");
+  // A per-role model flag COMPOSES with the inventory (issue #101 item 3): it
+  // keeps the selected registry/profile and overrides only that role, rather
+  // than being refused as a source-mixing combination the way a REPLACE-semantic
+  // override (registryConfig, raw overrides) is.
+  const composed = resolvePipelineConfig({
+    task: "x",
+    targetDir: "/tmp",
+    inventoryConfig: inventory,
+    coderModel: "large",
+    compactionMode: "disabled-then-halt",
+    env: fakeEnv({ LOCAL_KEY: "k" }),
+    warn: silent,
+  });
+  // The inventory is kept (its profile still routes the other roles), the coder
+  // role alone is overridden to the registered "large" model.
+  expect(composed.effectiveConfig?.inventoryProfile).toEqual({
+    value: "primary",
+    source: "default",
+  });
+  expect(composed.roles.coder.model.id).toBe("large");
+  expect(composed.roles.planner?.model.id).toBe("large");
   expect(() =>
     resolvePipelineConfig({
       task: "x",
       targetDir: "/tmp",
       inventoryConfig: inventory,
-      coderModel: "large",
+      coderModel: "does-not-exist",
       env: fakeEnv({ LOCAL_KEY: "k" }),
       warn: silent,
     }),
-  ).toThrow("cannot be combined");
+  ).toThrow(/not registered by the selected inventory/);
   expect(() =>
     resolvePipelineConfig({
       task: "x",
