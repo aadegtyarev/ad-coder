@@ -9,33 +9,33 @@ arguments or drowning in implementation noise?
 - A long-running role reports semantic progress such as `Read`, `Search`, `Edit`,
   `Run`, `Web`, and `Inspect image`, including completion or failure. A heartbeat
   remains the fallback when no new activity is available.
-- Human output groups repeated activity into a compact, incrementally updated
-  summary. It does not print every low-level event or force the user to infer that
-  the process is still alive.
-- Machine mode exposes a stable event schema and keeps final-result stdout
-  unpolluted. Consumers can correlate events with the role, run, turn, tool call,
-  and parent operation without parsing prose.
-- 2026-09-16: Event projections are bounded, and they name the SUBJECT a tool is
-  acting on: the path read or written, the command run, the URL fetched, the
-  query searched, and the line counts an edit moves. The operator needs these to
-  see a role going the wrong way before it gets there. A path is not a secret to
-  the person whose repository it is, and anyone able to start ad-coder can
-  already read every file on the machine -- the former rule replaced such values
-  with "unknown", which protected nothing and hid the only thing worth watching.
-- Projections never include the CONTENT a tool returns or carries: file bodies,
-  command output, response bodies, prompts. That is where a secret the operator
-  never asked for actually surfaces. Credential-shaped VALUES inside a projected
-  command or URL are replaced (`echo API_KEY=***`) while the shape stays
-  readable, because terminal scrollback gets screenshotted and pasted.
-- Tool lifecycle reporting is truthful: requested, started, completed, failed,
-  cancelled, and timed out are distinct. Missing instrumentation never fabricates
-  completion, and dropped events are counted visibly.
+- Human output groups repeated activity into a compact, incrementally updated summary. It does not print every
+  low-level event or force the user to infer that the process is still alive.
+- Machine mode exposes a stable event schema and keeps final-result stdout unpolluted. Consumers can correlate
+  events with the role, run, turn, tool call, and parent operation without parsing prose.
+- 2026-09-16: Event projections are bounded, and they name the SUBJECT a tool is acting on: the path read
+  or written, the command run, the URL fetched, the query searched, the line counts an edit moves -- what the
+  operator needs to see a role going the wrong way before it gets there. A path is not a secret to the person
+  whose repository it is, and anyone able to start ad-coder can already read every file on the machine -- the
+  former rule replaced such values with "unknown", which protected nothing and hid the only thing worth watching.
+- Projections never include the CONTENT a tool returns or carries: file bodies, command output, response
+  bodies, prompts. That is where a secret the operator never asked for actually surfaces. Credential-shaped
+  VALUES inside a projected command or URL are replaced (`echo API_KEY=***`) while the shape stays readable,
+  because terminal scrollback gets screenshotted and pasted.
+- Tool lifecycle reporting is truthful: requested, started, completed, failed, cancelled, and timed out are
+  distinct. Missing instrumentation never fabricates completion, and dropped events are counted visibly.
 - Detached background pipelines may additionally emit owner-scoped,
   content-free bounded lifecycle pages through a headless subscription. These
   notices are tail-only hints, expose pending or dropped events visibly, and
   always preserve explicit cursor polling as reconnect recovery. Console notice
   callbacks are rendering-only: they never enqueue conversational input or call a
   model/session turn, and JSON notices stay on complete stderr lines.
+- 2026-09-19: A `load_skill` event projects the skill id it TARGETED as `skillId` -- an IDENTIFIER in the
+  same class as the tool name the record already carries, never call arguments, never task text, never
+  payload -- so the ledger rule "tool NAMES and COUNTS only -- never call arguments" (src/ledger/types.ts)
+  stays true, and this is a bounded additive field on the projection, not a payload carrier. The
+  skill-trigger verification must attribute a load to a skill without the ledger carrying payloads, so an
+  unreadable target projects the explicit marker "unknown": an unattributable load is a finding, never a pass.
 - 2026-09-17: The rendered activity line names the SUBJECT, the WORKER, and the
   PRICE. A compound command is identified by its first meaningful command
   (`git status`, not a 120-character prefix) with a visible `…` marker when
