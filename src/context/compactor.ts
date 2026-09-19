@@ -1,22 +1,34 @@
-import type { AgentMessage, Hooks } from "@earendil-works/pi-agent-core";
-import {
-  createCompactionSummaryMessage,
-  estimateContextTokens,
-  estimateTokens,
+import type {
+  AgentMessage,
+  CompactionPreparation,
+  CompactionSettings,
+  CompactResult,
+  FileOperations,
+  HookInvocation,
+  Hooks,
 } from "@earendil-works/pi-agent-core";
+import { estimateContextTokens, estimateTokens } from "@earendil-works/pi-agent-core";
 import type { Api, Message, Model, Models } from "@earendil-works/pi-ai";
 import { resolvePrompt } from "../prompts/prompts";
+import { AdmissionCancelledError, QueueSaturatedError } from "../provider-admission";
+import { ProviderLimitError, ProviderQuotaError } from "../runner/errors";
 import type { ContextBudget } from "./budget";
 import { ContextBudgetError } from "./budget";
 
-const HOOK_ID = "ad-coder/context-compactor";
+const HOOK_ID = "ad-coder/durable-compaction";
 
 /**
  * The seam that turns an evicted conversation head into a single summary
  * string. Injected exactly like the Ledger's sink: the compactor never calls a
  * provider itself, so tests hand it a fake and nothing touches the network.
+ *
+ * `previousSummary` is the summary the previous compaction left behind. The
+ * evicted head does NOT include it (`prepareCompaction` starts from the
+ * previous compaction entry's retained tail), so a summarizer that ignores this
+ * argument silently drops everything older than the current threshold window --
+ * the task, its acceptance criteria, and every path the run had established.
  */
-export type Summarizer = (messages: AgentMessage[]) => Promise<string>;
+export type Summarizer = (messages: AgentMessage[], previousSummary?: string) => Promise<string>;
 
 export type CompactionMode = "auto" | "cache-aware" | "disabled-then-halt";
 
@@ -95,11 +107,18 @@ export class SummarizerUnavailableError extends Error {
 
 /** Build a one-shot, no-tool summarizer over the caller's existing Models boundary. */
 export function createSummarizer(models: Models, model: Model<Api>): Summarizer {
-  return async (messages) => {
+  return async (messages, previousSummary) => {
     const providerMessages = standardMessages(messages);
+    // The previous summary rides the SYSTEM prompt, never the message list: it
+    // is an instruction about what the summary below has to preserve, not a turn
+    // anyone took. A later turn must never be able to read it as operator input.
+    const systemPrompt =
+      previousSummary === undefined
+        ? SUMMARIZATION_PROMPT
+        : `${SUMMARIZATION_PROMPT}\n\n<previous-summary>\n${previousSummary}\n</previous-summary>`;
     const measured =
       estimateContextTokens(providerMessages).tokens +
-      estimateTokens({ role: "user", content: SUMMARIZATION_PROMPT, timestamp: 0 });
+      estimateTokens({ role: "user", content: systemPrompt, timestamp: 0 });
     if (measured > model.contextWindow) {
       throw new SummarizerUnavailableError(
         "oversized",
@@ -110,7 +129,7 @@ export function createSummarizer(models: Models, model: Model<Api>): Summarizer 
     const response = await models.completeSimple(
       model,
       {
-        systemPrompt: SUMMARIZATION_PROMPT,
+        systemPrompt,
         messages: providerMessages,
         tools: [],
       },
@@ -182,6 +201,10 @@ export function resolveCompactionPolicy(
  * `keepRecentTokens`. For a non-empty input the tail is never empty: the final
  * message is always kept, even when it alone exceeds `keepRecentTokens`, so the
  * pre-flight's "irreducible tail" is a real floor.
+ *
+ * The durable compaction below keeps its own tail (`findCutPoint`, upstream);
+ * this copy is what the PRE-FLIGHT measures, so a turn whose irreducible tail
+ * cannot fit is refused before a provider call rather than after one.
  */
 export function selectRecentTail(
   messages: AgentMessage[],
@@ -203,14 +226,35 @@ export function selectRecentTail(
 }
 
 /**
- * How many summarization attempts a session gets before its context is declared
- * lost. One was not enough: every failure observed on 2026-09-19 was a provider
- * outage or a daily-limit refusal -- transient by nature -- and the one-strike
- * rule turned each into a permanently unusable session (issue #391). Two bounds
- * what a determinedly broken summarizer can spend while still surviving a
- * hiccup on the next turn.
+ * Map a role's own context budget onto the harness's durable compaction.
+ *
+ * The harness compacts when the measured context exceeds
+ * `contextWindow - reserveTokens`; ad-coder's policy compacts at
+ * `maxTokens - reserveTokens`. Equating the two thresholds is the whole
+ * mapping, and it is why the harness reserve is NOT the role's reserve:
+ *
+ *   reserve(harness) = contextWindow - (maxTokens - reserve(budget))
+ *
+ * In the shipped default (maxTokens = 0.9 x window, reserve = 0.1 x window) the
+ * harness reserve comes out at 0.2 x window, and both strategies fire at
+ * 0.8 x window. `keepRecentTokens` maps verbatim -- it is the same idea in both
+ * (the recent tail a compaction never evicts).
+ *
+ * The clamp matters for a role paired at call time with a model smaller than
+ * the one it was defined against: there `maxTokens - reserve` can exceed the
+ * runtime window, and a negative reserve would make `shouldCompact` compare
+ * against a threshold below the window instead of at it.
  */
-export const COMPACTION_ATTEMPT_LIMIT = 2;
+export function durableCompactionSettings(
+  budget: ContextBudget,
+  contextWindow: number,
+): CompactionSettings {
+  return {
+    enabled: true,
+    reserveTokens: Math.max(0, contextWindow - (budget.maxTokens - budget.reserveTokens)),
+    keepRecentTokens: budget.keepRecentTokens,
+  };
+}
 
 /**
  * One failed summarization attempt, attributed by NAME AND NUMBER ONLY -- the
@@ -282,9 +326,10 @@ export function describeCompactionFailure(failure: CompactionFailure | undefined
 }
 
 /**
- * The session's context can no longer be summarized. Raised by `assertHealthy`
- * once the attempt limit is spent, so the operator is told a session is over
- * instead of being advised to retry a turn that cannot succeed.
+ * The session's context can no longer be summarized. Raised at the settled-run
+ * boundary when the harness's own compaction operation failed, so the operator
+ * is told a session is over instead of being advised to retry a turn that
+ * cannot succeed.
  *
  * Extends `ContextBudgetError` because it is the same condition seen from the
  * far side: a context that cannot fit and can no longer be compacted.
@@ -310,7 +355,8 @@ export class ContextCompactionLostError extends ContextBudgetError {
       keepRecentTokens: fields.budget.keepRecentTokens,
       measuredTokens: fields.measuredTokens,
       reason:
-        `summarization failed ${fields.failures.length} times ` +
+        `summarization failed ${fields.failures.length} ` +
+        `${fields.failures.length === 1 ? "time" : "times"} ` +
         `(last: ${describeCompactionFailure(fields.failures[fields.failures.length - 1])}); ` +
         `this session can no longer compact`,
       // Never the default "then retry" tail: the same process cannot summarize
@@ -332,124 +378,236 @@ export class ContextCompactionLostError extends ContextBudgetError {
 }
 
 /**
- * A `transform_context` handler that keeps a turn inside the role's budget by
- * summarizing the evicted head through the injected `Summarizer` and rebuilding
- * `[summary, ...recent tail]`. It does NOT throw on a summarizer failure: the
- * harness aggregate catches and discards a handler throw, so a failure is
- * counted and warned (numbers and names only) and the messages pass through
- * untransformed instead.
- *
- * A failure is survivable: the next turn attempts summarization again, up to
- * `COMPACTION_ATTEMPT_LIMIT` attempts, and a success clears the record. Past
- * the limit `assertHealthy` refuses every later turn with
- * `ContextCompactionLostError` -- a stop that names the cause and the way out
- * rather than a dead end.
+ * The failure codes pi-agent-core settles a run with when its own compaction
+ * operation could not produce a summary. `summarization_failed` is the provider
+ * refusing the summary (after the harness's own retries), `compaction_declined`
+ * is an overflow compaction the hook or the boundary refused, and
+ * `structural_interrupted` is a compaction attempt whose external outcome is
+ * unknown after a process death -- the same "reopen the session" answer.
  */
-export class ContextCompactor {
-  private readonly budget: ContextBudget;
-  private readonly summarizer: Summarizer;
-  private readonly scope: { provider: string; model: string } | undefined;
-  private failures: CompactionFailure[] = [];
+const COMPACTION_FAILURE_CODES = new Set([
+  "summarization_failed",
+  "compaction_declined",
+  "structural_interrupted",
+]);
 
-  constructor(deps: {
+/**
+ * Type a settled run failure as the compaction stop when that is what it is.
+ *
+ * The harness reports the failure as `{code, message}` and its message carries
+ * provider prose, so only the CODE is read. Everything else in the record is
+ * built from numbers ad-coder already owns: the role's budget, the runtime
+ * window, and the summarizer's provider/model names.
+ */
+export function compactionLostErrorFrom(
+  error: unknown,
+  fields: {
+    role: string;
     budget: ContextBudget;
-    summarizer: Summarizer;
-    /** The model the summarizer calls, recorded on failure. Names only. */
-    summarizerScope?: { provider: string; model: string };
-  }) {
-    this.budget = deps.budget;
-    this.summarizer = deps.summarizer;
-    this.scope = deps.summarizerScope;
-  }
+    contextWindow: number;
+  },
+): ContextCompactionLostError | undefined {
+  const code =
+    typeof error === "object" && error !== null ? (error as { code?: unknown }).code : undefined;
+  if (typeof code !== "string" || !COMPACTION_FAILURE_CODES.has(code)) return undefined;
+  return new ContextCompactionLostError({
+    role: fields.role,
+    budget: fields.budget,
+    measuredTokens: fields.budget.maxTokens,
+    contextWindow: fields.contextWindow,
+    failures: [
+      {
+        attempt: 1,
+        errorName: "CompactionError",
+        stopReason: code,
+        measuredTokens: fields.budget.maxTokens,
+        thresholdTokens: fields.budget.maxTokens - fields.budget.reserveTokens,
+      },
+    ],
+  });
+}
 
-  /** Summarizer failures so far. Non-zero means turns went out uncompacted. */
-  get compactionFailures(): number {
-    return this.failures.length;
-  }
+/**
+ * A failure that says the PROVIDER is unavailable rather than the summary being
+ * impossible: a saturated admission scope, a scope-wide cooldown, a spent
+ * quota, a cancelled admission.
+ *
+ * It decides between the two recoveries below. Falling back to the role's own
+ * model helps when the SUMMARIZER's route is what failed; it cannot help when
+ * the provider itself is refusing, because the role's turn needs that same
+ * provider and will be refused identically -- and the refusal is TYPED at
+ * admission (retryable, with a next action), while the harness's own
+ * summarization path turns any raw throw into a `HarnessFault` and destroys the
+ * type. Declining instead lets the turn reach admission, where the operator gets
+ * the refusal the contract promises (`docs/contracts/provider-admission.md`).
+ */
+function isProviderUnavailable(error: unknown): boolean {
+  return (
+    error instanceof QueueSaturatedError ||
+    error instanceof AdmissionCancelledError ||
+    error instanceof ProviderLimitError ||
+    error instanceof ProviderQuotaError
+  );
+}
 
-  /** The attributed failures, oldest first, for a caller that has to explain one. */
-  get compactionFailureDetail(): readonly CompactionFailure[] {
-    return [...this.failures];
-  }
+/** Sorted read-only and modified file lists, mirroring upstream `computeFileLists`. */
+function fileDetails(fileOps: FileOperations): { readFiles: string[]; modifiedFiles: string[] } {
+  const modified = new Set([...fileOps.edited, ...fileOps.written]);
+  return {
+    readFiles: [...fileOps.read].filter((file) => !modified.has(file)).sort(),
+    modifiedFiles: [...modified].sort(),
+  };
+}
 
-  assertHealthy(role: string, contextWindow = this.budget.maxTokens): void {
-    if (this.failures.length < COMPACTION_ATTEMPT_LIMIT) return;
-    throw new ContextCompactionLostError({
-      role,
-      budget: this.budget,
-      measuredTokens: this.budget.maxTokens,
-      failures: this.failures,
-      contextWindow,
-    });
-  }
+/**
+ * The file-operation tags upstream appends to a generated summary. They are
+ * part of the compaction entry's own contract (the next compaction reads the
+ * lists back off `details`), so a hook-produced summary carries them too.
+ */
+function formatFileOperations(readFiles: string[], modifiedFiles: string[]): string {
+  const sections: string[] = [];
+  if (readFiles.length > 0) sections.push(`<read-files>\n${readFiles.join("\n")}\n</read-files>`);
+  if (modifiedFiles.length > 0)
+    sections.push(`<modified-files>\n${modifiedFiles.join("\n")}\n</modified-files>`);
+  return sections.length === 0 ? "" : `\n\n${sections.join("\n\n")}`;
+}
 
-  /** Register the transform_context handler; returns the unsubscribe handle. */
-  attach(hooks: Hooks): () => void {
-    return hooks.on("transform_context", (event) => this.transform(event.messages), {
-      id: HOOK_ID,
-    });
-  }
+export interface DurableCompactionDeps {
+  /** ad-coder's summarizer: called with dialogue history only. */
+  summarizer: Summarizer;
+  /** The role's own budget, for the token numbers a failure line carries. */
+  budget: ContextBudget;
+  /** Names only: recorded on a failure so it says WHICH model refused (issue #391). */
+  summarizerScope?: { provider: string; model: string };
+}
 
-  private async transform(
-    messages: AgentMessage[],
-  ): Promise<{ messages: AgentMessage[] } | undefined> {
-    const threshold = this.budget.maxTokens - this.budget.reserveTokens;
-    const measured = estimateContextTokens(messages).tokens;
-    if (measured <= threshold) {
-      return undefined;
-    }
-    const { head, tail } = selectRecentTail(messages, this.budget.keepRecentTokens);
-    if (head.length === 0) {
-      return undefined;
-    }
-    let summary: string;
-    try {
-      summary = await this.summarizer(head);
-    } catch (error) {
-      // Attributed, not quoted: the error's class, its short machine tokens and
-      // its numeric status survive; its message does not, because a provider
-      // error's text can carry the request it rejected and the evicted head IS
-      // conversation. A dropped compaction leaves the turn over budget; the
-      // pre-flight guards the irreducible case.
-      const failure: CompactionFailure = {
-        attempt: this.failures.length + 1,
-        ...attributeFailure(error),
-        ...(this.scope !== undefined && { provider: this.scope.provider, model: this.scope.model }),
-        measuredTokens: measured,
-        thresholdTokens: threshold,
-      };
-      this.failures.push(failure);
-      // Warn on every attempt inside the bound (at most
-      // COMPACTION_ATTEMPT_LIMIT lines), so the record of WHY is visible while
-      // the session still has a chance; past the bound the refusal carries it.
-      if (this.failures.length <= COMPACTION_ATTEMPT_LIMIT) {
-        process.stderr.write(
-          `ad-coder: context compaction failed, turn passed through uncompacted (attempt ` +
-            `${failure.attempt} of ${COMPACTION_ATTEMPT_LIMIT}, ${describeCompactionFailure(failure)}, ` +
-            `measured ${measured} tokens, threshold ${threshold})\n`,
-        );
-      }
-      return undefined;
-    }
-    // The summarizer works again, so the session is healthy: a failure is a
-    // record of what went wrong, not a permanent verdict on the session.
-    this.failures = [];
-    // Announced, for the same reason the failure below it is: a compaction that
-    // happens silently cannot be distinguished afterwards from one that never
-    // needed to happen. That mattered the moment a calibration task tried to
-    // measure retention ACROSS compaction -- the run looked identical whether
-    // the history had been summarised or had simply fit, so the task could not
-    // show it was measuring what it claimed.
+/**
+ * Register ad-coder's summarizer as the harness's compaction producer.
+ *
+ * This is the whole fix for issue #444. `transform_context` rewrote ONE
+ * request's message list and never wrote it back, so the durable session never
+ * shrank: a 203k-token session against a 200k window kept sending raw
+ * over-threshold requests, attempted compaction on EVERY model call, and
+ * reported at most two of the failures. `before_compaction` runs at a durable
+ * run boundary instead: the harness cuts the history at `keepRecentTokens`,
+ * commits a `compaction` entry that REPLACES the summarized prefix on the
+ * branch, and every later request is built from that entry.
+ *
+ * What reaches the summarizer is the prepared eviction set -- `messagesToSummarize`
+ * plus the split-turn prefix -- so the role's system prompt, its tool
+ * descriptions and its skills catalogue are NOT part of the summary request.
+ * They are the cacheable prefix, and rewriting them is what would cost the
+ * prompt cache on every turn (the operator's cost rule for this fix).
+ *
+ * A summarizer failure is NOT a thrown error here: the handler returns nothing,
+ * which hands the decision back to the harness, which generates the summary
+ * with the ROLE's model instead. That keeps the run alive when the cheap
+ * summarizer is what failed (a daily limit, an outage, an over-window input),
+ * and the line below says so. It never loops: the harness bounds its own
+ * attempts per compaction operation and settles the run when they are spent.
+ */
+export function attachDurableCompaction(hooks: Hooks, deps: DurableCompactionDeps): () => void {
+  return hooks.on("before_compaction", (event) => produceSummary(event, deps), { id: HOOK_ID });
+}
+
+/** What the hook hands back: our summary, a refusal to summarize, or nothing. */
+export type CompactionHookResult = { compaction: CompactResult } | { decline: true } | undefined;
+
+/** The hook body, exported for tests that drive it without a harness. */
+export async function produceSummary(
+  event: HookInvocation<"before_compaction">,
+  deps: DurableCompactionDeps,
+): Promise<CompactionHookResult> {
+  const preparation: CompactionPreparation = event.preparation;
+  const messages = [...preparation.messagesToSummarize, ...preparation.turnPrefixMessages];
+  // ad-coder's own threshold, which `durableCompactionSettings` is what makes
+  // the harness agree with: maxTokens - reserveTokens.
+  const threshold = deps.budget.maxTokens - deps.budget.reserveTokens;
+  if (messages.length === 0) {
+    // The harness decided to compact, but its cut point evicted NOTHING: the
+    // whole context is inside the retained tail, which happens when the newest
+    // message alone is what pushed the run over the threshold. There is no
+    // summary to write, and the answer differs by why compaction was asked for:
     //
-    // NUMBERS ONLY, like every other line this file writes: how much was
-    // measured, what the threshold was, and how many messages were replaced by
-    // the summary. The summary itself is model output over the conversation and
-    // never goes to stderr.
+    // - `threshold`: the run can simply continue with an over-threshold but
+    //   under-window request, which the pre-flight already accepted. Declining
+    //   says so, and saves the provider call a summary of nothing would cost.
+    // - `overflow` and `manual`: the run cannot continue without this
+    //   operation -- `overflow` is pi-agent-core's own length-recovery
+    //   (compact, then retry the turn), and refusing it fails the run with
+    //   `compaction_declined` instead of letting the retry happen. Hand the
+    //   decision back: upstream writes the entry from the retained tail alone,
+    //   so no history is lost either way.
+    const reason = event.reason;
     process.stderr.write(
-      `ad-coder: context compacted ${head.length} messages ` +
-        `(measured ${measured} tokens, threshold ${threshold})\n`,
+      `ad-coder: context compaction skipped: the whole context is inside the retained tail ` +
+        `(reason ${reason}, measured ${preparation.tokensBefore} tokens, threshold ${threshold}, ` +
+        `tail ${preparation.retainedTail.length} messages)\n`,
     );
-    const summaryMessage = createCompactionSummaryMessage(summary, measured, Date.now());
-    return { messages: [summaryMessage, ...tail] };
+    return reason === "threshold" ? { decline: true } : undefined;
   }
+  let summary: string;
+  try {
+    summary = await deps.summarizer(messages, preparation.previousSummary);
+  } catch (error) {
+    // Attributed, not quoted: the error's class, its short machine tokens and
+    // its numeric status survive; its message does not, because a provider
+    // error's text can carry the request it rejected and the evicted head IS
+    // conversation. Written on EVERY failure -- the pre-#444 handler gated its
+    // warning on an attempt bound, so a session that failed 63 times left two
+    // lines behind and the rest of the story lived only in a token number.
+    const failure: CompactionFailure = {
+      attempt: 1,
+      ...attributeFailure(error),
+      ...(deps.summarizerScope !== undefined && {
+        provider: deps.summarizerScope.provider,
+        model: deps.summarizerScope.model,
+      }),
+      measuredTokens: preparation.tokensBefore,
+      thresholdTokens: threshold,
+    };
+    const measured = `(measured ${preparation.tokensBefore} tokens, threshold ${threshold})`;
+    if (isProviderUnavailable(error)) {
+      // The provider is refusing, so the role's own turn will be refused the
+      // same way. Summarizing with the role's model could only replace the
+      // typed admission refusal with a harness fault, so decline: the run
+      // continues to its own provider call and the caller gets the refusal the
+      // admission contract promises.
+      process.stderr.write(
+        `ad-coder: compaction summarizer unavailable (${describeCompactionFailure(failure)}); ` +
+          `not summarizing with the role's own model, which needs the same provider ${measured}\n`,
+      );
+      return { decline: true };
+    }
+    process.stderr.write(
+      `ad-coder: compaction summarizer failed (${describeCompactionFailure(failure)}); ` +
+        `the harness summarizes with the role's own model instead ${measured}\n`,
+    );
+    return undefined;
+  }
+  const { readFiles, modifiedFiles } = fileDetails(preparation.fileOps);
+  const details = { readFiles, modifiedFiles };
+  // Announced, for the same reason the failure above it is: a compaction that
+  // happens silently cannot be distinguished afterwards from one that never
+  // needed to happen. That mattered the moment a calibration task tried to
+  // measure retention ACROSS compaction -- the run looked identical whether
+  // the history had been summarised or had simply fit, so the task could not
+  // show it was measuring what it claimed.
+  //
+  // NUMBERS ONLY, like every other line this file writes: how much was
+  // measured, what the threshold was, and how many messages were replaced by
+  // the summary. The summary itself is model output over the conversation and
+  // never goes to stderr.
+  process.stderr.write(
+    `ad-coder: context compacted ${messages.length} messages ` +
+      `(measured ${preparation.tokensBefore} tokens, threshold ${threshold})\n`,
+  );
+  return {
+    compaction: {
+      summary: summary + formatFileOperations(readFiles, modifiedFiles),
+      tokensBefore: preparation.tokensBefore,
+      retainedTail: preparation.retainedTail,
+      details,
+    },
+  };
 }

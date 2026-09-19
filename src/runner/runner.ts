@@ -16,8 +16,9 @@ import { closeOpenAICodexWebSocketSessions } from "@earendil-works/pi-ai/api/ope
 import { requireModelAuthentication } from "../auth/operations";
 import type { CompactionPolicy, Summarizer } from "../context/compactor";
 import {
+  attachDurableCompaction,
   COMPACTION_SAFETY_PROMPT,
-  ContextCompactor,
+  compactionLostErrorFrom,
   resolveCompactionPolicy,
 } from "../context/compactor";
 import { assertContextFitsBudget, assertTurnFitsBudget } from "../context/preflight";
@@ -658,6 +659,7 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
     session,
     models,
     model: params.model,
+    compactionMode: compaction.mode,
   });
   const effectiveSystemPrompt =
     compaction.mode === "auto"
@@ -720,22 +722,6 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
     sink,
   });
 
-  const compactor =
-    compaction.mode === "auto"
-      ? new ContextCompactor({
-          budget: params.role.contextBudget,
-          summarizer: compaction.summarizer as Summarizer,
-          // Names only: recorded on the failure so a compaction failure says
-          // WHICH model refused it (issue #391).
-          ...(compaction.summarizerModel !== undefined && {
-            summarizerScope: {
-              provider: compaction.summarizerModel.provider,
-              model: compaction.summarizerModel.id,
-            },
-          }),
-        })
-      : undefined;
-
   let harness: Awaited<ReturnType<typeof AgentHarness.create<ExecutionToolContext>>>["harness"];
   try {
     ({ harness } = await AgentHarness.create<ExecutionToolContext>(options, context));
@@ -745,7 +731,20 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
     throw error;
   }
   ledger.attach(harness.hooks);
-  compactor?.attach(harness.hooks);
+  if (compaction.mode === "auto") {
+    attachDurableCompaction(harness.hooks, {
+      budget: params.role.contextBudget,
+      summarizer: compaction.summarizer as Summarizer,
+      // Names only: recorded on the failure so a compaction failure says
+      // WHICH model refused it (issue #391).
+      ...(compaction.summarizerModel !== undefined && {
+        summarizerScope: {
+          provider: compaction.summarizerModel.provider,
+          model: compaction.summarizerModel.id,
+        },
+      }),
+    });
+  }
   const ownsActivityChannel = params.activityChannel === undefined;
   const activityChannel = params.activityChannel ?? new ToolActivityChannel(params.toolActivity);
   const offActivityConsumer =
@@ -851,7 +850,6 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
         pending,
       ];
       if (compaction.mode === "auto") {
-        compactor?.assertHealthy(params.role.name, params.model.contextWindow);
         assertTurnFitsBudget(params.role, messages, params.model);
       } else {
         assertContextFitsBudget(params.role, messages, params.model);
@@ -954,6 +952,16 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
       if (result.error?.code === "configured_tools_unavailable") {
         throw new ConfiguredToolsUnavailableError(runId, result.error);
       }
+      // The harness could not produce the compaction this run needed, so the run
+      // itself settled as failed. That is not an empty turn and not a provider
+      // refusal: the session's context can no longer be summarized, and the
+      // answer is to reopen it, not to retry it (#444, #391).
+      const compactionLost = compactionLostErrorFrom(result.error, {
+        role: params.role.name,
+        budget: params.role.contextBudget,
+        contextWindow: params.model.contextWindow,
+      });
+      if (compactionLost !== undefined) throw compactionLost;
       const finalMessage = await newestAssistantMessage(session, context);
       const text = assistantMessageText(finalMessage);
       // An admission refusal settles as a stream-terminal error message (the

@@ -212,13 +212,13 @@ the accepted Planner result.
 
 ## Context, usage, and recovery
 
-ad-coder owns its context policy. Auto mode summarizes only the evicted head
-through a configured summarizer; disabled mode never summarizes and halts when
-the full branch no longer fits. Context refusals use the effective ceiling
-`min(maxTokens, contextWindow)`, even with a smaller
-runtime model window; the typed diagnostic reports that ceiling without
-transcript content. Retry with a larger-window model or lower context-budget
-settings; cross-provider summarization needs explicit authorization.
+ad-coder owns its context policy. Auto mode commits a durable entry: the harness
+cuts the branch, ad-coder supplies the summary of the evicted head; disabled
+mode never summarizes and halts when the full branch no longer fits. Context
+refusals use the effective ceiling `min(maxTokens, contextWindow)`; the
+diagnostic reports that ceiling without transcript content. Retry with a
+larger-window model or a lower budget; cross-provider summarization needs
+explicit authorization.
 
 Pipeline handoff is separate from transcript compaction. The first review
 is broad; later Coder and Reviewer turns default to bounded findings, response,

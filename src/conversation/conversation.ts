@@ -13,8 +13,10 @@ import type { Api, Model, Models, TextContent } from "@earendil-works/pi-ai";
 import { closeOpenAICodexWebSocketSessions } from "@earendil-works/pi-ai/api/openai-codex-responses";
 import type { CompactionPolicy, Summarizer } from "../context/compactor";
 import {
+  attachDurableCompaction,
   COMPACTION_SAFETY_PROMPT,
-  ContextCompactor,
+  type ContextCompactionLostError,
+  compactionLostErrorFrom,
   resolveCompactionPolicy,
 } from "../context/compactor";
 import { assertContextFitsBudget, assertTurnFitsBudget } from "../context/preflight";
@@ -330,6 +332,7 @@ export async function startConversation(config: ConversationConfig): Promise<Con
     session,
     models,
     model: config.model,
+    compactionMode: compaction.mode,
   });
   const options: AgentHarnessOptions<ExecutionToolContext> = {
     ...base,
@@ -359,25 +362,23 @@ export async function startConversation(config: ConversationConfig): Promise<Con
     throw error;
   }
 
-  // The compactor is a transform_context handler; attaching it per turn would
+  // The summarizer is a before_compaction handler; attaching it per turn would
   // compound handlers the same way a per-turn ledger attach would compound
   // rows. Attach ONCE here, never in step.
-  const compactor =
-    compaction.mode === "auto"
-      ? new ContextCompactor({
-          budget: config.role.contextBudget,
-          summarizer: compaction.summarizer as Summarizer,
-          // Names only: recorded on the failure so a compaction failure says
-          // WHICH model refused it (issue #391).
-          ...(compaction.summarizerModel !== undefined && {
-            summarizerScope: {
-              provider: compaction.summarizerModel.provider,
-              model: compaction.summarizerModel.id,
-            },
-          }),
-        })
-      : undefined;
-  compactor?.attach(harness.hooks);
+  if (compaction.mode === "auto") {
+    attachDurableCompaction(harness.hooks, {
+      budget: config.role.contextBudget,
+      summarizer: compaction.summarizer as Summarizer,
+      // Names only: recorded on the failure so a compaction failure says
+      // WHICH model refused it (issue #391).
+      ...(compaction.summarizerModel !== undefined && {
+        summarizerScope: {
+          provider: compaction.summarizerModel.provider,
+          model: compaction.summarizerModel.id,
+        },
+      }),
+    });
+  }
 
   const lane: AgentLane = await harness.lane(config.laneName ?? "main", context);
 
@@ -400,6 +401,13 @@ export async function startConversation(config: ConversationConfig): Promise<Con
   // A provider can observe abort yet never settle. Do not dispatch another turn
   // into that lane until its original prompt has actually settled.
   let laneBusy = false;
+  // The session's compaction is spent, once and for all: the context is over the
+  // threshold, no summary can be produced for it, and every later drive would
+  // re-attempt -- and re-pay for -- the same doomed compaction before failing
+  // the same way. Sticky, and checked before the budget pre-flight, so a spent
+  // session refuses without dispatching (issue #391's contract, which the
+  // pre-#444 pre-flight assertion used to enforce).
+  let spentCompaction: ContextCompactionLostError | undefined;
   let abortRequested = false;
   let closePromise: Promise<void> | undefined;
 
@@ -493,6 +501,7 @@ export async function startConversation(config: ConversationConfig): Promise<Con
     const stepName = opts?.step ?? `turn:${n}`;
 
     try {
+      if (spentCompaction !== undefined) throw spentCompaction;
       const entries = await lane.findEntries({ type: "message", order: "oldestFirst" }, context);
       const pending = { role: "user" as const, content: userInput, timestamp: Date.now() };
       const messages = [
@@ -500,7 +509,6 @@ export async function startConversation(config: ConversationConfig): Promise<Con
         pending,
       ];
       if (compaction.mode === "auto") {
-        compactor?.assertHealthy(role.name, config.model.contextWindow);
         assertTurnFitsBudget(role, messages, config.model);
       } else {
         assertContextFitsBudget(role, messages, config.model);
@@ -597,6 +605,28 @@ export async function startConversation(config: ConversationConfig): Promise<Con
       }
       const finalMessage = await newestAssistantMessage(session, context);
       const assistantText = assistantMessageText(finalMessage);
+      if (result.status !== "completed") {
+        // The harness could not produce the compaction this run needed, so the
+        // run itself settled as failed. That is not an empty turn and not a
+        // provider refusal: the session's context can no longer be summarized,
+        // and the answer is to reopen it, not to retry it (#444, #391).
+        //
+        // Classified BEFORE the empty-answer projection and outside it: a run
+        // that fails on turn N leaves turn N-1's answer as the newest assistant
+        // message on the branch, so `assistantText` is not empty and a check
+        // nested under that condition would report the failed run as a
+        // completed one. The compaction stop is the one settled failure this
+        // loop types even when text survives, because retrying cannot clear it.
+        const compactionLost = compactionLostErrorFrom(result.error, {
+          role: role.name,
+          budget: role.contextBudget,
+          contextWindow: config.model.contextWindow,
+        });
+        if (compactionLost !== undefined) {
+          spentCompaction = compactionLost;
+          throw compactionLost;
+        }
+      }
       if (assistantText.trim() === "") {
         if (result.status !== "completed") {
           // An admission refusal settles as a stream-terminal error message, and

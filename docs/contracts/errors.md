@@ -232,3 +232,35 @@ for machines?
   same boundary. The same bounded pair is also recorded on the ledger row
   (`providerError {status?, code?}`, `ledger-report.md`), which is what
   makes the diagnosis readable from durable artifacts alone.
+- 2026-09-20 (issue #444): **A summarizer failure is recoverable, and the
+  recovery is the harness's own.** The compactor no longer counts attempts or
+  remembers a failure: it is a `before_compaction` hook, and rule (1) of the
+  2026-09-19 entry above is SUPERSEDED -- `COMPACTION_ATTEMPT_LIMIT` does not
+  exist and nothing sticky is left behind by a single refusal. The hook has
+  three answers, and which one it gives is the whole policy. (a) A summary:
+  the harness commits it. (b) Nothing, for a summarizer failure on its OWN
+  route -- the harness then summarizes with the role's own model, so a cheap
+  summarizer that is down costs tokens rather than the session, and the
+  fallback is bounded by the harness's retry policy instead of ours. (c)
+  `{decline: true}`, and this answer is reserved for two cases where a
+  fallback would be a LIE: the provider is unavailable (queue saturated,
+  admission cancelled, provider limit, quota), so the typed refusal must
+  survive to the caller, and a threshold compaction with NOTHING evictable,
+  where the harness would otherwise call the role's own model to summarize an
+  empty set. A decline on a threshold leaves the run running uncompacted; on
+  an overflow or a manual compaction it would settle the run as
+  `compaction_declined`, which is why pi-agent-core's length recovery -- the
+  retried truncation of issue #368 -- is passed THROUGH as `undefined` and
+  never declined. A THROW is not an answer: the harness's structural
+  generation is not inside the catch that recognises `StructuralCancelled`, so
+  a raw provider error raised from there is wrapped as
+  `AgentHarness storage or invariant fault` and destroys the typed admission
+  error it was carrying (measured). The terminal stop keeps its own rule: it
+  is classified at the SETTLED-RUN boundary, from the settled result and never
+  from the answer text -- a run that fails leaves the PREVIOUS turn's assistant
+  text on the branch, so a classifier that reads the text reports a failed run
+  as a completed turn (measured) -- it is typed as
+  `ContextCompactionLostError` for `summarization_failed`,
+  `compaction_declined` and `structural_interrupted` only, and it is STICKY:
+  the spent session refuses every later turn before any provider dispatch,
+  rather than re-dispatching into the same wall.

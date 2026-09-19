@@ -85,17 +85,38 @@ test("defineRole rejects a malformed or over-window context budget", () => {
   ).toThrow(/must be below maxTokens/);
 });
 
-test("toHarnessOptions passes the system prompt through verbatim and disables compaction", () => {
+test("toHarnessOptions passes the system prompt through verbatim and maps the budget", () => {
   const { model: runModel, models } = resolveRoleModel(valid);
   const opts = toHarnessOptions(valid, { session: {} as Session, models, model: runModel });
 
   expect(opts.systemPrompt).toBe(valid.systemPrompt);
   expect(typeof opts.systemPrompt).toBe("string");
-  // The real budget numbers are NOT mirrored into Pi's CompactionSettings.
-  expect(opts.compaction).toEqual({ enabled: false, reserveTokens: 0, keepRecentTokens: 0 });
+  // Auto is the resolved default, and the harness reserve is DERIVED from the
+  // role's own threshold -- `contextWindow - (maxTokens - reserveTokens)` -- so
+  // both strategies fire at the same number. The budget's own numbers are not
+  // mirrored: the harness reserve is not the role's reserve.
+  expect(opts.compaction).toEqual({
+    enabled: true,
+    reserveTokens:
+      runModel.contextWindow - (valid.contextBudget.maxTokens - valid.contextBudget.reserveTokens),
+    keepRecentTokens: valid.contextBudget.keepRecentTokens,
+  });
+  expect(runModel.contextWindow - (opts.compaction?.reserveTokens ?? 0)).toBe(
+    valid.contextBudget.maxTokens - valid.contextBudget.reserveTokens,
+  );
   expect(opts.streamOptions?.cacheRetention).toBe(valid.cacheRetention);
   expect(opts.model).toBe(runModel);
   expect(opts.models).toBe(models);
+
+  // A disabled role compacts nothing: no threshold can fire, and the harness
+  // never commits an entry for it.
+  const disabled = toHarnessOptions(valid, {
+    session: {} as Session,
+    models,
+    model: runModel,
+    compactionMode: "disabled-then-halt",
+  });
+  expect(disabled.compaction).toEqual({ enabled: false, reserveTokens: 0, keepRecentTokens: 0 });
 });
 
 test("role request timeout reaches provider stream options and zero disables it", () => {

@@ -73,12 +73,17 @@ state. Ignored harness state and chat history are never canonical project memory
   Role validated against a CALLER-SUPPLIED Model (local/LM-Studio safe),
   ContextCompactor via transform_context with ad-coder's own prompt,
   assertTurnFitsBudget pre-flight (a function, not a hook — a hook throw cannot
-  refuse a turn). Pi compaction stays disabled.
+  refuse a turn). The transform_context rewrite was later found not to shrink
+  the session (#444); see the activation entry below.
 - **Compaction activation** — DONE. `auto` is the resolved default and uses the
   cheap-tier model through a one-shot no-tool summarizer; `disabled-then-halt`
   performs a full-branch refusal without summarization. `cache-aware` remains a
-  fail-loud reserved mode until request assembly is verified. Pi compaction
-  remains disabled because ad-coder owns the policy.
+  fail-loud reserved mode until request assembly is verified. Pi's own
+  compaction is ENABLED and is the writer: ad-coder owns the policy by supplying
+  the summary through the `before_compaction` hook, so the harness commits a
+  durable entry and the session really shrinks (#444). The role's system prompt,
+  tool definitions and skills catalogue never enter the summarizer — only
+  dialogue history does. Invariants: `docs/contracts/compaction.md`.
 - **Capability matrix** — DONE. `src/capabilities/capabilities.ts`:
   `deriveCapabilities(model)` yields a ModelCapabilities descriptor — cost mode
   (per-token when any cost field is nonzero; else local when the baseUrl host is

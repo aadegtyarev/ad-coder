@@ -63,11 +63,13 @@ export type {
 } from "./context/compactor";
 export {
   assertSummarizerWindow,
-  COMPACTION_ATTEMPT_LIMIT,
+  attachDurableCompaction,
   COMPACTION_SAFETY_PROMPT,
   ContextCompactionLostError,
-  ContextCompactor,
+  compactionLostErrorFrom,
   createSummarizer,
+  describeCompactionFailure,
+  durableCompactionSettings,
   resolveCompactionPolicy,
   SUMMARIZATION_PROMPT,
   SummarizerUnavailableError,
