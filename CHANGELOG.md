@@ -13,6 +13,39 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.94.0] - 2026-09-19
+
+### Fixed
+- **A session killed mid-turn is resumable again.** A console killed while a
+  turn was running leaves its operation recorded as `running` in the durable
+  session. On `--resume` the harness reinstalls that operation, and every turn
+  after the resume died before any provider call: `ConversationSession.step`
+  handed the operator's input straight to `lane.prompt`, which the lane refuses
+  with `LaneBusy` while it still owns an operation. The refusal is an untyped
+  harness error, so the console could only render it as a bare
+  `console turn failed`, and no ledger row was written to explain it -- a
+  killed session was unresumable in practice, and the loop repeated on each
+  retry. `step` now settles the installed operation first (`lane.resume`, the
+  same recovery the single-turn runner already performs for a resumed stage via
+  `resumeActiveOperation`) and only then dispatches the new input; a settlement
+  that leaves the lane occupied by a deferred run raises the existing typed
+  `SuspendedRunError` instead of hiding it. The recovered turn's own answer
+  stays in the durable history and the ledger and is never returned as the reply
+  to the input that followed it; the settlement's cost is attributed to the turn
+  that performed it, on a row naming the recovered operation's own id. A turn that dies before the provider is reached now names
+  the failing error's CLASS in the fallback message, so the next occurrence is
+  diagnosable from the console alone: the classifier is total -- an anonymous
+  subclass renders `(Error)`, a non-Error throw renders `(non-error <typeof>)`,
+  and an error that throws while being described (a Proxy trap, an accessor that
+  refuses) renders `(unclassified)` instead of replacing the turn's failure with
+  its own -- and it consults no own property of the thrown value, so a forged
+  `name` or `constructor` cannot supply a class and a message can never ride out
+  through the field that replaces the withheld one. The typed branches are held
+  to the same standard: each of them reads fields off the caught value, and a
+  value that passes the type check and then refuses those reads is answered by
+  the untyped line instead of escaping the turn's catch as an `input_failed`
+  ("restart the console") on a console whose input stream is fine.
+
 ## [0.93.0] - 2026-09-19
 
 ### Changed

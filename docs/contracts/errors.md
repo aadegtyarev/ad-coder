@@ -165,3 +165,48 @@ for machines?
   branch and exits with reason `context_compaction_lost`, `retryable: false` in
   JSON mode. Provider/model names and numbers only: prompt text, summary text,
   and provider message prose never cross this boundary.
+- 2026-09-19 (issue #412): An untyped failure renders a BOUNDED class token, or a
+  fixed non-error label, and nothing else. The console's last-resort branch names
+  the failing error's class because a turn that dies before any provider call
+  leaves no ledger row and the class is the only evidence a reader gets -- but
+  the message stays withheld (an untyped harness error is the case most likely to
+  quote the request it rejected), and the fields that carry a class are ORDINARY
+  properties that any thrown object can set to anything: an anonymous subclass
+  has an empty `constructor.name` (rendering as an empty pair of parentheses), a
+  thrown non-Error has no class at all, and a crafted error can point either
+  field at text that would forge another class, a second record, or a message
+  into a projection that is meant to be one bounded line. So it consults NO own
+  property of the thrown value at all -- an own `name` or an own `constructor` is
+  exactly how a forged class would be supplied, and neither is read: (1) the name
+  comes from the PROTOTYPE's constructor, (2) it is accepted only when it is a
+  plain identifier of bounded length, (3) anything else that IS an Error renders
+  the base label `Error` (an anonymous subclass has an empty `constructor.name`
+  and is still, truthfully, an Error), and (4) a thrown non-Error renders
+  `non-error <typeof>`, with `null` named explicitly because `typeof null` is
+  "object". Totality is part of the rule, not an aspiration, and it covers the
+  WHOLE classification of a caught value: every read made of it -- `instanceof`,
+  `[[GetPrototypeOf]]`, the `constructor` access -- runs through a Proxy's traps
+  when the thrown value is one, and each of them can therefore THROW rather than
+  answer. A diagnostic that dies while describing a failure replaces the turn's
+  failure with its own (measured: the escape left the turn's catch and was
+  rendered as `input_failed`, whose advice is to restart a console whose input
+  stream is fine), so no classification step is allowed to propagate one: the
+  typed checks ask through a total `instanceof` that treats a refusal as "not
+  this type", and the classifier reports any refusal of its own reads as the
+  fixed label `unclassified`. The TYPED branches are inside that rule, not
+  beside it: each of them READS fields off the value (`status`, `failure`,
+  `attempts`, `provider`, `block`, `retryAfterMs`), and passing the type check
+  does not make those reads safe -- the check walks the prototype chain, so a
+  Proxy answers it and traps the reads (measured: a Proxy around
+  `ProviderRejectionError` whose `get` trap throws escaped the turn's own catch
+  and rendered the fault as `input_failed`, advice to restart a console whose
+  input stream was fine). The whole chain is therefore guarded, and the guard is
+  sound only because every branch COMPUTES its entire line before writing it: a
+  defeated branch has rendered nothing, so the untyped line replaces it and
+  remains the turn's single failure record -- never a second one. The result is
+  total and deterministic: every input
+  -- including a hostile one -- yields one token from the closed set {bounded
+  identifier, `Error`, `non-error <typeof>`, `unclassified`}, the same failure
+  always renders the same line, and no message, stack, or provider payload can
+  reach the reader through the class field. Class names and `typeof` labels only
+  -- never a message, never an anonymous blank.

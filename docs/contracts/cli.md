@@ -102,3 +102,37 @@ Rules for ad-coder's command-line front. A violation is always blocking.
   banner still names the same run id and ledger file for a resumed session.
   Without the flag the default flow is byte-identical: a fresh session every
   start.
+- 2026-09-19 (issue #412): a resumed session SETTLES the operation that was in
+  flight when the process died, before it dispatches the operator's next prompt.
+  The durable session still records that operation as `running`, and the lane
+  refuses any new prompt while it stands -- `LaneBusy`, an untyped harness error
+  raised before the first provider call -- so every turn after `--resume` used to
+  fail the same way, in milliseconds, leaving no ledger row to explain it: the
+  session was unresumable in practice, however many times it was restarted. Four
+  rules follow. (1) Settlement is AUTOMATIC and comes FIRST: finding an installed
+  operation, the conversation drives it to a settled record (`lane.resume`) and
+  only then sends the operator's input. This is the rule the single-turn runner
+  already applies to a resumed stage (`resumeActiveOperation`,
+  src/runner/runner.ts), reached here through the multi-turn conversation that is
+  its counterpart. There is no flag, no confirmation prompt and no separate
+  repair command: `--resume` followed by a prompt is the whole recovery, and a
+  settlement that fails surfaces as that turn's own failure rather than as a
+  silent refusal to work. (2) The rules are KIND-AGNOSTIC: a provider call, a
+  tool call, and an operation whose cancellation was requested all settle through
+  that one call, and the conversation never second-guesses the harness's own
+  reconciliation -- an operation the harness reconciles to aborted or to an
+  interrupted (not re-executed) tool settles as such. (3) A settlement that
+  leaves a DEFERRED run (`status` "suspended") raises the existing typed
+  `SuspendedRunError`; a record the caller would read as settled hides a run
+  still pending, so no prompt is sent into the occupied lane. (4) The recovered
+  operation's answer belongs to THAT operation: it stays in the durable history
+  and in the ledger, and is never returned as the answer to the input the
+  operator just sent -- a front rendering it as the reply to a new question would
+  attribute an old answer to a new prompt. Recovery is attributed rather than
+  silent: the settlement runs inside the turn's own ledger bridge, so its tokens
+  land on the turn that performed it -- the row carries the `turn:N` step the
+  conversation always writes, and its `runId` is the RECOVERED operation's own id
+  (the id installed when the process died, which `lane.resume` continues rather
+  than replacing), so the settlement's cost is distinguishable from the cost of
+  the prompt that follows it. The cost is neither dropped nor merged into an
+  unidentified row.

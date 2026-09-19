@@ -691,6 +691,183 @@ test("turn and close failures use fixed messages and close once", async () => {
   expect(error.text()).not.toContain(secret);
 });
 
+test("an untyped turn failure names a bounded class token and nothing else", async () => {
+  // The untyped fallback is the case where the class name is the ONLY evidence
+  // a reader gets, so it must be total (an anonymous subclass, a non-Error
+  // throw), deterministic, and impossible to forge: `constructor` and `name`
+  // are ordinary properties, and a crafted error must not be able to smuggle
+  // its message -- or a second record -- through the field that replaces it.
+  class CredentialShapedError extends Error {}
+  const cases: { thrown: unknown; expected: string }[] = [
+    { thrown: new Error("credential=super-secret"), expected: "console turn failed (Error)" },
+    { thrown: new TypeError("boom"), expected: "console turn failed (TypeError)" },
+    {
+      thrown: new CredentialShapedError("credential=super-secret"),
+      expected: "console turn failed (CredentialShapedError)",
+    },
+    // An anonymous subclass has an empty `constructor.name`; it is still an Error.
+    { thrown: new (class extends Error {})(), expected: "console turn failed (Error)" },
+    // An OWN `constructor` property cannot spoof the class: the name is read
+    // from the prototype, which is the class the value really is.
+    {
+      thrown: Object.assign(new Error("boom"), { constructor: { name: "Mislead" } }),
+      expected: "console turn failed (Error)",
+    },
+    // Neither can an OWN `name` -- the field a forged class would be supplied
+    // through. No on-property of the thrown value is consulted at all.
+    {
+      thrown: Object.assign(new Error("boom"), { name: "ForgedIdentifier" }),
+      expected: "console turn failed (Error)",
+    },
+    // ... so an accessor that refuses to answer is never even called.
+    {
+      thrown: Object.defineProperty(new Error("boom"), "name", {
+        get() {
+          throw new Error("trap");
+        },
+      }),
+      expected: "console turn failed (Error)",
+    },
+    // A prototype whose constructor name is not a string is not a class name.
+    {
+      thrown: Object.setPrototypeOf(
+        new Error("boom"),
+        Object.assign(Object.create(Error.prototype), { constructor: { name: 42 } }),
+      ),
+      expected: "console turn failed (Error)",
+    },
+    // A forged `name` carrying a newline and a fake record never renders.
+    {
+      thrown: Object.assign(new Error("boom"), { name: 'Evil\n{"code":"ok"}' }),
+      expected: "console turn failed (Error)",
+    },
+    // Every read the classifier makes can THROW instead of answering when the
+    // thrown value is a Proxy. The escape used to replace the turn's own failure
+    // with the classifier's (reported as `input_failed`); it now renders a fixed
+    // label, because a diagnostic that dies while describing a failure is worse
+    // than a generic one.
+    {
+      thrown: new Proxy(new Error("boom"), {
+        getPrototypeOf() {
+          throw new Error("trap");
+        },
+      }),
+      expected: "console turn failed (unclassified)",
+    },
+    {
+      // The prototype itself answers with an accessor that refuses.
+      thrown: Object.create(
+        Object.create(Error.prototype, {
+          constructor: {
+            get() {
+              throw new Error("trap");
+            },
+          },
+        }),
+      ),
+      expected: "console turn failed (unclassified)",
+    },
+    // `instanceof` passing does not make the REST of the chain safe. A typed
+    // error's branch reads fields off the value (`status`, `failure`,
+    // `attempts`, `provider`, `block`, `retryAfterMs`), and a Proxy passes the
+    // tag check -- it walks the prototype chain -- while trapping those reads.
+    // Measured before this guard: the throw left the turn's own catch and was
+    // rendered as `input_failed`, whose advice is to restart a console whose
+    // input stream is fine, on a turn whose failure was already known.
+    {
+      thrown: new Proxy(new ProviderRejectionError("run", 400), {
+        get() {
+          throw new Error("trap");
+        },
+      }),
+      expected: "console turn failed (ProviderRejectionError)",
+    },
+    {
+      thrown: new Proxy(
+        new ConsoleControlError({
+          code: "unknown_command",
+          message: "boom",
+          action: "x",
+          retryable: false,
+        }),
+        {
+          get() {
+            throw new Error("trap");
+          },
+        },
+      ),
+      expected: "console turn failed (ConsoleControlError)",
+    },
+    {
+      // Refuses BOTH reads, so nothing about the value is answerable and the
+      // fixed label is the honest answer.
+      thrown: new Proxy(new ProviderQuotaError("run", "insufficient_quota", 120_000), {
+        get() {
+          throw new Error("trap");
+        },
+        getPrototypeOf() {
+          throw new Error("trap");
+        },
+      }),
+      expected: "console turn failed (unclassified)",
+    },
+    {
+      // A branch can ALSO be defeated midway: the first read answers and a later
+      // one refuses. Every branch builds its whole line before writing it, so
+      // the defeated branch has rendered nothing and this replacement is the
+      // turn's single record -- never a second one.
+      thrown: new Proxy(new GenerationTruncatedError("run", "length", 16384, 16347), {
+        get(target, key, receiver) {
+          if (key === "outputTokens") throw new Error("trap");
+          return Reflect.get(target, key, receiver);
+        },
+      }),
+      expected: "console turn failed (GenerationTruncatedError)",
+    },
+    { thrown: null, expected: "console turn failed (non-error null)" },
+    { thrown: undefined, expected: "console turn failed (non-error undefined)" },
+    { thrown: "boom", expected: "console turn failed (non-error string)" },
+    {
+      thrown: { message: "credential=super-secret" },
+      expected: "console turn failed (non-error object)",
+    },
+  ];
+
+  for (const { thrown, expected } of cases) {
+    const session: ConversationSession = {
+      runId: "session",
+      ledgerPath: undefined,
+      async step() {
+        throw thrown;
+      },
+      async close() {},
+    };
+    const error = new Capture();
+    const result = await runConsole({
+      session,
+      input: ttyFrom("hello\n"),
+      output: new Capture(),
+      error,
+      mode: "json",
+    });
+    expect(result).toEqual({ reason: "turn_failed", completedTurns: 0 });
+    const records = error
+      .text()
+      .split("\n")
+      .filter((line) => line.trim() !== "")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(records.map((record) => record.type)).toEqual(["progress", "console_error"]);
+    expect(records[1]).toEqual({
+      type: "console_error",
+      code: "turn_failed",
+      message: expected,
+      action: "retry the prompt; if it keeps failing, restart the console",
+      retryable: true,
+    });
+    expect(error.text()).not.toContain("super-secret");
+  }
+});
+
 test("typed session exhaustion stops input with no fabricated JSON record", async () => {
   const session = fakeSession({ stepError: new SessionLimitError("turns", 1, 1) });
   const output = new Capture();

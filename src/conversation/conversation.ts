@@ -412,7 +412,34 @@ export async function startConversation(config: ConversationConfig): Promise<Con
 
     try {
       laneBusy = true;
-      const providerPrompt = lane.prompt(userInput, undefined, context);
+      // A conversation reopened after a process kill still OWNS the operation
+      // that was in flight when the process died: the durable state records
+      // `control.status` "running", so the lane refuses every new prompt with
+      // LaneBusy -- an untyped harness error, which the console could only
+      // render as a bare "console turn failed" before any provider call. That
+      // made a killed session unresumable in practice: every turn after
+      // `--resume` died the same way, with no ledger row to explain it.
+      //
+      // The single-turn runner already drives exactly this case when it is
+      // asked to resume a stage (`resumeActiveOperation`,
+      // src/runner/runner.ts) -- settle the installed operation first, then
+      // decide what to run. The multi-turn conversation is that primitive's
+      // counterpart (`startConversation`), so it settles the interrupted
+      // operation the same way and only then dispatches the operator's turn.
+      // The recovered turn's own answer stays in the durable history; this
+      // step returns the answer to the input the operator just sent.
+      const providerPrompt = (async () => {
+        const execution = await lane.inspectExecution(context);
+        if (execution.current === null) return lane.prompt(userInput, undefined, context);
+        const recovered = getOrThrow(await lane.resume(context));
+        if ("status" in recovered && recovered.status === "suspended") {
+          // Settling left the lane occupied by a deferred run, exactly as a
+          // suspended prompt would; the same typed refusal applies, because a
+          // record the caller reads as settled would hide a run still pending.
+          throw new SuspendedRunError(runId);
+        }
+        return lane.prompt(userInput, undefined, context);
+      })();
       // Always observe the detached provider result. This both prevents a late
       // rejection from becoming unhandled and releases the lane only when its
       // original operation has really stopped.
