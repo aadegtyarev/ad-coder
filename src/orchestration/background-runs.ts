@@ -305,6 +305,13 @@ function privateStateDirectory(targetDir: string): string {
   return current;
 }
 
+/** The executor a background run invokes to drive its detached pipeline. */
+export type BackgroundRunExecutor = (
+  task: string,
+  runId: string,
+  control: { cancelled: () => boolean; onStage: (step: StepCost) => void },
+) => Promise<RunPipelineResult>;
+
 /** Session-owned durable, content-free projection over isolated pipeline workers. */
 export class BackgroundRunManager {
   private readonly entries = new Map<string, Entry>();
@@ -316,11 +323,7 @@ export class BackgroundRunManager {
   private watcher: fs.FSWatcher | undefined;
   private closed = false;
   constructor(
-    private readonly execute: (
-      task: string,
-      runId: string,
-      control: { cancelled: () => boolean; onStage: (step: StepCost) => void },
-    ) => Promise<RunPipelineResult>,
+    private readonly execute: BackgroundRunExecutor,
     limits: Partial<BackgroundRunLimits> = {},
     targetDir?: string,
     ownerId: string = crypto.randomUUID(),
@@ -1137,27 +1140,37 @@ function parseWake(value: unknown): { entries: WakeEntry[] } {
 }
 /**
  * Union two wake projections so a blind writer cannot erase another writer's
- * windows. Handled wins over unhandled (acting on a pause must not be undone);
- * counts and window bounds take the widest/least-known value so the result
- * never understates what happened.
+ * windows. A window's identity is its kind plus the timestamp that began it
+ * (`firstAt`), NOT its handled state: two observations of the SAME window (one
+ * writer marked it handled, another still holds it unhandled) collapse into
+ * one where handled wins, while a genuinely new window of the same kind (a
+ * later re-pause) keeps its own firstAt and stays distinct, so a blind merge
+ * cannot erase a fresh unhandled window behind an already-handled one. Within
+ * a window, count takes the widest single observation (the events folded into
+ * one window) -- never a sum of two projections of the same window -- and
+ * firstAt/lastAt take the min/max bounds.
  */
 function mergeWake(
   a: { entries: WakeEntry[] } | undefined,
   b: { entries: WakeEntry[] } | undefined,
 ): { entries: WakeEntry[] } | undefined {
   if (a === undefined && b === undefined) return undefined;
-  const byKind = new Map<WakeKind, WakeEntry[]>();
-  for (const w of [...(a?.entries ?? []), ...(b?.entries ?? [])])
-    byKind.set(w.kind, [...(byKind.get(w.kind) ?? []), w]);
+  const byWindow = new Map<string, WakeEntry[]>();
+  for (const w of [...(a?.entries ?? []), ...(b?.entries ?? [])]) {
+    const key = `${w.kind}\u0000${w.firstAt}`;
+    byWindow.set(key, [...(byWindow.get(key) ?? []), w]);
+  }
   const entries: WakeEntry[] = [];
-  for (const [kind, list] of byKind) {
+  for (const list of byWindow.values()) {
+    const first = list[0];
+    if (first === undefined) continue;
     const handled = list.some((w) => w.handled);
     let handledAt: number | undefined;
     for (const w of list)
       if (w.handledAt !== undefined)
         handledAt = handledAt === undefined ? w.handledAt : Math.max(handledAt, w.handledAt);
     entries.push({
-      kind,
+      kind: first.kind,
       firstAt: Math.min(...list.map((w) => w.firstAt)),
       lastAt: Math.max(...list.map((w) => w.lastAt)),
       count: Math.max(...list.map((w) => w.count)),

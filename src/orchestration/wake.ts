@@ -55,6 +55,8 @@ export interface WakePumpDeps {
   markHandled: (runId: string, kinds: readonly WakeKind[]) => void;
   runTurn: (prompt: string, step: string) => Promise<void>;
   maxWakesPerTurn?: number;
+  /** True while a front / wake turn is running; the pump must defer, never race it. */
+  turnActive?: () => boolean;
 }
 
 /**
@@ -100,6 +102,10 @@ export class WakePump {
     this.scheduled = true;
     queueMicrotask(() => {
       this.scheduled = false;
+      // A front turn owns the conversation right now; defer rather than race it.
+      // The wake stays durably unhandled and drains on the next nudge (a new
+      // notice or the front turn's settle) -- never lost, never hot-looped.
+      if (this.deps.turnActive?.()) return;
       void this.drain();
     });
   }
@@ -107,20 +113,34 @@ export class WakePump {
   private async drain(): Promise<void> {
     if (this.inFlight) return;
     this.inFlight = true;
+    let succeeded = false;
     try {
       const pending = this.deps.listPending();
       if (pending.length === 0) return;
       const batch = pending.slice(0, this.maxWakesPerTurn);
       const step = `wake:${++this.turnCounter}`;
-      await this.deps.runTurn(buildWakeTurnPrompt(batch), step);
+      try {
+        await this.deps.runTurn(buildWakeTurnPrompt(batch), step);
+      } catch (error) {
+        // A racing failure (e.g. `conversation step already active`) must not
+        // escape through `void this.drain()` as an unhandled rejection, and must
+        // not hot-loop: mark NOTHING handled, report one bounded line to stderr,
+        // and leave the batch unhandled for the next nudge.
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`ad-coder: wake turn failed (${step}): ${message}`.slice(0, 200));
+        return;
+      }
       // Mark handled only after the turn resolves, so a failed turn leaves the
       // wakes unhandled for the next drain.
       for (const wake of batch) this.deps.markHandled(wake.runId, [wake.kind]);
+      succeeded = true;
     } finally {
       this.inFlight = false;
-      // Reschedule only if unhandled windows remain; then signal idle when a
-      // settle leaves nothing queued.
-      if (this.deps.listPending().length > 0) {
+      // After a SUCCESSFUL drain, reschedule only if unhandled windows remain
+      // (the per-turn cap left some behind). A FAILED drain leaves everything
+      // unhandled on purpose and must stay quiescent until the next nudge, so
+      // it never hot-loops.
+      if (succeeded && this.deps.listPending().length > 0) {
         this.schedule();
       } else if (this.idleResolver !== undefined) {
         const resolve = this.idleResolver;

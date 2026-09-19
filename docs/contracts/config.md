@@ -155,6 +155,13 @@ Rules the operator declared for ad-coder. A violation is always blocking.
   Close-drain time remains finite by default and may use zero for immediate
   shutdown. CLI overrides are `--background-max-page-size`,
   `--background-max-page-bytes`, `--background-close-drain-ms`, and `--lease-ms`.
+- 2026-09-19: Background wake bounds are the same class of ceiling: the durable
+  wake windows a turn drains are retained and batched under mandatory positive
+  safety bounds that cannot be disabled with zero. `maxWakeEntriesPerRun`
+  (default 12) caps the coalesced wake windows retained per run, and
+  `maxWakesPerTurn` (default 8) caps how many unhandled windows one orchestrator
+  turn drains. CLI overrides are `--background-max-wake-entries` and
+  `--background-max-wakes-per-turn`.
 - 2026-09-15: The context window each role will actually use is visible in the
   effective configuration, per role, together with where that number came from
   and the budget derived from it. A window the resolver settled on its own --
