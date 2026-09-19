@@ -20,6 +20,8 @@ import {
   findConsoleCommand,
 } from "../src/conversation/console-control";
 import {
+  CONVERSATION_REFUSAL_TEXT,
+  ConversationRefusedError,
   type ConversationSession,
   type ConversationTurnResult,
   startConversation,
@@ -866,6 +868,137 @@ test("an untyped turn failure names a bounded class token and nothing else", asy
     });
     expect(error.text()).not.toContain("super-secret");
   }
+});
+
+test("a refused turn renders the authored cause from the fixed map, not a forged message (issue #422)", async () => {
+  // An attacker-shaped subclass passes the tag check and carries an arbitrary
+  // own `message`; the branch must render the FIXED map text keyed by the
+  // discriminator, never the caught value's message (issue #412 discipline).
+  class ForgedMessageRefusal extends ConversationRefusedError {}
+  const cases: {
+    thrown: ConversationRefusedError;
+    message: string;
+    action: string;
+    retryable: boolean;
+  }[] = [
+    {
+      thrown: new ConversationRefusedError("closed"),
+      message: CONVERSATION_REFUSAL_TEXT.closed,
+      action: "restart the console",
+      retryable: false,
+    },
+    {
+      // The forged message must not travel: the branch reads only the
+      // discriminator and renders the fixed map text keyed by it.
+      thrown: Object.assign(new ForgedMessageRefusal("step_active"), {
+        message: "credential=super-secret",
+      }),
+      message: CONVERSATION_REFUSAL_TEXT.step_active,
+      action: "retry the prompt once the current turn settles",
+      retryable: true,
+    },
+  ];
+  for (const { thrown, message, action, retryable } of cases) {
+    const session = fakeSession({ stepError: thrown });
+    const error = new Capture();
+    await runConsole({
+      session,
+      input: ttyFrom("hello\nnext\n"),
+      output: new Capture(),
+      error,
+      mode: "json",
+    });
+    expect(error.text()).toContain(`"code":"turn_refused"`);
+    expect(error.text()).toContain(`"message":${JSON.stringify(message)}`);
+    expect(error.text()).toContain(`"action":${JSON.stringify(action)}`);
+    expect(error.text()).toContain(`"retryable":${JSON.stringify(retryable)}`);
+    expect(error.text()).not.toContain("super-secret");
+    expect(error.text()).not.toContain("(Error)");
+    // The authored-sentence projection holds for the untyped fallback too.
+  }
+});
+
+test("a step_active refusal keeps the console open so the promised retry is reachable (issue #422)", async () => {
+  const session = fakeSession({ stepError: new ConversationRefusedError("step_active") });
+  const error = new Capture();
+  const output = new Capture();
+  const result = await runConsole({
+    session,
+    input: ttyFrom("first\n"),
+    output,
+    error,
+    mode: "json",
+  });
+  // The read-back turn 2 fails the same way under faux, so the front survives
+  // to dispatch it rather than closing the stream on a failure that clears.
+  expect(session.inputs).toEqual(["first"]);
+  expect(error.text()).toContain('"code":"turn_refused"');
+  expect(result).toEqual({ reason: "eof", completedTurns: 0 });
+});
+
+test("a closed refusal stops the console with turn_failed and one record (issue #422)", async () => {
+  const session = fakeSession({ stepError: new ConversationRefusedError("closed") });
+  const error = new Capture();
+  const result = await runConsole({
+    session,
+    input: ttyFrom("hello\\n"),
+    output: new Capture(),
+    error,
+    mode: "json",
+  });
+  expect(result).toEqual({ reason: "turn_failed", completedTurns: 0 });
+  const records = error
+    .text()
+    .split("\n")
+    .filter((line) => line.trim() !== "")
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  expect(records[1]).toEqual({
+    type: "console_error",
+    code: "turn_refused",
+    message: "conversation is closed",
+    action: "restart the console",
+    retryable: false,
+  });
+});
+
+test("a refusal with a throwing field read falls back to the untyped line, never input_failed (issue #422)", async () => {
+  // A Proxy that answers the tag check and throws on the discriminator read
+  // must NOT replace the turn's failure with `input_failed`: the guard-try
+  // catches the defeated branch and renders the untyped line, exactly once.
+  const session: ConversationSession = {
+    runId: "session",
+    ledgerPath: undefined,
+    async step() {
+      throw new Proxy(new ConversationRefusedError("lane_stopping"), {
+        get(target, key, receiver) {
+          if (key === "reason") throw new Error("trap");
+          return Reflect.get(target, key, receiver);
+        },
+      });
+    },
+    async close() {},
+  };
+  const error = new Capture();
+  const result = await runConsole({
+    session,
+    input: ttyFrom("hello\\n"),
+    output: new Capture(),
+    error,
+    mode: "json",
+  });
+  expect(result).toEqual({ reason: "turn_failed", completedTurns: 0 });
+  const records = error
+    .text()
+    .split("\n")
+    .filter((line) => line.trim() !== "")
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  expect(records[1]).toEqual({
+    type: "console_error",
+    code: "turn_failed",
+    message: "console turn failed (ConversationRefusedError)",
+    action: "retry the prompt; if it keeps failing, restart the console",
+    retryable: true,
+  });
 });
 
 test("typed session exhaustion stops input with no fabricated JSON record", async () => {

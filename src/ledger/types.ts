@@ -84,4 +84,13 @@ export interface LedgerRecord {
     toolDefinitions: number;
     total: number;
   };
+  /**
+   * Present ONLY on a refusal row: a turn the conversation refused before any
+   * provider call (issue #422). Carries the typed code, the discriminator and
+   * the authored sentence -- never the prompt or any other in-scope payload --
+   * and its usage is always zero, which is what distinguishes it from a
+   * provider-failure row (usage from the provider, no refusal field). Additive:
+   * readers that do not know it simply ignore it.
+   */
+  refusal?: { code: string; reason: string; message: string };
 }

@@ -13,6 +13,25 @@ enforces that dated release headings go in non-increasing date order
 
 ## [0.96.0] - 2026-09-19
 
+## [0.96.1] - 2026-09-19
+
+### Fixed
+
+- **A turn the conversation refuses before any provider call now carries its
+  cause to the console instead of `console turn failed (Error)` (issue #422).**
+  The three pre-provider refusals -- a closed session, a step already active,
+  and a lane still settling after an interruption -- used to throw ordinary
+  `Error`s whose authored sentence was dropped: the operator saw only the
+  bounded class token, with no advice, no retry guidance, and no trace anywhere
+  after a run that died at 0s with no provider call and no ledger. They now
+  throw one house class (`ConversationRefusedError`, typed code
+  `conversation_refused`) whose authored wording is unchanged, rendered in
+  console language with per-reason action and retryability from a fixed map.
+  The refusal also leaves ONE ledger row -- zero usage, `stopReason: refusal`,
+  and an additive `refusal` field carrying code, discriminator, and the authored
+  sentence only -- so it stays distinguishable from a provider-failure row,
+  which always carries provider-reported usage and no refusal field.
+
 ## [0.95.1] - 2026-09-19
 
 ### Fixed

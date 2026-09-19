@@ -254,3 +254,42 @@ test("with no file args, the ledger command reads .ad-coder/ledger of the cwd", 
   expect(parsed.files[0]?.records).toEqual(1);
   expect(parsed.files).toHaveLength(1);
 });
+
+test("a refusal row parses and contributes only zero amounts (issue #422)", () => {
+  const refusalRow: LedgerRecord = {
+    ts: 100,
+    runId: "run-1",
+    lane: "main",
+    role: "coder",
+    step: "turn:1",
+    provider: "faux",
+    model: "faux-1",
+    stopReason: "refusal",
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+    refusal: {
+      code: "conversation_refused",
+      reason: "lane_stopping",
+      message: "conversation lane is still stopping",
+    },
+  };
+  const parsed = parseLedgerLine(JSON.stringify(refusalRow));
+  expect(parsed).toEqual(refusalRow);
+
+  const settled = record({ ts: 200 });
+  const report = aggregateLedgerRecords([refusalRow, settled]);
+  expect(report.total.modelCalls).toEqual(2);
+  // The refusal row contributes zero tokens and zero money; the settled row's
+  // numbers are exactly what the totals carry.
+  expect(report.total.freshInput).toEqual(USAGE.input);
+  expect(report.total.output).toEqual(USAGE.output);
+  expect(report.total.costUsd).toBeCloseTo(USAGE.cost.total);
+  expect(report.recordsRead).toEqual(2);
+  expect(report.skippedLines).toEqual(0);
+});

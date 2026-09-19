@@ -12,7 +12,12 @@ import type {
   ConversationToolCall,
   ConversationTurnResult,
 } from "../conversation/conversation";
-import { TurnInterruptedError } from "../conversation/conversation";
+import {
+  CONVERSATION_REFUSAL_TEXT,
+  type ConversationRefusalReason,
+  ConversationRefusedError,
+  TurnInterruptedError,
+} from "../conversation/conversation";
 import { CostAnomalyBlockedError } from "../economics/cost-anomaly";
 import type { ToolActivityConfig } from "../observability/tool-activity";
 import type { BackgroundRunManager, BackgroundRunNotice } from "../orchestration/background-runs";
@@ -1018,6 +1023,53 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
             ),
           );
           reason = "turn_failed";
+        } else if (isInstanceOf(error, ConversationRefusedError)) {
+          // A refusal the conversation raised BEFORE any provider call (issue
+          // #422). The branch reads only the discriminator, and the rendered
+          // text comes from the FIXED map, never from the caught value's own
+          // `message` -- `instanceof` passing does not make that read safe
+          // (#412), and a forged message must not reach the terminal or the
+          // ledger. The read itself sits inside the guard-try like every other
+          // typed branch: a value that answers the tag and then throws on the
+          // field read defeats this branch into the fallback below, which
+          // renders the untyped line and nothing else.
+          const refusalReason: ConversationRefusalReason | undefined =
+            error.reason === "closed" ||
+            error.reason === "step_active" ||
+            error.reason === "lane_stopping"
+              ? error.reason
+              : undefined;
+          if (refusalReason === undefined) {
+            // Outside the closed set: not falsifiable, not ours to render.
+            writeUntypedTurnFailure(error);
+          } else {
+            params.error.write(
+              renderFailure(
+                {
+                  code: "turn_refused",
+                  message: CONVERSATION_REFUSAL_TEXT[refusalReason],
+                  action:
+                    refusalReason === "closed"
+                      ? "restart the console"
+                      : refusalReason === "step_active"
+                        ? "retry the prompt once the current turn settles"
+                        : "wait for the provider call to settle, then retry the prompt",
+                  // A closed session cannot accept a retry; the other two
+                  // refusals clear on their own, and the input is kept open
+                  // so the promised retry is actually reachable here.
+                  retryable: refusalReason !== "closed",
+                },
+                mode,
+              ),
+            );
+            if (refusalReason === "closed") {
+              // Nothing can succeed again in this session.
+              reason = "turn_failed";
+            } else {
+              if (mode === "formatted") params.output.write("ad-coder> ");
+              return;
+            }
+          }
         } else {
           writeUntypedTurnFailure(error);
         }
