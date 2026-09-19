@@ -743,14 +743,14 @@ test("auth manages a declared env-var provider: login stores, status hides the v
   const targetDir = path.join(root, "project");
   const credentialPath = path.join(root, "private", "credentials.json");
   fs.mkdirSync(targetDir);
-  const inventoryPath = declaredInventoryFile(root);
+  const modelsConfigPath = declaredModelsYamlFile(root);
   const secret = "sk-test-declared-key";
   let output = "";
   try {
     await runAuthCommand({
       action: "login",
       provider: DECLARED_PROVIDER_ID,
-      inventoryPath,
+      modelsConfigPath,
       credentialPath,
       targetDir,
       interaction: { prompt: async () => secret, notify: () => undefined },
@@ -771,7 +771,7 @@ test("auth manages a declared env-var provider: login stores, status hides the v
     await runAuthCommand({
       action: "status",
       provider: DECLARED_PROVIDER_ID,
-      inventoryPath,
+      modelsConfigPath,
       credentialPath,
       targetDir,
       write: (text) => {
@@ -786,7 +786,7 @@ test("auth manages a declared env-var provider: login stores, status hides the v
     await runAuthCommand({
       action: "logout",
       provider: DECLARED_PROVIDER_ID,
-      inventoryPath,
+      modelsConfigPath,
       credentialPath,
       targetDir,
       write: (text) => {
@@ -834,7 +834,7 @@ test("auth resolves a declared provider from models.yaml (models.yaml-first)", a
   }
 });
 
-test("auth --provider rejects an unknown id naming the declared ids only", () => {
+test("auth --provider with a stored inventories.json present is the loud retire error", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-unknown-provider-cli-"));
   const priorConfigHome = process.env.XDG_CONFIG_HOME;
   process.env.XDG_CONFIG_HOME = root;
@@ -857,10 +857,14 @@ test("auth --provider rejects an unknown id naming the declared ids only", () =>
       "--credential-path",
       credentialPath,
     ]);
+    // The stored JSON route is retired (2026-09-19): auth cannot manage a
+    // provider through it either. The failure is loud and names the migration
+    // command, never the operator's path. Unknown-id validation against the
+    // declared ids is covered by the models.yaml variant below.
     expect(result.code).not.toBe(0);
-    expect(result.stderr).toContain("openai-codex");
-    expect(result.stderr).toContain("openrouter");
-    expect(result.stderr).toContain(DECLARED_PROVIDER_ID);
+    expect(result.stderr).toContain("no longer a routing source");
+    expect(result.stderr).toContain("config migrate");
+    expect(result.stderr).not.toContain(configDir);
     // ids only -- never a credential value or env-var name leaked.
     expect(result.stderr).not.toContain("MYPROVIDER_API_KEY");
   } finally {

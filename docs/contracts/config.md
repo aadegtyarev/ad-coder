@@ -65,10 +65,12 @@ Rules the operator declared for ad-coder. A violation is always blocking.
   store that produces a snapshot admits exactly the ids it names, and a store
   without a snapshot stays env-only (its key must arrive via the environment).
   `ad-coder auth` (login/status/logout) covers declared env-var providers,
-  sourced `models.yaml`-first then `inventories.json` -- the same precedence
-  routing uses -- and a declared env-var provider resolves as an `api_key`
-  login with the same empty-key refusal and post-login retention check as the
-  shipped `openrouter` preset. Per-role model overrides (`--coder-model` and
+  sourced `models.yaml`-first -- the same precedence routing uses, including
+  the same-day retirement of the stored `inventories.json` route below (a
+  present stored JSON under an absent `models.yaml` is that loud migrate
+  error for auth too) -- and a declared env-var provider resolves as an
+  `api_key` login with the same empty-key refusal and post-login retention
+  check as the shipped `openrouter` preset. Per-role model overrides (`--coder-model` and
   the rest of the role-model family) COMPOSE with a selected inventory: pinning
   one role's model keeps the selected registry/profile and overrides only that
   role, instead of being refused or silently disabling the inventory. An
@@ -106,6 +108,16 @@ Rules the operator declared for ad-coder. A violation is always blocking.
   `baseUrl`); `baseUrl` and `concurrency` both follow provider-declares/
   model-narrows. Only a ladder's FIRST rung is served today (the runtime walk
   is future work).
+- 2026-09-19: **The stored `inventories.json` route is retired (referencing
+  the same-day `models.yaml` entry above; issue #280).** `models.yaml` is the
+  operator-facing stored routing source; `ad-coder config migrate` (0.80.0)
+  is the only stored-JSON reader, and `--inventory-config` remains a per-run
+  data path. An absent `models.yaml` with a PRESENT stored `inventories.json`
+  is a loud typed error naming `config migrate` -- never a silent switch to
+  the env-preset/codex route, and the resolver never rewrites the stored
+  file. With both absent, the built-in env-preset/codex route runs exactly as
+  before. Nothing is seeded on first use: this supersedes the 2026-09-14
+  first-use seeding rule, whose text remains above as history.
 - 2026-09-19: **`settings.yaml`'s `review` section is an explicit override of
   the review-stamp marker-file behaviour, resolved ONCE and threaded to BOTH
   the settle writer and the `stamp check` gate so the two can never disagree
@@ -246,8 +258,9 @@ The 2026-09-19 pair (issue #280) supersedes the 2026-09-14 "`inventories.json`
 is the single editable runtime source" rule for routing: `models.yaml` is the
 operator-facing routing document and `settings.yaml` the behaviour document,
 resolved YAML-first-then-JSON with the winning source visible rather than
-silent; `inventories.json` remains only the absent-YAML fallback until it is
-retired in a later slice.
+silent; the same-day retirement entry above makes the retirement real: a
+present `inventories.json` under an absent `models.yaml` is a loud typed error
+naming `config migrate`, and nothing is seeded on first use.
 The decomposition-depth exception implements the operation-mode contract's
 default stop after a child pipeline asks for decomposition again.
 The 2026-09-16 capability rule generalises the 2026-09-11 pair from values to

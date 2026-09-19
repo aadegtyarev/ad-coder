@@ -10,7 +10,7 @@ import { CostAnomalyDetector, FileCostAnomalyStore } from "../economics/cost-ano
 import { DEFAULT_PROJECT_GATES } from "../gates/project-gates";
 import type { QualityGate } from "../gates/types";
 import { resolveModelInventory } from "../inventory/resolve";
-import { defaultInventoryPath, readOrCreateDefaultInventory } from "../inventory/store";
+import { defaultInventoryPath, storedInventoryExists } from "../inventory/store";
 import type { ModelInventoryConfig, ResolvedModelInventory } from "../inventory/types";
 import { MemoryLedgerSink } from "../ledger/ledger";
 import type {
@@ -577,8 +577,10 @@ function resolveConfig(
   // combination guard above). The `--<role>-model` family composes instead of
   // disabling (issue #101 item 3): pinning one role's model keeps the stored
   // routing config and overrides just that role. `models.yaml` present -> it
-  // wins; a present-but-unusable YAML is a typed error; absent -> the existing
-  // `inventories.json` path, unchanged.
+  // wins; a present-but-unusable YAML is a typed error; ABSENT -> a PRESENT
+  // stored `inventories.json` is a loud retire error naming `config migrate`,
+  // and ABSENT BOTH falls through to the built-in env-preset/codex route,
+  // unchanged. Nothing is seeded on first use.
   const useStoredConfig =
     options.inventoryConfig === undefined &&
     options.modelsConfigPath !== undefined &&
@@ -613,14 +615,19 @@ function resolveConfig(
         source: options.inventoryProfile === undefined ? "default" : "selection",
       };
     } else {
-      rawInventoryConfig = readOrCreateDefaultInventory(
-        options.inventoryPath ?? defaultInventoryPath(),
-      );
-      inventory = resolveModelInventory(rawInventoryConfig, options.inventoryProfile, {
-        env,
-        credentials,
-        ...(storedIds !== undefined && { storedCredentialIds: storedIds }),
-      });
+      // models.yaml ABSENT. The stored `inventories.json` route is retired:
+      // a PRESENT file is a loud operator-facing error pointing at
+      // `ad-coder config migrate` -- never a silent switch to env presets,
+      // never a seeding write. ABSENT both leaves yamlSelection and inventory
+      // undefined so the existing selectProvider flow decides below.
+      const storedInventory = options.inventoryPath ?? defaultInventoryPath();
+      if (storedInventoryExists(storedInventory)) {
+        throw new Error(
+          "stored inventories.json is no longer a routing source: models.yaml is " +
+            "the operator-facing stored routing source. " +
+            "Run `ad-coder config migrate` to convert it.",
+        );
+      }
     }
   } else if (options.inventoryConfig !== undefined) {
     rawInventoryConfig = options.inventoryConfig;
