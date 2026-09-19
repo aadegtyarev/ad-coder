@@ -30,6 +30,7 @@ import type { ToolActivityRecord } from "../src/observability/tool-activity";
 import { ProjectStore } from "../src/project-store/project-store";
 import type { Role } from "../src/role";
 import { defineRole } from "../src/role";
+import { EmptyTurnError } from "../src/runner/errors";
 import { defineTool } from "../src/runner/tool";
 import { SessionLimitController, SessionLimitError } from "../src/session-limits";
 
@@ -365,6 +366,104 @@ test("a conversation settles a session's interrupted operation before it prompts
   // the step settled the interrupted operation instead of stepping over it.
   expect(durableText()).toContain("recovered");
   expect(durableText()).toContain("after resume");
+});
+
+test("#428: a session killed mid-assistant-effect replays safely and its resumed turn settles as a typed empty-turn failure (measured pin)", async () => {
+  // MEASUREMENT NOTE (filled after the red run).
+  const { faux, models, model, role } = harnessFixture();
+  // The kill happens while the ASSISTANT effect is pending: pi-agent-core
+  // commits the durable operation state at "assistant.effect_pending"
+  // BEFORE the provider call is made (drive/generation.js:
+  // publishGenerationIntent -> performGeneration), so a model whose
+  // streamSimple never settles leaves exactly the state measured in the
+  // ticket — control.status "running", at "assistant.effect_pending",
+  // installed as the lane's currentOperationId.
+  const frozenModels = new Proxy(models, {
+    get(target, property, receiver) {
+      if (property === "streamSimple") {
+        return () => new Promise<never>(() => {});
+      }
+      return Reflect.get(target, property, receiver);
+    },
+  });
+  const responseReady = new Promise<never>(() => {});
+  void responseReady;
+  faux.setResponses([fauxAssistantMessage("never settles")]);
+
+  const runId = `effect_pending_${Date.now()}`;
+  const store = new ProjectStore(targetDir);
+  const orphanRepo = new JsonlSessionRepo({
+    fileSystem: store.fileSystem,
+    sessionsRoot: store.layout.sessions,
+  });
+  const orphanSession = await orphanRepo.create(
+    { id: runId, cwd: store.layout.targetDir },
+    BACKGROUND_CONTEXT,
+  );
+  const killed = await startConversation({
+    role,
+    targetDir,
+    models: frozenModels,
+    model,
+    runId,
+    session: orphanSession,
+  });
+  void killed.step("work killed mid-stream").catch(() => {});
+
+  const sessionsRoot = path.join(targetDir, ".ad-coder", "sessions");
+  const sessionFile = fs
+    .readdirSync(sessionsRoot, { recursive: true, encoding: "utf8" })
+    .map((name) => path.join(sessionsRoot, name))
+    .find((candidate) => candidate.endsWith(`_${runId}.jsonl`));
+  expect(sessionFile).toBeDefined();
+  const durableText = (): string => fs.readFileSync(sessionFile as string, "utf8");
+  // Wait until the durable file shows the same state the ticket measured.
+  const deadline = Date.now() + 10_000;
+  while (!durableText().includes("assistant.effect_pending")) {
+    if (Date.now() > deadline) throw new Error("operation never reached assistant.effect_pending");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  const linesBefore = durableText().split("\n").length;
+
+  const resumed = await startConversation({ role, targetDir, models, model, runId });
+  try {
+    const started = Date.now();
+    const cause = await resumed.step("hello after restart").catch((error) => error);
+    const elapsedMs = Date.now() - started;
+    // MEASURED CURRENT BEHAVIOR (2026-09-19, issue #428), pinned as the red
+    // run found it. The vendor replays the orphaned operation recorded at
+    // `assistant.effect_pending` with no provider call (synthetic settle),
+    // so the resumed turn proceeds normally into the harness -- and then the
+    // recovery settles the replayed generation as EmptyTurnError -- a typed
+    // outcome, not a plain Error, and NOT a stuck lane:
+    expect(cause).toBeInstanceOf(EmptyTurnError);
+    expect((cause as { code: string }).code).toBe("empty_turn");
+    // The typed message pins the OPEN QUESTION from the ticket verbatim: its
+    // "verify authentication and retry" advice fits a declined provider
+    // credential, not a previous turn that was killed mid-stream and replayed
+    // as an interrupted marker. The operator asked whether that advice should
+    // change; that question is deliberately NOT fixed in this PR -- this
+    // assertion documents the measured state as-is.
+    expect((cause as Error).message).toBe(
+      "the provider returned a failed empty turn; verify authentication and retry (provider code assistant_error)",
+    );
+    // The typed error still locates the run for programmatic callers.
+    expect((cause as { runId: string }).runId).toBe(runId);
+    // And it fails immediately, before any provider call the same way the
+    // two-process diagnosis (/tmp/fx428) measured it:
+    expect(elapsedMs).toBeLessThan(5000);
+    // DURABLE RESULT: the replayed orphan operation is still recorded
+    // (`assistant.effect_pending` stays as history), the resumed run gains
+    // records (the synthetic settle writes -- so the earlier "no records at
+    // all" reading was wrong), and the last settled status is `failed`, not
+    // the kill's `running` -- the lane does not STICK on the killed state.
+    expect(durableText()).toContain("assistant.effect_pending");
+    expect(durableText().split("\n").length).toBeGreaterThan(linesBefore);
+    const settledStatuses = durableText().match(/"status":"[a-z_]+"/g) ?? [];
+    expect(settledStatuses.at(-1)).toBe('"status":"failed"');
+  } finally {
+    await resumed.close();
+  }
 });
 
 test("exactly one ledger row per turn (per-turn attach/unsubscribe, no duplication)", async () => {

@@ -203,6 +203,29 @@ export class ConversationRefusedError extends Error {
   }
 }
 
+/**
+ * A house error for a `startConversation` call whose durable session could not
+ * be SEATED (issue #428). Defensive acquisition guard: it reaches only when a
+ * caller supplied no `session` AND the project store still returned no session
+ * -- an admission refusal BEFORE any model step, thrown from
+ * `startConversation`, never from the step family (which throws
+ * `ConversationRefusedError` instead, a closed set that must not grow a new
+ * reason for it). Authored message and next action from the class itself --
+ * a front renders from THESE constants, never from a caught value's own
+ * dynamic text (#412 discipline).
+ */
+export class SessionNotAcquiredError extends Error {
+  static readonly CODE = "session_not_acquired" as const;
+  static readonly NEXT_ACTION = "restart the console to open a fresh session" as const;
+  override readonly name = "SessionNotAcquiredError";
+  readonly code = "session_not_acquired" as const;
+
+  /** `runId` is a validated file-name-safe token, safe as a detail field. */
+  constructor(readonly runId: string) {
+    super("conversation failed to open or resume its durable session");
+  }
+}
+
 export class TurnInterruptedError extends Error {
   readonly code = "interrupted" as const;
   constructor() {
@@ -324,8 +347,7 @@ export async function startConversation(config: ConversationConfig): Promise<Con
       ? new ProjectStore(absTargetDir, config.projectStoreConfig)
       : undefined;
   const acquiredSession = config.session ?? (await store?.openOrCreateSession(runId, context));
-  if (acquiredSession === undefined)
-    throw new Error("startConversation: failed to acquire session");
+  if (acquiredSession === undefined) throw new SessionNotAcquiredError(runId);
   const session: Session = acquiredSession;
 
   const base = toHarnessOptions(config.role, {
