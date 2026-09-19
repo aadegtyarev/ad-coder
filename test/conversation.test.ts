@@ -18,11 +18,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { ContextBudgetError } from "../src/context/budget";
 import type { Summarizer } from "../src/context/compactor";
-import {
-  COMPACTION_ATTEMPT_LIMIT,
-  ContextCompactionLostError,
-  SUMMARIZATION_PROMPT,
-} from "../src/context/compactor";
+import { ContextCompactionLostError, SUMMARIZATION_PROMPT } from "../src/context/compactor";
 import { ConversationRefusedError, startConversation } from "../src/conversation/conversation";
 import {
   CostAnomalyBlockedError,

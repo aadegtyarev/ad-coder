@@ -11,6 +11,28 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.107.0] - 2026-09-20
+
+### Fixed
+- **A `startConversation` whose durable session could not be seated is now a
+  typed failure (issue #428).** The last plain `Error` in the startup family
+  -- the defensive acquisition guard that fires when a caller passes no
+  `session` and the project store still returns none -- threw an untyped
+  message. It now throws `SessionNotAcquiredError` (code
+  `session_not_acquired`, authored message and next action), and both machine
+  and human CLI fronts project it as a typed record with
+  `retryable: false` and the action to open a fresh session. Every other
+  pre-provider failure was already typed since #427.
+- **Measurement (issue #428, open):** a session whose process dies while its
+  assistant effect is pending (`assistant.effect_pending`) is replayed
+  safely on restart with no provider call, and the lane does not stick; the
+  resumed turn then settles as `EmptyTurnError` whose "verify authentication"
+  advice fits a provider credential refusal, not a killed-and-replayed
+  operation. That advice/question is NOT corrected in this release and
+  remains open in the ticket.
+- **Reviewer round 1 (0.107.0):** CLI projection tests for
+  `session_not_acquired`; zero lint warnings.
+
 ## [0.106.0] - 2026-09-20
 
 ### Fixed
