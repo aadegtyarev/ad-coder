@@ -116,7 +116,7 @@ export { buildInstalledInventoryConfig, DEFAULT_INVENTORY_NAME } from "./invento
 export type { ModelInventoryErrorCode } from "./inventory/errors";
 export { ModelInventoryError } from "./inventory/errors";
 export { resolveModelInventory } from "./inventory/resolve";
-export { defaultInventoryPath, readOrCreateDefaultInventory } from "./inventory/store";
+export { defaultInventoryPath } from "./inventory/store";
 export type {
   ModelInventoryConfig,
   ModelInventoryProfile,

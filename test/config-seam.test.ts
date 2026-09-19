@@ -484,22 +484,23 @@ test("(a) models.yaml wins when both it and inventories.json are present", () =>
   }
 });
 
-test("(a) only-JSON keeps the existing inventory path when models.yaml is absent", () => {
+test("(a) only-JSON is retired: an absent models.yaml with a stored inventories.json errors", () => {
   const dir = scratch();
   try {
     writeInventory(dir, "json-profile");
-    const config = resolvePipelineConfig({
-      task: "x",
-      targetDir: dir,
-      modelsConfigPath: path.join(dir, "models.yaml"), // absent
-      inventoryPath: path.join(dir, "inventories.json"),
-      settingsConfigPath: path.join(dir, "settings.yaml"),
-      env: fakeEnv({ JSON_KEY: "k" }),
-      warn: silent,
-    });
-    expect(config.delegatedRoute?.source).toBe('inventory "json-profile"');
-    expect(config.effectiveConfig?.inventoryProfile?.source).toBe("default");
-    expect(config.effectiveConfig?.inventoryProfile?.value).toBe("json-profile");
+    // The stored JSON route is retired (2026-09-19): loud, never a silent
+    // fallback to env presets, never a silent switch to the seeded file.
+    expect(() =>
+      resolvePipelineConfig({
+        task: "x",
+        targetDir: dir,
+        modelsConfigPath: path.join(dir, "models.yaml"), // absent
+        inventoryPath: path.join(dir, "inventories.json"),
+        settingsConfigPath: path.join(dir, "settings.yaml"),
+        env: fakeEnv({ JSON_KEY: "k" }),
+        warn: silent,
+      }),
+    ).toThrow(/no longer a routing source/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

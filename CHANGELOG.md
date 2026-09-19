@@ -13,6 +13,18 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.93.0] - 2026-09-19
+
+### Changed
+- **The stored `inventories.json` route retires in favour of `models.yaml`
+  (issue #280).** When `models.yaml` is absent and a stored
+  `~/.config/ad-coder/inventories.json` is present, resolution fails loudly
+  with an error naming `ad-coder config migrate` instead of reading the file;
+  with both absent the built-in env-preset/codex route runs exactly as before,
+  and nothing is seeded on first use (`readOrCreateDefaultInventory` is
+  removed). `config migrate` (0.80.0) is the only stored-JSON reader and
+  `--inventory-config` remains the per-run data path.
+
 ## [0.92.0] - 2026-09-19
 
 ### Removed

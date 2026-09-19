@@ -2,8 +2,7 @@ import { loadModelsConfigSeam } from "../config/seam";
 import { defaultModelsPath } from "../config/store";
 import { toRegistryProvider } from "../config/to-registry";
 import { ModelInventoryError } from "../inventory/errors";
-import { defaultInventoryPath, readOrCreateDefaultInventory } from "../inventory/store";
-import type { ModelInventoryConfig } from "../inventory/types";
+import { defaultInventoryPath, storedInventoryExists } from "../inventory/store";
 import type { ProviderConfig, RegistryConfig } from "../registry/types";
 
 /**
@@ -11,10 +10,13 @@ import type { ProviderConfig, RegistryConfig } from "../registry/types";
  *
  * WHY A SHARED HELPER. `auth login/status/logout --provider <id>` for a
  * non-built-in `id` must manage the SAME provider routing resolves -- same
- * `models.yaml`-first / `inventories.json`-fallback precedence, same
- * credential env-var NAME projection -- otherwise `auth login --provider x`
- * could store a key that routing never reads (or the reverse). One source of
- * truth here keeps the two from drifting.
+ * `models.yaml`-first precedence, same credential env-var NAME projection --
+ * otherwise `auth login --provider x` could store a key that routing never
+ * reads (or the reverse). One source of truth here keeps the two from
+ * drifting. With the stored `inventories.json` route retired (issue #280),
+ * "the same" includes routing's retirement: a present stored JSON under an
+ * absent `models.yaml` is the same loud migrate-pointer error, and with both
+ * sources absent nothing beyond the built-ins is declared.
  *
  * CREDENTIAL BOUNDARY. A provider's `credential` is an env-var NAME (or the
  * literal `oauth` marker), never a value; nothing here reads process.env and no
@@ -26,7 +28,10 @@ import type { ProviderConfig, RegistryConfig } from "../registry/types";
 export interface DeclaredProviderSource {
   /** `models.yaml` path; defaults to the XDG config home (models.yaml-first). */
   modelsConfigPath?: string;
-  /** `inventories.json` path; the fallback when `models.yaml` is absent. */
+  /**
+   * Stored `inventories.json` path; retired as a source (issue #280): when
+   * `models.yaml` is absent, its PRESENCE is the loud migrate-pointer error.
+   */
   inventoryPath?: string;
 }
 
@@ -38,41 +43,12 @@ function sourcePaths(source: DeclaredProviderSource): { models: string; inventor
 }
 
 /**
- * The default profile's registry providers from `inventories.json`, filtered to
- * env-var providers (the only kind `auth` can store a key for -- oauth is the
- * codex-only marker and is never operator-declared as an env-var provider).
- *
- * Uses `readOrCreateDefaultInventory` for the same reason routing does: the
- * first CLI use seeds the built-in profile, and every later read is user-owned.
- */
-function inventoryEnvProviders(inventory: ModelInventoryConfig): Map<string, ProviderConfig> {
-  const name = inventory.default;
-  if (name === undefined) {
-    throw new ModelInventoryError(
-      "missing_selection",
-      "profile",
-      "inventory has no default; select a profile explicitly",
-    );
-  }
-  const profile = inventory.profiles.find((entry) => entry.name === name);
-  if (profile === undefined) {
-    throw new ModelInventoryError(
-      "unknown_profile",
-      name,
-      `inventory profile "${name}" is not declared`,
-    );
-  }
-  const result = new Map<string, ProviderConfig>();
-  for (const provider of profile.registry.providers) {
-    if (provider.credential.kind === "env-var") result.set(provider.id, provider);
-  }
-  return result;
-}
-
-/**
  * The declared env-var providers available to `auth`, keyed by id, resolved the
- * way routing resolves them: `models.yaml` when present, else `inventories.json`.
- * Returns an empty map when neither source declares an env-var provider.
+ * way routing resolves them: `models.yaml` when present; with `models.yaml`
+ * absent, a PRESENT stored `inventories.json` is the loud retire error naming
+ * `config migrate`, and with both absent nothing is declared (nothing is
+ * seeded). Returns an empty map when neither source declares an env-var
+ * provider.
  */
 export function declaredEnvProviders(
   source: DeclaredProviderSource = {},
@@ -86,7 +62,19 @@ export function declaredEnvProviders(
     }
     return result;
   }
-  return inventoryEnvProviders(readOrCreateDefaultInventory(paths.inventory));
+  // models.yaml ABSENT. The stored `inventories.json` route is retired
+  // (issue #280): a PRESENT file is the same loud operator-facing error
+  // routing throws -- never a silent read, never a seeding write -- so auth
+  // cannot store a key routing would refuse to read. ABSENT both leaves no
+  // declared env-var provider: auth covers the built-ins only.
+  if (storedInventoryExists(paths.inventory)) {
+    throw new Error(
+      "stored inventories.json is no longer a routing source: models.yaml is " +
+        "the operator-facing stored routing source. " +
+        "Run `ad-coder config migrate` to convert it.",
+    );
+  }
+  return new Map();
 }
 
 /** The declared env-var provider ids, for the CLI's `--provider` validation error (ids only). */
