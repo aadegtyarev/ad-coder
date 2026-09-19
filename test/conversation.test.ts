@@ -2,7 +2,11 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { BACKGROUND_CONTEXT, MemorySessionRepo } from "@earendil-works/pi-agent-core";
+import {
+  BACKGROUND_CONTEXT,
+  JsonlSessionRepo,
+  MemorySessionRepo,
+} from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import {
   createModels,
@@ -236,6 +240,101 @@ test("a default conversation resumes durable history after reconstruction", asyn
   const messages = await durable.findEntries({ type: "message" }, BACKGROUND_CONTEXT);
   expect(messages.filter((entry) => entry.type === "message")).toHaveLength(4);
   await durable.close(BACKGROUND_CONTEXT);
+});
+
+test("a conversation settles a session's interrupted operation before it prompts", async () => {
+  // The durability bug this pins: a console killed mid-turn leaves its
+  // operation recorded `running` in the durable session. On `--resume` the
+  // harness reinstalls that operation, and `step` used to hand the operator's
+  // input straight to `lane.prompt` -- which the lane refuses with an untyped
+  // `LaneBusy`, before any provider call and before any ledger row. Every turn
+  // after a resume died that way, so a killed session was unresumable in
+  // practice. The fix settles the installed operation first (lane.resume),
+  // exactly as the single-turn runner already does for a resumed stage.
+  //
+  // The kill is reproduced by abandonment rather than by a signal: the first
+  // conversation is left mid-tool and never closed, so its operation stays
+  // installed in the durable record -- which is all the second conversation
+  // reads. The tool never settles, so it is the durable snapshot that carries
+  // the state across, not anything still live in memory.
+  let markToolStarted: () => void = () => {};
+  const toolStarted = new Promise<void>((resolve) => {
+    markToolStarted = resolve;
+  });
+  const hang = defineTool({
+    name: "hang",
+    description: "Never settles: stands in for a process killed mid-tool.",
+    label: "hang",
+    parameters: Type.Object({ note: Type.String() }),
+    execute() {
+      markToolStarted();
+      // Never settles: the durable snapshot, not this promise, is what carries
+      // the in-flight operation to the next conversation.
+      return new Promise<never>(() => {});
+    },
+  });
+
+  const { faux, models, model, role } = harnessFixture(["hang"]);
+  const runId = `interrupted_${Date.now()}`;
+  faux.setResponses([
+    fauxAssistantMessage(fauxToolCall("hang", { note: "in-flight" })),
+    // The interrupted operation's own turn, driven to settlement by the resume.
+    fauxAssistantMessage("recovered"),
+    // The operator's turn, dispatched only after that settlement.
+    fauxAssistantMessage("after resume"),
+  ]);
+
+  // The abandoned side is handed a session opened WITHOUT a store lease: a
+  // killed process holds none, so the resumed conversation must be able to take
+  // the session through the ordinary store route while this one stays open.
+  const store = new ProjectStore(targetDir);
+  const orphanRepo = new JsonlSessionRepo({
+    fileSystem: store.fileSystem,
+    sessionsRoot: store.layout.sessions,
+  });
+  const orphanSession = await orphanRepo.create(
+    { id: runId, cwd: store.layout.targetDir },
+    BACKGROUND_CONTEXT,
+  );
+  const killed = await startConversation({
+    role,
+    targetDir,
+    models,
+    model,
+    runId,
+    session: orphanSession,
+    tools: [hang],
+  });
+  const abandoned = killed.step("work that outlives the process");
+  abandoned.catch(() => {});
+  await toolStarted;
+
+  // Evidence for the assertion below is read straight off the session file,
+  // because the durable file -- not the live process -- is what the resumed
+  // conversation has to work from.
+  const sessionsRoot = path.join(targetDir, ".ad-coder", "sessions");
+  const sessionFile = fs
+    .readdirSync(sessionsRoot, { recursive: true, encoding: "utf8" })
+    .map((name) => path.join(sessionsRoot, name))
+    .find((candidate) => candidate.endsWith(`_${runId}.jsonl`));
+  expect(sessionFile).toBeDefined();
+  const durableText = (): string => fs.readFileSync(sessionFile as string, "utf8");
+  // `pi.op.state` is the durable operation record. If it is absent the session
+  // reopened with nothing installed, and every assertion below would pass for
+  // the wrong reason (the faux responses would simply be consumed in order).
+  expect(durableText()).toContain("pi.op.state");
+
+  const resumed = await startConversation({ role, targetDir, models, model, runId, tools: [hang] });
+  try {
+    expect((await resumed.step("what happened")).assistantText).toBe("after resume");
+  } finally {
+    await resumed.close();
+  }
+
+  // The recovered turn really ran: its answer reached the durable history, so
+  // the step settled the interrupted operation instead of stepping over it.
+  expect(durableText()).toContain("recovered");
+  expect(durableText()).toContain("after resume");
 });
 
 test("exactly one ledger row per turn (per-turn attach/unsubscribe, no duplication)", async () => {

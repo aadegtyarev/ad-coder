@@ -910,11 +910,18 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
         );
         reason = "turn_failed";
       } else {
+        // The fallback names the error's CLASS and nothing else. A turn that
+        // dies before any provider call leaves no ledger row, so the class is
+        // the only evidence a reader gets -- but an error's message can carry
+        // the request it rejected, and an untyped harness error is the case
+        // most likely to quote one. Same attribution discipline as the
+        // compactor: the class survives, the message does not.
+        const cause = error instanceof Error ? error.constructor.name : typeof error;
         params.error.write(
           renderFailure(
             {
               code: "turn_failed",
-              message: "console turn failed",
+              message: `console turn failed (${cause})`,
               action: "retry the prompt; if it keeps failing, restart the console",
               retryable: true,
             },

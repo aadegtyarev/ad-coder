@@ -13,6 +13,26 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.94.0] - 2026-09-19
+
+### Fixed
+- **A session killed mid-turn is resumable again.** A console killed while a
+  turn was running leaves its operation recorded as `running` in the durable
+  session. On `--resume` the harness reinstalls that operation, and every turn
+  after the resume died before any provider call: `ConversationSession.step`
+  handed the operator's input straight to `lane.prompt`, which the lane refuses
+  with `LaneBusy` while it still owns an operation. The refusal is an untyped
+  harness error, so the console could only render it as a bare
+  `console turn failed`, and no ledger row was written to explain it -- a
+  killed session was unresumable in practice, and the loop repeated on each
+  retry. `step` now settles the installed operation first (`lane.resume`, the
+  same recovery the single-turn runner already performs for a resumed stage via
+  `resumeActiveOperation`) and only then dispatches the new input; a settlement
+  that leaves the lane occupied by a deferred run raises the existing typed
+  `SuspendedRunError` instead of hiding it. A turn that dies before the
+  provider is reached now names the failing error's CLASS in the fallback
+  message, so the next occurrence is diagnosable from the console alone.
+
 ## [0.93.0] - 2026-09-19
 
 ### Changed
