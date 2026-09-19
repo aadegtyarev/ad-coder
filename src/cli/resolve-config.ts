@@ -91,11 +91,20 @@ export type ConfigurableRole =
   | "orchestrator";
 export type BuiltInPluginName = "explore" | "web" | "vision";
 
-const DEFAULT_STAGE_LIMITS: Required<StageLimits> = {
-  maxDurationMs: 1_800_000,
-  maxModelTurns: 96,
-  maxToolTurns: 384,
-  maxInputTokens: 1_500_000,
+/**
+ * Calibrated 2026-09-19 (issue #405) from the fleet's own pause statistics: 72 coordinator run
+ * records carried 16 duration pauses and 4 input-token pauses, and **zero** pauses on model turns,
+ * tool turns or cost. Duration and input are therefore the ceilings that actually bind, and the
+ * turn ceilings move with them so that a raised duration does not simply push the same stage into
+ * the neighbouring wall (the plan stage that closed out on `model_turns` at 20/30 with 12 reserved
+ * is the specimen). Cost is deliberately NOT raised: it is the one ceiling with no pause evidence,
+ * and the per-role cost ratios are a calibration of their own.
+ */
+export const DEFAULT_STAGE_LIMITS: Required<StageLimits> = {
+  maxDurationMs: 2_700_000,
+  maxModelTurns: 144,
+  maxToolTurns: 576,
+  maxInputTokens: 2_400_000,
   maxCostUsd: 6,
   finalResponseReserveModelTurns: 12,
   finalResponseReserveDurationMs: 90_000,
@@ -103,48 +112,72 @@ const DEFAULT_STAGE_LIMITS: Required<StageLimits> = {
   finalResponseReserveInputTokens: 300_000,
 };
 
-/** Efficient role ceilings inferred from committed dogfood evidence; overrides remain data-only. */
-const DEFAULT_ROLE_STAGE_LIMITS: Readonly<Partial<Record<ProfileRole, StageLimits>>> = {
+/**
+ * Efficient role ceilings inferred from committed dogfood evidence; overrides remain data-only.
+ *
+ * Calibrated again 2026-09-19 (issues #358, #405): the per-role table is what the operator's own
+ * console runs on — a global `--stage-max-*` flag OVERRIDES these values, so raising the flag alone
+ * leaves every run that passes no flag exactly where it was. Every ceiling below moves by one
+ * bounded step (duration and turns x1.5, input x1.6) and cost stays put, because cost is the one
+ * dimension with no pause evidence at all.
+ *
+ * Two of these steps are measurements rather than symmetry:
+ *
+ * - `planner.maxDurationMs` takes its value from the learned ceiling the stage-limit contract
+ *   already records (docs/contracts/stage-limit-calibration.md, 2026-09-18, run
+ *   `4c26d8d9-f682-4587-8e5e-07f1de1f8e82`): a plan stage that exhausted 540_000 completed at
+ *   726_866 once it was given 810_000. The shipped default was still the pre-probe number, so the
+ *   learned value never reached anyone who did not pass a flag by hand.
+ * - `planner.maxModelTurns` follows the closeout reason of that same completion:
+ *   `reason model_turns, "20/30 model turns used, 12 reserved"` — with duration raised, the turns
+ *   ceiling is the next one the stage meets.
+ *
+ * The rest is symmetry with those two, which is a stated reason and not a measurement: a raise of
+ * one ceiling without its neighbours only moves where the stage stops. 78% of every duration pause
+ * recorded is the plan stage, so the planner's numbers are the ones to watch; if it pauses again,
+ * that is the second observation the contract requires before the next raise.
+ */
+export const DEFAULT_ROLE_STAGE_LIMITS: Readonly<Partial<Record<ProfileRole, StageLimits>>> = {
   planner: {
-    maxDurationMs: 540_000,
-    maxModelTurns: 30,
-    maxToolTurns: 60,
-    maxInputTokens: 750_000,
+    maxDurationMs: 810_000,
+    maxModelTurns: 45,
+    maxToolTurns: 90,
+    maxInputTokens: 1_200_000,
     maxCostUsd: 0.3,
   },
   researcher: {
-    maxDurationMs: 720_000,
-    maxModelTurns: 42,
-    maxToolTurns: 96,
-    maxInputTokens: 900_000,
+    maxDurationMs: 1_080_000,
+    maxModelTurns: 63,
+    maxToolTurns: 144,
+    maxInputTokens: 1_440_000,
     maxCostUsd: 0.75,
   },
   security: {
-    maxDurationMs: 540_000,
-    maxModelTurns: 30,
-    maxToolTurns: 60,
-    maxInputTokens: 600_000,
+    maxDurationMs: 810_000,
+    maxModelTurns: 45,
+    maxToolTurns: 90,
+    maxInputTokens: 960_000,
     maxCostUsd: 0.45,
   },
   coder: {
-    maxDurationMs: 1_440_000,
-    maxModelTurns: 60,
-    maxToolTurns: 144,
-    maxInputTokens: 1_200_000,
+    maxDurationMs: 2_160_000,
+    maxModelTurns: 90,
+    maxToolTurns: 216,
+    maxInputTokens: 1_920_000,
     maxCostUsd: 2.4,
   },
   reviewer: {
-    maxDurationMs: 900_000,
-    maxModelTurns: 48,
-    maxToolTurns: 120,
-    maxInputTokens: 1_050_000,
+    maxDurationMs: 1_350_000,
+    maxModelTurns: 72,
+    maxToolTurns: 180,
+    maxInputTokens: 1_680_000,
     maxCostUsd: 1.5,
   },
   auditor: {
-    maxDurationMs: 900_000,
-    maxModelTurns: 48,
-    maxToolTurns: 120,
-    maxInputTokens: 1_050_000,
+    maxDurationMs: 1_350_000,
+    maxModelTurns: 72,
+    maxToolTurns: 180,
+    maxInputTokens: 1_680_000,
     maxCostUsd: 1.5,
   },
 };

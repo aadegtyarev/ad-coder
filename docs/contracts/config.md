@@ -25,6 +25,15 @@ Rules the operator declared for ad-coder. A violation is always blocking.
   defaults protect 4 model turns, 30 seconds, 8 tool turns, and 100,000
   provider-reported input tokens inside an enabled stage budget. Each reserve
   remains independently configurable and zero-disableable.
+- 2026-09-19 (issue #405): the reserve defaults are the ones the code has used
+  since 2026-09-18 -- 12 model turns, 90 seconds, 24 tool turns, and 300,000
+  provider-reported input tokens -- and the 2026-09-13 numbers above are
+  superseded by that raise, which left the CLI help, the README and this entry
+  stating the pre-raise values. The property recorded on 2026-09-13 is unchanged:
+  each reserve is independently configurable and zero-disableable. All nine
+  stage-limit help lines (five ceilings and four reserves) are now interpolated
+  from `DEFAULT_STAGE_LIMITS` rather than typed, so a future raise moves the
+  shipped text with the number instead of leaving it behind.
 - 2026-09-12: Context-window enforcement, summarization percentage, the
   decomposition guards, and mandatory tool-activity projection/event/rendering
   safety ceilings are explicit exceptions to the zero-disabled default policy.

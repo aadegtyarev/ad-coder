@@ -446,20 +446,30 @@ their own `pluginTools`.
 Model-backed `role` and `drive` commands announce their stage immediately and
 print a heartbeat to stderr every 10 seconds. Change it with `--heartbeat-ms`.
 Provider requests time out after 120 seconds by default; use
-`--request-timeout-ms`. Whole stages also default to a 10-minute deadline, 32
-model calls, 128 tool calls, 500,000 provider-reported input tokens, and $2 of
-provider-reported cost. Override them with `--stage-max-duration-ms`,
-`--stage-max-model-turns`, `--stage-max-tool-turns`,
-`--stage-max-input-tokens`, and `--stage-max-cost-usd`; zero disables the named
-limit. A reached limit durably pauses the incomplete stage with explicit recovery
-guidance. Final-response reserves stop new tools before the hard limits; configure
-them with the `--stage-final-response-reserve-*` options, including the default
-100,000-token input reserve. To constrain one role without changing another, pass
-`--role-stage-limits limits.json`, where `limits.json` is a JSON object such as
-`{"planner":{"maxModelTurns":8},"coder":{"maxCostUsd":4}}`. Valid keys are
-planner, researcher, security, coder, reviewer, auditor, and orchestrator; omitted
-fields inherit the global `--stage-*` value and zero retains its documented
-disable semantics. This is independent of context `--role-budget-percents`.
+`--request-timeout-ms`. Whole stages also carry a deadline, a model-call ceiling,
+a tool-call ceiling, and ceilings on provider-reported input tokens and cost. The
+global defaults are 45 minutes, 144 model calls, 576 tool calls, 2,400,000 input
+tokens, and $6, and every role except `orchestrator` overrides them with tighter
+ceilings of its own — slice-planning, for instance, runs at 810,000 ms / 45 model
+calls / 1,200,000 input tokens, and the coder at 2,160,000 ms / 90 / 1,920,000.
+`config show` reports the global values and whether each came from a flag; the
+per-role ceilings live in `DEFAULT_ROLE_STAGE_LIMITS` in
+`src/cli/resolve-config.ts`, which is the table to edit to change a role's own
+ceiling.
+
+Passing a global `--stage-max-duration-ms`, `--stage-max-model-turns`,
+`--stage-max-tool-turns`, `--stage-max-input-tokens`, or `--stage-max-cost-usd`
+flag **replaces every role's ceiling** for that dimension with the one value
+passed; it is a flattening override, not a floor, so raising the global cost
+ceiling raises what the coder may spend and the planner too. Zero disables the
+named limit. A reached limit durably pauses the incomplete stage with explicit
+recovery guidance. Final-response reserves stop new tools before the hard limits;
+configure them with the `--stage-final-response-reserve-*` options, whose defaults
+protect 12 model turns, 90 seconds, 24 tool turns, and 300,000 input tokens inside
+an enabled stage budget. A per-role ceiling can also be set by a host embedding
+the pipeline (`roleStageLimits` in the pipeline config, which is the last overlay
+and wins over both a role default and a global flag); there is no CLI flag for it
+today. This is independent of context `--role-budget-percents`.
 Zero explicitly disables heartbeat or provider-request timeout. Tool activity
 retention, subscriber queues, grouping, projection, event, line, and renderer
 limits use the registry-derived `--tool-activity-*` options and appear in

@@ -6,6 +6,7 @@ import * as path from "node:path";
 import { PassThrough, Readable, Writable } from "node:stream";
 import { createModels, fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 import { runConsole } from "../src/cli/console";
+import { DEFAULT_STAGE_LIMITS } from "../src/cli/resolve-config";
 import { resolveResumeRun, resumeOrchestratorConfig, resumeSeedNote } from "../src/cli/resume";
 import { loadTaskFile } from "../src/cli/task-file";
 import { ContextCompactionLostError } from "../src/context/compactor";
@@ -2714,6 +2715,52 @@ test("the real console front refuses a bare --resume with nothing to continue", 
   expect(failed.stderr).toContain("start without --resume");
   // The bare form's refusal also creates nothing.
   expect(fs.existsSync(path.join(target, ".ad-coder"))).toBe(false);
+});
+
+test("role --help states the stage-limit defaults the code actually uses (issue #405)", () => {
+  // Every one of these nine lines used to print a number the code did not use --
+  // the five stage ceilings (600000/32/128/500000/2 against
+  // 1800000/96/384/1500000/6) and, from the same 2026-09-18 raise, all four
+  // closeout reserves (4/30000/8/100000 against 12/90000/24/300000) -- so the
+  // only surface a user could read them from stated wrong ones. The numbers are
+  // interpolated from DEFAULT_STAGE_LIMITS now; this test pins the rendering to
+  // the constant, which is what keeps them from drifting apart again. It walks
+  // the whole option catalogue rather than a hand-picked list, so a tenth
+  // flag line cannot be added with a typed number and escape the pin.
+  const help = runConsoleCli(["role", "--help"]);
+  expect(help.code).toBe(0);
+  // The flag name carries the constant key: `--stage-final-response-reserve-
+  // input-tokens` is `finalResponseReserveInputTokens`, `--stage-max-cost-usd`
+  // is `maxCostUsd`. Deriving the mapping instead of listing pairs means a new
+  // `--stage-*` ceiling whose help line types its default by hand fails here,
+  // which is the drift this test exists to catch.
+  const limits: Record<string, number> = DEFAULT_STAGE_LIMITS;
+  const lines = help.stdout.split("\n").filter((line) => line.includes("--stage-"));
+  const checked: string[] = [];
+  for (const line of lines) {
+    const flag = line.match(/--stage-[a-z0-9-]+/)?.[0];
+    const stated = line.match(/defaults to (\d+)/)?.[1];
+    if (flag === undefined || stated === undefined) continue;
+    const key = flag
+      .slice("--stage-".length)
+      .replace(/-([a-z0-9])/g, (_, c: string) => c.toUpperCase());
+    const value = limits[key];
+    expect(value, `${flag} has no DEFAULT_STAGE_LIMITS entry named ${key}`).toBeDefined();
+    // A help line that states the default is a claim about that constant, and
+    // stating a DIFFERENT number is the defect, not the fact of stating one.
+    expect(`${flag} defaults to ${stated}`, `${flag} states a default the code does not use`).toBe(
+      `${flag} defaults to ${value}`,
+    );
+    checked.push(flag);
+  }
+  // Nine today (five ceilings, four reserves); a floor keeps this test from
+  // passing vacuously if the help output ever stops containing them.
+  expect(checked.length).toBeGreaterThanOrEqual(9);
+  // The flag's real semantics -- it replaces EVERY role's own ceiling -- is the
+  // half the old text never mentioned, and the half that surprises a caller: it
+  // is the only way the CLI can touch a role's ceiling at all, and it cannot
+  // touch one role alone.
+  expect(help.stdout).toContain("replaces every role's own ceiling");
 });
 
 test("console --help renders --resume from the single registry", () => {
