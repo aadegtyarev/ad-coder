@@ -23,11 +23,7 @@ import {
   ContextCompactionLostError,
   SUMMARIZATION_PROMPT,
 } from "../src/context/compactor";
-import {
-  ConversationRefusedError,
-  SessionNotAcquiredError,
-  startConversation,
-} from "../src/conversation/conversation";
+import { ConversationRefusedError, startConversation } from "../src/conversation/conversation";
 import {
   CostAnomalyBlockedError,
   CostAnomalyDetector,

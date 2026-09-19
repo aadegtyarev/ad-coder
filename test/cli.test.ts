@@ -1476,6 +1476,28 @@ test("a human front states the update failure and its recovery action on one lin
   );
 });
 
+test("a human front projects a session that was never acquired with its authored text and action", () => {
+  const error = new SessionNotAcquiredError("run-9f2a");
+  expect(renderCliError(error)).toBe(
+    `ad-coder: ${error.message}; ${SessionNotAcquiredError.NEXT_ACTION}\n`,
+  );
+  // The record carries the class code as well, though the human line never does.
+  expect(SessionNotAcquiredError.CODE).toBe("session_not_acquired");
+  // An error with no action renders with no stray separator.
+  expect(renderCliError(new Error("plain failure"))).toBe("ad-coder: plain failure\n");
+});
+
+test("a machine front projects a session that was never acquired with its code, detail, and action", () => {
+  const error = new SessionNotAcquiredError("run-9f2a");
+  expect(projectCliError(error)).toEqual({
+    code: SessionNotAcquiredError.CODE,
+    detail: error.runId,
+    text: error.message,
+    retryable: false,
+    nextAction: SessionNotAcquiredError.NEXT_ACTION,
+  });
+});
+
 test("a usage error under a machine front stays machine-readable instead of printing help", () => {
   for (const args of [
     ["update", "--json", "stray"],

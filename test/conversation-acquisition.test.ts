@@ -14,7 +14,6 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { createModels, fauxProvider } from "@earendil-works/pi-ai";
-import type { ProjectStoreConfig } from "../src/project-store/types";
 import type { Role } from "../src/role";
 
 // Capture the REAL store before the mock replaces the registry entry.
