@@ -11,7 +11,7 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
-## [0.102.0] - 2026-09-19
+## [0.104.0] - 2026-09-19
 
 ### Changed
 - **The delivery signature is published as a prose lead-in plus ONE fenced
