@@ -28,7 +28,6 @@ enforces that dated release headings go in non-increasing date order
   Profile names are preserved; renaming a profile to a purpose name is a hand
   edit.
 
-## [0.75.0] - 2026-09-19
 ## [0.79.0] - 2026-09-19
 
 ### Added
@@ -44,6 +43,7 @@ enforces that dated release headings go in non-increasing date order
   validated like the existing price fields -- a malformed value is a typed
   `ConfigError` naming the field path (for example
   `<provider>.models.<model>.cacheRead`), never a silently ignored key.
+
 ## [0.78.0] - 2026-09-19
 
 ### Fixed
