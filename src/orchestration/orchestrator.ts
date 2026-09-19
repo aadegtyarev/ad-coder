@@ -37,6 +37,7 @@ import type { SessionLimitSnapshot, SessionLimits } from "../session-limits";
 import { SessionLimitController, SessionLimitError } from "../session-limits";
 import { pluginNamesFromToolNames } from "../skills/resolver";
 import { roleSkillKit } from "../skills/role-kit";
+import { recordReviewStampFromResult } from "../stamp/record-review-stamp";
 import { buildWebTools } from "../web/tools";
 import { resolveWorkflowModules } from "../workflows/registry";
 import type { OrchestratorWorkflowModule } from "../workflows/types";
@@ -409,6 +410,18 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         decision?.id ?? completed.checkpoint.runId,
       );
     }
+    // The core's own settle paths owe the same paperwork as the CLI fronts'
+    // runPipeline (issue #378): run_pipeline/resume_pipeline settle a
+    // structured verdict HERE, so this is where their stamp is written --
+    // same one-writer hook, ignored outcome, no stderr the fronts don't have.
+    // The writer stays a no-op in targets without the stamp marker, and a
+    // pause or a pending decision threw above and writes nothing.
+    recordReviewStampFromResult(
+      config.targetDir,
+      completed.result,
+      new Date(),
+      config.requireStamp,
+    );
     const totalCost = perStep.reduce((sum, e) => sum + e.cost, 0);
     return { runId: completed.checkpoint.runId, result: completed.result, perStep, totalCost };
   };
@@ -484,6 +497,14 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         decision?.id ?? completed.checkpoint.runId,
       );
     }
+    // Same settle hook as executePipeline (issue #378): start_pipeline and the
+    // background lanes settle their verdict here, so their stamp lands here.
+    recordReviewStampFromResult(
+      config.targetDir,
+      completed.result,
+      new Date(),
+      config.requireStamp,
+    );
     return {
       runId: completed.checkpoint.runId,
       result: completed.result,

@@ -69,6 +69,8 @@ import { EmptyTurnError, ProviderLimitError } from "../src/runner/errors";
 import type { Tool } from "../src/runner/tool";
 import { SessionLimitController, SessionLimitError } from "../src/session-limits";
 import { LOAD_SKILL_TOOL_NAME } from "../src/skills/load-tool";
+import { STAMPS_MARKER_FILE } from "../src/stamp/record-review-stamp";
+import { computeTreeDigest, parseReviewStamp } from "../src/stamp/review-stamp";
 import {
   INSPECT_IMAGE_TOOL_NAME,
   WEB_READ_TOOL_NAME,
@@ -1072,6 +1074,55 @@ function governedPlanTurn() {
 }
 
 /**
+ * Turn the fixture target into the kind of repository the stamp writer reacts
+ * to (issue #378): a real git repo -- `computeTreeDigest` shells out to
+ * `git ls-files` -- with an EMPTY TRACKED stamps file and the committed marker.
+ * Tracking the empty stamps file makes the writer's exclusion of it real: the
+ * run appends into the file, so a digest that failed to exclude it would no
+ * longer match a recomputation over the same tree. The initial commit is not
+ * ceremony: the runner measures every stage with `git diff HEAD`, and a repo
+ * with no commits fails that with a stage_failed pause.
+ */
+function stampTarget(fx: Fixture): void {
+  const git = (argv: string[]): void => {
+    const child = Bun.spawnSync(["git", ...argv], {
+      cwd: fx.targetDir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    if (child.exitCode !== 0) throw new Error(child.stderr.toString());
+  };
+  git(["init", "-q"]);
+  git(["config", "user.email", "t@example.com"]);
+  git(["config", "user.name", "t"]);
+  fs.mkdirSync(path.join(fx.targetDir, "docs", "reviews"), { recursive: true });
+  fs.writeFileSync(path.join(fx.targetDir, "docs", "reviews", "stamps.log"), "");
+  git(["add", "docs/reviews/stamps.log"]);
+  git(["commit", "-q", "--allow-empty", "-m", "fixture"]);
+  fs.writeFileSync(
+    path.join(fx.targetDir, STAMPS_MARKER_FILE),
+    JSON.stringify({ file: "docs/reviews/stamps.log" }),
+  );
+}
+
+/** The newest stamp line in the fixture target, parsed like the gate parses it. */
+function newestStamp(fx: Fixture) {
+  const text = fs.readFileSync(path.join(fx.targetDir, "docs", "reviews", "stamps.log"), "utf8");
+  const parsed = parseReviewStamp(text.trimEnd().split("\n").at(-1) ?? "");
+  if (typeof parsed === "string") throw new Error(parsed);
+  return parsed;
+}
+
+/** Poll an in-process background run to a terminal lifecycle, with a real deadline. */
+async function waitUntil(predicate: () => boolean, timeoutMs = 10_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error("timed out waiting for the background run");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+/**
  * Invoke a tool's execute the way the harness would, but with only the two args
  * the orchestrator handlers read. The full `AgentHarnessTool.execute` takes six
  * (onUpdate/toolContext/invocation/context); the handlers ignore them, so a
@@ -1141,6 +1192,75 @@ test("capability reachable without the chat front: runPipeline drives to a verdi
   // plan, code, review each ran as one step.
   expect(run.perStep.map((e) => e.phase)).toEqual(["plan", "code", "review"]);
   // No startConversation / tools were involved -- the core alone reached a verdict.
+});
+
+test("the core's own settle path writes the review stamp for run_pipeline (issue #378)", async () => {
+  const fx = fixture();
+  stampTarget(fx);
+  const verdict: Verdict = { status: "approved", issues: [], summary: "looks good" };
+  approveScenario(fx, verdict);
+
+  const core = createOrchestrator({ buildConfig: fx.buildConfig, ledgerSink: fx.sink });
+  const run = await core.runPipeline("implement X");
+
+  expect(run.result.approved).toBe(true);
+  const stamp = newestStamp(fx);
+  expect(stamp.verdict).toBe("approved");
+  // The digest must match the fixture tree computed the way
+  // src/stamp/review-stamp.ts computes it -- the stamps file itself excluded.
+  expect(stamp.treeDigest).toBe(computeTreeDigest(fx.targetDir, ["docs/reviews/stamps.log"]));
+});
+
+test("a changes_requested-settled run stamps verdict:changes_requested (issue #378)", async () => {
+  const fx = fixture();
+  stampTarget(fx);
+  const changes: Verdict = { status: "changes_requested", issues: [], summary: "needs work" };
+  // onChangesRequested defaults to "advance", so the loop exhausts maxRounds (3)
+  // and settles approved:false -- the writer stamps that as changes_requested.
+  fx.faux.setResponses([
+    ...governedPlanTurn(),
+    ...[0, 1, 2].flatMap(() => [
+      fauxAssistantMessage("coded X"),
+      fauxAssistantMessage(fauxToolCall(SUBMIT_VERDICT_TOOL_NAME, changes)),
+      fauxAssistantMessage("review complete"),
+    ]),
+  ]);
+
+  const core = createOrchestrator({ buildConfig: fx.buildConfig, ledgerSink: fx.sink });
+  const run = await core.runPipeline("implement X");
+
+  expect(run.result.approved).toBe(false);
+  expect(run.result.verdicts.at(-1)?.status).toBe("changes_requested");
+  expect(newestStamp(fx).verdict).toBe("changes_requested");
+});
+
+test("without the stamp marker the core's settle path writes no stamps file (issue #378)", async () => {
+  const fx = fixture();
+  const verdict: Verdict = { status: "approved", issues: [], summary: "looks good" };
+  approveScenario(fx, verdict);
+
+  const core = createOrchestrator({ buildConfig: fx.buildConfig, ledgerSink: fx.sink });
+  const run = await core.runPipeline("implement X");
+
+  expect(run.result.approved).toBe(true);
+  expect(fs.existsSync(path.join(fx.targetDir, "docs", "reviews", "stamps.log"))).toBe(false);
+});
+
+test("the background pipeline lane stamps at settle (issue #378)", async () => {
+  const fx = fixture();
+  stampTarget(fx);
+  const verdict: Verdict = { status: "approved", issues: [], summary: "looks good" };
+  approveScenario(fx, verdict);
+
+  const core = createOrchestrator({ buildConfig: fx.buildConfig, ledgerSink: fx.sink });
+  // start() (not startDetached) drives executeBackgroundPipeline in-process.
+  const started = core.backgroundRuns.start("implement X");
+  await waitUntil(() => core.backgroundRuns.status(started.runId).lifecycle === "completed");
+
+  const stamp = newestStamp(fx);
+  expect(stamp.verdict).toBe("approved");
+  expect(stamp.treeDigest).toBe(computeTreeDigest(fx.targetDir, ["docs/reviews/stamps.log"]));
+  await core.backgroundRuns.close();
 });
 
 test("conversational core uses coordinator closeout for captured FollowUps", async () => {
