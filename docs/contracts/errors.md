@@ -210,3 +210,25 @@ for machines?
   always renders the same line, and no message, stack, or provider payload can
   reach the reader through the class field. Class names and `typeof` labels only
   -- never a message, never an anonymous blank.
+- 2026-09-19 (issue #418): A provider failure that settles a turn as an empty
+  one carries its bounded CAUSE past the boundary, so an operator can read
+  "all presets fail with X" without re-running. When none of the owned
+  boundaries fired (quota, rejection, credential), the empty-turn fallback
+  records what the provider REPORTED: `providerStatus` is the HTTP status read
+  from the same anchored message shapes or a structured
+  `status`/`statusCode` field, validated to 400..599 (recording, not
+  classification -- it moves no 2026-09-19 boundary), and
+  `providerErrorCode` is the provider's own error code as a strict-charset
+  token (`[A-Za-z0-9_.-]{1,64}`, the same extractor the quota error uses).
+  When a non-credential status is carried the message names it (`HTTP <n> (…
+  provider error code <token>); check the provider account for HTTP <n> and
+  retry`) instead of repeating the credential advice `auth status` already
+  disproves -- an OpenRouter 402 billing refusal is not an authentication
+  failure. When no status is parsed, or the status IS 401/403, the message
+  stays verbatim the pinned `verify authentication and retry` wording. A
+  status or code that fails its bound is DROPPED, never truncated. Only the
+  bounded pair ever crosses: the message it was read from -- and with it any
+  echoed request values, URLs, and the response body -- is dropped at the
+  same boundary. The same bounded pair is also recorded on the ledger row
+  (`providerError {status?, code?}`, `ledger-report.md`), which is what
+  makes the diagnosis readable from durable artifacts alone.

@@ -11,6 +11,43 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.101.0] - 2026-09-19
+
+### Fixed
+- **A provider failure that settles a turn with `stopReason=error` and zero usage keeps a
+  bounded, readable cause in the durable artifacts (issue #418).** The provider's own report
+  of why it refused used to stop at the harness boundary: the ledger row stored model,
+  provider, `stopReason` and the zero usage, the error projection `EmptyTurnError`
+  (`src/runner/errors.ts`) named only the harness-composed code (`assistant_error`), and the
+  provider's own failure fields -- a billing status, a missing-endpoint refusal, a
+  moderation verdict -- rode on the `errorMessage` that was dropped with the message. From
+  the artifacts alone an operator could not distinguish "the whole provider is broken" from
+  "one preset failed", and the hardcoded "verify authentication and retry" advice pointed
+  away from a key `auth status` showed as fine. Now `EmptyTurnError` carries two additional
+  OPTIONAL bounded fields, parsed at the settled-failure boundary
+  (`src/runner/runner.ts`) from the harness-composed provider error with -- where the
+  composed error names nothing parsable -- the settled message's own `errorMessage` as the
+  second channel: `providerStatus`, a 400..599 integer read from the same anchored message
+  shapes the classification readers share (`anchoredProviderStatusFrom`, extracted to one
+  place), and `providerErrorCode`, the provider's own error code/type token
+  (`[A-Za-z0-9_.-]{1,64}`, via `extractProviderCodeToken`). When either is present and the
+  status is not a credential one (401/403), the message no longer advises an authentication
+  check; it names the provider-reported status and code. The 401/403 credential wording is
+  unchanged (errors contract 2026-09-19), as are the `ProviderRejectionError`
+  (400/404/405/409/413/415/422) and quota (429) boundaries -- this release RECORDS what the
+  provider reported, it moves no classification.
+
+  The ledger row (`src/ledger/ledger.ts`, `src/ledger/types.ts`) gains an optional
+  `providerError` field carrying ONLY `{ status?, code? }` -- the same two bounded
+  extractions, read from the error-stopped settled message's `errorMessage` and never from
+  a raw body, which can echo the request and never reaches a file. A failed provider turn
+  now reads "all presets fail with HTTP 402 insufficient_credits" straight from
+  `.ad-coder/ledger` rows, without re-running anything. The `safeErrorText` allow-list
+  audit comment in `src/orchestration/orchestrator.ts` is updated for the extended class,
+  `docs/contracts/errors.md` gained a dated 2026-09-19 entry, and
+  `docs/contracts/ledger-report.md` documents the new field. No new error class and no new
+  hierarchy.
+
 ## [0.100.0] - 2026-09-19
 
 ### Changed

@@ -40,6 +40,22 @@ test("a real-shaped ledger line parses into the record type", () => {
   expect(parseLedgerLine(JSON.stringify(line))).toEqual(line);
 });
 
+test("an optional providerError field round-trips and leaves the aggregates numeric (issue #418)", () => {
+  // The bounded {status, code} pair is just another optional row field: the
+  // line parser must not choke on it (a live ledger is read like a live
+  // file) and the aggregates stay numeric -- rows tolerate the field, the
+  // report simply does not aggregate it.
+  const line = record({
+    ts: 100,
+    stopReason: "error",
+    providerError: { status: 402, code: "insufficient_credits" },
+  });
+  expect(parseLedgerLine(JSON.stringify(line))).toEqual(line);
+  const totals = aggregateLedgerRecords([line]).total;
+  expect(totals.modelCalls).toBe(1);
+  expect(totals.output).toBe(USAGE.output);
+});
+
 test("a truncated or malformed line is skipped, never thrown", () => {
   // The shape of a file a live run is still appending, read mid-write.
   const good = JSON.stringify(record({ ts: 1 }));

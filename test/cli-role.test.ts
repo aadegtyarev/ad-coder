@@ -92,7 +92,13 @@ test("runRoleStandalone drives one faux turn and returns the assistant text plus
 
 test("standalone roles enforce the same stage budgets as pipeline roles", async () => {
   const { faux, models, model, role } = fixture();
-  const response = fauxAssistantMessage("too expensive");
+  // `fauxAssistantMessage` shares ONE module-global usage object across the
+  // process; split it before mutating so this file cannot rewire the default
+  // usage other files' faux messages see.
+  const response = {
+    ...fauxAssistantMessage("too expensive"),
+    usage: { ...fauxAssistantMessage("too expensive").usage },
+  };
   response.usage.input = 2;
   faux.setResponses([response]);
   await expect(

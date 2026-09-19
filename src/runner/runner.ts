@@ -53,6 +53,7 @@ import {
   GenerationTruncatedError,
   ProviderQuotaError,
   ProviderRejectionError,
+  providerErrorCauseFrom,
   providerLimitFrom,
   providerQuotaFrom,
   providerRejectionStatusFrom,
@@ -977,7 +978,26 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
         // refusal.)
         const rejection = providerRejectionStatusFrom(result.error);
         if (rejection !== undefined) throw new ProviderRejectionError(runId, rejection);
-        throw new EmptyTurnError(runId, result.error?.code);
+        // Bounded provider-cause enrichment for the FALLBACK only (#418). The
+        // allow-list classifications above are owned boundaries and stay
+        // exactly as they are; this is the case where none of them fired and
+        // the class used to say "verify authentication" about a provider that
+        // in fact named a status and a code (an OpenRouter 402 billing
+        // refusal is neither rejection, quota, nor credential failure). The
+        // extraction is bounded by `providerErrorCauseFrom`/the constructor:
+        // `EmptyTurnError` drops a non-integer, out-of-range, or
+        // non-strict-charset value, and its message never carries provider
+        // prose or a body. The settled assistant message's `errorMessage` is
+        // the second channel for the same failure string, read only when the
+        // composed error carried no parsable one.
+        const cause =
+          providerErrorCauseFrom(result.error) ??
+          providerErrorCauseFrom({
+            ...(typeof finalMessage?.errorMessage === "string" && {
+              message: finalMessage.errorMessage,
+            }),
+          });
+        throw new EmptyTurnError(runId, result.error?.code, cause?.status, cause?.code);
       }
       if (text.trim() === "") {
         // Non-zero usage with no answer text: a generation RAN and produced

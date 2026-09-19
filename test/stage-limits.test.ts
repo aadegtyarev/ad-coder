@@ -1,6 +1,22 @@
 import { expect, test } from "bun:test";
 import type { Models } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
+
+/**
+ * A faux assistant message the test may freely mutate.
+ *
+ * `fauxAssistantMessage` stamps every message with ONE module-global `usage`
+ * object (pi-ai's `DEFAULT_USAGE`), so mutating `message.usage` in one file
+ * rewires the default usage seen by every later faux message in the process --
+ * a non-zero `input` made `runRole` resolve failed runs instead of rejecting
+ * `EmptyTurnError` (#418). Split the usage first so mutations stay local.
+ */
+function mutableFauxMessage(content: string): ReturnType<typeof fauxAssistantMessage> {
+  const message = fauxAssistantMessage(content);
+  message.usage = { ...message.usage, cost: { ...message.usage.cost } };
+  return message;
+}
+
 import {
   DEFAULT_STAGE_LIMITS,
   projectRemainingStageBudget,
@@ -174,7 +190,7 @@ test("stage configuration and observed usage reject unsafe numbers", () => {
 
 test("models wrapper meters every provider turn and blocks before dispatch", async () => {
   let calls = 0;
-  const message = fauxAssistantMessage("ok");
+  const message = mutableFauxMessage("ok");
   message.usage.input = 7;
   message.usage.cacheRead = 3;
   message.usage.cost.total = 0.2;
@@ -197,7 +213,7 @@ test("models wrapper meters every provider turn and blocks before dispatch", asy
 
 test("input closeout predicts the next request from prior provider usage", async () => {
   const visibleToolCounts: number[] = [];
-  const message = fauxAssistantMessage("ok");
+  const message = mutableFauxMessage("ok");
   message.usage.input = 100;
   message.usage.cacheRead = 0;
   const models = {
@@ -222,7 +238,7 @@ test("input closeout predicts the next request from prior provider usage", async
 
 test("a tool-free closeout request tells the model why its tools are gone", async () => {
   const seen: { tools: number; messages: { role: string; content: unknown }[] }[] = [];
-  const message = fauxAssistantMessage("ok");
+  const message = mutableFauxMessage("ok");
   message.usage.input = 100;
   message.usage.cacheRead = 0;
   const models = {
@@ -258,7 +274,7 @@ test("a tool-free closeout request tells the model why its tools are gone", asyn
 
 test("a closeout request keeps the workflow's submission tool and drops the rest", async () => {
   const seen: unknown[][] = [];
-  const message = fauxAssistantMessage("ok");
+  const message = mutableFauxMessage("ok");
   message.usage.input = 100;
   message.usage.cacheRead = 0;
   const models = {
@@ -309,7 +325,7 @@ test("a submission tool is admitted past the closeout reserve while other tools 
 });
 
 test("a closeout request leaves the caller's own context untouched", async () => {
-  const message = fauxAssistantMessage("ok");
+  const message = mutableFauxMessage("ok");
   message.usage.input = 100;
   message.usage.cacheRead = 0;
   const models = { completeSimple: async () => message } as unknown as Models;
@@ -329,7 +345,7 @@ test("a closeout request leaves the caller's own context untouched", async () =>
 
 test("a closeout request without a message list is passed through unchanged", async () => {
   let seen: unknown;
-  const message = fauxAssistantMessage("ok");
+  const message = mutableFauxMessage("ok");
   message.usage.input = 100;
   message.usage.cacheRead = 0;
   const models = {
@@ -351,7 +367,7 @@ test("a closeout request without a message list is passed through unchanged", as
 });
 
 test("input closeout prediction survives controller reconstruction", async () => {
-  const message = fauxAssistantMessage("ok");
+  const message = mutableFauxMessage("ok");
   message.usage.input = 100;
   message.usage.cacheRead = 0;
   const firstModels = {
@@ -402,7 +418,7 @@ test("closeout() relays the recorded tool-turn closeout", () => {
 });
 
 test("closeout() relays a model-boundary closeout detected inside wrap", async () => {
-  const message = fauxAssistantMessage("ok");
+  const message = mutableFauxMessage("ok");
   message.usage.input = 100;
   message.usage.cacheRead = 0;
   const models = { completeSimple: async () => message } as unknown as Models;

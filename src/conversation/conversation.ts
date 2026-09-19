@@ -45,6 +45,7 @@ import {
   GenerationTruncatedError,
   ProviderQuotaError,
   ProviderRejectionError,
+  providerErrorCauseFrom,
   providerQuotaFrom,
   providerRejectionStatusFrom,
   resolveTargetDir,
@@ -634,7 +635,20 @@ export async function startConversation(config: ConversationConfig): Promise<Con
               truncated.reasoningTokens,
             );
           }
-          throw new EmptyTurnError(runId, result.error?.code);
+          // Bounded provider-cause enrichment for the FALLBACK only (#418),
+          // same as the runner's settled-failure boundary: none of the
+          // allow-list classifications above owned this failure, so the cause
+          // the provider actually named must still cross. Extraction is
+          // bounded by `providerErrorCauseFrom`/the `EmptyTurnError`
+          // constructor; the message never carries provider prose or a body.
+          const cause =
+            providerErrorCauseFrom(result.error) ??
+            providerErrorCauseFrom({
+              ...(typeof finalMessage?.errorMessage === "string" && {
+                message: finalMessage.errorMessage,
+              }),
+            });
+          throw new EmptyTurnError(runId, result.error?.code, cause?.status, cause?.code);
         }
         // A settled-SUCCESS turn with no answer text is still not a completed
         // turn when the final assistant message carries nothing usable (#368):
@@ -652,7 +666,18 @@ export async function startConversation(config: ConversationConfig): Promise<Con
             truncated.reasoningTokens,
           );
         }
-        throw new EmptyTurnError(runId, result.error?.code);
+        // Same bounded provider-cause enrichment as the settled-FAILURE
+        // fallback above (#418): a completed-but-silent turn carries no
+        // `result.error`, so the message channel is often the only one; both
+        // are read for the bounded status/code pair and nothing else crosses.
+        const cause =
+          providerErrorCauseFrom(result.error) ??
+          providerErrorCauseFrom({
+            ...(typeof finalMessage?.errorMessage === "string" && {
+              message: finalMessage.errorMessage,
+            }),
+          });
+        throw new EmptyTurnError(runId, result.error?.code, cause?.status, cause?.code);
       }
       cumulativeDropped += ledger.droppedRecords;
       return {

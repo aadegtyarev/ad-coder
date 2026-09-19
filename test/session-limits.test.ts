@@ -5,7 +5,10 @@ import { SessionLimitController, SessionLimitError } from "../src/session-limits
 
 function message(cost: number): AssistantMessage {
   const result = fauxAssistantMessage("ok");
-  result.usage.cost.total = cost;
+  // `fauxAssistantMessage` shares ONE module-global usage object across the
+  // process; split it before mutating so this file cannot rewire the default
+  // usage other files' faux messages see.
+  result.usage = { ...result.usage, cost: { ...result.usage.cost, total: cost } };
   return result;
 }
 

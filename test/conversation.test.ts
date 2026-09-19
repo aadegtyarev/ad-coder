@@ -137,6 +137,40 @@ test("a message-embedded 429 quota refusal surfaces as a typed quota outcome thr
   }
 });
 
+test("a message-embedded non-credential provider failure keeps its bounded cause on the empty-turn error through conversation (#418)", async () => {
+  const { faux, models, model, role } = harnessFixture();
+  const session = await new MemorySessionRepo().create({}, BACKGROUND_CONTEXT);
+  const secretBody =
+    '{"error":{"code":"insufficient_credits","message":"You have exceeded your monthly spend"}}';
+  faux.setResponses([
+    fauxAssistantMessage("", {
+      stopReason: "error",
+      errorMessage: `402: ${secretBody}`,
+    }),
+  ]);
+  const conversation = await startConversation({ role, targetDir, models, model, session });
+  try {
+    // A 402 is neither rejection, quota, nor credential failure: none of the
+    // allow-list classifications above the fallback owns it, so the fallback
+    // must carry the bounded cause the provider actually named -- the status
+    // and the strict-charset token -- and must never say "verify
+    // authentication" about a billing refusal, and never echo the body.
+    const error = await conversation.step("do it").catch((cause) => cause);
+    expect(error).toMatchObject({
+      code: "empty_turn",
+      providerStatus: 402,
+      providerErrorCode: "insufficient_credits",
+    });
+    expect(error.message).not.toContain("verify authentication");
+    expect(error.message).toContain("HTTP 402");
+    expect(error.message).toContain("provider error code insufficient_credits");
+    expect(error.message).not.toContain("exceeded your monthly spend");
+    expect(error.message).not.toContain('insufficient_credits","message"');
+  } finally {
+    await conversation.close();
+  }
+});
+
 test("#368: a generation truncated at the output limit surfaces as a typed truncated outcome through conversation", async () => {
   const { faux, models, model, role } = harnessFixture();
   const session = await new MemorySessionRepo().create({}, BACKGROUND_CONTEXT);
