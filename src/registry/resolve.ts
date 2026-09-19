@@ -40,6 +40,20 @@ export interface ResolveOptions {
    * a caller that already owns a run identity can reuse it.
    */
   session?: string;
+  /**
+   * The provider ids that MUST pass the credential preflight (issue #414).
+   * ABSENT = every provider is preflighted, the behaviour every existing
+   * caller keeps (auth/preset/migrate/test sites). When PRESENT, a provider
+   * OUTSIDE the set still registers normally -- `createProvider` reads no
+   * key, and `envApiKeyAuth.resolve` returns undefined only at request time
+   * -- but a missing key is NOT a `missing_credential` failure; a provider
+   * INSIDE the set is preflighted exactly as today, fail-loud. The edge is
+   * the YAML copy of the JSON route's rule "a profile that does not select a
+   * provider does not read its credentials". The set carries ids only
+   * (`Set.has` -- no credential value ever crosses), and the env var of an
+   * out-of-set provider is NEVER read here: registration needs no key.
+   */
+  preflightCredentialIds?: ReadonlySet<string>;
 }
 
 type ProviderStreams = ReturnType<typeof openAICompletionsApi>;
@@ -106,6 +120,8 @@ export function resolveRegistry(
       readEnv,
       options?.credentials !== undefined,
       options?.storedCredentialIds,
+      // The preflight scope (`undefined` = preflight every provider).
+      options?.preflightCredentialIds,
       session,
     );
     for (const model of provider.models) {
@@ -150,6 +166,7 @@ function registerProvider(
   readEnv: (name: string) => string | undefined,
   hasCredentialStore: boolean,
   storedCredentialIds: ReadonlySet<string> | undefined,
+  preflightCredentialIds: ReadonlySet<string> | undefined,
   session: string,
 ): string {
   if (provider.credential.kind === "oauth") {
@@ -159,7 +176,14 @@ function registerProvider(
   }
 
   const envVar = provider.credential.envVar;
-  const key = readEnv(envVar);
+  // PREFLIGHT SCOPE (issue #414). `undefined` means preflight every provider
+  // (long-standing behaviour); a passed set preflights only its members. For
+  // an out-of-set provider the env accessor is NOT queried at all --
+  // registration needs no key, so no secret is even touched here -- and a
+  // missing key surfaces only when a route actually dispatches (pi-ai's
+  // undefined `resolve`). In-set providers keep the fail-loud preflight whose
+  // error names only the variable, never a value.
+  const preflight = preflightCredentialIds === undefined || preflightCredentialIds.has(provider.id);
   // The knowledge set is the gate; `hasCredentialStore` only guards that the
   // set speaks about the injected store (a store without a snapshot must not
   // widen admission, and `undefined && ...` keeps the env-only preflight). An
@@ -169,7 +193,11 @@ function registerProvider(
   // EVERY env-var provider and silently kill this preflight.
   const canUseStoredCredential =
     hasCredentialStore && storedCredentialIds?.has(provider.id) === true;
-  if ((key === undefined || key === "") && !canUseStoredCredential) {
+  // Env access happens ONLY for a provider that is being preflighted without
+  // stored-key admission: an out-of-set provider never touches `readEnv`, and
+  // a set member admitted through the store does not need the env either.
+  const envKey = preflight && !canUseStoredCredential ? readEnv(envVar) : undefined;
+  if (preflight && !canUseStoredCredential && (envKey === undefined || envKey === "")) {
     // Load-bearing: envApiKeyAuth.resolve returns undefined (not throw) on a
     // missing key, so without this preflight a missing key would surface only as
     // a later stream failure, not a typed missing_credential naming the var.

@@ -640,6 +640,189 @@ test("(c) a role@complexity row replaces that tier only, keeping the bare row el
 });
 
 // ---------------------------------------------------------------------------
+// (#414) reachableProviders: the preflight scope mirrors the profile's reach
+
+test("(#414) reachableProviders names the selected rungs' providers, not foreign enabled ones", () => {
+  const config = parseModelsConfig({
+    providers: {
+      "opencode-go": {
+        enabled: true,
+        api: "openai-completions",
+        baseUrl: "https://opencode.example.com",
+        credential: "OPENCODE_API_KEY",
+        models: { "glm-5.3-flash": { input: 0.15, output: 0.5 } },
+      },
+      // Enabled, declared, VALID -- but no selected rung reaches it.
+      spare: {
+        enabled: true,
+        api: "openai-completions",
+        baseUrl: "https://spare.example.com",
+        credential: "SPARE_API_KEY",
+        models: { "spare-model": { input: 0.1, output: 0.2 } },
+      },
+    },
+    profiles: { daily: { coder: "opencode-go:glm-5.3-flash" } },
+  });
+  const { reachableProviders, registry } = toRegistryAndProfile(config, "daily");
+  // The registry itself stays FULL: both enabled providers are projected.
+  expect(registry.providers.map((p) => p.id).sort()).toEqual(["opencode-go", "spare"]);
+  // ...but only what the profile names is reachable.
+  expect(reachableProviders).toEqual(["opencode-go"]);
+});
+
+test("(#414) overrides and every ladder row contribute their providers", () => {
+  const config = parseModelsConfig({
+    providers: {
+      one: {
+        enabled: true,
+        api: "openai-completions",
+        baseUrl: "https://one.example.com",
+        credential: "ONE_KEY",
+        models: { "m-a": { input: 0.1, output: 0.2 } },
+      },
+      two: {
+        enabled: true,
+        api: "openai-completions",
+        baseUrl: "https://two.example.com",
+        credential: "TWO_KEY",
+        models: { "m-b": { input: 0.1, output: 0.2 } },
+      },
+    },
+    profiles: {
+      daily: {
+        coder: "one:m-a",
+        "coder@complex": "two:m-b",
+        // Only the first rung is served today, but every rung is reachable
+        // data: a future ladder walk landing here is preflighted up front.
+        orchestrator: ["one:m-a", "two:m-b"],
+      },
+    },
+  });
+  const { reachableProviders } = toRegistryAndProfile(config, "daily");
+  // First-seen order, deduped.
+  expect(reachableProviders).toEqual(["one", "two"]);
+});
+
+test("(#414) reachability resolves the model's REGISTERING provider, never the rung prefix", () => {
+  // parseModelsConfig would refuse a rung whose prefix does not own the model,
+  // so this shaped-as-validated input pins the rule for hand-built input: the
+  // set must follow the registry's model -> owner index, not the prefix.
+  // The DECLARED profile shape (`routes` per name) is what this layer consumes;
+  // only validation refusal is simulated here by the prefix lie.
+  const config = {
+    defaultProfile: "daily",
+    providers: {
+      one: {
+        enabled: true,
+        api: "openai-completions",
+        baseUrl: "https://one.example.com",
+        credential: "ONE_KEY",
+        models: { "m-a": { input: 0.1, output: 0.2 } },
+      },
+    },
+    profiles: { daily: { name: "daily", routes: { coder: ["spare:m-a"] } } },
+  } as Parameters<typeof toRegistryAndProfile>[0];
+  const { reachableProviders } = toRegistryAndProfile(config, "daily");
+  expect(reachableProviders).toEqual(["one"]);
+});
+
+// ---------------------------------------------------------------------------
+// (#414) e2e: one keyless enabled provider must not break every route
+
+const twoProviderYaml = (profile: string): string => `providers:
+  opencode-go:
+    enabled: true
+    api: openai-completions
+    baseUrl: https://opencode.example.com
+    credential: OPENCODE_API_KEY
+    models:
+      glm-5.3-flash: {input: 0.15, output: 0.5}
+  spare:
+    enabled: true
+    api: openai-completions
+    baseUrl: https://spare.example.com
+    credential: SPARE_API_KEY
+    models:
+      spare-model: {input: 0.1, output: 0.2}
+default: daily
+profiles:
+${profile}
+`;
+
+const routesTo = (rung: string): string =>
+  [
+    "orchestrator",
+    "planner",
+    "researcher",
+    "coder",
+    "reviewer",
+    "auditor",
+    "security",
+    "summarizer",
+  ]
+    .map((role) => `    ${role}: ${rung}`)
+    .join("\n");
+
+test("(#414) an enabled provider without a key stays inert while the profile ignores it", () => {
+  const dir = scratch();
+  try {
+    const modelsPath = writeModels(
+      dir,
+      twoProviderYaml(`  daily:\n${routesTo("opencode-go:glm-5.3-flash")}`),
+    );
+    // SPARE_API_KEY is set NOWHERE: no env (and the store is outside the
+    // target dir), yet the profile never names the spare provider.
+    const config = resolvePipelineConfig({
+      task: "x",
+      targetDir: dir,
+      modelsConfigPath: modelsPath,
+      settingsConfigPath: path.join(dir, "settings.yaml"),
+      env: fakeEnv({ OPENCODE_API_KEY: "k" }),
+      warn: silent,
+    });
+    expect(config.delegatedRoute?.source).toBe('models.yaml "daily"');
+    // Every served role routes to opencode-go's model, never the spare one.
+    expect(Object.values(config.roles).map((role) => role?.model.name)).toEqual(
+      Array(Object.values(config.roles).length).fill("glm-5.3-flash"),
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("(#414) a profile that routes to the keyless provider still fails missing_credential", () => {
+  const dir = scratch();
+  try {
+    const modelsPath = writeModels(
+      dir,
+      twoProviderYaml(`  daily:\n${routesTo("spare:spare-model")}`),
+    );
+    try {
+      resolvePipelineConfig({
+        task: "x",
+        targetDir: dir,
+        modelsConfigPath: modelsPath,
+        settingsConfigPath: path.join(dir, "settings.yaml"),
+        env: fakeEnv({ OPENCODE_API_KEY: "k" }),
+        warn: silent,
+      });
+      expect.unreachable();
+    } catch (error) {
+      // The profile DOES name the keyless provider: the preflight stays
+      // fail-loud with the verbatim missing_credential error.
+      expect(error).toBeInstanceOf(RegistryError);
+      const re = error as RegistryError;
+      expect(re.code).toBe("missing_credential");
+      expect(re.detail).toBe("SPARE_API_KEY");
+      expect(re.message).toContain('provider "spare"');
+      expect(re.message).not.toContain("k");
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // (#280) cache prices and maxTokens complete the per-model vocabulary
 
 function oneModel(model: Record<string, unknown>) {

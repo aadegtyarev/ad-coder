@@ -124,11 +124,21 @@ export function toRegistryProvider(
  * declaration and a routing profile. No I/O, no mutation, and no error from
  * data content -- the input is already validated; the only failures are
  * "which profile" questions this function owns.
+ *
+ * `reachableProviders` is REQUIRED in the result (an added field must be
+ * produced, never forgotten): the provider ids whose models the SELECTED
+ * profile's rungs name. The resolver uses it as the credential-preflight
+ * scope, so a foreign enabled provider without a key can never make an
+ * unselected-from profile unresolvable (issue #414) -- the YAML mirror of the
+ * JSON route's "no unselected profile reads credentials" per-profile-registry
+ * rule. The registry stays FULL: every enabled provider is still projected
+ * and registered (and still fails loudly on a missing credential/endpoint
+ * declaration), only the KEY preflight narrows.
  */
 export function toRegistryAndProfile(
   config: ModelsConfig,
   profileName?: string,
-): { registry: RegistryConfig; profile: Profile; name: string } {
+): { registry: RegistryConfig; profile: Profile; name: string; reachableProviders: string[] } {
   const name = profileName ?? config.defaultProfile;
   if (name === undefined) {
     throw new ConfigError(
@@ -166,6 +176,33 @@ export function toRegistryAndProfile(
     overrides.set(role, perRole);
   }
 
+  // Reachability is computed THE WAY THE REGISTRY RESOLVES (security
+  // mitigation for #414, Broken-Access-Control class): every rung of the
+  // SELECTED profile's routes -- bare rows, role@complexity overrides and
+  // every ladder rung, served or not -- contributes its MODEL part, and the
+  // owner is whichever projected registry provider declares that model name
+  // (names are globally unique). Never the rung's provider PREFIX: a prefix
+  // can scroll past its declare-provider check in a hand-built config, while
+  // the owner lookup is the same one the resolver's model index performs, so
+  // a rung `foo:bar` whose model `bar` is registered under `baz` reaches
+  // `baz` -- exactly what the registry will dispatch to. A model no provider
+  // owns adds nothing; the resolver raises `unknown_model` there instead.
+  const ownerOf = new Map<string, string>();
+  for (const provider of registry.providers) {
+    for (const model of provider.models ?? []) ownerOf.set(model.name, provider.id);
+  }
+  const reachableProviders: string[] = [];
+  const reached = new Set<string>();
+  for (const ladder of Object.values(declared.routes)) {
+    for (const rung of ladder) {
+      const owner = ownerOf.get(modelPart(rung));
+      if (owner !== undefined && !reached.has(owner)) {
+        reached.add(owner);
+        reachableProviders.push(owner);
+      }
+    }
+  }
+
   const entries: ProfileEntry[] = [];
   for (const [role, ladder] of bare) {
     const perRole = overrides.get(role);
@@ -182,5 +219,5 @@ export function toRegistryAndProfile(
     }
   }
 
-  return { registry, profile: { entries }, name };
+  return { registry, profile: { entries }, name, reachableProviders };
 }

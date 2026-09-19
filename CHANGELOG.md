@@ -13,6 +13,28 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.95.1] - 2026-09-19
+
+### Fixed
+- **A keyless enabled provider no longer rejects every models.yaml route
+  (issue #414).** The YAML route's credential preflight used to cover every
+  enabled provider in the file, so one extra enabled provider whose key was
+  absent from both the stored store and the environment rejected ANY command
+  routing through it with `RegistryError('missing_credential')`, even when the
+  selected profile never named that provider. The projection now reports the
+  providers the selected profile's rungs (and any `--<role>-model` /
+  `--vision-model` override) actually reach, resolved through the same
+  model-name -> provider index the resolver dispatches on, and the registry
+  preflights only those. The registry itself stays FULL -- every enabled
+  provider is still projected, registered and validated loudly (a missing
+  credential or endpoint declaration still refuses at the boundary, per
+  `docs/contracts/config.md` unchanged) -- and the missing-key error keeps its
+  exact `missing_credential` message and env-var name wherever a provider is
+  genuinely needed: a profile that routes to a keyless provider still fails,
+  and none becomes unresolvable because of a foreign one. The preflight set
+  carries provider ids only; no env variable is read for an out-of-set
+  provider. The JSON inventory route keeps its per-profile scoped registries.
+
 ## [0.95.0] - 2026-09-19
 
 ### Added
