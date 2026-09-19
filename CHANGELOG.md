@@ -13,6 +13,23 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.74.0] - 2026-09-19
+
+### Changed
+- **`run_role` states that a reviewer delegation is advisory and cannot satisfy
+  the pre-merge review-stamp gate** (issue #376). A review run as a bare role
+  through the orchestrator's `run_role` tool delivers by assistant text only --
+  no structured verdict exists on that path -- so it settles as prose, writes no
+  review stamp, and cannot satisfy `bun run stamp:check`, while the orchestrator
+  could believe a gate-satisfying review happened. Both `run_role` description
+  variants and a reviewer delegation's result text (normal and stage-closeout)
+  now say this plainly and point gate-satisfying review rounds at a
+  stamp-writing settle path: the pipeline review stage or the standalone
+  `ad-coder role reviewer` CLI. The stamp is still derived only from structured
+  settled verdicts through the one writer (`recordReviewStampFromResult`); no
+  path transcribes a verdict out of prose. Delegations of other roles keep their
+  result text unchanged.
+
 ## [0.73.0] - 2026-09-19
 
 ### Fixed
