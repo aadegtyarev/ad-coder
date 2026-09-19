@@ -13,6 +13,26 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.85.0] - 2026-09-19
+
+### Changed
+- **Every shipped skill description is rewritten as a trigger, in three parts**
+  (issue #366). The catalogue entry is the only surface of a skill a role always
+  reads, and four behaviour-bearing skills — `delivery-calibration`,
+  `task-slicing`, `role-selection`, `overload-response` — never triggered from
+  their one-line catalogue entries: granted, held, never loaded, while a
+  decomposed ticket was dispatched ten seconds after the orchestrator read it.
+  All 13 descriptions under `prompts/skills/` now name the capability, state an
+  explicit "Use when..." from the side of the work, and quote the phrases an
+  operator's task actually carries ("size this before you dispatch", "too big
+  for one run", "split it", "should I delegate or run it myself",
+  "file/claim this ticket", "open a PR"). Nothing else in any manifest moved:
+  no `always`, no `roles`, no `requires` edits — nothing is always-on. Version
+  bumps follow the contract's transition rule, which makes a wording change a
+  bump: the ten v2 skills to v3, `role-selection` to v4, `overload-response`
+  and `tracker-work` to v2. A shape-based test asserts the "Use when" and
+  "Phrases:" markers on every shipped description.
+
 ## [0.82.0] - 2026-09-19
 
 ### Fixed
