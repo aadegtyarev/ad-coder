@@ -8,6 +8,7 @@ import { createModels, fauxAssistantMessage, fauxProvider } from "@earendil-work
 import { runConsole } from "../src/cli/console";
 import { resolveResumeRun, resumeOrchestratorConfig, resumeSeedNote } from "../src/cli/resume";
 import { loadTaskFile } from "../src/cli/task-file";
+import { ContextCompactionLostError } from "../src/context/compactor";
 import {
   CONSOLE_COMMANDS,
   ConsoleControlError,
@@ -439,6 +440,84 @@ test("reports a cooperative interruption separately from a provider failure", as
   expect(error.text()).toContain("console turn interrupted");
   expect(error.text()).not.toContain("console turn failed");
   expect(session.closes).toBe(1);
+});
+
+test("a spent compaction stops the console with --resume, never with 'retry'", async () => {
+  const error = new Capture();
+  // A session whose summarizer failed its bounded attempts: no later turn can
+  // compact this context, so the run stops. The rendered advice must be the one
+  // action that works -- reopening the session -- and never the generic retry,
+  // which cannot succeed and which left the console alive and deaf (#391).
+  const lost = new ContextCompactionLostError({
+    role: "coder",
+    budget: { maxTokens: 4000, reserveTokens: 400, keepRecentTokens: 1000 },
+    measuredTokens: 9000,
+    contextWindow: 8000,
+    failures: [
+      {
+        attempt: 1,
+        errorName: "ProviderBoom",
+        status: 529,
+        providerCode: "overloaded",
+        provider: "summary-provider",
+        model: "cheap",
+        measuredTokens: 7000,
+        thresholdTokens: 3000,
+      },
+      {
+        attempt: 2,
+        errorName: "ProviderBoom",
+        status: 529,
+        providerCode: "overloaded",
+        provider: "summary-provider",
+        model: "cheap",
+        measuredTokens: 9000,
+        thresholdTokens: 3000,
+      },
+    ],
+  });
+  const result = await runConsole({
+    session: fakeSession({ stepError: lost }),
+    input: ttyFrom("hello\n"),
+    output: new Capture(),
+    error,
+    authenticationCommand: "ad-coder auth login --provider openrouter --target-dir '/tmp/project'",
+  });
+  // A stop, not a failed turn: the exit reason is its own, so a supervisor can
+  // tell "this session is over" from "that turn went wrong".
+  expect(result.reason).toBe("context_compaction_lost");
+  expect(error.text()).toContain("context compaction failed 2 times");
+  // Attributed by class, provider, model and numbers -- enough to act on.
+  expect(error.text()).toContain("ProviderBoom");
+  expect(error.text()).toContain("summary-provider/cheap");
+  expect(error.text()).toContain("HTTP 529");
+  expect(error.text()).toContain("9000 tokens against threshold 3000");
+  expect(error.text()).toContain("effective ceiling 8000");
+  expect(error.text()).toContain("--resume");
+  expect(error.text()).toContain("--summarizer-model");
+  // Neither a retry nor a credential command is the way out: the session's own
+  // compaction is what ran out.
+  expect(error.text()).not.toContain("then retry");
+  expect(error.text()).not.toContain("auth login");
+
+  // The machine-readable form carries the code and, crucially, retryable:false
+  // -- the one field a supervisor reads before deciding to re-run the turn.
+  const jsonError = new Capture();
+  await runConsole({
+    session: fakeSession({ stepError: lost }),
+    input: ttyFrom("hello\n"),
+    output: new Capture(),
+    error: jsonError,
+    mode: "json",
+  });
+  const record = JSON.parse(jsonError.text().trim().split("\n").pop() as string) as {
+    code: string;
+    retryable: boolean;
+    action: string;
+  };
+  expect(record.code).toBe("context_compaction_lost");
+  expect(record.retryable).toBe(false);
+  expect(record.action).toContain("--resume");
 });
 
 test("empty provider turns show an actionable authentication command", async () => {

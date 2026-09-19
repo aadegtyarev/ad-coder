@@ -13,6 +13,35 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.88.0] - 2026-09-19
+
+### Fixed
+- **A compaction failure stops the session with a way out instead of bricking it
+  (issue #391).** One failed summarization used to kill every later turn in
+  milliseconds — "summarization failed previously; refusing repeated attempts" —
+  with no model call and no cause recorded. The turn itself is non-throwing by
+  design (`transform_context` returns `undefined` so a summarizer failure passes
+  the turn through UNCOMPACTED), which leaves the context over budget; the guard
+  that was meant to prevent repeated attempts then refused exactly that context,
+  and because the failure record lives on the compactor — created once per
+  conversation — the condition was sticky for the whole session and only a
+  relaunch cleared it. The summarizer's own error was dropped, so nothing ever
+  said which model failed or why. Now: the refusal is bounded at
+  `COMPACTION_ATTEMPT_LIMIT` (2) attempts, so one transient provider error is no
+  longer a verdict on the session and a later success clears the record; every
+  failure is ATTRIBUTED, never quoted — attempt, error class name, stop reason,
+  numeric status, provider code, provider/model and the token numbers, read from
+  the error object's own fields and never from its message — and
+  `createSummarizer` throws a typed `SummarizerUnavailableError`
+  (`oversized` | `provider_error` | `aborted` | `empty_summary`) naming the model
+  that refused. The stop is `ContextCompactionLostError`, whose advice is the
+  action that exists — reopen the session from its durable store (console:
+  `--resume`), choosing a different summarizer model when the summarizer itself
+  is what failed — instead of "retry", which cannot succeed. The console renders
+  its own branch and exits with reason `context_compaction_lost`
+  (`retryable: false` in JSON mode). `ContextBudgetError` gains an optional
+  `advice` that replaces its default remedy tail.
+
 ## [0.87.0] - 2026-09-19
 
 ### Added

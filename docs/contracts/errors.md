@@ -135,3 +135,33 @@ for machines?
   the same output budget truncates the same reasoning-heavy turn again, so the
   remedy is a raised output budget or bounded thinking, then retry -- never
   "verify authentication" and never a blind retry.
+- 2026-09-19 (issue #391): A session whose context can no longer be compacted
+  stops with the action that exists, and the failure that caused it is
+  attributed rather than swallowed. `transform_context` is non-throwing by
+  design -- a summarizer failure passes the turn through UNCOMPACTED and lets
+  the pre-flight decide -- so the guard meant to prevent repeated attempts was
+  refusing exactly the context the failed compaction left behind, on every
+  later turn, in milliseconds and with no model call. The failure record lives
+  on the compactor, which is created once per conversation, so one transient
+  provider refusal was sticky for the whole session and only a relaunch cleared
+  it; the summarizer's own error was dropped (`void error`), so nothing ever
+  said which model refused or why. Three rules follow. (1) The refusal is
+  BOUNDED, not permanent: `COMPACTION_ATTEMPT_LIMIT` (2) attempts, so one
+  transient error is not a verdict on the session, and a later success clears
+  the record. (2) Every failure is ATTRIBUTED, never quoted: attempt, error
+  class name, provider stop reason, numeric HTTP status, provider code token,
+  provider/model, and the measured/threshold token numbers -- each read from
+  the error object's own fields and dropped unless it matches a strict
+  machine-safe charset, never parsed out of the message. `createSummarizer`
+  raises `SummarizerUnavailableError` carrying `oversized`, `provider_error`,
+  `aborted`, or `empty_summary`, plus the provider and model, so "which
+  summarizer refused it" is answerable from the projection. (3) The terminal
+  condition is its own typed stop, `ContextCompactionLostError` (a
+  `ContextBudgetError`, so existing budget handling keeps working), whose
+  advice replaces the default "then retry" tail: retrying the same prompt
+  cannot succeed, so the action is to restart the session and reopen it from
+  its durable state (console: `--resume`), choosing a different summarizer
+  model when the summarizer itself is what failed. The console renders its own
+  branch and exits with reason `context_compaction_lost`, `retryable: false` in
+  JSON mode. Provider/model names and numbers only: prompt text, summary text,
+  and provider message prose never cross this boundary.
