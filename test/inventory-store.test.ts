@@ -61,7 +61,24 @@ test("readInventory on an absent path throws and creates NOTHING", () => {
 
 test("defaultInventoryPath points at the ad-coder config root", () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-inventory-home-"));
-  expect(defaultInventoryPath(home)).toBe(
-    path.join(home, ".config", "ad-coder", "inventories.json"),
+
+  // An explicit XDG_CONFIG_HOME argument wins over home, whatever the
+  // ambient environment holds: the value is passed in, not read from env.
+  const xdgDir = path.join(home, "xdg");
+  expect(defaultInventoryPath(home, xdgDir)).toBe(
+    path.join(xdgDir, "ad-coder", "inventories.json"),
   );
+
+  // Without XDG_CONFIG_HOME the config root is home/.config; the ambient
+  // value must be cleared or this branch cannot be asserted hermetically.
+  const savedXdg = process.env.XDG_CONFIG_HOME;
+  delete process.env.XDG_CONFIG_HOME;
+  try {
+    expect(defaultInventoryPath(home)).toBe(
+      path.join(home, ".config", "ad-coder", "inventories.json"),
+    );
+  } finally {
+    if (savedXdg === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = savedXdg;
+  }
 });
