@@ -45,8 +45,11 @@ import { resolvePrompt } from "../prompts/prompts";
 import type { ResearchPurpose, RoleBriefSource } from "../prompts/role-briefs";
 import {
   DEFAULT_PROVIDER_ADMISSION_CONFIG,
+  FileProviderAdmissionStore,
+  MemoryProviderAdmissionStore,
   type ProviderAdmissionConfig,
   ProviderAdmissionController,
+  type ProviderAdmissionStore,
 } from "../provider-admission";
 import { RegistryError } from "../registry/errors";
 import { deepseekPreset, openaiCodexPreset, openrouterPreset } from "../registry/presets";
@@ -460,9 +463,16 @@ const ADMISSION_SETTING_KEYS = [
  * fed to the constructor as an override, so the module's finite defaults stay
  * standing and nonsense (a zero on a positive-required setting, a non-integer)
  * fails loud with the module's `TypeError`.
+ *
+ * The optional `durableStore` is how a headless caller honours the contract's
+ * durability line ("admission status ... durable wherever a request is
+ * durable"): every shipped entry point that knows a durable run store binds
+ * `FileProviderAdmissionStore(targetDir)` so queue/cooldown/uncertain state
+ * is restored at construction alongside the durable runs.
  */
 export function resolveProviderAdmissionController(
   settings: ProviderAdmissionSettings | undefined,
+  durableStore?: ProviderAdmissionStore,
 ): ProviderAdmissionController | undefined {
   if (settings?.maxConcurrentPerScope === 0) return undefined;
   const overrides: Partial<ProviderAdmissionConfig> = {};
@@ -470,7 +480,17 @@ export function resolveProviderAdmissionController(
     const value = settings?.[key];
     if (value !== undefined) overrides[key] = value;
   }
-  return new ProviderAdmissionController(overrides);
+  // NO durable run store in hand: an explicitly in-memory store, justified
+  // against the contract's durability line — admission state stays durable
+  // only wherever a request is durable, and a caller that seeds a controller
+  // without a targetDir has no durable run store to attach to, so the
+  // snapshot survives within this process (snapshots, double-restore guards)
+  // but not a restart. Durable shipped paths pass the file store above;
+  // programmatic in-process callers are not a durable-request surface.
+  return new ProviderAdmissionController(
+    overrides,
+    durableStore ?? new MemoryProviderAdmissionStore(),
+  );
 }
 
 /**
@@ -498,8 +518,16 @@ function resolveConfig(
   // the effective limits with the layer that set them. Enabled by default;
   // a configured `maxConcurrentPerScope: 0` is the disable sentinel, judged
   // inside the wiring gate (the module refuses a zero).
+  //
+  // DURABILITY: a resolved run already persists against `options.targetDir`
+  // (durable runs and ledger live under `.ad-coder/`, and the cost-anomaly
+  // detector below binds its own file store to the same root), so admission
+  // state is stored there too and restored at construction — resting queue
+  // occupancy, cooldown, and the uncertain in-flight permit survive a restart
+  // beside the durable run records, per docs/contracts/provider-admission.md.
   const providerAdmissionController = resolveProviderAdmissionController(
     options.providerAdmissionSettings,
+    new FileProviderAdmissionStore(options.targetDir),
   );
   const admissionSource =
     options.providerAdmissionSettings === undefined

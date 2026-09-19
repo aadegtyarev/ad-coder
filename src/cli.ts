@@ -133,6 +133,7 @@ import type { ProjectStoreConfig } from "./project-store/types";
 import { ProjectStoreError } from "./project-store/types";
 import {
   AdmissionCancelledError,
+  FileProviderAdmissionStore,
   type ProviderAdmissionController,
   QueueSaturatedError,
 } from "./provider-admission";
@@ -361,7 +362,16 @@ function buildRunner(
   // A workflow module's `ctx.runRole` is a real provider call, so it passes the
   // same operator block every other entry point does. Built here rather than
   // taken from a resolved pipeline config because `run` resolves none.
-  const providerAdmissionController = resolveProviderAdmissionController(admissionSettings);
+  // DURABILITY (issue #365): durable runs persist under `.ad-coder/runs/` in
+  // this target dir, so the controller binds its snapshot file to the same
+  // durable run store root — queue occupancy, cooldown, and the uncertain
+  // in-flight permit are restored beside the runs, per
+  // docs/contracts/provider-admission.md. The store is lazy: constructing it
+  // touches no filesystem until admission actually saves.
+  const providerAdmissionController = resolveProviderAdmissionController(
+    admissionSettings,
+    new FileProviderAdmissionStore(absTargetDir),
+  );
   return createRoleRunner({
     targetDir: absTargetDir,
     models,

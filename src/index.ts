@@ -531,6 +531,7 @@ export {
   admissionFailureFrom,
   admissionScopeKey,
   DEFAULT_PROVIDER_ADMISSION_CONFIG,
+  FileProviderAdmissionStore,
   MemoryProviderAdmissionStore,
   ProviderAdmissionController,
   QueueSaturatedError,

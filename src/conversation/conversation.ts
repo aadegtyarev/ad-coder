@@ -266,7 +266,17 @@ export async function startConversation(config: ConversationConfig): Promise<Con
   if (hasOpaqueSummarizer && (controller.limits.maxTurns > 0 || controller.limits.maxCostUsd > 0)) {
     throw new TypeError("custom summarizer cannot be used with positive session limits");
   }
-  const compaction = resolveCompactionPolicy(explicitPolicy, limitedModels, config.model);
+  // The compaction summarizer is an LLM GENERATION PATH, so it rides the same
+  // outermost chain the harness turns ride (contract
+  // docs/contracts/provider-admission.md: every generation path through
+  // admission). `models` is admission -> tool-call recovery -> cost anomaly ->
+  // session -- hierarchically IDENTICAL limits to `limitedModels`, only with
+  // admission outermost -- mirroring `runRole`, which passes its wrapped
+  // `models` here for exactly the same reason. Scope identity matches the turn
+  // stream (admission did the wrapping above), so a summarizer call counts
+  // against the same scope's concurrency and cooldown and cannot probe a
+  // provider whose scope is saturated or standing down.
+  const compaction = resolveCompactionPolicy(explicitPolicy, models, config.model);
 
   const store =
     config.session === undefined

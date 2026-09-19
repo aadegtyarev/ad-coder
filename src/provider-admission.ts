@@ -1,4 +1,6 @@
 import * as crypto from "node:crypto";
+import * as fs from "node:fs";
+import * as nodePath from "node:path";
 import {
   type AssistantMessage,
   type AssistantMessageEventStream,
@@ -242,6 +244,60 @@ export class MemoryProviderAdmissionStore implements ProviderAdmissionStore {
 
   save(snapshot: ProviderAdmissionSnapshot): void {
     this.snapshot = structuredClone(snapshot);
+  }
+}
+
+/**
+ * Durable admission state beside a project's durable run store (issue #365
+ * layer 1b, review finding 2). Snapshot only — nothing beyond the
+ * `ProviderAdmissionStore` load/save pair — written next to the durable run
+ * records the ProjectStore keeps (`.ad-coder/runs/`), so a restarted headless
+ * host restores queue occupancy, cooldown, and the uncertain in-flight permit
+ * at controller construction (the constructor loads from the store it is
+ * given), instead of re-arming empty.
+ *
+ * Shape / safety mirror the shipped `FileCostAnomalyStore`: lazy — constructing
+ * one touches no filesystem, `load` of a missing or unreadable file stays
+ * `undefined`, and `save` atomic-replaces (temp file + rename, 0700 dir / 0600
+ * file) so a crash mid-write can never leave half a snapshot behind. A file
+ * from another or future snapshot version is DISCARDED, not half-trusted: the
+ * controller's `restore` would refuse it violently, and a stale queue occupies
+ * capacity forever — losing recent admission state costs only a bounded wait,
+ * resurrecting wrong state would deadlock a scope.
+ *
+ * No credential or account id can land here by construction: scope keys are
+ * digests and labels pass `assertScopeLabel` (`provider-admission.ts` header).
+ */
+export class FileProviderAdmissionStore implements ProviderAdmissionStore {
+  private readonly filePath: string;
+
+  constructor(targetDir: string) {
+    this.filePath = nodePath.resolve(targetDir, ".ad-coder", "runs", "provider-admission.json");
+  }
+
+  load(): ProviderAdmissionSnapshot | undefined {
+    let raw: string;
+    try {
+      raw = fs.readFileSync(this.filePath, "utf8");
+    } catch {
+      return undefined;
+    }
+    try {
+      const parsed = JSON.parse(raw) as ProviderAdmissionSnapshot;
+      if (parsed?.version !== 1) return undefined;
+      if (typeof parsed.scopes !== "object" || parsed.scopes === null) return undefined;
+      return parsed;
+    } catch {
+      return undefined;
+    }
+  }
+
+  save(snapshot: ProviderAdmissionSnapshot): void {
+    const dir = nodePath.dirname(this.filePath);
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const temp = `${this.filePath}.${process.pid}.tmp`;
+    fs.writeFileSync(temp, JSON.stringify(snapshot), { mode: 0o600 });
+    fs.renameSync(temp, this.filePath);
   }
 }
 

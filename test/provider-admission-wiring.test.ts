@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { BACKGROUND_CONTEXT, MemorySessionRepo } from "@earendil-works/pi-agent-core";
+import { branchTip } from "@earendil-works/pi-agent-core/harness/session";
 import type { Api, AssistantMessage, Model, Models } from "@earendil-works/pi-ai";
 import { createModels, fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 import { projectCliError, renderCliError } from "../src/cli";
@@ -11,6 +12,7 @@ import {
   resolveProviderAdmissionController,
 } from "../src/cli/resolve-config";
 import { parseSettingsConfig } from "../src/config/validate";
+import { SUMMARIZATION_PROMPT } from "../src/context/compactor";
 import { startConversation } from "../src/conversation/conversation";
 import { CostAnomalyDetector, MemoryCostAnomalyStore } from "../src/economics/cost-anomaly";
 import { StageLimitController } from "../src/orchestration/stage-limits";
@@ -19,6 +21,8 @@ import {
   AdmissionCancelledError,
   admissionScopeKey,
   DEFAULT_PROVIDER_ADMISSION_CONFIG,
+  FileProviderAdmissionStore,
+  MemoryProviderAdmissionStore,
   ProviderAdmissionController,
   QueueSaturatedError,
 } from "../src/provider-admission";
@@ -308,6 +312,109 @@ test("provider admission wiring: a provider_limit rejection in a generation path
   expect(streamSnapshot.scopes[streamKey]?.concurrent).toBe(0);
 });
 
+test(
+  "provider admission wiring: the compaction summarizer rides admission in startConversation, " +
+    "not the pre-admission chain",
+  async () => {
+    // The regression this guards (review finding 1, issue #365 layer 1b):
+    // `resolveCompactionPolicy` was fed `limitedModels` — the chain WITHOUT the
+    // admission wrapper — so a compaction summarizer could dispatch to a
+    // provider whose scope was saturated or standing down. THE OBSERVABLE: a
+    // scope saturated by one held probe, with the conversation's FIRST turn
+    // already over budget so the summarizer fires BEFORE the turn's own
+    // (admitted) provider call inside that step. Wired right, the summarizer
+    // is refused at admission and the provider is never probed (callCount 0);
+    // wired to `limitedModels`, the summary dispatch succeeds first and the
+    // provider count is 1.
+    const { faux, models, model } = harnessFixture();
+    faux.setResponses(
+      Array.from(
+        { length: 4 },
+        () => (request: { systemPrompt?: string }) =>
+          fauxAssistantMessage(
+            request.systemPrompt === SUMMARIZATION_PROMPT ? "safe historical briefing" : "reply",
+          ),
+      ),
+    );
+    const role = defineRole(
+      {
+        name: "coder",
+        provider: model.provider,
+        modelId: model.id,
+        systemPrompt: "You code.",
+        activeToolNames: [],
+        cacheRetention: "none",
+        // Small budget: the PRELOADED history below is over threshold, so the
+        // FIRST step attempts compaction, while the still-recent tail stays
+        // inside the preflight ceiling (the irreducible case would refuse the
+        // turn before any provider path was reached).
+        contextBudget: { maxTokens: 1100, reserveTokens: 100, keepRecentTokens: 250 },
+      },
+      model,
+    );
+    const calls: string[] = [];
+    const holds: ParkedCall[] = [];
+    const { controller } = await saturatedScope(calls, holds);
+    const sessionController = new SessionLimitController({ maxTurns: 8 });
+    // A durable session carried over from a restart: its history is already
+    // over the compaction threshold, so the FIRST step must compact BEFORE it
+    // can dispatch — the resumed-history scenario the contract's restore
+    // rules serve. The lane tip is moved to the preloaded tail via the same
+    // `pi.branch.tip` value the harness reads when it re-opens a lane, so
+    // history is on the lane like a resumed durable session's.
+    const repo = new MemorySessionRepo();
+    const session = await repo.create({}, BACKGROUND_CONTEXT);
+    const seeded = await session.createBranch("default", null, BACKGROUND_CONTEXT);
+    // History then a still-open question. The lane tip is moved to the newest
+    // entry via the same `pi.branch.tip` value the harness reads when it
+    // re-opens a lane, so history is on the lane like a resumed durable
+    // session's: oversized head (assistant history), small tail (the question).
+    await seeded.appendMessage(
+      {
+        role: "assistant",
+        content: [{ type: "text", text: `history:${"x".repeat(4800)}` }],
+        timestamp: 3,
+      } as never,
+      BACKGROUND_CONTEXT,
+    );
+    const question = await seeded.appendMessage(
+      { role: "user", content: [{ type: "text", text: "continue" }], timestamp: 2 } as never,
+      BACKGROUND_CONTEXT,
+    );
+    await session.setValue(branchTip("main"), question, BACKGROUND_CONTEXT);
+
+    const conversation = await startConversation({
+      role,
+      targetDir,
+      models,
+      model,
+      session,
+      providerAdmissionController: controller,
+      sessionLimitController: sessionController,
+      costAnomalyDetector: new CostAnomalyDetector({}, new MemoryCostAnomalyStore()),
+    });
+    try {
+      // Over budget from the preloaded history: compaction is attempted before
+      // the turn dispatches. The saturated scope refuses the summarizer; the
+      // turn's own admission-wrapped dispatch is refused right after — the
+      // typed failure reaches the caller.
+      await expect(conversation.step("continue")).rejects.toBeInstanceOf(QueueSaturatedError);
+    } finally {
+      await conversation.close();
+    }
+    // THE WIRING PROBE: the provider was never reached — neither by the
+    // summarizer nor by anything else. Under the old wiring this is 1: the
+    // summary request rode the pre-admission chain and dispatched.
+    expect(faux.state.callCount).toBe(0);
+    // Only the priming probe entered the inner chain; the summarizer added no
+    // `completeSimple` entry.
+    expect(calls).toEqual(["complete"]);
+    // The refusal is the shared scope's, not a private reproduction of the
+    // session limits: the session controller reserved nothing for the refusals.
+    expect(sessionController.snapshot().admittedTurns).toBe(0);
+  },
+);
+
 test("provider admission wiring: cancelDeferred passes through the admission proxy unchanged", async () => {
   const calls: string[] = [];
   const holds: ParkedCall[] = [];
@@ -447,6 +554,68 @@ test("provider admission wiring: settings.yaml gains the provider-admission voca
   expect(() => parseSettingsConfig({ review: {}, "provider-admission": 3 })).toThrow(
     /must be a map/,
   );
+});
+
+test("provider admission wiring: the resolver hands the supplied store to the controller", async () => {
+  const calls: string[] = [];
+  const holds: ParkedCall[] = [];
+  const store = new MemoryProviderAdmissionStore();
+  const controller = resolveProviderAdmissionController({ maxConcurrentPerScope: 2 }, store);
+  expect(controller).toBeInstanceOf(ProviderAdmissionController);
+  const wrapped = controller?.wrap(gateModels(calls, holds), "faux", "faux");
+  const admit = wrapped?.complete({} as never, {} as never);
+  void admit?.catch(() => undefined);
+  await flush();
+  // The controller SAVED through the supplied store: a snapshot is there.
+  const key = admissionScopeKey("faux", "faux");
+  expect(store.load()?.scopes[key]?.concurrent).toBe(1);
+  // A controller built on the same store RESTORES from it — the durability the
+  // durable headless paths get from the file store.
+  const restored = resolveProviderAdmissionController({ maxConcurrentPerScope: 2 }, store);
+  expect(restored?.snapshot().scopes[key]?.concurrent).toBe(1);
+});
+
+test("provider admission wiring: the resolved pipeline stores admission state in the durable run store", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-admission-durable-"));
+  try {
+    const resolved = resolvePipelineConfig({
+      task: "x",
+      targetDir: dir,
+      registryConfig: mixedRegistry(),
+      profile: buildDefaultProfile({ strong: "small", mid: "small", cheap: "small" }),
+      env: fakeEnv({ LOCAL_KEY: "k" }),
+      warn: silent,
+    });
+    const controller = resolved.providerAdmissionController;
+    expect(controller).toBeInstanceOf(ProviderAdmissionController);
+
+    // Durable activity through the resolved controller: one call admitted
+    // and parked while its permit is live, as a durable run's in-flight
+    // request would be.
+    const calls: string[] = [];
+    const holds: ParkedCall[] = [];
+    const wrapped = controller?.wrap(gateModels(calls, holds), "local", "local");
+    const admit = wrapped?.complete({} as never, {} as never);
+    void admit?.catch(() => undefined);
+    await flush();
+
+    // The state file sits BESIDE the durable run records under .ad-coder/runs.
+    const file = path.join(dir, ".ad-coder", "runs", "provider-admission.json");
+    const persisted = JSON.parse(fs.readFileSync(file, "utf8")) as {
+      version: number;
+      scopes: Record<string, { concurrent: number }>;
+    };
+    expect(persisted.version).toBe(1);
+    const key = admissionScopeKey("local", "local");
+    expect(persisted.scopes[key]?.concurrent).toBe(1);
+
+    // A restarted controller re-reading the SAME durable run store restores
+    // the in-flight permit (re-armed, still occupying its slot).
+    const restarted = new ProviderAdmissionController({}, new FileProviderAdmissionStore(dir));
+    expect(restarted.snapshot().scopes[key]?.concurrent).toBe(1);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("provider admission wiring: the CLI projects the two admission errors with their typed actions", () => {
