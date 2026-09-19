@@ -485,7 +485,12 @@ an explicit flag, the profile setting, or the built-in default.
 `--workflows false`, a selective `--workflows <names|^name>` list,
 `--skills <names>`, and `--no-skills` are per-run switches; their explicit
 words also cross into a detached background worker verbatim, so what you typed
-at the console is what the invisible process runs.
+at the console is what the invisible process runs. The credential-source
+launch parameter repeats the same way: when `--credential-path <file>` was
+typed at the console, the detached worker resolves the same private credential
+file (a path crosses the boundary, never a credential value); when it was not
+typed, the worker resolves its own default file. The parameter is never
+persisted into the profile or the run record.
 
 To keep a capability off persistently instead of typing the flag every launch,
 set it in the private user profile at `~/.config/ad-coder/profile.json`:
