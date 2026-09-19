@@ -39,7 +39,6 @@ question without shelling out (`cli.md`, `architecture.md`).
 - 2026-09-17: Report is per role, per provider/model, and totals, each carrying
   the same numeric shape; tool-name keys and provider/model strings are
   attacker-influenced data and are handled as data only.
-
 - 2026-09-19: **A refusal row records a turn the conversation refused before
   any provider call (issue #422).** Its `usage` is zero in every amount, its
   `stopReason` is `refusal`, and it carries one additive `refusal` object with
@@ -48,3 +47,13 @@ question without shelling out (`cli.md`, `architecture.md`).
   provider-failure row, which carries the provider's own usage and no `refusal`
   field. Readers that do not know the field ignore it; aggregations take it in
   with a zero contribution.
+- 2026-09-19 (issue #418): An error-stopped settled row may carry an optional
+  `providerError` = `{status?, code?}`: the HTTP status the provider reported
+  (anchored 3-digit message shape or structured field, validated 400..599)
+  and its own error code as a strict-charset token (`[A-Za-z0-9_.-]{1,64}`).
+  Identifiers and numbers only still holds: the provider's failure message
+  and body are read for these two bounded values and never stored -- a body
+  can echo the request it refused. The field is what lets "all presets fail
+  with 402 / insufficient_credits" be answered from the ledger alone. The
+  reader stays a live-file reader: an optional field cannot make a
+  well-formed line skip, and the aggregates stay numeric.

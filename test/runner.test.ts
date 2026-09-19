@@ -90,6 +90,11 @@ test("safe Git diff projection is bounded and redacts credential-like additions"
   });
 });
 
+/** A rejected runRole: plain Error with the harness `code` field attached. */
+function isCodedError(error: unknown): error is Error & { code?: string } {
+  return error instanceof Error && "code" in error;
+}
+
 /** A faux provider + models pair and the role validated against its window. */
 function harnessFixture() {
   const faux = fauxProvider({
@@ -482,6 +487,59 @@ test("#356: a message-embedded 429 quota refusal surfaces as a typed quota outco
     status: 429,
     providerCode: "insufficient_quota",
   });
+});
+
+test("#418: a non-allow-list provider status still names its cause in the empty-turn fallback", async () => {
+  const { faux, models, model, role } = harnessFixture();
+  // The incident shape: every preset of the provider refused with the same
+  // billing status, embedded in a settled error the rejection allow-list
+  // does not own (402 is neither a rejection nor a quota nor a credential
+  // status). The fallback EmptyTurnError currently carries only the harness
+  // code and the misdirecting credential advice, so the operator is told to
+  // "verify authentication" about a key that is fine.
+  faux.setResponses([
+    () => {
+      throw new Error(
+        '402: {"error":{"code":"insufficient_credits","message":"PROBE never-publish-me"}}',
+      );
+    },
+  ]);
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-418-"));
+  const thrown = await runRole({ role, targetDir: tmp, models, model, prompt: "do it" }).catch(
+    (error: unknown) => error as unknown,
+  );
+  if (!isCodedError(thrown)) throw new Error("runRole should have rejected with a coded error");
+  expect(thrown.code).toBe("empty_turn");
+  expect(thrown).toMatchObject({ providerStatus: 402, providerErrorCode: "insufficient_credits" });
+  // A named provider status replaces the credential misdirection: the message
+  // must not advise an auth check the `auth status` already disproves.
+  expect(thrown.message).not.toContain("verify authentication");
+  expect(thrown.message).toContain("HTTP 402");
+  expect(thrown.message).toContain("insufficient_credits");
+  // Bounded fields only: the uncontrolled body never crosses the error text.
+  expect(JSON.stringify(thrown)).not.toContain("never-publish-me");
+});
+
+test("#418: a 401/403-embedded empty turn keeps the credential wording (errors 2026-09-19)", async () => {
+  const { faux, models, model, role } = harnessFixture();
+  faux.setResponses([
+    () => {
+      throw new Error(
+        '401: {"error":{"code":"invalid_api_key","message":"PROBE never-publish-me"}}',
+      );
+    },
+  ]);
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-418-"));
+  const thrown = await runRole({ role, targetDir: tmp, models, model, prompt: "do it" }).catch(
+    (error: unknown) => error as unknown,
+  );
+  if (!isCodedError(thrown)) throw new Error("runRole should have rejected with a coded error");
+  expect(thrown.code).toBe("empty_turn");
+  // The status is recorded (provenance, not classification), but the message
+  // stays exactly the credential advice the 2026-09-19 boundary pinned.
+  expect(thrown).toMatchObject({ providerStatus: 401, providerErrorCode: "invalid_api_key" });
+  expect(thrown.message).toContain("verify authentication and retry");
+  expect(thrown.message).not.toContain("HTTP 401");
 });
 
 test("truncatedGenerationFrom classifies silence and spares usable content", () => {

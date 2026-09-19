@@ -201,6 +201,46 @@ test("a response's tool calls are recorded as name-to-count, arguments excluded"
   expect(JSON.stringify(sink.records()[0])).not.toContain("secret-payload");
 });
 
+test("an error-stopped response carries a bounded providerError, never the body (issue #418)", async () => {
+  const sink = new MemoryLedgerSink();
+  const { hooks, registered } = fakeHooks();
+  new Ledger({ runId: "run1", role: "coder", step: "code", sink }).attach(hooks);
+  const handler = registered[0]?.handler;
+  if (handler === undefined) throw new Error("handler was not registered");
+
+  // The #418 incident shape: an OpenRouter-style billing refusal whose exact
+  // body pi-agent-core attaches to the error-stopped settled message. Without
+  // the bounded projection the row says only stopReason=error and the cause
+  // is lost -- every surface downstream then says "verify authentication".
+  const failedMessage = settled(usage(0, 0, 0));
+  failedMessage.stopReason = "error";
+  failedMessage.errorMessage =
+    '402: {"error":{"code":"insufficient_credits","message":"prompt-echo PROBE never-publish-me"}}';
+  await handler({ runId: "run-1", lane: "main", message: failedMessage }, FAKE_CONTEXT);
+
+  const row = sink.records()[0];
+  // Both bounded values of the pair survive, so an operator reading the ledger
+  // alone can answer "all presets fail with 402 / insufficient_credits".
+  expect(row?.providerError).toEqual({ status: 402, code: "insufficient_credits" });
+  // The uncontrolled body -- and anything that could echo the request with it
+  // -- never crosses into a durable artifact.
+  expect(JSON.stringify(row)).not.toContain("never-publish-me");
+  expect(JSON.stringify(row)).not.toContain("prompt-echo");
+  expect(JSON.stringify(row)).not.toContain("errorMessage");
+});
+
+test("a settled response with no provider error carries no providerError key", async () => {
+  const sink = new MemoryLedgerSink();
+  const { hooks, registered } = fakeHooks();
+  new Ledger({ runId: "run1", role: "r", step: "s", sink }).attach(hooks);
+  const handler = registered[0]?.handler;
+  if (handler === undefined) throw new Error("handler was not registered");
+
+  await handler(event(usage(100, 110, 0.01), 200), FAKE_CONTEXT);
+
+  expect("providerError" in (sink.records()[0] as LedgerRecord)).toBe(false);
+});
+
 test("a text-only response omits the toolCalls key rather than writing an empty map", async () => {
   const sink = new MemoryLedgerSink();
   const { hooks, registered } = fakeHooks();

@@ -2,6 +2,10 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { HookInvocation, Hooks, SettledAssistantMessage } from "@earendil-works/pi-agent-core";
 import type { Usage } from "@earendil-works/pi-ai";
+// Bounded provider-cause extraction (issue #418) lives beside the other
+// anchored readers it shares its inputs and invariants with. The import is
+// acyclic: runner/errors imports nothing from the ledger.
+import { providerErrorCauseFrom } from "../runner/errors";
 import type { LedgerRecord } from "./types";
 import { toolCallCounts, usageAmounts } from "./usage";
 
@@ -251,6 +255,19 @@ export class Ledger {
       // idiom when the response requested no tools, so a text-only turn carries
       // no empty `toolCalls: {}`.
       const counts = toolCallCounts(event.message);
+      // Bounded provider cause (issue #418). The provider's exact error body
+      // arrives on the error-stopped settled message; persisting it RAW would
+      // store uncontrolled text that can echo the request, so only the
+      // validated `status`/`code` pair crosses, and only for an error stop --
+      // a clean turn carries no failure to record.
+      const providerErrorMessage =
+        event.message.stopReason === "error" && typeof event.message.errorMessage === "string"
+          ? event.message.errorMessage
+          : undefined;
+      const providerError =
+        providerErrorMessage !== undefined
+          ? providerErrorCauseFrom({ message: providerErrorMessage })
+          : undefined;
       const record: LedgerRecord = {
         ts: Date.now(),
         runId: event.runId,
@@ -264,6 +281,7 @@ export class Ledger {
         usage: usageAmounts(this.perResponseUsageFrom(event.message)),
         ...(Object.keys(counts).length > 0 && { toolCalls: counts }),
         ...(this.requestBytes !== undefined && { requestBytes: this.requestBytes }),
+        ...(providerError !== undefined && { providerError }),
       };
       this.sink.write(record);
     } catch (error) {

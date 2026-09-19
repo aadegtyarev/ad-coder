@@ -93,4 +93,24 @@ export interface LedgerRecord {
    * readers that do not know it simply ignore it.
    */
   refusal?: { code: string; reason: string; message: string };
+  /**
+   * Bounded provider-reported failure cause, present ONLY on an error-stopped
+   * settled message (issue #418): `status` is the 3-digit HTTP status the
+   * provider embedded in its failure (anchored message shapes or a structured
+   * field, validated to 400..599) and `code` is the provider's own error code
+   * as a strict-charset token (`[A-Za-z0-9_.-]{1,64}`). Both fields are
+   * optional and one or the other may be absent when the provider named only
+   * a bare status.
+   *
+   * SAFE TO SHARE. Only these two bounded values are stored -- never the
+   * message they were read from, never the response body (a provider error
+   * body can echo the request it refused), never prose, never a URL. Two
+   * rows repeating the same paired values are what an operator reads as
+   * "all presets fail with 402 / insufficient_credits" -- without re-running
+   * anything, and without the body ever having reached a file.
+   */
+  providerError?: {
+    status?: number;
+    code?: string;
+  };
 }

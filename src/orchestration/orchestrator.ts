@@ -757,6 +757,18 @@ function safeErrorText(error: unknown): string {
 const SAFE_NAME_PATTERN = /^[\w$.-]{1,64}$/;
 
 const SAFE_HOUSE_ERRORS = [
+  // Field-by-field audit (errors contract 2026-09-19 / issue #418):
+  // `code` is the authored literal `empty_turn`; `providerCode` is the
+  // harness-composed failure code (e.g. `assistant_error`);
+  // `providerStatus` is a safe integer the constructor BOUNDS to 400..599
+  // and otherwise DROPS (recording only -- it moves no class boundary);
+  // `providerErrorCode` is the strict-charset token
+  // (`[A-Za-z0-9_.-]{1,64}`, length-capped, prose/URLs impossible), likewise
+  // dropped otherwise; `runId` is validated by `assertRunId` before any
+  // projection. `message` is an AUTHORED string splicing only those bounded
+  // fields -- provider prose and response bodies never cross, and when no
+  // non-credential status was parsed the message stays verbatim the pinned
+  // "verify authentication and retry" wording.
   EmptyTurnError,
   ProviderRejectionError,
   // Field-by-field audit (errors contract 2026-09-16 / 2026-09-19):

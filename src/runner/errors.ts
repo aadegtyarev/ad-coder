@@ -16,18 +16,73 @@ export type RunnerErrorCode =
 export class EmptyTurnError extends Error {
   override readonly name = "EmptyTurnError";
   readonly code = "empty_turn" as const;
+  /**
+   * The HTTP status the PROVIDER reported for the empty turn, when its failure
+   * message carried it in one of the anchored shapes below. RECORDING, not
+   * classification: unlike `providerRejectionStatusFrom` the full 400..599
+   * range is accepted, because this field answers "what did the provider
+   * report" -- it never moves a class boundary (#356 owns those). Bounded
+   * unconditionally in the constructor so the projection allow-list audit can
+   * name it.
+   */
+  readonly providerStatus: number | undefined;
+  /**
+   * The provider's OWN bounded error code token (`[A-Za-z0-9_.-]{1,64}`),
+   * distinct from `providerCode`, which carries the HARNESS composed code
+   * (e.g. `assistant_error`). Keeping the two apart is what lets an operator
+   * tell "the harness emptied the turn" from "the provider said insufficient
+   * credits" -- the confusion at the heart of #418.
+   */
+  readonly providerErrorCode: string | undefined;
 
   constructor(
     readonly runId: string,
     /** The bounded, harness-authored failure code that emptied the turn, when one exists. */
     readonly providerCode?: string,
+    /** The provider-reported HTTP status, recording-only, bounded 400..599. */
+    providerStatus?: number,
+    /** The provider's own strict-charset error code token, when one was extractable. */
+    providerErrorCode?: string,
   ) {
+    // Every carried field is bounded HERE, at the single point the projection
+    // allow-list audit (orchestrator safeErrorText) can name: a non-integer or
+    // out-of-range status and a non-token code are DROPPED, never truncated
+    // and never thrown about -- the classification does not depend on them.
+    const boundedStatus =
+      typeof providerStatus === "number" &&
+      Number.isSafeInteger(providerStatus) &&
+      providerStatus >= 400 &&
+      providerStatus <= 599
+        ? providerStatus
+        : undefined;
+    const boundedProviderErrorCode =
+      providerErrorCode !== undefined && PROVIDER_ERROR_CODE_BOUND.test(providerErrorCode)
+        ? providerErrorCode
+        : undefined;
+    const credentialed =
+      boundedStatus === undefined || boundedStatus === 401 || boundedStatus === 403;
+    // The 2026-09-19 boundary is preserved verbatim: absent a non-credential
+    // provider status, the message is exactly today's. With one, the message
+    // must NOT repeat the credential advice: `auth status` already answers
+    // that question, and a 402 billing refusal sent to check the key kept the
+    // cause undiagnosable (#418). The rewrite splices ONLY bounded values --
+    // no provider prose, never the response body.
     super(
-      `the provider returned a failed empty turn; verify authentication and retry` +
-        `${providerCode !== undefined ? ` (provider code ${providerCode})` : ""}`,
+      credentialed
+        ? `the provider returned a failed empty turn; verify authentication and retry` +
+            `${providerCode !== undefined ? ` (provider code ${providerCode})` : ""}`
+        : `the provider returned a failed empty turn with HTTP ${boundedStatus as number}` +
+            `${providerCode !== undefined ? ` (provider code ${providerCode})` : ""}` +
+            `${boundedProviderErrorCode !== undefined ? ` (provider error code ${boundedProviderErrorCode})` : ""}` +
+            `; check the provider account for HTTP ${boundedStatus as number} and retry`,
     );
+    this.providerStatus = boundedStatus;
+    this.providerErrorCode = boundedProviderErrorCode;
   }
 }
+
+/** A strict-charset provider error-code token; anything else is dropped, never truncated. */
+const PROVIDER_ERROR_CODE_BOUND = /^[A-Za-z0-9_.-]{1,64}$/;
 
 /**
  * A provider response settled as a deferred suspension instead of a settled
@@ -84,6 +139,69 @@ export class ProviderRejectionError extends Error {
         "inspect the request this role sends -- model id, tool schemas, parameters -- and retry",
     );
   }
+}
+
+/**
+ * The bounded provider cause recorded past the classification boundaries
+ * (issue #418).
+ *
+ * RECORDING, NOT CLASSIFICATION. Every field is optional and each says what
+ * the provider REPORTED -- not what a class owns. There is deliberately no
+ * allow-list here: a 402 billing refusal is neither a rejection, nor a quota,
+ * nor a credential failure, and any of those filters would re-create the
+ * #418 undiagnosability by dropping the field exactly when the boundary
+ * falls through to the generic empty turn.
+ */
+export interface ProviderErrorCause {
+  /** The provider-reported HTTP status: a safe integer validated to 400..599. */
+  readonly status?: number;
+  /** The provider's own strict-charset error code token (`[A-Za-z0-9_.-]{1,64}`). */
+  readonly code?: string;
+}
+
+/**
+ * Extract the bounded provider cause from an uncontrolled settled failure, or
+ * `undefined` when it names neither a status nor a structured code token.
+ *
+ * ONLY THE BOUNDED PAIR CROSSES. `status` is read from a structured
+ * `status`/`statusCode` field (a safe integer, 400..599) or from the two
+ * anchored message shapes via `anchoredProviderStatusFrom`; `code` is
+ * `extractProviderCodeToken`'s strict-charset token. The message -- and with
+ * it every echoed request value, every URL and every body -- is read for
+ * those two fields and dropped: an operator reading the result can state
+ * "all presets fail with 402 / insufficient_credits" and nothing more, which
+ * is exactly the contract for a durable artifact (#418).
+ *
+ * ACCEPTS BOTH SETTLED SHAPES. A pi-agent-core `result.error` (`{ code,
+ * message }`) and a settled assistant message read as
+ * `{ message: errorMessage }` -- the ledger projects its row from the latter
+ * alone.
+ */
+export function providerErrorCauseFrom(error: unknown): ProviderErrorCause | undefined {
+  if (error === null || typeof error !== "object") return undefined;
+  const value = error as Record<string, unknown>;
+  const message = typeof value.message === "string" ? value.message : undefined;
+  // Structured field first (the same trust order as every other reader), then
+  // the anchored message shapes; the validated 400..599 band rejects "000",
+  // "069", and any longer number the anchoring already refused to truncate.
+  const structured = value.status ?? value.statusCode;
+  let status: number | undefined =
+    typeof structured === "number" &&
+    Number.isSafeInteger(structured) &&
+    structured >= 400 &&
+    structured <= 599
+      ? structured
+      : undefined;
+  if (status === undefined && message !== undefined) {
+    const parsed = anchoredProviderStatusFrom(message);
+    if (parsed !== undefined && parsed >= 400 && parsed <= 599) status = parsed;
+  }
+  const code = message !== undefined ? extractProviderCodeToken(message) : undefined;
+  if (status === undefined && code === undefined) return undefined;
+  return {
+    ...(status !== undefined && { status }),
+    ...(code !== undefined && { code }),
+  };
 }
 
 /** A role referenced tools that were not registered in the selected plugin set. */
@@ -395,10 +513,33 @@ export function providerRejectionStatusFrom(error: unknown): number | undefined 
   }
   const message = value.message;
   if (typeof message !== "string") return undefined;
+  const parsed = anchoredProviderStatusFrom(message);
+  return parsed !== undefined && PROVIDER_REJECTION_STATUSES.has(parsed) ? parsed : undefined;
+}
+
+/**
+ * Read the 3-digit leading status from one of the two anchored message shapes
+ * (`"<status>: <body>"`, its `<prefix> (<status>): <body>` variant, or the
+ * SDK's `"<status> <body>"`), WITHOUT choosing a class for it.
+ *
+ * SHARED ANCHORED READER. `providerRejectionStatusFrom` and
+ * `providerQuotaFrom` inline the same two patterns; `providerErrorCauseFrom`
+ * reads the same channel, so the reading lives in one place and all three
+ * boundaries see identical messages identically. The narrative on the two
+ * message shapes above carries over unchanged: anchored at the start so a
+ * three-digit number inside prose never matches, bounded to exactly three
+ * digits so "2024 ..." fails at the fourth character, and the body is never
+ * returned -- the whole output is a number.
+ *
+ * UNFILTERED BY DELIBERATE DESIGN. Callers classify; this only records.
+ * `providerRejectionStatusFrom` filters to its allow-list AFTER this returns,
+ * and every other caller validates the range itself, so loosening the read
+ * here cannot widen a classification.
+ */
+export function anchoredProviderStatusFrom(message: string): number | undefined {
   const match = /^(?:[^():]{0,64} )?\(?(\d{3})\)?: /.exec(message) ?? /^(\d{3}) /.exec(message);
   if (match === null) return undefined;
-  const parsed = Number(match[1]);
-  return PROVIDER_REJECTION_STATUSES.has(parsed) ? parsed : undefined;
+  return Number(match[1]);
 }
 
 /**
@@ -481,8 +622,8 @@ export function providerQuotaFrom(
   } else {
     const message = value.message;
     if (typeof message !== "string") return undefined;
-    const match = /^(?:[^():]{0,64} )?\(?(\d{3})\)?: /.exec(message) ?? /^(\d{3}) /.exec(message);
-    isStatus429 = match !== null && Number(match[1]) === 429;
+    const match = anchoredProviderStatusFrom(message);
+    isStatus429 = match !== undefined && match === 429;
   }
   if (!isStatus429) return undefined;
   const message = typeof value.message === "string" ? value.message : undefined;
