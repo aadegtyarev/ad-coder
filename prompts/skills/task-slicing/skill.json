@@ -1,1 +1,1 @@
-{"id":"task-slicing","version": "2","description":"A request broader than one shippable slice: cut the smallest change that ships on its own and can be shown correct.","roles":["orchestrator","planner"]}
+{"id":"task-slicing","version": "3","description":"Task slicing. Use when a request is broader than one shippable change and must be cut to a slice that ships. Phrases: 'too broad', 'slice it', 'what ships first'.","roles":["orchestrator","planner"]}

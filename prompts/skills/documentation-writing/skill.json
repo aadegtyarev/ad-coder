@@ -1,7 +1,7 @@
 {
   "id": "documentation-writing",
-  "version": "2",
-  "description": "Writing, revising or auditing documentation: give its one reader the answer to their one job — compactness is not word count, and a stale sentence is worse than a missing one.",
+  "version": "3",
+  "description": "Documentation writing. Use when prose for a reader with a task is the deliverable — written, revised or audited. Phrases: 'update the docs', 'write it up'.",
   "roles": [
     "orchestrator",
     "planner",

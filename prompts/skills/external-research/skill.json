@@ -1,7 +1,7 @@
 {
   "id": "external-research",
-  "version": "2",
-  "description": "Answering what the repository cannot: a dependency, protocol or price that needs a dated external fact — classify the question, cross-verify what would change a decision, and cite only what was fetched.",
+  "version": "3",
+  "description": "External research. Use when a decision needs an outside, dated fact the repository cannot supply, graded for trust. Phrases: 'look it up', 'check the docs'.",
   "roles": ["orchestrator", "researcher", "planner", "security", "reviewer"],
   "requires": {"plugins": ["web_search"]}
 }

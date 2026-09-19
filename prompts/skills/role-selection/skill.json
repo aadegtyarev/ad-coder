@@ -1,6 +1,6 @@
 {
   "id": "role-selection",
-  "version": "3",
-  "description": "Match work to its execution path: what each worker role does, returns, which one sizes the work before a dispatch, and when delegated work beats doing or editing it yourself.",
+  "version": "4",
+  "description": "Role selection. Use when work must be matched to its execution path before any edit or dispatch. Phrases: 'should I delegate or run it myself', 'who does this'.",
   "roles": ["orchestrator"]
 }

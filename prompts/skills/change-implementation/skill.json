@@ -1,6 +1,6 @@
 {
   "id": "change-implementation",
-  "version": "2",
-  "description": "Editing code: baseline first, contracts as blocking requirements, a test per step, and a report of what was actually run.",
+  "version": "3",
+  "description": "Change implementation. Use when code is edited to land a decision — baseline, a test per step, evidence of what ran. Phrases: 'make the change', 'fix it'.",
   "roles": ["orchestrator", "coder", "planner", "reviewer"]
 }

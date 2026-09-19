@@ -1,7 +1,7 @@
 {
   "id": "delivery-calibration",
-  "version": "2",
-  "description": "Size a ticket before dispatching it — its shape, order and accepted-result cost — and turn broad work into bounded evidence-producing dispatches.",
+  "version": "3",
+  "description": "Delivery calibration. Use when a ticket is about to be dispatched with size and cost still unknown. Phrases: 'size this before you dispatch', 'how big is this'.",
   "roles": [
     "orchestrator"
   ]

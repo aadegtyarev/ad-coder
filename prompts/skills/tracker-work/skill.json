@@ -1,6 +1,6 @@
 {
   "id": "tracker-work",
-  "version": "1",
-  "description": "Filing, claiming or closing an issue, or opening a pull request: search before filing, claim before starting, keep labels true, and put the generated evidence in the pull request.",
+  "version": "2",
+  "description": "Tracker work. Use when an issue must be filed, claimed or closed, or a pull request opened. Phrases: 'file/claim this ticket', 'open a PR'.",
   "roles": ["orchestrator"]
 }
