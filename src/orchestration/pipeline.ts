@@ -77,6 +77,7 @@ export function pipelinePauseFromCheckpoint(
       action: pause.action,
       ...(pause.limitReason === undefined ? {} : { limitReason: pause.limitReason }),
       ...(pause.limit === undefined ? {} : { limit: pause.limit }),
+      ...(pause.cause === undefined ? {} : { cause: { ...pause.cause } }),
     },
     {
       steps: stageMetrics.length,

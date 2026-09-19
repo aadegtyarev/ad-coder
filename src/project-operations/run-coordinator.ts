@@ -1,5 +1,6 @@
 import * as crypto from "node:crypto";
 import * as path from "node:path";
+import { CostAnomalyBlockedError } from "../economics/cost-anomaly";
 import type { WorkflowSession } from "../orchestration/session";
 import {
   applyTransition,
@@ -16,17 +17,28 @@ import {
 } from "../orchestration/stage-limits";
 import type {
   Driver,
+  PipelinePauseCause,
   PipelineResult,
   ResearchDispatchIntent,
   StepResult,
   WorkflowPhase,
   WorkflowState,
 } from "../orchestration/types";
-import { OrchestrationError } from "../orchestration/types";
+import {
+  MAX_PAUSE_CAUSE_CODE_CHARS,
+  MAX_PAUSE_CAUSE_MESSAGE_CHARS,
+  OrchestrationError,
+} from "../orchestration/types";
 import type { ProjectStore } from "../project-store/project-store";
 import type { VersionedState } from "../project-store/types";
 import { ProjectStoreError } from "../project-store/types";
-import { ProviderRejectionError } from "../runner/errors";
+import {
+  ConfiguredToolsUnavailableError,
+  EmptyTurnError,
+  ProviderRejectionError,
+  RunnerError,
+  SuspendedRunError,
+} from "../runner/errors";
 import { type BacklogStore, FileBacklogStore } from "./backlog";
 import {
   appendDocumentationProposal,
@@ -84,39 +96,55 @@ export interface RunCheckpoint {
     action: string;
     limitReason?: StageLimitReason;
     limit?: number;
+    cause?: PipelinePauseCause;
   };
 }
 
 /**
- * The durable pause a non-limit stage failure leaves behind.
+ * The pause a non-limit stage failure leaves behind.
  *
  * WHY THE CAUSE IS INSPECTED HERE. The checkpoint is often the only thing an
  * operator reads after an unattended run stops, and a fixed "inspect the
  * provider failure" told them nothing about WHICH failure -- a provider that
- * refused a malformed request read exactly like one that was never
- * authenticated. `WorkflowStageFailureError` preserves its `sourceError`, so a
- * typed rejection can name the status and the party at fault right in the
- * pause.
+ * refused a malformed request read exactly like a git-diff measurement that
+ * could not run, and the cause itself was dropped entirely (issue #363).
+ * `WorkflowStageFailureError` preserves its `sourceError`, so the
+ * classification below decides per source:
  *
- * NUMBERS AND CODES ONLY. `ProviderRejectionError` carries no body, so nothing
- * uncontrolled reaches durable state -- the same discipline the stage-limit
- * pause above follows.
+ * - a provider rejection keeps its own pause and wording (the status is the
+ *   diagnosable part and stays in the action),
+ * - every typed HARNESS-SIDE error -- the runner's own, an empty turn, a cost
+ *   block, unavailable tools, a suspended deferral, a project-operations
+ *   rejection such as `invalid_follow_up`, an orchestration precondition -- is
+ *   named AS HARNESS WORK with a bounded `cause`, so the durable record can
+ *   say what actually failed and the retrying stage can converge on it,
+ * - anything untyped keeps the old generic wording and records nothing: its
+ *   message is uncontrolled text the numbers-and-codes-only discipline
+ *   (documented above) forbids persisting.
+ *
+ * NUMBERS AND CODES ONLY. Typed harness errors are built in code from fixed
+ * phrases plus safe tokens (statuses, run ids, paths, counts), so their
+ * `code`/`message` are harness-authored by construction and bounded to the
+ * char ceilings in orchestration/types.ts. No provider response body and no
+ * model text can reach a pause record through this path.
  */
 function stageFailurePause(
   phase: WorkflowState["phase"],
   sourceError: unknown,
-): { phase: WorkflowState["phase"]; code: string; action: string } {
+): { phase: WorkflowState["phase"]; code: string; action: string; cause?: PipelinePauseCause } {
   // The REVIEW stage failing to run is its OWN outcome (issue #227): an
   // operator skimming a generic stage_failed line is exactly how PR #220's
   // unreviewed branch went quiet. Naming it here is what makes a review that
   // did not happen render differently from any other stage failure.
   if (phase === "review") {
+    const cause = pauseCauseFrom(sourceError, 0);
     return {
       phase,
       code: "review_not_run",
       action:
         "the review stage did not run to a verdict; inspect the reviewer's registration and " +
         "configuration, then resume the review explicitly",
+      ...(cause === undefined ? {} : { cause }),
     };
   }
   if (sourceError instanceof ProviderRejectionError) {
@@ -128,10 +156,50 @@ function stageFailurePause(
         "inspect the request this stage sends (model id, tool schemas, parameters), then retry the stage explicitly",
     };
   }
+  const cause = pauseCauseFrom(sourceError, 0);
+  if (cause === undefined) {
+    return {
+      phase,
+      code: "stage_failed",
+      action: "inspect the provider failure and retry the stage explicitly",
+    };
+  }
   return {
     phase,
     code: "stage_failed",
-    action: "inspect the provider failure and retry the stage explicitly",
+    action:
+      cause.recurrence > 0
+        ? `the stage failed inside the harness (${cause.code}); the same cause has now been recorded ` +
+          `${cause.recurrence + 1} consecutive times -- resolve it, then retry the stage explicitly`
+        : `the stage failed inside the harness (${cause.code}); resolve the recorded cause, then retry the stage explicitly`,
+    cause,
+  };
+}
+
+/**
+ * The bounded cause a typed HARNESS-SIDE error earns, or undefined for any
+ * source this discipline will not persist (an untyped error, whose message is
+ * uncontrolled, or a provider rejection, whose status already sits in the
+ * action). The recurrence count is passed in by the caller, which owns the
+ * checkpoint comparison (same stage + same code as the previously recorded
+ * cause).
+ */
+function pauseCauseFrom(sourceError: unknown, recurrence: number): PipelinePauseCause | undefined {
+  const typed =
+    sourceError instanceof RunnerError ||
+    sourceError instanceof EmptyTurnError ||
+    sourceError instanceof CostAnomalyBlockedError ||
+    sourceError instanceof ConfiguredToolsUnavailableError ||
+    sourceError instanceof SuspendedRunError ||
+    sourceError instanceof ProjectOperationsError ||
+    sourceError instanceof OrchestrationError;
+  if (!typed) return undefined;
+  return {
+    code: sourceError.code.slice(0, MAX_PAUSE_CAUSE_CODE_CHARS),
+    ...(sourceError.message === ""
+      ? {}
+      : { message: sourceError.message.slice(0, MAX_PAUSE_CAUSE_MESSAGE_CHARS) }),
+    recurrence,
   };
 }
 

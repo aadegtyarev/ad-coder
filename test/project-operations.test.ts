@@ -49,8 +49,16 @@ import {
   WorkflowStageFailureError,
   WorkflowStageLimitError,
 } from "../src";
+import { CostAnomalyBlockedError } from "../src/economics/cost-anomaly";
+import { OrchestrationError } from "../src/orchestration/types";
 import { SUBMIT_VERDICT_TOOL_NAME } from "../src/orchestration/verdict";
 import { defineRole } from "../src/role";
+import {
+  ConfiguredToolsUnavailableError,
+  EmptyTurnError,
+  RunnerError,
+  SuspendedRunError,
+} from "../src/runner/errors";
 
 function ldoPlan(id: string): Record<string, unknown> {
   return {
@@ -631,6 +639,106 @@ test("RunCoordinator names the rejecting provider in the pause instead of a gene
   coordinator.resumeStage({ source: "operator", action: "retry" });
   expect((await coordinator.run()).status).toBe("complete");
   expect(attempts).toBe(2);
+});
+
+const failureMetrics = {
+  stage: "code:1",
+  status: "paused",
+  provider: "faux",
+  model: "faux-1",
+  thinkingLevel: "unknown",
+  durationMs: 12,
+  input: 0,
+  cachedInput: 0,
+  freshInput: 0,
+  output: 0,
+  reasoning: 0,
+  costUsd: 0,
+  requestBytes: { systemPrompt: 0, prompt: 0, toolDefinitions: 0, total: 0 },
+  readFiles: [] as string[],
+  readFilesTotal: 0,
+  readFilesTruncated: 0,
+  diffBytes: 0,
+  contextStrategy: "auto",
+} as const;
+
+/** Run one coordinator whose first step throws, and return its paused checkpoint. */
+async function pauseOnFailure(sourceError: unknown, runId: string): Promise<RunCheckpoint> {
+  const target = root();
+  const store = new ProjectStore(target);
+  const base = coordinatorSession(store, []);
+  const session: WorkflowSession = {
+    ...base,
+    async step() {
+      throw new WorkflowStageFailureError(sourceError, "failed-code", { ...failureMetrics });
+    },
+  };
+  const coordinator = new RunCoordinator(session, store, { runId });
+  return (await coordinator.run()).checkpoint;
+}
+
+test("a harness-side stage failure is worded as harness work and carries its cause (issue #363)", async () => {
+  // A stage can fail for reasons the HARNESS authored: the runner's own typed
+  // measurement failure, an empty turn, a cost-anomaly block, unavailable
+  // tools, a suspended deferral, a typed submission rejection, an orchestration
+  // precondition. Mapping every one of them to "inspect the provider failure"
+  // sent operators looking at the provider for failures it had nothing to do
+  // with, and dropped the cause on the floor so the durable record could not
+  // say what had happened at all.
+  const cases: readonly (readonly [unknown, string, string | undefined])[] = [
+    [
+      new RunnerError("diff_metric_failed", "/tmp/target", "git diff HEAD failed (128)"),
+      "diff_metric_failed",
+      "git diff HEAD failed (128)",
+    ],
+    [new EmptyTurnError("failed-code", "assistant_error"), "empty_turn", undefined],
+    [
+      new CostAnomalyBlockedError("faux", "faux-1", {
+        at: 0,
+        chargedUsd: 1,
+        expectedUsd: 0.5,
+        ratio: 2,
+        acceptedRatio: 1,
+        confirmingObservations: 2,
+      }),
+      "cost_anomaly_blocked",
+      undefined,
+    ],
+    [new ConfiguredToolsUnavailableError("failed-code"), "configured_tools_unavailable", undefined],
+    [new SuspendedRunError("failed-code"), "suspended", undefined],
+    [
+      new ProjectOperationsError(
+        "invalid_follow_up",
+        "kind must be one of contract, note, design-doc-drift, backlog",
+      ),
+      "invalid_follow_up",
+      "invalid_follow_up: kind must be one of contract, note, design-doc-drift, backlog",
+    ],
+    [
+      new OrchestrationError("malformed_plan", "failed-code", "planner JSON handoff is invalid"),
+      "malformed_plan",
+      "planner JSON handoff is invalid",
+    ],
+  ];
+  for (const [index, [sourceError, expectedCode, expectedMessage]] of cases.entries()) {
+    const checkpoint = await pauseOnFailure(sourceError, `harness-cause-${index}`);
+    const pause = checkpoint.pause;
+    expect(pause?.code).toBe("stage_failed");
+    // The classification is the point: a harness-side failure must not be
+    // reported as a provider failure with advice to inspect the provider.
+    expect(pause?.action).not.toContain("inspect the provider failure");
+    expect(pause?.action).toContain(expectedCode);
+    expect(pause?.cause).toEqual(expect.objectContaining({ code: expectedCode, recurrence: 0 }));
+    if (expectedMessage === undefined) {
+      // A fixed-harness message carries itself; the assertion above already
+      // names the code, so nothing further is pinned per case.
+      expect(pause?.cause?.message).toBeDefined();
+    } else {
+      expect(pause?.cause?.message).toBe(expectedMessage);
+    }
+    // The cause stays resumable by the same explicit operator act.
+    expect(PAUSES_CLEARED_BY_AN_EXPLICIT_ACT).toContain("stage_failed");
+  }
 });
 
 test("RunCoordinator durably pauses a cooperatively interrupted workflow and resumes it", async () => {
