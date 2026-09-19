@@ -1,5 +1,6 @@
 import * as crypto from "node:crypto";
 import * as path from "node:path";
+import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/harness/env/nodejs";
 import { Type } from "@earendil-works/pi-ai";
 import type { DelegatedRoute, ResolvePipelineConfigOptions } from "../cli/resolve-config";
 import { resolveOrchestratorSeed, resolvePipelineConfig } from "../cli/resolve-config";
@@ -20,6 +21,7 @@ import type { ProfileRole } from "../profiles/types";
 import { PROFILE_ROLES } from "../profiles/validate";
 import { ProjectOperationsError } from "../project-operations/errors";
 import { clearsOnExplicitAct, RunCoordinator } from "../project-operations/run-coordinator";
+import { ProjectStore } from "../project-store/project-store";
 import type { Role } from "../role";
 import { defineRole } from "../role";
 import {
@@ -31,6 +33,7 @@ import {
   ProviderRejectionError,
   RunInterruptedError,
   RunnerError,
+  resolveTargetDir,
   SuspendedRunError,
 } from "../runner/errors";
 import type { Tool } from "../runner/tool";
@@ -51,6 +54,12 @@ import { autoDriver, createWorkflowSession } from "./session";
 import { STAGE_LIMIT_KEY, type StageLimitReason } from "./stage-limits";
 import { isSubmissionToolName } from "./submission-tools";
 import { assertTransitionOffered, DriveError } from "./transition-guard";
+import {
+  createTrivialEditGuard,
+  type TrivialEditCoverFn,
+  type TrivialEditCoverSettle,
+  trivialEditGuardPlan,
+} from "./trivial-edit";
 import type {
   AvailableTransition,
   Complexity,
@@ -62,6 +71,14 @@ import type {
   WorkflowPhase,
   WorkflowState,
 } from "./types";
+import {
+  buildSubmitVerdictTool,
+  formatReviewerInstruction,
+  REVIEW_SUBMISSION_ATTEMPTS,
+  REVIEW_SUBMISSION_RETRY,
+  SUBMIT_VERDICT_TOOL_NAME,
+  type VerdictCapture,
+} from "./verdict";
 
 /** The four tool names the orchestrator model drives the workflow through. */
 export const RUN_PIPELINE_TOOL_NAME = "run_pipeline";
@@ -859,6 +876,25 @@ const RUN_ROLE_REVIEWER_DESCRIPTION_ADVISORY =
 const RUN_ROLE_REVIEWER_RESULT_ADVISORY =
   "review advisory: this run_role review delivered prose only, wrote no review stamp, and cannot satisfy the pre-merge gate `bun run stamp:check` -- gate-satisfying review rounds must come from a settle path that produces a structured verdict and writes the stamp (the built-in pipeline's review stage, or the standalone `ad-coder role reviewer` CLI).";
 
+/**
+ * The reviewer-side framing for one trivial-edit cover turn (issue #388).
+ *
+ * Stated HERE and not imported from the CLI on purpose: the cover is an
+ * orchestrator-front seam, the CLI's standalone framing is a different
+ * surface, and importing across the fronts would couple them for one
+ * paragraph (and risk an import cycle through `src/cli.ts`). The framing
+ * states what a reviewer cannot infer from its pipeline prompt: that this is
+ * an independent invocation over the ORCHESTRATOR'S OWN bounded trivial edit,
+ * that `submit_verdict` IS registered here and is the way to settle, and that
+ * the task carries paths and counts only -- the file's content is read, never
+ * pasted (docs/contracts/errors.md).
+ */
+const TRIVIAL_EDIT_COVER_FRAMING = [
+  "This is an independent reviewer invocation covering the orchestrator's own bounded trivial edit (issue #388): a machine-measured change of at most one file and five changed lines that the orchestrator applied directly, recorded in the run's trivial-edit record.",
+  `The ${SUBMIT_VERDICT_TOOL_NAME} tool IS registered in this conversation and is the way to settle: submit the verdict through it, and it is recorded like any other stage verdict.`,
+  "The task names the change (tool, file, +added/-removed lines) and the uncovered window as the guard reports them -- never file contents. Inspect the file's CURRENT content with the read tool before settling.",
+].join("\n");
+
 /** Build general role delegation; unlike workflow tools this remains available with no module. */
 export function buildRunRoleTool(
   runRole: (
@@ -1457,6 +1493,22 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
   // the tools. Its independent role selection still shares the registry and
   // credential boundary with the pipeline.
   const seed = resolveOrchestratorSeed({ ...sharedConfig, task: "orchestrate" });
+  // The trivial-edit guard is installed ONLY when the orchestrator can delegate
+  // (issue #388), which it reads off `delegatedRoute.groups.length > 0`. A
+  // session whose route leaves the reviewer unreachable is still a delegating
+  // session -- the guard installs, and the reviewerCover half below decides
+  // whether the edits get covered. The orchestrator-only collapse (#386) edits
+  // directly -- no guard, no bound, no record.
+  const trivialPlan = trivialEditGuardPlan(seed.delegatedRoute);
+  // The guard reads file content for measurement through the SAME env shape the
+  // orchestrator conversation's built-in tools use (its own startConversation
+  // builds one privately, so this one exists solely to feed the guard).
+  const trivialEnv = trivialPlan.guard
+    ? new NodeExecutionEnv({ cwd: resolveTargetDir(config.targetDir) })
+    : undefined;
+  const trivialStore = trivialPlan.guard
+    ? new ProjectStore(config.targetDir, config.projectStoreConfig)
+    : undefined;
   const core =
     enabledModules.length === 0
       ? undefined
@@ -1584,6 +1636,111 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
       await conversation.close();
     }
   }, sessionFacts);
+  // The reviewer cover over the orchestrator's OWN bounded trivial edits (issue
+  // #388). Defined only when the guard is installed AND a reviewer is reachable
+  // (`trivialPlan.reviewerCover`): a session whose route leaves the reviewer
+  // unreachable keeps the guard with NO cover, so every edit records
+  // `reviewer_unavailable` -- that is the disabled half of the gate, not a
+  // failure to wire it. The shape mirrors the delegated-role callback above:
+  // resolve the reviewer lazily through `resolvePipelineConfig`, then start the
+  // cover turn through the SAME seam the delegated path uses, so a host (and
+  // the gate test) intercepts it identically. A reviewer role that cannot even
+  // resolve throws, which the guard records as `reviewer_failed`.
+  const trivialReviewCover: TrivialEditCoverFn | undefined =
+    trivialPlan.guard &&
+    trivialPlan.reviewerCover &&
+    trivialEnv !== undefined &&
+    trivialStore !== undefined
+      ? async (change, uncovered): Promise<TrivialEditCoverSettle> => {
+          const coverTask = [
+            "Review a bounded trivial edit the orchestrator applied directly (issue #388).",
+            `Change: the ${change.tool} tool on ${change.file}, +${change.linesAdded}/-${change.linesRemoved} changed lines.`,
+            `Uncovered window: ${uncovered.files} file(s) / ${uncovered.lines} changed line(s) awaiting reviewer cover.`,
+            `Inspect the file's CURRENT content with the read tool, then settle the verdict by calling ${SUBMIT_VERDICT_TOOL_NAME}.`,
+          ].join("\n");
+          const resolved = resolvePipelineConfig({ ...sharedConfig, task: coverTask });
+          const base = resolved.roles.reviewer;
+          if (base === undefined) {
+            throw new OrchestratorError(
+              "invalid_role",
+              "reviewer",
+              "role reviewer is not configured",
+            );
+          }
+          // Same filter as the delegated path: inheriting the pipeline role's
+          // submission-tool names wholesale listed tools that are not
+          // registered here (#236). The cover's ONLY submission tool is the
+          // verdict tool built below, per attempt.
+          const inheritedToolNames = (base.role.activeToolNames ?? []).filter(
+            (tool) => !isSubmissionToolName(tool),
+          );
+          const role = defineRole(
+            {
+              ...base.role,
+              name: "reviewer",
+              systemPrompt: `${base.role.systemPrompt}\n\n${TRIVIAL_EDIT_COVER_FRAMING}\n\n${formatReviewerInstruction()}`,
+              activeToolNames: [
+                ...new Set(["read", "bash", SUBMIT_VERDICT_TOOL_NAME, ...inheritedToolNames]),
+              ],
+            },
+            base.model,
+          );
+          const runAttempt = async (
+            reviewerRunId: string,
+            task: string,
+          ): Promise<TrivialEditCoverSettle | undefined> => {
+            const capture: VerdictCapture = {};
+            const conversation = await (config.startDelegatedConversation ?? startConversationImpl)(
+              {
+                role,
+                targetDir: config.targetDir,
+                runId: reviewerRunId,
+                models: resolved.models,
+                model: base.model,
+                tools: [buildSubmitVerdictTool(capture, reviewerRunId)],
+                ledgerSink: sink,
+                sessionLimitController: controller,
+                ...(resolved.costAnomalyDetector !== undefined && {
+                  costAnomalyDetector: resolved.costAnomalyDetector,
+                }),
+                activityChannel,
+                ...(resolved.compaction !== undefined && { compaction: resolved.compaction }),
+              },
+            );
+            try {
+              await conversation.step(task, { step: "role:reviewer" });
+            } finally {
+              await conversation.close();
+            }
+            if (capture.verdict === undefined) return undefined;
+            return {
+              verdict: capture.verdict.status,
+              reviewerRunId,
+              issueCount: capture.verdict.issues.length,
+            };
+          };
+          // Same shape as the CLI's runReviewWithSubmissionRetry: one retry
+          // converts a prose-ending review into a settled one, each attempt
+          // under a FRESH run id (a turn is keyed by run id in the session
+          // store), and the runId that settles is the one recorded.
+          const first = await runAttempt(crypto.randomUUID(), coverTask);
+          if (first !== undefined) return first;
+          for (let attempt = 1; attempt < REVIEW_SUBMISSION_ATTEMPTS; attempt += 1) {
+            const retry = await runAttempt(
+              crypto.randomUUID(),
+              `${coverTask}\n\n${REVIEW_SUBMISSION_RETRY}`,
+            );
+            if (retry !== undefined) return retry;
+          }
+          // Exhausted attempts and provider errors both throw: the guard
+          // records `reviewer_failed` and refuses to report the edit as
+          // settled -- never an undefined return that could read as "no
+          // reviewer stage", which this wiring has already ruled out.
+          throw new Error(
+            `trivial-edit cover: the reviewer ended without calling ${SUBMIT_VERDICT_TOOL_NAME} in ${REVIEW_SUBMISSION_ATTEMPTS} attempts`,
+          );
+        }
+      : undefined;
   const seedKit = roleKit("orchestrator");
   const tools = buildOrchestratorTools(
     core,
@@ -1643,6 +1800,21 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
     activityChannel,
     ...(config.toolActivity !== undefined && { toolActivity: config.toolActivity }),
     ...(seed.compaction !== undefined && { compaction: seed.compaction }),
+    // Guard the orchestrator's OWN direct edit/write calls ONLY (issue #388).
+    // The cover rides along only when a reviewer is reachable; otherwise the
+    // guard runs bare and its entries record `reviewer_unavailable` -- the
+    // disabled half of the gate, kept for the #386 orchestrator-only collapse.
+    ...(trivialPlan.guard &&
+      trivialEnv !== undefined &&
+      trivialStore !== undefined && {
+        wrapBuiltinTools: (builtins) =>
+          createTrivialEditGuard(builtins, {
+            env: trivialEnv,
+            store: trivialStore,
+            runId: orchestratorRunId,
+            ...(trivialReviewCover !== undefined && { cover: trivialReviewCover }),
+          }),
+      }),
   });
   // Neither conversation closes a channel it did not create, so whoever built
   // this one closes it -- and only if it was built here, never a caller's.

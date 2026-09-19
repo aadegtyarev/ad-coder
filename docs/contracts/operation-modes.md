@@ -52,6 +52,20 @@ Rules for operator authority in ad-coder. A violation is always blocking.
   rule names. It is verified by measurement, not prose alone: per-role `edits`
   and `timeToFirstEdit` after dispatch in `ad-coder ledger report` show the
   edits under `coder`, not `orchestrator`.
+- 2026-09-19: A bounded trivial edit is the one direct edit the orchestrator's
+  own hands may make, and the bound is measured by the machine, not judged by
+  the orchestrator (operator decision, issue #388). At most ONE file and at
+  most FIVE changed lines (added + removed), accumulated across still-uncovered
+  edits until a reviewer covers them; over the bound, the change is delegated
+  like any other. Where the orchestrator's job is to start roles, that is
+  exactly what makes the exception honest: if the edit touched code and a
+  reviewer is reachable, a reviewer covers the edit -- reading the file's
+  current content itself -- before the work is considered closed, and the
+  verdict is recorded like any other stage verdict. When roles are not
+  available (the #386 orchestrator-only collapse), the direct edit stands and
+  the accumulated record with `reviewer_unavailable` entries is what that mode
+  provides. The per-run record lives in durable state at
+  `.ad-coder/runs/trivial-edits/<runId>.json`.
 
 ## Sources
 

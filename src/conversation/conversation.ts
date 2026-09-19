@@ -1,6 +1,7 @@
 import * as path from "node:path";
 import type {
   AgentHarnessOptions,
+  AgentHarnessTool,
   AgentLane,
   Context,
   ExecutionToolContext,
@@ -88,6 +89,20 @@ export interface ConversationConfig {
   context?: Context;
   /** Custom tools that EXTEND the built-in [bash,read,write,edit] set. See `RunRoleParams.tools`. */
   tools?: Tool[];
+  /**
+   * Internal seam for the orchestrator front ONLY. It maps the freshly-built
+   * built-in array (bash/read/write/edit) to the array actually registered.
+   * It may wrap or drop built-ins, but must NOT introduce new names:
+   * `assertUniqueToolNames` still guards the concatenated set, and a name
+   * introduced here that collides with `tools` would fail exactly as a
+   * duplicate today. Delegated role conversations and pipeline stages must
+   * NEVER pass it -- the coder edits freely; this is the bound the
+   * orchestrator's own direct `edit`/`write` calls travel through (issue
+   * #388).
+   */
+  wrapBuiltinTools?: (
+    tools: readonly AgentHarnessTool<ExecutionToolContext>[],
+  ) => readonly AgentHarnessTool<ExecutionToolContext>[];
   /** Optional resource thresholds. Zero/omitted disables each threshold. */
   sessionLimits?: SessionLimits;
   /** Internal sharing seam for nested work; takes precedence over sessionLimits. */
@@ -196,7 +211,11 @@ export async function startConversation(config: ConversationConfig): Promise<Con
   const context = config.context ?? BACKGROUND_CONTEXT;
   const env = new NodeExecutionEnv({ cwd: absTargetDir });
   const toolContext: ExecutionToolContext = { env };
-  const builtin = [...createBuiltinTools(env)];
+  const rawBuiltin = [...createBuiltinTools(env)];
+  // The orchestrator-front seam wraps/drops built-ins BEFORE the custom tools
+  // are concatenated (issue #388). It must not introduce names; the collision
+  // guard below still sees the full set.
+  const builtin = config.wrapBuiltinTools ? [...config.wrapBuiltinTools(rawBuiltin)] : rawBuiltin;
   // Concatenate before validating so the collision guard sees the full set,
   // exactly as runRole does. `?? []` never registers `undefined`.
   const tools = [...builtin, ...(config.tools ?? [])];
