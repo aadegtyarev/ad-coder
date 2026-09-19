@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
+import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/harness/env/nodejs";
 import type { Api, Context, CredentialStore, Message, Model } from "@earendil-works/pi-ai";
 import {
   createModels,
@@ -15,7 +16,10 @@ import type {
   FauxResponseFactory,
   FauxResponseStep,
 } from "@earendil-works/pi-ai/providers/faux";
-import { startConversation as startConversationImpl } from "../src/conversation/conversation";
+import {
+  type ConversationConfig,
+  startConversation as startConversationImpl,
+} from "../src/conversation/conversation";
 import { CostAnomalyDetector } from "../src/economics/cost-anomaly";
 import { MemoryLedgerSink } from "../src/ledger/ledger";
 import type { LedgerRecord } from "../src/ledger/types";
@@ -52,6 +56,7 @@ import {
 import { SUBMIT_PLAN_TOOL_NAME } from "../src/orchestration/plan";
 import { createWorkflowSession } from "../src/orchestration/session";
 import { DriveError } from "../src/orchestration/transition-guard";
+import { readTrivialEditRecord } from "../src/orchestration/trivial-edit";
 import type {
   Complexity,
   PipelineConfig,
@@ -63,6 +68,7 @@ import type {
 import { OrchestrationError } from "../src/orchestration/types";
 import { SUBMIT_VERDICT_TOOL_NAME } from "../src/orchestration/verdict";
 import { buildDefaultProfile } from "../src/profiles/default-profile";
+import type { Profile, ProfileRole } from "../src/profiles/types";
 import type { RunCheckpoint } from "../src/project-operations/run-coordinator";
 import { RunCoordinator } from "../src/project-operations/run-coordinator";
 import { ProjectStore } from "../src/project-store/project-store";
@@ -71,6 +77,7 @@ import { READ_PROJECT_TOOL_NAME } from "../src/project-tools/read";
 import { SEARCH_PROJECT_TOOL_NAME } from "../src/project-tools/search";
 import type { Role } from "../src/role";
 import { defineRole } from "../src/role";
+import { createBuiltinTools } from "../src/runner/builtin-tools";
 import {
   EmptyTurnError,
   GenerationTruncatedError,
@@ -2659,3 +2666,286 @@ test("a seeded readable sink replays prior rows without rewriting the mirror", a
   // row -- no duplicated seed, no rewrite.
   expect(after).toBe(`${before}${JSON.stringify(row("orchestrator", "turn:2", 0.25))}\n`);
 });
+
+/** The wrapBuiltinTools seam type the orchestrator's own conversation receives. */
+type TrivialWrap = NonNullable<ConversationConfig["wrapBuiltinTools"]>;
+
+interface TrivialGateSeams {
+  /** The orchestrator conversation's wrapBuiltinTools, if the guard was wired. */
+  wrap: TrivialWrap | undefined;
+  /** The outer conversation's run_role description: the resolved route in words. */
+  runRoleDescription: string | undefined;
+  /** Every reviewer (cover) conversation the delegated seam saw, with its task. */
+  reviewerTurns: {
+    runId: string | undefined;
+    activeToolNames: string[];
+    systemPrompt: string;
+    task: string;
+  }[];
+  /** Every startDelegatedConversation call, reviewer or not. */
+  delegatedCalls: number;
+}
+
+/**
+ * Start an orchestrator whose seams expose the trivial-edit gate WITHOUT any
+ * provider: the outer seam captures `wrapBuiltinTools`, the delegated seam
+ * settles any reviewer (cover) conversation by executing the submit_verdict
+ * tool it finds there with an approved verdict and recording what it saw.
+ */
+async function startTrivialGateSession(options: {
+  targetDir: string;
+  runId: string;
+  profile?: Profile;
+  /** The cover reviewer's turn throws (a stand-in for a provider failure). */
+  reviewerStepThrows?: boolean;
+}): Promise<TrivialGateSeams & { session: Awaited<ReturnType<typeof startOrchestrator>> }> {
+  const seams: TrivialGateSeams = {
+    wrap: undefined,
+    runRoleDescription: undefined,
+    reviewerTurns: [],
+    delegatedCalls: 0,
+  };
+  const session = await startOrchestrator({
+    targetDir: options.targetDir,
+    env: () => undefined,
+    warn: () => {},
+    credentials: {
+      read: async () => ({ type: "oauth", access: "a", refresh: "r", expires: 0 }),
+      list: async () => [],
+      modify: async (_providerId, fn) => fn(undefined),
+      delete: async () => {},
+    },
+    ...(options.profile !== undefined && { profile: options.profile }),
+    runId: options.runId,
+    enabledWorkflows: [],
+    startConversation: async (config) => {
+      seams.wrap = config.wrapBuiltinTools;
+      seams.runRoleDescription = (config.tools ?? []).find(
+        (tool) => tool.name === RUN_ROLE_TOOL_NAME,
+      )?.description;
+      return fakeConversation(options.runId);
+    },
+    startDelegatedConversation: async (config) => {
+      seams.delegatedCalls += 1;
+      const submit = (config.tools ?? []).find((tool) => tool.name === SUBMIT_VERDICT_TOOL_NAME);
+      // A delegated worker conversation registers no submission tools (#236);
+      // only the trivial-edit cover turn carries submit_verdict.
+      if (submit === undefined) return fakeConversation(config.role.name);
+      const turn = {
+        runId: config.runId,
+        activeToolNames: [...(config.role.activeToolNames ?? [])],
+        systemPrompt: config.role.systemPrompt,
+        task: "",
+      };
+      seams.reviewerTurns.push(turn);
+      return {
+        ...fakeConversation(config.runId ?? "reviewer-run"),
+        step: async (task: string) => {
+          turn.task = task;
+          await callTool(submit, {
+            status: "approved",
+            issues: [],
+            summary: "bounded trivial edit is correct",
+          });
+          if (options.reviewerStepThrows === true) {
+            throw new Error("provider connection lost");
+          }
+          return {
+            runId: config.runId ?? "reviewer-run",
+            step: "turn:1",
+            status: "completed" as const,
+            assistantText: "reviewed",
+            toolCalls: [],
+            droppedRecords: 0,
+          };
+        },
+      };
+    },
+  });
+  return { ...seams, session };
+}
+
+/**
+ * Drive the wrapped `edit` built-in exactly as an orchestrator turn does: map
+ * the REAL built-ins through the captured seam, then execute a single-file
+ * edit against `src/a.ts` in the target directory.
+ */
+async function runWrappedTrivialEdit(
+  wrap: TrivialWrap,
+  targetDir: string,
+  edits: { oldText: string; newText: string }[],
+): Promise<string> {
+  const env = new NodeExecutionEnv({ cwd: targetDir });
+  const editTool = wrap(createBuiltinTools(env)).find((tool) => tool.name === "edit");
+  if (editTool === undefined) throw new Error("the guard must keep the edit tool registered");
+  const result = await editTool.execute(
+    "trivial-gate-call",
+    { path: "src/a.ts", edits },
+    () => {},
+    { env },
+    {
+      invocationId: "trivial-gate-inv",
+      operationId: "trivial-gate-op",
+      turnId: "trivial-gate-turn",
+      getMemo: async () => undefined,
+      setMemo: async () => {},
+    },
+    BACKGROUND_CONTEXT,
+  );
+  return result.content.map((part) => (part.type === "text" ? part.text : "")).join("");
+}
+
+/** A profile that routes the coder but leaves the reviewer with no cell at all. */
+function coderOnlyProfile(): Profile {
+  const roles: ProfileRole[] = ["orchestrator", "coder", "summarizer"];
+  return {
+    entries: roles.flatMap((role) =>
+      (["trivial", "medium", "complex"] as const).map((complexity) => ({
+        role,
+        complexity,
+        model: "codex-luna",
+      })),
+    ),
+  };
+}
+
+function trivialTmpDir(suffix: string): string {
+  return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), `ad-coder-trivial-${suffix}-`)));
+}
+
+function writeSrcFile(targetDir: string, content: string): void {
+  fs.mkdirSync(path.join(targetDir, "src"), { recursive: true });
+  fs.writeFileSync(path.join(targetDir, "src/a.ts"), content, "utf8");
+}
+
+test("a trivial edit inside the machine bound is reviewer-covered and recorded (issue #388)", async () => {
+  const targetDir = trivialTmpDir("gate");
+  const runId = "trivial-gate-run";
+  const { session, wrap, reviewerTurns } = await startTrivialGateSession({ targetDir, runId });
+  writeSrcFile(targetDir, "one\ntwo\n");
+
+  expect(wrap).toBeDefined();
+  // +2/-1 = 3 changed lines, within the accumulated bound of 5.
+  const resultText = await runWrappedTrivialEdit(wrap as TrivialWrap, targetDir, [
+    { oldText: "one", newText: "1\n2" },
+  ]);
+  await session.close();
+
+  // The gate asserts through DURABLE STATE, not through the tool result alone.
+  const record = readTrivialEditRecord(new ProjectStore(targetDir), runId);
+  expect(record.entries).toHaveLength(1);
+  const entry = record.entries[0];
+  expect(entry?.tool).toBe("edit");
+  expect(entry?.file).toBe("src/a.ts");
+  expect(entry?.linesAdded).toBe(2);
+  expect(entry?.linesRemoved).toBe(1);
+  expect(entry?.covered).toBe(true);
+  expect(entry?.cover.status).toBe("reviewed");
+  expect(entry?.cover.verdict).toBe("approved");
+  // The cover's reviewer run is the runId the reviewer conversation received.
+  expect(entry?.cover.reviewerRunId).toBe(reviewerTurns[0]?.runId);
+  expect(reviewerTurns).toHaveLength(1);
+
+  // The reviewer conversation was a real reviewer: submit_verdict registered,
+  // the change named by tool/file/counts in its task (never pasted content).
+  expect(reviewerTurns[0]?.activeToolNames).toContain(SUBMIT_VERDICT_TOOL_NAME);
+  expect(reviewerTurns[0]?.systemPrompt).toContain("independent reviewer invocation");
+  expect(reviewerTurns[0]?.task).toContain("edit");
+  expect(reviewerTurns[0]?.task).toContain("src/a.ts");
+  expect(reviewerTurns[0]?.task).toContain("+2/-1");
+  expect(reviewerTurns[0]?.task).toContain(SUBMIT_VERDICT_TOOL_NAME);
+
+  // The edit's own result states the cover plainly.
+  expect(resultText).toContain("trivial-edit cover: approved by reviewer");
+}, 20000);
+
+test("a trivial edit with the reviewer unreachable stays uncovered and starts no reviewer (issue #388)", async () => {
+  const targetDir = trivialTmpDir("uncovered");
+  const runId = "trivial-uncovered-run";
+  const { session, wrap, runRoleDescription, reviewerTurns, delegatedCalls } =
+    await startTrivialGateSession({
+      targetDir,
+      runId,
+      profile: coderOnlyProfile(),
+    });
+  // Route evidence: the resolved DelegatedRoute leaves reviewer unreachable,
+  // which the run_role description prints as "not configured".
+  expect(runRoleDescription).toContain("not configured:");
+  expect(runRoleDescription).toContain("reviewer");
+  writeSrcFile(targetDir, "one\ntwo\n");
+
+  expect(wrap).toBeDefined();
+  const resultText = await runWrappedTrivialEdit(wrap as TrivialWrap, targetDir, [
+    { oldText: "one", newText: "1" },
+  ]);
+  await session.close();
+
+  // No reviewer conversation started at all.
+  expect(reviewerTurns).toHaveLength(0);
+  expect(delegatedCalls).toBe(0);
+  // The turn completes; the record keeps the entry uncovered.
+  expect(resultText).toContain("no reviewer stage available");
+  const record = readTrivialEditRecord(new ProjectStore(targetDir), runId);
+  expect(record.entries).toHaveLength(1);
+  expect(record.entries[0]?.covered).toBe(false);
+  expect(record.entries[0]?.cover).toEqual({ status: "reviewer_unavailable" });
+}, 20000);
+
+test("a trivial edit beyond the five-line machine bound is refused before it applies (issue #388)", async () => {
+  const targetDir = trivialTmpDir("overbound");
+  const runId = "trivial-overbound-run";
+  const { session, wrap, reviewerTurns, delegatedCalls } = await startTrivialGateSession({
+    targetDir,
+    runId,
+  });
+  writeSrcFile(targetDir, "one\ntwo\n");
+
+  expect(wrap).toBeDefined();
+  // +4/-2 = 6 changed lines, one over the accumulated bound.
+  await expect(
+    runWrappedTrivialEdit(wrap as TrivialWrap, targetDir, [
+      { oldText: "one\ntwo", newText: "1\n2\n3\n4" },
+    ]),
+  ).rejects.toThrow("trivial edit bound exceeded");
+  await expect(
+    runWrappedTrivialEdit(wrap as TrivialWrap, targetDir, [
+      { oldText: "one\ntwo", newText: "1\n2\n3\n4" },
+    ]),
+  ).rejects.toThrow("bound is 1 file / 5 changed lines");
+  await session.close();
+
+  // Nothing applied and nothing was recorded; no reviewer was asked.
+  expect(fs.readFileSync(path.join(targetDir, "src/a.ts"), "utf8")).toBe("one\ntwo\n");
+  const record = readTrivialEditRecord(new ProjectStore(targetDir), runId);
+  expect(record.entries).toHaveLength(0);
+  expect(reviewerTurns).toHaveLength(0);
+  expect(delegatedCalls).toBe(0);
+}, 20000);
+
+test("a failing reviewer cover records reviewer_failed and refuses to claim closure (issue #388)", async () => {
+  const targetDir = trivialTmpDir("failed-cover");
+  const runId = "trivial-failed-cover-run";
+  const { session, wrap, reviewerTurns } = await startTrivialGateSession({
+    targetDir,
+    runId,
+    reviewerStepThrows: true,
+  });
+  writeSrcFile(targetDir, "one\ntwo\n");
+
+  expect(wrap).toBeDefined();
+  // The cover turn fails mid-flight (here: a thrown step). The edit itself
+  // APPLIED, so the tool result resolves -- but it must state plainly that the
+  // work may not be considered closed, never fake a settled review.
+  const resultText = await runWrappedTrivialEdit(wrap as TrivialWrap, targetDir, [
+    { oldText: "one", newText: "1" },
+  ]);
+  await session.close();
+
+  expect(resultText).toContain("could NOT settle");
+  expect(resultText).toContain("may not be considered closed");
+  expect(reviewerTurns).toHaveLength(1);
+  const record = readTrivialEditRecord(new ProjectStore(targetDir), runId);
+  expect(record.entries).toHaveLength(1);
+  expect(record.entries[0]?.covered).toBe(false);
+  expect(record.entries[0]?.cover).toEqual({ status: "reviewer_failed" });
+}, 20000);

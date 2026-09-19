@@ -13,6 +13,31 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.87.0] - 2026-09-19
+
+### Added
+- **The orchestrator's trivial direct edits are machine-bounded and reviewer-covered
+  (issue #388).** Where the orchestrator's job is to start roles, a one-line fix or a
+  typo is allowed, but the bound is the machine's, not the orchestrator's judgment: a
+  trivial edit touches at most ONE file and at most FIVE changed lines (added +
+  removed), measured from the patch before it applies and accumulated across
+  uncovered edits until a reviewer approves; a second distinct uncovered file or an
+  over-bound total is refused with the bound named and the advice to delegate. Every
+  successful edit is recorded in the run's durable state
+  (`.ad-coder/runs/trivial-edits/<runId>.json`): tool, file, measured lines, and the
+  cover verdict. When the orchestrator can delegate and a reviewer is reachable, the
+  edit is covered by a real reviewer turn — a structured `submit_verdict` over the
+  change, settling the window on approval and keeping it open on
+  `changes_requested` — before the work is considered closed; when the reviewer role
+  is not configured, the guard still bounds and records, with the cover honestly
+  marked `reviewer_unavailable`. The rule is contract-dated 2026-09-19 in
+  docs/contracts/operation-modes.md. Support: `ConversationConfig.wrapBuiltinTools`
+  maps the built-in tool array for the orchestrator front only (it may wrap or drop
+  built-ins, never introduce names); and `DelegatedRoute.unreachable` no longer
+  counts the banner's `unrouted` pseudo-group as role reachability — a role is
+  reachable only through a real model, so `run_role` and the reviewer cover fail with
+  the same typed error for the same reason.
+
 ## [0.85.0] - 2026-09-19
 
 ### Changed

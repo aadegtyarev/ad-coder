@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { CredentialStore } from "@earendil-works/pi-ai";
-import { resolvePipelineConfig } from "../src/cli/resolve-config";
+import { resolveOrchestratorSeed, resolvePipelineConfig } from "../src/cli/resolve-config";
 import { deriveContextBudget } from "../src/context/budget";
 import {
   COST_ANOMALY_STATE_PATH,
@@ -48,6 +48,40 @@ function mixedRegistry(): RegistryConfig {
     ],
   };
 }
+
+test("a profile with no reviewer cell lists reviewer as unreachable in the orchestrator seed", () => {
+  // The conversational orchestrator seeds roles-only (no pipeline graph), so a
+  // profile that routes the coder but leaves the reviewer unwritten resolves
+  // fine -- and #388's disabled half keys off the route facts: the reviewer
+  // must read as unreachable, never as reachable-but-failed. The banner's
+  // "unrouted" pseudo-group is NOT reachability.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "resolve-unreachable-"));
+  try {
+    const roles = ["orchestrator", "coder", "summarizer"] as const;
+    const profile = {
+      entries: roles.flatMap((role) =>
+        (["trivial", "medium", "complex"] as const).map((complexity) => ({
+          role,
+          complexity,
+          model: "small",
+        })),
+      ),
+    };
+    const seed = resolveOrchestratorSeed({
+      task: "orchestrate",
+      targetDir: dir,
+      registryConfig: mixedRegistry(),
+      profile,
+      env: fakeEnv({ LOCAL_KEY: "k" }),
+      warn: silent,
+    });
+    expect(seed.delegatedRoute?.unreachable).toContain("reviewer");
+    // The coder itself stays genuinely reachable.
+    expect(seed.delegatedRoute?.groups.map((group) => group.roles)).toContainEqual(["coder"]);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test("a resolved pipeline carries a live cost-anomaly detector, so default-on is real", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "resolve-anomaly-"));

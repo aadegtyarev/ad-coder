@@ -852,8 +852,14 @@ function resolveConfig(
         roles: roles.filter((role) => (DELEGATABLE_ROLES as readonly ProfileRole[]).includes(role)),
       }))
       .filter((group) => group.roles.length > 0),
-    unreachable: DELEGATABLE_ROLES.filter(
-      (role) => ![...layout.values()].some((roles) => roles.includes(role)),
+    unreachable: DELEGATABLE_ROLES.filter((role) =>
+      // The "unrouted" pseudo-group means NO model -- the roles inside it are
+      // exactly the unreachable ones (issue #388): counting it as reachability
+      // made a profile that leaves the reviewer unwritten wire a reviewer cover
+      // that could only fail. A role is reachable only through a real model.
+      [...layout.entries()].every(
+        ([modelName, roles]) => modelName === "unrouted" || !roles.includes(role),
+      ),
     ),
   };
 
