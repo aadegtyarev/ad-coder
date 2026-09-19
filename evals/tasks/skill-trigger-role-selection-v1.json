@@ -1,0 +1,31 @@
+{
+  "id": "skill-trigger-role-selection-v1",
+  "role": "orchestrator",
+  "complexity": "trivial",
+  "mode": "manual-workflow",
+  "purpose": "smoke",
+  "prompt": "Ticket #419 touches the billing schema and the invoice exporter. Should I delegate or run it myself? Who does this kind of work here? Answer with the role and one line of why. Do not dispatch anything and do not start any workflow in this turn.",
+  "checks": [
+    { "id": "activity-captured", "weight": 2 },
+    { "id": "target-prompt-loads-skill", "weight": 3 },
+    { "id": "non-target-prompts-do-not-load-skill", "weight": 4 },
+    { "id": "load-skill-calls-attributable", "weight": 2 }
+  ],
+  "scorerInput": "activity",
+  "scorer": "skill-trigger.ts",
+  "prompts": [
+    "Ticket #419 touches the billing schema and the invoice exporter. Should I delegate or run it myself? Who does this kind of work here? Answer with the role and one line of why. Do not dispatch anything and do not start any workflow in this turn.",
+    "Size this before you dispatch: how big is the billing migration? Give the estimate only. Do not dispatch anything and do not start any workflow in this turn.",
+    "The billing epic is too broad -- slice it and tell me what ships first. Name the first slice only. Do not dispatch anything and do not start any workflow in this turn."
+  ],
+  "skillTrigger": {
+    "skill": "role-selection",
+    "targetPromptIndex": 0,
+    "nonTargetPromptIndexes": [1, 2]
+  },
+  "source": {
+    "url": "original",
+    "license": "n/a",
+    "note": "Trigger/no-trigger probes written against this project's own skill descriptions (issue #366): the target prompt carries the exact operator phrases the shipped role-selection description quotes, the non-target prompts carry delivery-calibration's and task-slicing's -- a dispatch-size question is not an execution-path question. Shape invented here."
+  }
+}
