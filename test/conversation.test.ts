@@ -23,7 +23,7 @@ import {
   ContextCompactionLostError,
   SUMMARIZATION_PROMPT,
 } from "../src/context/compactor";
-import { startConversation } from "../src/conversation/conversation";
+import { ConversationRefusedError, startConversation } from "../src/conversation/conversation";
 import {
   CostAnomalyBlockedError,
   CostAnomalyDetector,
@@ -473,6 +473,7 @@ test("close during a tool is idempotent, cancels once, rejects overlap, and boun
   const active = conversation.step("block");
   void active.catch(() => undefined);
   await started;
+  await expect(conversation.step("overlap")).rejects.toThrow(ConversationRefusedError);
   await expect(conversation.step("overlap")).rejects.toThrow("conversation step already active");
   const firstClose = conversation.close();
   const secondClose = conversation.close();
@@ -713,4 +714,119 @@ test("an operator block refuses a conversation turn, so the console cannot bypas
   expect(released.status).toBe("completed");
   await releasedConversation.close();
   fs.rmSync(targetDir, { recursive: true, force: true });
+});
+
+test("a refused turn leaves exactly one ledger row with the refusal field and zero usage (issue #422)", async () => {
+  const { faux, models, model, role } = harnessFixture(["blocking_tool"]);
+  const sink = new MemoryLedgerSink();
+  let signalStarted: (() => void) | undefined;
+  let releaseTool: (() => void) | undefined;
+  const started = new Promise<void>((resolve) => {
+    signalStarted = resolve;
+  });
+  const released = new Promise<void>((resolve) => {
+    releaseTool = resolve;
+  });
+  const tool = defineTool({
+    name: "blocking_tool",
+    description: "Keep the step active until the test reads the refusal row.",
+    label: "blocking",
+    parameters: Type.Object({}),
+    async execute() {
+      signalStarted?.();
+      await released;
+      return { content: [{ type: "text", text: "released" }], details: undefined };
+    },
+  });
+  faux.setResponses([
+    fauxAssistantMessage(fauxToolCall("blocking_tool", {})),
+    fauxAssistantMessage("settled"),
+  ]);
+
+  const conversation = await startConversation({
+    role,
+    targetDir,
+    models,
+    model,
+    tools: [tool],
+    ledgerSink: sink,
+  });
+  try {
+    expect(sink.records()).toHaveLength(0);
+    // The active step keeps `stepping` true, so the concurrent step is refused
+    // before any provider call and before the turn counter moves.
+    const active = conversation.step("hold the step");
+    void active.catch(() => undefined);
+    await started;
+    await expect(conversation.step("overlap")).rejects.toThrow(ConversationRefusedError);
+    // The refusal happened before the provider: the turn had no after_response
+    // hook to fire, so the sink holds the refusal trace ALONE.
+    const rows = sink.records();
+    // The held turn itself emitted its own provider row when the tool call
+    // response settled. The Refusal row is its OWN single line, appended after
+    // it, zero-usage and carrying the refusal field.
+    expect(rows).toHaveLength(2);
+    const row = rows[1]!;
+    expect(row.stopReason).toBe("refusal");
+    expect(row.step).toBe("turn:2");
+    expect(row.usage).toEqual({
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    });
+    expect(row.provider).toBe("faux");
+    expect(row.model).toBe("faux-1");
+    expect(row.refusal).toEqual({
+      code: "conversation_refused",
+      reason: "step_active",
+      message: "conversation step already active",
+    });
+    // Identifiers and numbers only: the prompt text never reaches the ledger.
+    expect(JSON.stringify(row)).not.toContain("overlap");
+    expect(JSON.stringify(row)).not.toContain("hold the step");
+    // The refusal never advanced the counter: a SECOND refusal while the same
+    // turn is still held names the same number again -- the number the refused
+    // turn would have had.
+    await expect(conversation.step("overlap again")).rejects.toThrow(ConversationRefusedError);
+    const rowsAfter = sink.records();
+    expect(rowsAfter).toHaveLength(3);
+    expect(rowsAfter[2]!.refusal).toEqual({
+      code: "conversation_refused",
+      reason: "step_active",
+      message: "conversation step already active",
+    });
+    expect(rowsAfter[2]!.step).toBe("turn:2");
+    expect(rowsAfter[2]!.usage.totalTokens).toBe(0);
+  } finally {
+    releaseTool?.();
+    await conversation.close();
+  }
+});
+
+test("a closed conversation refuses with the authored sentence and one ledger row", async () => {
+  const { faux, models, model, role } = harnessFixture();
+  const sink = new MemoryLedgerSink();
+  faux.setResponses([fauxAssistantMessage("never reached")]);
+
+  const conversation = await startConversation({
+    role,
+    targetDir,
+    models,
+    model,
+    ledgerSink: sink,
+  });
+  await conversation.close();
+  expect(sink.records()).toHaveLength(0);
+  await expect(conversation.step("after close")).rejects.toThrow(ConversationRefusedError);
+  const rows = sink.records();
+  expect(rows).toHaveLength(1);
+  expect(rows[0]!.refusal).toEqual({
+    code: "conversation_refused",
+    reason: "closed",
+    message: "conversation is closed",
+  });
+  expect(rows[0]!.usage.totalTokens).toBe(0);
 });

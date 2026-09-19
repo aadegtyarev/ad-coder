@@ -39,3 +39,12 @@ question without shelling out (`cli.md`, `architecture.md`).
 - 2026-09-17: Report is per role, per provider/model, and totals, each carrying
   the same numeric shape; tool-name keys and provider/model strings are
   attacker-influenced data and are handled as data only.
+
+- 2026-09-19: **A refusal row records a turn the conversation refused before
+  any provider call (issue #422).** Its `usage` is zero in every amount, its
+  `stopReason` is `refusal`, and it carries one additive `refusal` object with
+  the typed code, the discriminator, and the AUTHORED refusal sentence -- never
+  a prompt or any other in-scope payload. It stays distinguishable from a
+  provider-failure row, which carries the provider's own usage and no `refusal`
+  field. Readers that do not know the field ignore it; aggregations take it in
+  with a zero contribution.

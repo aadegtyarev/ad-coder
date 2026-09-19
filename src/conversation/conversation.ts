@@ -21,6 +21,7 @@ import { assertContextFitsBudget, assertTurnFitsBudget } from "../context/prefli
 import type { CostAnomalyDetector } from "../economics/cost-anomaly";
 import type { LedgerSink } from "../ledger/ledger";
 import { FileLedgerSink, Ledger } from "../ledger/ledger";
+import type { LedgerRecord } from "../ledger/types";
 import {
   attachToolActivity,
   type ToolActivityAttachment,
@@ -162,7 +163,43 @@ export interface ConversationTurnResult {
   droppedActivityEvents?: number;
 }
 
-/** Options for a single turn. */
+/**
+ * The closed set of reasons a conversation can refuse a turn BEFORE the provider
+ * is ever reached (issue #422). One token per refusal check in `step`, in the
+ * order those checks run.
+ */
+export type ConversationRefusalReason = "closed" | "step_active" | "lane_stopping";
+
+/**
+ * The authored refusal sentences. The single source of the refusal wording:
+ * the console front renders from THIS map, not from the caught value's own
+ * `message` (issue #412 discipline -- `instanceof` passing does not make a
+ * message read safe), and the ledger refusal row carries the same text. The
+ * wording is the pre-typing behavior, kept verbatim.
+ */
+export const CONVERSATION_REFUSAL_TEXT: Record<ConversationRefusalReason, string> = {
+  closed: "conversation is closed",
+  step_active: "conversation step already active",
+  lane_stopping:
+    "conversation lane is still stopping after interruption; wait for the provider call to settle before retrying",
+};
+
+/**
+ * A house error for a turn the conversation refuses before dispatching to a
+ * provider: session closed, a step already active, or the lane still settling
+ * after an interruption. Follows the #237 discipline -- an AUTHORED message from
+ * the fixed map above, matched BY CLASS at a front, no dynamic content ever.
+ */
+export class ConversationRefusedError extends Error {
+  static readonly CODE = "conversation_refused" as const;
+  override readonly name = "ConversationRefusedError";
+  readonly code = "conversation_refused" as const;
+
+  constructor(readonly reason: ConversationRefusalReason) {
+    super(CONVERSATION_REFUSAL_TEXT[reason]);
+  }
+}
+
 export class TurnInterruptedError extends Error {
   readonly code = "interrupted" as const;
   constructor() {
@@ -171,6 +208,7 @@ export class TurnInterruptedError extends Error {
   }
 }
 
+/** Options for a single turn. */
 export interface ConversationStepOptions {
   /** Ledger attribution for this turn. Defaults to `turn:N` where N is the 1-based turn index. */
   step?: string;
@@ -379,16 +417,69 @@ export async function startConversation(config: ConversationConfig): Promise<Con
     });
   };
 
+  // Zero usage for a turn that never reached a provider: nothing was read,
+  // written or billed -- the numbers that distinguish a refusal row (#422)
+  // from a provider-failure row, which carries the provider's own usage.
+  const zeroUsage: LedgerRecord["usage"] = {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 0,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  };
+
+  /**
+   * Trace a refused turn into the SAME ledger sink every turn uses, then
+   * return the typed refusal to throw. Before this, a pre-provider refusal
+   * threw with no ledger and no durable trace at all: the run showed 0s, no
+   * provider call, and a durable session stuck in `pending` with nothing to
+   * explain it (issue #422). The row is attributable by its zero usage plus
+   * the `refusal` field, carries ONLY the authored sentence from
+   * `CONVERSATION_REFUSAL_TEXT` -- never the prompt, never harness context
+   * that is in scope at every throw site -- and a failed write never
+   * replaces the refusal itself, exactly as `Ledger.record` treats drops.
+   */
+  const refusedTurn = (reason: ConversationRefusalReason): ConversationRefusedError => {
+    try {
+      sink.write({
+        ts: Date.now(),
+        runId,
+        lane: config.laneName ?? "main",
+        role: role.name,
+        step: `turn:${turnCounter + 1}`,
+        provider: config.model.provider,
+        model: config.model.id,
+        stopReason: "refusal",
+        usage: zeroUsage,
+        refusal: {
+          code: ConversationRefusedError.CODE,
+          reason,
+          message: CONVERSATION_REFUSAL_TEXT[reason],
+        },
+      });
+    } catch (error) {
+      process.stderr.write(
+        `ad-coder: ledger write failed, records are being dropped: ${
+          error instanceof Error ? error.message : String(error)
+        }\n`,
+      );
+    }
+    return new ConversationRefusedError(reason);
+  };
+
   async function step(
     userInput: string,
     opts?: ConversationStepOptions,
   ): Promise<ConversationTurnResult> {
-    if (closed) throw new Error("conversation is closed");
-    if (stepping) throw new Error("conversation step already active");
+    if (closed) {
+      throw refusedTurn("closed");
+    }
+    if (stepping) {
+      throw refusedTurn("step_active");
+    }
     if (laneBusy) {
-      throw new Error(
-        "conversation lane is still stopping after interruption; wait for the provider call to settle before retrying",
-      );
+      throw refusedTurn("lane_stopping");
     }
     controller.assertActive();
     stepping = true;
