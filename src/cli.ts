@@ -23,12 +23,22 @@ import type {
   ResolvableProvider,
   ResolvePipelineConfigOptions,
 } from "./cli/resolve-config";
-import { DEFAULT_STAGE_LIMITS, resolvePipelineConfig } from "./cli/resolve-config";
+import {
+  DEFAULT_STAGE_LIMITS,
+  resolvePipelineConfig,
+  resolveProviderAdmissionController,
+} from "./cli/resolve-config";
 import { resolveResumeRun, resumeOrchestratorConfig, resumeSeedNote } from "./cli/resume";
 import { ToolActivityRenderer } from "./cli/tool-activity";
 import { migrateInventoriesToModels } from "./config/migrate";
 import { loadSettingsConfigSeam } from "./config/seam";
-import { defaultModelsPath, defaultSettingsPath, writeFreshModelsConfig } from "./config/store";
+import {
+  defaultModelsPath,
+  defaultSettingsPath,
+  loadSettingsConfig,
+  writeFreshModelsConfig,
+} from "./config/store";
+import type { ProviderAdmissionSettings, SettingsConfig } from "./config/types";
 import type { CompactionPolicy } from "./context/compactor";
 import { CostAnomalyDetector, FileCostAnomalyStore } from "./economics/cost-anomaly";
 import {
@@ -121,6 +131,12 @@ import { clearsOnExplicitAct, RunCoordinator } from "./project-operations/run-co
 import { ProjectStore } from "./project-store/project-store";
 import type { ProjectStoreConfig } from "./project-store/types";
 import { ProjectStoreError } from "./project-store/types";
+import {
+  AdmissionCancelledError,
+  FileProviderAdmissionStore,
+  type ProviderAdmissionController,
+  QueueSaturatedError,
+} from "./provider-admission";
 import { parseRegistryConfig } from "./registry/validate";
 import type { Role } from "./role";
 import { defineRole } from "./role";
@@ -330,7 +346,10 @@ function credentialEnvForTarget(
  * Credentials come from `builtinModels()` -- the CLI's OWN process
  * environment -- never from `<targetDir>/.env`.
  */
-function buildRunner(targetDirArg: string): WorkflowContext["runRole"] {
+function buildRunner(
+  targetDirArg: string,
+  admissionSettings?: ProviderAdmissionSettings,
+): WorkflowContext["runRole"] {
   const absTargetDir = resolveTargetDir(targetDirArg);
   const env = credentialEnvForTarget(absTargetDir);
   const models = builtinModels({
@@ -343,10 +362,21 @@ function buildRunner(targetDirArg: string): WorkflowContext["runRole"] {
   // A workflow module's `ctx.runRole` is a real provider call, so it passes the
   // same operator block every other entry point does. Built here rather than
   // taken from a resolved pipeline config because `run` resolves none.
+  // DURABILITY (issue #365): durable runs persist under `.ad-coder/runs/` in
+  // this target dir, so the controller binds its snapshot file to the same
+  // durable run store root — queue occupancy, cooldown, and the uncertain
+  // in-flight permit are restored beside the runs, per
+  // docs/contracts/provider-admission.md. The store is lazy: constructing it
+  // touches no filesystem until admission actually saves.
+  const providerAdmissionController = resolveProviderAdmissionController(
+    admissionSettings,
+    new FileProviderAdmissionStore(absTargetDir),
+  );
   return createRoleRunner({
     targetDir: absTargetDir,
     models,
     costAnomalyDetector: new CostAnomalyDetector({}, new FileCostAnomalyStore(absTargetDir)),
+    ...(providerAdmissionController !== undefined && { providerAdmissionController }),
   });
 }
 
@@ -469,6 +499,12 @@ export async function runRoleStandalone(params: {
    * blocked.
    */
   costAnomalyDetector?: CostAnomalyDetector;
+  /**
+   * Shared provider-capacity admission boundary (issue #365). A standalone
+   * role reaches the provider through its own role runner, so the boundary is
+   * handed to it explicitly, exactly like the operator block above.
+   */
+  providerAdmissionController?: ProviderAdmissionController;
   /** Cancels a live role run and persists a resumable pause. */
   abortSignal?: AbortSignal;
 }): Promise<{
@@ -621,6 +657,9 @@ export async function runRoleStandalone(params: {
       ...(params.stageLimits !== undefined && { stageLimits: params.stageLimits }),
       ...(params.costAnomalyDetector !== undefined && {
         costAnomalyDetector: params.costAnomalyDetector,
+      }),
+      ...(params.providerAdmissionController !== undefined && {
+        providerAdmissionController: params.providerAdmissionController,
       }),
     }).runRole(params.role, params.model, params.task, {
       runId,
@@ -2042,6 +2081,18 @@ export function backgroundHostLauncherFor(
   else await manager.close(true);
 }
 
+/**
+ * The operator's `settings.yaml` when the file exists; an ABSENT file is the
+ * defaults case, not an error (the store refuses to read a missing file). A
+ * present file is validated strictly, so a malformed setting fails the command
+ * loudly -- a violation is always blocking (docs/contracts/config.md).
+ */
+function loadOptionalSettingsConfig(): SettingsConfig | undefined {
+  const file = defaultSettingsPath();
+  if (!fs.existsSync(file)) return undefined;
+  return loadSettingsConfig(file);
+}
+
 function buildConfigOptions(
   targetDirArg: string,
   flags: Record<string, string | undefined>,
@@ -2329,6 +2380,15 @@ function buildConfigOptions(
       : skillsDisabled
         ? "profile"
         : "built-in-default";
+  // The persistent-setting layer for provider admission (docs/contracts/
+  // config.md): the operator's `provider-admission` section, when one was
+  // written, resolves ahead of the built-in default. The section travels with
+  // its source so `config show` can name the layer that set it.
+  const settings = loadOptionalSettingsConfig();
+  const providerAdmissionSettings =
+    settings !== undefined && Object.keys(settings.providerAdmission).length > 0
+      ? settings.providerAdmission
+      : undefined;
   return {
     targetDir,
     // Set-valued capability with the one shared resolution: unset = built-in
@@ -2407,6 +2467,10 @@ function buildConfigOptions(
     }),
     ...(Object.keys(budgetPercents).length > 0 && { budgetPercents }),
     ...(roleBudgetPercents !== undefined && { roleBudgetPercents }),
+    ...(providerAdmissionSettings !== undefined && {
+      providerAdmissionSettings,
+      providerAdmissionSettingsSource: "settings" as const,
+    }),
     ...(maxRounds !== undefined && { maxRounds }),
     ...(defaultComplexity !== undefined && { defaultComplexity }),
     ...(plannerHandoffAttempts !== undefined && { plannerHandoffAttempts }),
@@ -2540,6 +2604,9 @@ async function roleCommand(
       ...(standaloneStageLimits !== undefined && { stageLimits: standaloneStageLimits }),
       ...(config.costAnomalyDetector !== undefined && {
         costAnomalyDetector: config.costAnomalyDetector,
+      }),
+      ...(config.providerAdmissionController !== undefined && {
+        providerAdmissionController: config.providerAdmissionController,
       }),
       abortSignal: abortController.signal,
     });
@@ -2856,7 +2923,12 @@ async function runCommand(
 
   const scriptPath = resolveScriptPath(scriptArg);
   const targetDir = flags["--target-dir"];
-  const runRole = targetDir === undefined ? undefined : buildRunner(targetDir);
+  // Same admission policy every other entry point resolves: the workflow's
+  // ctx.runRole is a provider call, so the operator's settings.yaml applies.
+  const runRole =
+    targetDir === undefined
+      ? undefined
+      : buildRunner(targetDir, loadOptionalSettingsConfig()?.providerAdmission);
 
   const imported: unknown = await import(pathToFileURL(scriptPath).href);
   const workflow = (imported as { default?: unknown }).default;
@@ -3906,6 +3978,20 @@ export function projectCliError(error: unknown): Record<string, unknown> {
       retryable: false,
       nextAction: error.nextAction,
     };
+  if (error instanceof QueueSaturatedError)
+    return {
+      code: error.code,
+      text: error.message,
+      retryable: error.retryable,
+      nextAction: error.nextAction,
+    };
+  if (error instanceof AdmissionCancelledError)
+    return {
+      code: error.code,
+      text: error.message,
+      retryable: error.retryable,
+      nextAction: error.nextAction,
+    };
   if (error instanceof UserProfileError) return { code: error.code, detail: error.detail };
   if (error instanceof ProjectOperationsError) return { code: error.code, detail: error.detail };
   if (error instanceof ProjectStoreError) return { code: error.code, detail: error.path };
@@ -3915,7 +4001,12 @@ export function projectCliError(error: unknown): Record<string, unknown> {
 
 /** Render a failed CLI invocation as the human line, including its recovery action. */
 export function renderCliError(error: unknown): string {
-  const action = error instanceof UpdateError ? error.nextAction : undefined;
+  const action =
+    error instanceof UpdateError
+      ? error.nextAction
+      : error instanceof QueueSaturatedError || error instanceof AdmissionCancelledError
+        ? error.nextAction
+        : undefined;
   return `ad-coder: ${errorMessage(error)}${action === undefined ? "" : `; ${action}`}\n`;
 }
 

@@ -517,6 +517,25 @@ export {
   RoleBriefError,
   resolveResearchRoleBrief,
 } from "./prompts/role-briefs";
+export type {
+  AdmissionPriorityClass,
+  ProviderAdmissionConfig,
+  ProviderAdmissionScopeState,
+  ProviderAdmissionSnapshot,
+  ProviderAdmissionStore,
+  ProviderAdmissionToken,
+} from "./provider-admission";
+export {
+  ADMISSION_PRIORITY_CLASSES,
+  AdmissionCancelledError,
+  admissionFailureFrom,
+  admissionScopeKey,
+  DEFAULT_PROVIDER_ADMISSION_CONFIG,
+  FileProviderAdmissionStore,
+  MemoryProviderAdmissionStore,
+  ProviderAdmissionController,
+  QueueSaturatedError,
+} from "./provider-admission";
 export type { RegistryErrorCode } from "./registry/errors";
 export { RegistryError } from "./registry/errors";
 export {

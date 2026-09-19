@@ -459,6 +459,9 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     ...(config.costAnomalyDetector !== undefined && {
       costAnomalyDetector: config.costAnomalyDetector,
     }),
+    ...(config.providerAdmissionController !== undefined && {
+      providerAdmissionController: config.providerAdmissionController,
+    }),
     ...(config.stageLimits !== undefined && { stageLimits: config.stageLimits }),
     ...(config.roleStageLimits !== undefined && { roleStageLimits: config.roleStageLimits }),
     ...(config.projectStoreConfig !== undefined && {

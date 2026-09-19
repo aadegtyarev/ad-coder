@@ -160,6 +160,7 @@ import {
   ProjectStore,
   ProjectStoreError,
   PromptError,
+  ProviderAdmissionController,
   ProviderLimitError,
   parseProfile,
   parseRegistryConfig,
@@ -232,6 +233,7 @@ test("the package is importable by its published name", () => {
   expect(typeof GateRunner).toBe("function");
   expect(typeof runRole).toBe("function");
   expect(typeof ProviderLimitError).toBe("function");
+  expect(typeof ProviderAdmissionController).toBe("function");
   expect(typeof LiveRetryCoordinator).toBe("function");
   expect(typeof ProjectStore).toBe("function");
   expect(typeof ProjectStoreError).toBe("function");

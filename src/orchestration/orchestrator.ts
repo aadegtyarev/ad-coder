@@ -1630,6 +1630,9 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
       ...(resolved.costAnomalyDetector !== undefined && {
         costAnomalyDetector: resolved.costAnomalyDetector,
       }),
+      ...(resolved.providerAdmissionController !== undefined && {
+        providerAdmissionController: resolved.providerAdmissionController,
+      }),
       activityChannel,
       ...(config.toolActivity !== undefined && { toolActivity: config.toolActivity }),
       ...(resolved.compaction !== undefined && { compaction: resolved.compaction }),
@@ -1805,6 +1808,9 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
     sessionLimitController: controller,
     ...(seed.costAnomalyDetector !== undefined && {
       costAnomalyDetector: seed.costAnomalyDetector,
+    }),
+    ...(seed.providerAdmissionController !== undefined && {
+      providerAdmissionController: seed.providerAdmissionController,
     }),
     ...(core !== undefined && {
       subscribeBackgroundRuns: core.backgroundRuns.subscribe.bind(core.backgroundRuns),

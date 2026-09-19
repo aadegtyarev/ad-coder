@@ -32,6 +32,7 @@ import {
 import type { BackgroundRunNoticeConsumer } from "../orchestration/background-runs";
 import { ProjectStore } from "../project-store/project-store";
 import type { ProjectStoreConfig } from "../project-store/types";
+import { admissionFailureFrom, type ProviderAdmissionController } from "../provider-admission";
 import type { Role } from "../role";
 import { toHarnessOptions } from "../role";
 import { createBuiltinTools } from "../runner/builtin-tools";
@@ -118,6 +119,14 @@ export interface ConversationConfig {
    * turn passes the same gate.
    */
   costAnomalyDetector?: CostAnomalyDetector;
+  /**
+   * Shared provider-capacity admission boundary (issue #365). Carried here
+   * because a conversation reaches the provider through its OWN `Models` wrap,
+   * not through `runRole`: wiring admission only into the pipeline left the
+   * console — and the `run_role` tool — able to open a provider client that no
+   * outermost gate watched.
+   */
+  providerAdmissionController?: ProviderAdmissionController;
   activityChannel?: ToolActivityChannel;
   activityConsumer?: ToolActivityConsumer;
   toolActivity?: Partial<ToolActivityConfig>;
@@ -237,6 +246,19 @@ export async function startConversation(config: ConversationConfig): Promise<Con
     limitedModels,
     tools.map((tool) => tool.name),
   );
+  // ADMISSION OUTERMOST, for the same reason as `runRole`: each proxy
+  // delegates inward, so the wrapper applied last is entered first, and a
+  // saturated scope must refuse before session/stage/cost-anomaly reserve
+  // anything. Scope identity is the provider-account id — `config.model.provider`
+  // (e.g. `work-openrouter` vs `home-openrouter`, docs/provider-catalogs.md) —
+  // passed as both the provider and the account label, never a secret or a raw
+  // credential id; `admissionScopeKey` hashes it so only the digest persists.
+  const models =
+    config.providerAdmissionController?.wrap(
+      recoveredModels,
+      config.model.provider,
+      config.model.provider,
+    ) ?? recoveredModels;
   const explicitPolicy =
     config.compaction ??
     (config.summarizer === undefined ? undefined : { mode: "auto", summarizer: config.summarizer });
@@ -244,7 +266,17 @@ export async function startConversation(config: ConversationConfig): Promise<Con
   if (hasOpaqueSummarizer && (controller.limits.maxTurns > 0 || controller.limits.maxCostUsd > 0)) {
     throw new TypeError("custom summarizer cannot be used with positive session limits");
   }
-  const compaction = resolveCompactionPolicy(explicitPolicy, limitedModels, config.model);
+  // The compaction summarizer is an LLM GENERATION PATH, so it rides the same
+  // outermost chain the harness turns ride (contract
+  // docs/contracts/provider-admission.md: every generation path through
+  // admission). `models` is admission -> tool-call recovery -> cost anomaly ->
+  // session -- hierarchically IDENTICAL limits to `limitedModels`, only with
+  // admission outermost -- mirroring `runRole`, which passes its wrapped
+  // `models` here for exactly the same reason. Scope identity matches the turn
+  // stream (admission did the wrapping above), so a summarizer call counts
+  // against the same scope's concurrency and cooldown and cannot probe a
+  // provider whose scope is saturated or standing down.
+  const compaction = resolveCompactionPolicy(explicitPolicy, models, config.model);
 
   const store =
     config.session === undefined
@@ -257,7 +289,7 @@ export async function startConversation(config: ConversationConfig): Promise<Con
 
   const base = toHarnessOptions(config.role, {
     session,
-    models: recoveredModels,
+    models,
     model: config.model,
   });
   const options: AgentHarnessOptions<ExecutionToolContext> = {
@@ -475,6 +507,17 @@ export async function startConversation(config: ConversationConfig): Promise<Con
       const assistantText = assistantMessageText(finalMessage);
       if (assistantText.trim() === "") {
         if (result.status !== "completed") {
+          // An admission refusal settles as a stream-terminal error message, and
+          // the durable drive composes every settled failure as
+          // `assistant_error` -- the typed class is destroyed at that boundary
+          // exactly as an HTTP status is. Recover it BEFORE the empty-turn
+          // projection: "verify authentication" is the wrong instruction for a
+          // scope this conversation saturated, and `queue_saturated` is
+          // retryable while an empty turn is not.
+          if (config.providerAdmissionController !== undefined) {
+            const admissionFailure = admissionFailureFrom(result.error, config.model.provider);
+            if (admissionFailure !== undefined) throw admissionFailure;
+          }
           // Same attribution rule as runRole: a named client-error status means
           // the provider answered and refused, which is not an authentication
           // failure. See ProviderRejectionError for why only the number crosses.
@@ -518,6 +561,7 @@ export async function startConversation(config: ConversationConfig): Promise<Con
             truncated.reasoningTokens,
           );
         }
+        throw new EmptyTurnError(runId, result.error?.code);
       }
       cumulativeDropped += ledger.droppedRecords;
       return {

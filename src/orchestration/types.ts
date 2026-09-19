@@ -16,6 +16,7 @@ import type { RunCoordinatorOptions } from "../project-operations/run-coordinato
 import type { FollowUp } from "../project-operations/types";
 import type { ProjectStoreConfig } from "../project-store/types";
 import type { ResearchPurpose, RoleBriefSource } from "../prompts/role-briefs";
+import type { ProviderAdmissionController } from "../provider-admission";
 import type { ResolvedRegistry } from "../registry/types";
 import type { Role } from "../role";
 import type { Tool } from "../runner/tool";
@@ -347,6 +348,12 @@ export interface PipelineConfig {
   sessionLimitController?: SessionLimitController;
   /** Shared cost-per-token anomaly tracking for every role in this session. */
   costAnomalyDetector?: CostAnomalyDetector;
+  /**
+   * Shared provider-capacity admission boundary (issue #365). Wrapping at the
+   * runner's Models seam, outermost, is what makes a saturated scope
+   * unbypassable: every generation path goes through this one boundary.
+   */
+  providerAdmissionController?: ProviderAdmissionController;
   /**
    * The project's DECLARED quality gates (issue #227). Declared as data, once —
    * `gates` defaults to the shipped declaration for this project and a different

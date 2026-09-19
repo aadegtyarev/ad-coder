@@ -668,6 +668,25 @@ enforces that dated release headings go in non-increasing date order
 
 ## [0.67.0] - 2026-09-18
 
+### Added
+- **Provider admission guards every generation call at one outermost boundary**
+  (issue #365). `ProviderAdmissionController` is wired into the two Models
+  seams every generation path crosses (`runRole` and `startConversation`),
+  outermost, so a saturated scope refuses before session limits, stage limits,
+  cost-anomaly detection, or tool-call recovery reserve anything. The scope is
+  the provider-account label (`work-openrouter` vs `home-openrouter`), never a
+  credential; only its SHA-256 digest is ever persisted.
+
+  Settings resolve through `settings.yaml`'s `provider-admission` section;
+  `config show` and `--json` report every resolved limit with the layer that
+  set it. Admission ships ENABLED with finite module defaults; a configured
+  `max-concurrent-per-scope: 0` disables the boundary in the wiring layer
+  (pass-through, no controller) because the controller itself refuses a zero.
+  A saturated scope surfaces the typed, retryable `queue_saturated` failure;
+  a cancelled admission the non-retryable `cancelled`; the CLI projects both
+  with their codes, retryability, and next action on stderr, never leaking a
+  scope digest, model id, prompt, or provider body.
+
 ### Fixed
 - **A stage closeout keeps the submission tool it just demanded** (issue #339).
   Reaching the closeout reserve stripped every tool from the next request and
