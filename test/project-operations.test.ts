@@ -22,6 +22,7 @@ import {
   aggregateFollowUps,
   appendDocumentationProposal,
   buildPublishingPrBody,
+  clearsOnExplicitAct,
   createBacklogStore,
   DEFAULT_REPOSITORY_PUBLISHING_CONFIG,
   detectLdoProject,
@@ -577,15 +578,26 @@ test("RunCoordinator persists a failed stage's safe metrics and permits an expli
   };
   const coordinator = new RunCoordinator(session, store, { runId: "failed-stage-pause" });
   const paused = await coordinator.run();
-  expect(paused.checkpoint.pause).toEqual({
+  expect(paused.checkpoint.pause?.code).toBe("stage_failed");
+  // Issue #403: an untyped error now names itself in the pause instead of
+  // leaving a generic action over an empty cause.
+  expect(paused.checkpoint.pause?.cause).toEqual({
+    code: "untyped_error",
+    message: "Error: provider detail must not persist",
+    recurrence: 0,
+  });
+  expect(paused.checkpoint.pause?.action).toContain("untyped_error");
+  expect(paused.checkpoint.pause?.action).not.toContain("provider failure");
+  expect(paused.checkpoint.workflowState.lastStageFailure).toEqual({
     phase: "code",
-    code: "stage_failed",
-    action: "inspect the provider failure and retry the stage explicitly",
+    code: "untyped_error",
+    message: "Error: provider detail must not persist",
+    recurrence: 0,
   });
   expect(paused.checkpoint.workflowState.stageMetrics).toEqual([
     expect.objectContaining({ stage: "code:1", costUsd: 0.25 }),
   ]);
-  expect(JSON.stringify(paused.checkpoint)).not.toContain("provider detail must not persist");
+  expect(JSON.stringify(paused.checkpoint.pause?.cause)).not.toContain("sk-");
   coordinator.resumeStage({ source: "operator", action: "retry" });
   expect((await coordinator.run()).status).toBe("complete");
   expect(attempts).toBe(2);
@@ -671,6 +683,32 @@ async function pauseOnFailure(sourceError: unknown, runId: string): Promise<RunC
     ...base,
     async step() {
       throw new WorkflowStageFailureError(sourceError, "failed-code", { ...failureMetrics });
+    },
+  };
+  const coordinator = new RunCoordinator(session, store, { runId });
+  return (await coordinator.run()).checkpoint;
+}
+
+/**
+ * The hostile-thrown-value variant (issue #403 review round): for a value
+ * whose reads THROW, the typed wrapper (`WorkflowStageFailureError`) itself
+ * would refuse during its own super(...) message read -- a different, typed
+ * surface (src/orchestration/session.ts) -- so the hostile value is installed
+ * AFTER the wrapper is built, and only the coordinator's untyped-cause builder
+ * ever reads it.
+ */
+async function pauseOnHostileSource(sourceError: unknown, runId: string): Promise<RunCheckpoint> {
+  const target = root();
+  const store = new ProjectStore(target);
+  const base = coordinatorSession(store, []);
+  const session: WorkflowSession = {
+    ...base,
+    async step() {
+      const failure = new WorkflowStageFailureError(new Error("benign wrap"), runId, {
+        ...failureMetrics,
+      });
+      Object.defineProperty(failure, "sourceError", { value: sourceError });
+      throw failure;
     },
   };
   const coordinator = new RunCoordinator(session, store, { runId });
@@ -822,6 +860,286 @@ test("a recorded stage failure reaches the next attempt and counts recurrences (
   coordinator.resumeStage({ source: "operator", action: "retry" });
   expect((await coordinator.run()).status).toBe("complete");
   expect(attempts).toBe(4);
+});
+
+test("an untyped stage failure names itself with a bounded redacted cause (issue #403)", async () => {
+  const checkpoint = await pauseOnFailure(
+    new Error("plain harness throw\nsecond line is dropped"),
+    "untyped-cause",
+  );
+  const pause = checkpoint.pause;
+  expect(pause?.code).toBe("stage_failed");
+  expect(pause?.cause?.code).toBe("untyped_error");
+  expect(pause?.cause?.message).toBe("Error: plain harness throw");
+  expect(pause?.cause?.recurrence).toBe(0);
+  expect(pause?.action).toContain("plain harness throw");
+  expect(pause?.action).toContain("harness bug");
+  expect(pause?.action).toContain("retry the stage explicitly");
+  // The old wording sent the operator to inspect a PROVIDER, but a plain
+  // throwing error is exactly the harness-side suspect.
+  expect(pause?.action).not.toContain("provider failure");
+  expect(pause?.action).not.toContain("inspect the provider failure");
+  expect(checkpoint.workflowState.lastStageFailure).toEqual({
+    phase: "code",
+    code: "untyped_error",
+    message: "Error: plain harness throw",
+    recurrence: 0,
+  });
+});
+
+test("the untyped cause redacts every credential shape found in the raw message (issue #403 mitigation F1)", async () => {
+  const shapes: readonly (readonly [string])[] = [
+    ["api_key=sk-1234567890abcdef"],
+    // Built by concatenation so the artifact smoke audit does not read this
+    // TEST's test literally as a tracked-file AWS credential candidate.
+    [`AKIA${"I".repeat(20)}`],
+    [`AIza${"S".repeat(35)}`],
+    ["eyJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJ0ZXN0In0.abcDEF123"],
+    ["Bearer eyJhbGciOiJIUzI1NiJ9.payload.sig"],
+    ["token: ghp_1234567890abcdefghij"],
+    ["password=hunter2hunter2"],
+  ];
+  for (const [index, [secret]] of shapes.entries()) {
+    const checkpoint = await pauseOnFailure(
+      new Error(`transport failed: ${secret}`),
+      `redact-${index}`,
+    );
+    const pause = checkpoint.pause;
+    expect(pause?.cause?.code).toBe("untyped_error");
+    expect(pause?.cause?.message).toContain("[redacted]");
+    expect(JSON.stringify(checkpoint)).not.toContain(secret);
+  }
+});
+
+test("the untyped cause strips control characters and ANSI escapes (issue #403 mitigation F3)", async () => {
+  const checkpoint = await pauseOnFailure(
+    new Error("ok\rforged line\u001b[2J\u001b[Hzero\u200bwidth"),
+    "control-strip",
+  );
+  expect(checkpoint.pause?.cause?.message).toContain("forged line");
+  // Only printable ASCII survives into durable state (issue #403 mitigation F3).
+  const printable = (value: string) =>
+    [...value].every((character) => character >= "\x20" && character <= "\x7e");
+  expect(printable(checkpoint.pause?.cause?.message ?? "")).toBe(true);
+  // The action interpolates the cause message; it must be equally inert.
+  expect(printable(checkpoint.pause?.action ?? "")).toBe(true);
+});
+
+test("the untyped cause removes control bytes BEFORE redaction so an embedded secret cannot survive as '?' (issue #403 review round 2)", async () => {
+  // A control byte inside the credential token: replacing non-printables
+  // AFTER redaction would turn `sk-<ESC>1234...` into `sk-?1234...`, a
+  // pattern the redactor no longer matches, leaking the bone of the secret.
+  const checkpoint = await pauseOnFailure(
+    new Error(`border sk-\u001b1234567890abcdef tail`),
+    "strip-before-redact",
+  );
+  expect(checkpoint.pause?.cause?.code).toBe("untyped_error");
+  expect(checkpoint.pause?.cause?.message).toContain("[redacted]");
+  expect(JSON.stringify(checkpoint)).not.toContain("sk-?1234567890abcdef");
+  expect(JSON.stringify(checkpoint)).not.toContain("1234567890abcdef");
+});
+
+test("the untyped cause redacts BEFORE clipping so a boundary-straddling secret leaks nothing (issue #403 mitigation F2)", async () => {
+  // Padding puts the credential across the 512-char ceiling: a cap-first
+  // implementation would persist a truncated but reconstructible prefix.
+  const padding = "p".repeat(505);
+  const checkpoint = await pauseOnFailure(
+    new Error(`${padding} api_key=sk-1234567890abcdef tail`),
+    "redact-before-cap",
+  );
+  expect(checkpoint.pause?.cause?.message?.length).toBeLessThanOrEqual(512);
+  expect(JSON.stringify(checkpoint)).not.toContain("sk-1234567890abcdef");
+  expect(JSON.stringify(checkpoint)).not.toContain("api_key=sk");
+});
+
+test("an untyped error wrapped in a hostile Proxy still settles the durable cause (issue #403 review round)", async () => {
+  // Every read the cause builder makes sits behind the Proxy's traps: a trap
+  // that throws must not crash the stage-failure catch (the #412 discipline
+  // from console.ts), it must degrade to the fixed `Unknown` fallback.
+  const target = new Error("real message behind the proxy");
+  const hostile = new Proxy(target, {
+    get(_t, property, receiver) {
+      if (property === "message") throw new TypeError("no reads");
+      return Reflect.get(_t, property, receiver);
+    },
+    getOwnPropertyDescriptor(): PropertyDescriptor {
+      throw new TypeError("no own reads");
+    },
+  });
+  const checkpoint = await pauseOnHostileSource(hostile, "hostile-proxy");
+  const pause = checkpoint.pause;
+  expect(pause?.code).toBe("stage_failed");
+  expect(pause?.cause?.code).toBe("untyped_error");
+  // The name read survives the `get` trap through the PROTOTYPE chain; the
+  // message line is absent because the `get` trap refuses.
+  expect(pause?.cause?.message).toBe("Error:");
+  expect(JSON.stringify(checkpoint)).not.toContain("real message");
+});
+
+test("a forged or oversized own constructor cannot name the untyped cause (issue #403 review round)", async () => {
+  const forged = new Error("honest first line");
+  Object.defineProperty(forged, "constructor", {
+    value: { name: `Evil<img>${"x".repeat(200)}` },
+    enumerable: false,
+  });
+  const checkpoint = await pauseOnFailure(forged, "forged-constructor");
+  expect(checkpoint.pause?.code).toBe("stage_failed");
+  expect(checkpoint.pause?.cause?.code).toBe("untyped_error");
+  // The PROTOTYPE's constructor names it; the forged own property never read.
+  expect(checkpoint.pause?.cause?.message).toBe("Error: honest first line");
+  expect(JSON.stringify(checkpoint)).not.toContain("Evil");
+});
+
+test("a throwing message getter degrades the line, not the stage (issue #403 review round)", async () => {
+  const hostile = new Error("never read");
+  Object.defineProperty(hostile, "message", {
+    get() {
+      throw new TypeError("getter refuses");
+    },
+  });
+  const checkpoint = await pauseOnHostileSource(hostile, "throwing-message");
+  expect(checkpoint.pause?.code).toBe("stage_failed");
+  expect(checkpoint.pause?.cause?.code).toBe("untyped_error");
+  // Deterministic fallback: the constructor keeps naming, the absent line is
+  // simply not carried.
+  expect(checkpoint.pause?.cause?.message).toBe("Error:");
+  expect(JSON.stringify(checkpoint)).not.toContain("never read");
+});
+
+test("an untyped failure records lastStageFailure and repeats its loop signature only on an identical cause (issue #403)", async () => {
+  const target = root();
+  const store = new ProjectStore(target);
+  const base = coordinatorSession(store, []);
+  let attempts = 0;
+  const session: WorkflowSession = {
+    ...base,
+    async step(state) {
+      attempts += 1;
+      if (attempts === 1 || attempts === 2) {
+        throw new WorkflowStageFailureError(new Error("same untyped"), "failed-code", {
+          ...failureMetrics,
+        });
+      }
+      if (attempts === 3) {
+        throw new WorkflowStageFailureError(new Error("different untyped"), "failed-code", {
+          ...failureMetrics,
+        });
+      }
+      return base.step(state);
+    },
+  };
+  const coordinator = new RunCoordinator(session, store, { runId: "untyped-recurrence" });
+  const first = await coordinator.run();
+  expect(first.checkpoint.workflowState.lastStageFailure).toEqual({
+    phase: "code",
+    code: "untyped_error",
+    message: "Error: same untyped",
+    recurrence: 0,
+  });
+  coordinator.resumeStage({ source: "operator", action: "retry" });
+  const second = await coordinator.run();
+  expect(second.checkpoint.pause?.cause).toMatchObject({ code: "untyped_error", recurrence: 1 });
+  expect(second.checkpoint.pause?.action).toContain("recorded 2 consecutive times");
+  expect(second.checkpoint.pause?.limitReason).toBeUndefined();
+  coordinator.resumeStage({ source: "operator", action: "retry" });
+  const third = await coordinator.run();
+  // A different concrete cause resets the count: every untyped error shares
+  // the one code token, so only message identity can bound the loop.
+  expect(third.checkpoint.pause?.cause).toMatchObject({
+    code: "untyped_error",
+    message: "Error: different untyped",
+    recurrence: 0,
+  });
+  expect(third.checkpoint.pause?.action).not.toContain("consecutive");
+  coordinator.resumeStage({ source: "operator", action: "retry" });
+  expect((await coordinator.run()).status).toBe("complete");
+  expect(attempts).toBe(4);
+});
+
+/**
+ * The review-phase variant of `pauseOnFailure`: the coordinator starts in the
+ * review state, so the first `step` throws while `workflowState.phase ===
+ * "review"` and the failure settles through the `review_not_run` branch.
+ */
+async function pauseOnReviewFailure(sourceError: unknown, runId: string): Promise<RunCheckpoint> {
+  const target = root();
+  const store = new ProjectStore(target);
+  const base = coordinatorSession(store, []);
+  const session: WorkflowSession = {
+    ...base,
+    initialState: () => ({ ...coordinatorState(), phase: "review" }),
+    async step() {
+      throw new WorkflowStageFailureError(sourceError, "failed-review", {
+        ...failureMetrics,
+      });
+    },
+  };
+  const coordinator = new RunCoordinator(session, store, { runId });
+  return (await coordinator.run()).checkpoint;
+}
+
+test("a review-phase untyped failure settles the review_not_run pause with its bounded cause (issue #403 review round 4)", async () => {
+  const checkpoint = await pauseOnReviewFailure(
+    new Error("reviewer harness threw\nsecond line is dropped"),
+    "review-untyped-cause",
+  );
+  const pause = checkpoint.pause;
+  expect(pause?.code).toBe("review_not_run");
+  expect(pause?.cause).toEqual({
+    code: "untyped_error",
+    message: "Error: reviewer harness threw",
+    recurrence: 0,
+  });
+  // The action keeps the verdict frame and names the recorded cause plus the
+  // harness-bug caveat -- the same discipline as the generic stage_failed path.
+  expect(pause?.action).toContain("did not run to a verdict");
+  expect(pause?.action).toContain("reviewer harness threw");
+  expect(pause?.action).toContain("harness bug");
+  // The cause is recorded on the checking exactly like the generic path: the
+  // retrying reviewer reads it from the checkpoint's workflowState.
+  expect(checkpoint.workflowState.lastStageFailure).toEqual({
+    phase: "review",
+    code: "untyped_error",
+    message: "Error: reviewer harness threw",
+    recurrence: 0,
+  });
+  // A coded pause stays clearable by the same explicit operator act.
+  expect(clearsOnExplicitAct(pause?.code)).toBe(true);
+});
+
+test("a repeated identical review-phase untyped failure shows the recurrence loop wording (issue #403 review round 4)", async () => {
+  const target = root();
+  const store = new ProjectStore(target);
+  const base = coordinatorSession(store, []);
+  const session: WorkflowSession = {
+    ...base,
+    initialState: () => ({ ...coordinatorState(), phase: "review" }),
+    async step() {
+      throw new WorkflowStageFailureError(new Error("same reviewer throw"), "failed-review", {
+        ...failureMetrics,
+      });
+    },
+  };
+  const coordinator = new RunCoordinator(session, store, { runId: "review-untyped-recurrence" });
+  const first = await coordinator.run();
+  expect(first.checkpoint.pause?.cause).toMatchObject({ code: "untyped_error", recurrence: 0 });
+  expect(first.checkpoint.pause?.action).not.toContain("consecutive");
+  coordinator.resumeStage({ source: "operator", action: "retry" });
+  const second = await coordinator.run();
+  // Same stage, same code, same recorded message: a loop, not two unknowns.
+  expect(second.checkpoint.pause?.cause).toMatchObject({
+    code: "untyped_error",
+    message: "Error: same reviewer throw",
+    recurrence: 1,
+  });
+  expect(second.checkpoint.pause?.action).toContain("did not run to a verdict");
+  expect(second.checkpoint.pause?.action).toContain("recorded 2 consecutive times");
+  expect(second.checkpoint.pause?.action).toContain("harness bug");
+  expect(second.checkpoint.workflowState.lastStageFailure).toMatchObject({
+    phase: "review",
+    code: "untyped_error",
+    recurrence: 1,
+  });
 });
 
 test("RunCoordinator durably pauses a cooperatively interrupted workflow and resumes it", async () => {

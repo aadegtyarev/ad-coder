@@ -423,9 +423,20 @@ function evidenceReferences(values: string[]): string[] {
   return unique;
 }
 
-function redactCredentialLike(value: string): string {
+/**
+ * Credential-shaped values inside durable records are replaced while the
+ * shape stays readable. This is the SINGLE shared redactor (issue #403
+ * review round): the run-coordinator's untyped cause re-imports it. The union
+ * pattern covers the common prefix-keyword shapes plus the extensions the
+ * untyped cause needed: AWS access-key ids, Google API keys, JWT bearer
+ * tokens, and any bearer-scheme header. The AWS access-key id arm matches 16
+ * OR MORE uppercase characters after `AKIA`, so an over-long run cannot leak
+ * its tail past a boundary (the redaction may over-include;
+ * under-including would expose a real key prefix).
+ */
+export function redactCredentialLike(value: string): string {
   return value.replace(
-    /\b(?:sk|ghp|github_pat|xox[baprs])[-_A-Za-z0-9]{8,}\b|\b(?:token|secret|password|api[_-]?key)\s*[:=]\s*\S+/gi,
+    /\b(?:sk|ghp|github_pat|xox[baprs])[-_A-Za-z0-9]{8,}\b|\b(?:token|secret|password|api[_-]?key)\s*[:=]\s*\S+|\bAKIA[0-9A-Z]{16,}\b|\bAIza[0-9A-Za-z_-]{35}\b|\beyJ[A-Za-z0-9._-]{20,}\b|\bbearer\s+\S{8,}\b/gi,
     "[redacted]",
   );
 }
