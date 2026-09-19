@@ -11,6 +11,7 @@ import { parseModelsConfig } from "../src/config/validate";
 import { buildDefaultProfile } from "../src/profiles/default-profile";
 import { resolveProfile } from "../src/profiles/resolve";
 import { writeProjectCalibrationSnapshot } from "../src/project-calibration";
+import { parseSettingsConfig } from "../src/config/validate";
 import { RegistryError } from "../src/registry/errors";
 import { resolveRegistry } from "../src/registry/resolve";
 import type { RegistryConfig } from "../src/registry/types";
@@ -446,6 +447,36 @@ test("(h) a present-but-empty settings.yaml stays refused, not silently defaulte
 
 // ---------------------------------------------------------------------------
 // (f) require-stamp resolution + writer/checker agreement
+
+// (h) session-manager section (issue #365 layer 2)
+
+test("(h) the session-manager section parses allowed roots and creation volume", () => {
+  const parsed = parseSettingsConfig({
+    review: { "require-stamp": "on" },
+    "session-manager": {
+      "allowed-roots": ["/srv/projects"],
+      "max-projects": 8,
+    },
+  });
+  expect(parsed.sessionManager).toEqual({ allowedRoots: ["/srv/projects"], maxProjects: 8 });
+});
+
+test("(h) an absent session-manager section parses to the refusal-to-serve default", () => {
+  expect(parseSettingsConfig({ review: {} }).sessionManager).toEqual({ allowedRoots: [] });
+});
+
+const SESSION_MANAGER_BAD = [
+  ["relative allowed root", { "session-manager": { "allowed-roots": ["srv/relative"] } }],
+  ["non-list allowed roots", { "session-manager": { "allowed-roots": "/srv" } }],
+  ["non-integer max-projects", { "session-manager": { "max-projects": 1.5 } }],
+  ["negative max-projects", { "session-manager": { "max-projects": -1 } }],
+  ["unknown section key", { "session-manager": { volume: 3 } }],
+  ["unknown top key", { "session-manager-x": {} }],
+] as const;
+
+test.each(SESSION_MANAGER_BAD)("(h) session-manager parsing refuses %s", (_ignore, document) => {
+  expect(() => parseSettingsConfig(document)).toThrow(ConfigError);
+});
 
 function settingsWith(requireStamp: "auto" | "on" | "off"): SettingsConfig {
   return {
