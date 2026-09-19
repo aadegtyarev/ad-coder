@@ -40,7 +40,11 @@ enforces that dated release headings go in non-increasing date order
   refuses) renders `(unclassified)` instead of replacing the turn's failure with
   its own -- and it consults no own property of the thrown value, so a forged
   `name` or `constructor` cannot supply a class and a message can never ride out
-  through the field that replaces the withheld one.
+  through the field that replaces the withheld one. The typed branches are held
+  to the same standard: each of them reads fields off the caught value, and a
+  value that passes the type check and then refuses those reads is answered by
+  the untyped line instead of escaping the turn's catch as an `input_failed`
+  ("restart the console") on a console whose input stream is fine.
 
 ## [0.93.0] - 2026-09-19
 

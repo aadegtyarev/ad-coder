@@ -708,6 +708,32 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
       params.error.write("ad-coder: current turn interrupt failed\n");
     });
   };
+  /**
+   * The untyped turn failure: this console's LAST resort, and total by
+   * construction -- it reads nothing off the caught value except through
+   * `describeErrorClass`, which cannot throw. It is therefore also what answers
+   * when the typed branches above are themselves defeated: each of them reads
+   * fields off the caught value (`status`, `failure`, `attempts`, `provider`,
+   * `block`, `retryAfterMs`), and a value that passes `instanceof` and THEN
+   * refuses those reads -- a Proxy whose traps throw -- used to take the failure
+   * out of the catch entirely, re-reporting a failed turn as `input_failed` on a
+   * console whose input stream was fine.
+   */
+  const writeUntypedTurnFailure = (error: unknown): void => {
+    const cause = describeErrorClass(error);
+    params.error.write(
+      renderFailure(
+        {
+          code: "turn_failed",
+          message: `console turn failed (${cause})`,
+          action: "retry the prompt; if it keeps failing, restart the console",
+          retryable: true,
+        },
+        mode,
+      ),
+    );
+    reason = "turn_failed";
+  };
   const handleLine = async (
     rawLine: string,
     lane: { prompt?: number; control?: number } = {},
@@ -798,210 +824,210 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
       );
       if (mode === "formatted") params.output.write("ad-coder> ");
     } catch (error) {
-      if (params.interrupted?.()) {
-        params.error.write(
-          renderFailure(
-            {
-              code: "interrupted",
-              message: "console turn interrupted",
-              action: "restart the console to resume the session",
-              retryable: true,
-            },
-            mode,
-          ),
-        );
-        reason = "interrupted";
-      } else if (isInstanceOf(error, ConsoleControlError)) {
-        // The guidance is derived from the command registry, so it always names
-        // the failed command and one next action (docs/contracts/errors.md).
-        params.error.write(renderFailure(error.failure, mode));
-        if (mode === "formatted") params.output.write("ad-coder> ");
-        return;
-      } else if (isInstanceOf(error, TurnInterruptedError)) {
-        params.error.write(
-          renderFailure(
-            {
-              code: "interrupted",
-              message: "current turn interrupted",
-              action: "session remains available; enter the next prompt",
-              retryable: true,
-            },
-            mode,
-          ),
-        );
-        if (mode === "formatted") params.output.write("ad-coder> ");
-        return;
-      } else if (isInstanceOf(error, SessionLimitError)) {
-        params.error.write(
-          renderFailure(
-            {
-              code: "session_limit",
-              message: "session resource limit reached",
-              action: "restart the console to start a session with a fresh budget",
-              // The same session cannot grant more budget to a retry.
-              retryable: false,
-            },
-            mode,
-          ),
-        );
-        reason = "session_limit";
-      } else if (isInstanceOf(error, ContextCompactionLostError)) {
-        // The session's context can no longer be compacted, so every later turn
-        // would fail the same way. That makes this a STOP, and the stop has to
-        // name a way out that actually exists: `--resume` reopens this very
-        // session from its durable store, and `--summarizer-model` picks a
-        // summarizer other than the one that failed. "Retry the prompt" -- what
-        // the generic branch used to say -- can never work here, and the session
-        // stayed alive and deaf behind it (issue #391).
-        params.error.write(
-          renderFailure(
-            {
-              code: "context_compaction_lost",
-              message:
-                `context compaction failed ${error.attempts} times; last: ` +
-                `${describeCompactionFailure(error.lastFailure)}` +
-                (error.lastFailure !== undefined
-                  ? ` (measured ${error.lastFailure.measuredTokens} tokens against threshold ` +
-                    `${error.lastFailure.thresholdTokens}, effective ceiling ${error.effectiveCeiling})`
-                  : ` (effective ceiling ${error.effectiveCeiling})`),
-              action:
-                "restart the console with --resume to reopen this session, adding " +
-                "--summarizer-model <id> when the summarizer itself is what failed",
-              // The same process cannot summarize this context again, and the
-              // session's own compaction is what ran out.
-              retryable: false,
-            },
-            mode,
-          ),
-        );
-        reason = "context_compaction_lost";
-      } else if (isInstanceOf(error, CostAnomalyBlockedError)) {
-        // The operator decides, in this session: the block names both amounts,
-        // the overcharge, and the `/cost release` that accepts the new price,
-        // and input stays open so they can type it. Collapsing this into the
-        // generic turn failure left the console advising a retry that could
-        // only fail again (`docs/contracts/errors.md`).
-        const scope = `${error.provider}/${error.model}`;
-        params.error.write(
-          renderFailure(
-            {
-              code: error.code,
-              message:
-                `${scope} billed ${formatCostUsd(error.block.chargedUsd)} against ` +
-                `${formatCostUsd(error.block.expectedUsd)} declared ` +
-                `(${formatCostRatio(error.block.ratio)}, confirmed by ` +
-                `${error.block.confirmingObservations} responses); this model is blocked`,
-              action: `accept the new price with: /cost release ${scope} — or route this role to another model`,
-              // Retrying the same prompt on a blocked model cannot succeed;
-              // the operator has to decide first.
-              retryable: false,
-            },
-            mode,
-          ),
-        );
-        // The session is intact and the block is liftable from this prompt, so
-        // the console keeps reading input rather than tearing down.
-        if (mode === "formatted") params.output.write("ad-coder> ");
-        return;
-      } else if (isInstanceOf(error, ProviderQuotaError)) {
-        // Quota/rate-limit is retryable but NOT now, and never: the credential
-        // is valid, the request shape is fine, only the account is out of
-        // quota (#356). The advice names the reset window and points at the
-        // plan, never at authentication or the request.
-        const reset =
-          error.retryAfterMs === undefined
-            ? "wait for the provider's reset window"
-            : `wait for the reset window (~${Math.ceil(error.retryAfterMs / 1_000)}s)`;
-        params.error.write(
-          renderFailure(
-            {
-              code: "provider_quota",
-              message:
-                `provider refused the request with HTTP 429 (quota/rate limit exhausted)` +
-                (error.providerCode !== undefined ? ` (provider code ${error.providerCode})` : ""),
-              action: `${reset}, or check the plan and usage, then retry`,
-              retryable: true,
-            },
-            mode,
-          ),
-        );
-        reason = "turn_failed";
-      } else if (isInstanceOf(error, GenerationTruncatedError)) {
-        // A truncated generation is retryable, but NOT with the same budget: the
-        // same output cap truncates the same reasoning-heavy turn again (#368).
-        // The advice names the budget change; never a blind retry, never a
-        // credential, never the request.
-        params.error.write(
-          renderFailure(
-            {
-              code: "generation_truncated",
-              message:
-                `the generation ended with no answer and no tool call` +
-                (error.stopReason !== undefined ? ` (stopReason ${error.stopReason})` : "") +
-                (error.outputTokens !== undefined
-                  ? ` after ${error.outputTokens} output tokens` +
-                    (error.reasoningTokens !== undefined
-                      ? ` (${error.reasoningTokens} on reasoning)`
-                      : "")
-                  : ""),
-              action: "raise the output budget or bound thinking, then retry",
-              retryable: true,
-            },
-            mode,
-          ),
-        );
-        reason = "turn_failed";
-      } else if (isInstanceOf(error, ProviderRejectionError)) {
-        // Never offer the authentication command here: the provider answered.
-        params.error.write(
-          renderFailure(
-            {
-              code: "provider_rejected",
-              message: `provider rejected the request with HTTP ${error.status}`,
-              action: "inspect the request this role sends (model id, tool schemas, parameters)",
-              retryable: false,
-            },
-            mode,
-          ),
-        );
-        reason = "turn_failed";
-      } else if (isInstanceOf(error, EmptyTurnError)) {
-        const recovery =
-          params.authenticationCommand === undefined
-            ? "verify authentication and retry"
-            : `run: ${params.authenticationCommand}`;
-        params.error.write(
-          renderFailure(
-            {
-              code: "empty_turn",
-              message: "provider returned a failed empty turn",
-              action: recovery,
-              retryable: true,
-            },
-            mode,
-          ),
-        );
-        reason = "turn_failed";
-      } else {
-        // The fallback names the error's CLASS and nothing else. A turn that
-        // dies before any provider call leaves no ledger row, so the class is
-        // the only evidence a reader gets -- but an error's message can carry
-        // the request it rejected, and an untyped harness error is the case
-        // most likely to quote one. Same attribution discipline as the
-        // compactor: the class survives, the message does not.
-        const cause = describeErrorClass(error);
-        params.error.write(
-          renderFailure(
-            {
-              code: "turn_failed",
-              message: `console turn failed (${cause})`,
-              action: "retry the prompt; if it keeps failing, restart the console",
-              retryable: true,
-            },
-            mode,
-          ),
-        );
-        reason = "turn_failed";
+      // The typed branches below READ fields off the caught value (`status`,
+      // `failure`, `attempts`, `provider`, `block`, `retryAfterMs`), and
+      // `instanceof` passing does not make those reads safe: a Proxy around a
+      // typed error answers the tag check and then throws on the first field
+      // read. Without this guard that throw left the turn's own catch and was
+      // reported as `input_failed` -- advice to restart a console whose input
+      // stream was fine, on a turn whose real failure was already known.
+      try {
+        if (params.interrupted?.()) {
+          params.error.write(
+            renderFailure(
+              {
+                code: "interrupted",
+                message: "console turn interrupted",
+                action: "restart the console to resume the session",
+                retryable: true,
+              },
+              mode,
+            ),
+          );
+          reason = "interrupted";
+        } else if (isInstanceOf(error, ConsoleControlError)) {
+          // The guidance is derived from the command registry, so it always names
+          // the failed command and one next action (docs/contracts/errors.md).
+          params.error.write(renderFailure(error.failure, mode));
+          if (mode === "formatted") params.output.write("ad-coder> ");
+          return;
+        } else if (isInstanceOf(error, TurnInterruptedError)) {
+          params.error.write(
+            renderFailure(
+              {
+                code: "interrupted",
+                message: "current turn interrupted",
+                action: "session remains available; enter the next prompt",
+                retryable: true,
+              },
+              mode,
+            ),
+          );
+          if (mode === "formatted") params.output.write("ad-coder> ");
+          return;
+        } else if (isInstanceOf(error, SessionLimitError)) {
+          params.error.write(
+            renderFailure(
+              {
+                code: "session_limit",
+                message: "session resource limit reached",
+                action: "restart the console to start a session with a fresh budget",
+                // The same session cannot grant more budget to a retry.
+                retryable: false,
+              },
+              mode,
+            ),
+          );
+          reason = "session_limit";
+        } else if (isInstanceOf(error, ContextCompactionLostError)) {
+          // The session's context can no longer be compacted, so every later turn
+          // would fail the same way. That makes this a STOP, and the stop has to
+          // name a way out that actually exists: `--resume` reopens this very
+          // session from its durable store, and `--summarizer-model` picks a
+          // summarizer other than the one that failed. "Retry the prompt" -- what
+          // the generic branch used to say -- can never work here, and the session
+          // stayed alive and deaf behind it (issue #391).
+          params.error.write(
+            renderFailure(
+              {
+                code: "context_compaction_lost",
+                message:
+                  `context compaction failed ${error.attempts} times; last: ` +
+                  `${describeCompactionFailure(error.lastFailure)}` +
+                  (error.lastFailure !== undefined
+                    ? ` (measured ${error.lastFailure.measuredTokens} tokens against threshold ` +
+                      `${error.lastFailure.thresholdTokens}, effective ceiling ${error.effectiveCeiling})`
+                    : ` (effective ceiling ${error.effectiveCeiling})`),
+                action:
+                  "restart the console with --resume to reopen this session, adding " +
+                  "--summarizer-model <id> when the summarizer itself is what failed",
+                // The same process cannot summarize this context again, and the
+                // session's own compaction is what ran out.
+                retryable: false,
+              },
+              mode,
+            ),
+          );
+          reason = "context_compaction_lost";
+        } else if (isInstanceOf(error, CostAnomalyBlockedError)) {
+          // The operator decides, in this session: the block names both amounts,
+          // the overcharge, and the `/cost release` that accepts the new price,
+          // and input stays open so they can type it. Collapsing this into the
+          // generic turn failure left the console advising a retry that could
+          // only fail again (`docs/contracts/errors.md`).
+          const scope = `${error.provider}/${error.model}`;
+          params.error.write(
+            renderFailure(
+              {
+                code: error.code,
+                message:
+                  `${scope} billed ${formatCostUsd(error.block.chargedUsd)} against ` +
+                  `${formatCostUsd(error.block.expectedUsd)} declared ` +
+                  `(${formatCostRatio(error.block.ratio)}, confirmed by ` +
+                  `${error.block.confirmingObservations} responses); this model is blocked`,
+                action: `accept the new price with: /cost release ${scope} — or route this role to another model`,
+                // Retrying the same prompt on a blocked model cannot succeed;
+                // the operator has to decide first.
+                retryable: false,
+              },
+              mode,
+            ),
+          );
+          // The session is intact and the block is liftable from this prompt, so
+          // the console keeps reading input rather than tearing down.
+          if (mode === "formatted") params.output.write("ad-coder> ");
+          return;
+        } else if (isInstanceOf(error, ProviderQuotaError)) {
+          // Quota/rate-limit is retryable but NOT now, and never: the credential
+          // is valid, the request shape is fine, only the account is out of
+          // quota (#356). The advice names the reset window and points at the
+          // plan, never at authentication or the request.
+          const reset =
+            error.retryAfterMs === undefined
+              ? "wait for the provider's reset window"
+              : `wait for the reset window (~${Math.ceil(error.retryAfterMs / 1_000)}s)`;
+          params.error.write(
+            renderFailure(
+              {
+                code: "provider_quota",
+                message:
+                  `provider refused the request with HTTP 429 (quota/rate limit exhausted)` +
+                  (error.providerCode !== undefined
+                    ? ` (provider code ${error.providerCode})`
+                    : ""),
+                action: `${reset}, or check the plan and usage, then retry`,
+                retryable: true,
+              },
+              mode,
+            ),
+          );
+          reason = "turn_failed";
+        } else if (isInstanceOf(error, GenerationTruncatedError)) {
+          // A truncated generation is retryable, but NOT with the same budget: the
+          // same output cap truncates the same reasoning-heavy turn again (#368).
+          // The advice names the budget change; never a blind retry, never a
+          // credential, never the request.
+          params.error.write(
+            renderFailure(
+              {
+                code: "generation_truncated",
+                message:
+                  `the generation ended with no answer and no tool call` +
+                  (error.stopReason !== undefined ? ` (stopReason ${error.stopReason})` : "") +
+                  (error.outputTokens !== undefined
+                    ? ` after ${error.outputTokens} output tokens` +
+                      (error.reasoningTokens !== undefined
+                        ? ` (${error.reasoningTokens} on reasoning)`
+                        : "")
+                    : ""),
+                action: "raise the output budget or bound thinking, then retry",
+                retryable: true,
+              },
+              mode,
+            ),
+          );
+          reason = "turn_failed";
+        } else if (isInstanceOf(error, ProviderRejectionError)) {
+          // Never offer the authentication command here: the provider answered.
+          params.error.write(
+            renderFailure(
+              {
+                code: "provider_rejected",
+                message: `provider rejected the request with HTTP ${error.status}`,
+                action: "inspect the request this role sends (model id, tool schemas, parameters)",
+                retryable: false,
+              },
+              mode,
+            ),
+          );
+          reason = "turn_failed";
+        } else if (isInstanceOf(error, EmptyTurnError)) {
+          const recovery =
+            params.authenticationCommand === undefined
+              ? "verify authentication and retry"
+              : `run: ${params.authenticationCommand}`;
+          params.error.write(
+            renderFailure(
+              {
+                code: "empty_turn",
+                message: "provider returned a failed empty turn",
+                action: recovery,
+                retryable: true,
+              },
+              mode,
+            ),
+          );
+          reason = "turn_failed";
+        } else {
+          writeUntypedTurnFailure(error);
+        }
+      } catch {
+        // A typed branch was defeated by its own input. Every branch computes
+        // its whole line BEFORE writing it, so nothing has been rendered yet
+        // and this replacement is the turn's single failure record -- the real
+        // failure, named as far as the value allows, rather than the
+        // classifier's own.
+        writeUntypedTurnFailure(error);
       }
       stopped = true;
     }

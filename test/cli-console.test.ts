@@ -767,6 +767,63 @@ test("an untyped turn failure names a bounded class token and nothing else", asy
       ),
       expected: "console turn failed (unclassified)",
     },
+    // `instanceof` passing does not make the REST of the chain safe. A typed
+    // error's branch reads fields off the value (`status`, `failure`,
+    // `attempts`, `provider`, `block`, `retryAfterMs`), and a Proxy passes the
+    // tag check -- it walks the prototype chain -- while trapping those reads.
+    // Measured before this guard: the throw left the turn's own catch and was
+    // rendered as `input_failed`, whose advice is to restart a console whose
+    // input stream is fine, on a turn whose failure was already known.
+    {
+      thrown: new Proxy(new ProviderRejectionError("run", 400), {
+        get() {
+          throw new Error("trap");
+        },
+      }),
+      expected: "console turn failed (ProviderRejectionError)",
+    },
+    {
+      thrown: new Proxy(
+        new ConsoleControlError({
+          code: "unknown_command",
+          message: "boom",
+          action: "x",
+          retryable: false,
+        }),
+        {
+          get() {
+            throw new Error("trap");
+          },
+        },
+      ),
+      expected: "console turn failed (ConsoleControlError)",
+    },
+    {
+      // Refuses BOTH reads, so nothing about the value is answerable and the
+      // fixed label is the honest answer.
+      thrown: new Proxy(new ProviderQuotaError("run", "insufficient_quota", 120_000), {
+        get() {
+          throw new Error("trap");
+        },
+        getPrototypeOf() {
+          throw new Error("trap");
+        },
+      }),
+      expected: "console turn failed (unclassified)",
+    },
+    {
+      // A branch can ALSO be defeated midway: the first read answers and a later
+      // one refuses. Every branch builds its whole line before writing it, so
+      // the defeated branch has rendered nothing and this replacement is the
+      // turn's single record -- never a second one.
+      thrown: new Proxy(new GenerationTruncatedError("run", "length", 16384, 16347), {
+        get(target, key, receiver) {
+          if (key === "outputTokens") throw new Error("trap");
+          return Reflect.get(target, key, receiver);
+        },
+      }),
+      expected: "console turn failed (GenerationTruncatedError)",
+    },
     { thrown: null, expected: "console turn failed (non-error null)" },
     { thrown: undefined, expected: "console turn failed (non-error undefined)" },
     { thrown: "boom", expected: "console turn failed (non-error string)" },

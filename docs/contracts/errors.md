@@ -193,7 +193,18 @@ for machines?
   stream is fine), so no classification step is allowed to propagate one: the
   typed checks ask through a total `instanceof` that treats a refusal as "not
   this type", and the classifier reports any refusal of its own reads as the
-  fixed label `unclassified`. The result is total and deterministic: every input
+  fixed label `unclassified`. The TYPED branches are inside that rule, not
+  beside it: each of them READS fields off the value (`status`, `failure`,
+  `attempts`, `provider`, `block`, `retryAfterMs`), and passing the type check
+  does not make those reads safe -- the check walks the prototype chain, so a
+  Proxy answers it and traps the reads (measured: a Proxy around
+  `ProviderRejectionError` whose `get` trap throws escaped the turn's own catch
+  and rendered the fault as `input_failed`, advice to restart a console whose
+  input stream was fine). The whole chain is therefore guarded, and the guard is
+  sound only because every branch COMPUTES its entire line before writing it: a
+  defeated branch has rendered nothing, so the untyped line replaces it and
+  remains the turn's single failure record -- never a second one. The result is
+  total and deterministic: every input
   -- including a hostile one -- yields one token from the closed set {bounded
   identifier, `Error`, `non-error <typeof>`, `unclassified`}, the same failure
   always renders the same line, and no message, stack, or provider payload can
