@@ -1,7 +1,5 @@
-# LDO local state
+# Local run state
 tags
-.claude/ldo-runs.json
-.claude/ldo-args/
 
 # Dependencies and local run state
 node_modules
