@@ -13,6 +13,43 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.92.0] - 2026-09-19
+
+### Removed
+- **The vendored LDO runtime leaves `.claude/` (41 files), finishing the
+  retirement 0.67.3 started.** That release removed the LDO orchestration block
+  from `AGENTS.md`; the runtime the block pointed at stayed in the tree. What
+  goes now is what LDO v2.52.0 vendored on 2026-09-12, as its own
+  `.claude/LDO_VENDORED.md` manifest recorded: seven agent prompts under
+  `.claude/agents/` and six schemas under `.claude/schemas/`, six core modules
+  under `.claude/core/`, two scripts under `.claude/scripts/` including the
+  `ldo-run.mjs` launcher, eighteen skills under `.claude/skills/`, the
+  `workflows/ldo.js` flow, and the manifest itself -- 41 files in all.
+
+  The instruction that makes this correct was already in the tree and unchanged
+  by this release: `AGENTS.md` reads "For this program, do not use LDO. Develop
+  directly or through ad-coder's native roles", and `CLAUDE.md` states that
+  legacy Claude/LDO runtime files are not canonical project memory. Nothing
+  tracked outside the removed set references it — `git grep` for those paths
+  finds only `.gitignore`, whose two entries that existed solely for the
+  runtime's local state (`.claude/ldo-runs.json`, `.claude/ldo-args/`) are
+  removed with it, and `scripts/artifact-smoke.ts`, where `.claude` is declared a
+  tracked-but-unpacked root: the adapters still under `.claude/adapters/` keep
+  that root populated, so the packaging gate keeps passing unchanged. The
+  `ldoRun` helper in `test/project-operations.test.ts` is a fixture that builds
+  the run-record JSON the product reads; it touches no path under `.claude/` and
+  is untouched. So are `src/skills/` and `src/workflows/`, which are ad-coder's
+  own modules and share only a word with the vendored names.
+
+  `.claude/adapters/` — the three execution adapters for the Claude Code CLI and
+  the Codex CLI — is deliberately left in place. It is the one part of the
+  vendored tree outside the removal this release covers, nothing in the removed
+  set or in `src/` calls into it, and whether a future feature wants an
+  alternate-CLI adapter is a separate decision this change does not make.
+
+  Nothing is lost to history: every removed file remains reachable at the
+  repository's own commits.
+
 ## [0.91.0] - 2026-09-19
 
 ### Changed
