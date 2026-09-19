@@ -165,3 +165,23 @@ for machines?
   branch and exits with reason `context_compaction_lost`, `retryable: false` in
   JSON mode. Provider/model names and numbers only: prompt text, summary text,
   and provider message prose never cross this boundary.
+- 2026-09-19 (issue #412): An untyped failure renders a BOUNDED class token, or a
+  fixed non-error label, and nothing else. The console's last-resort branch names
+  the failing error's class because a turn that dies before any provider call
+  leaves no ledger row and the class is the only evidence a reader gets -- but
+  the message stays withheld (an untyped harness error is the case most likely to
+  quote the request it rejected), and the fields that carry a class are ORDINARY
+  properties that any thrown object can set to anything: an anonymous subclass
+  has an empty `constructor.name` (rendering as an empty pair of parentheses), a
+  thrown non-Error has no class at all, and a crafted error can point either
+  field at text that would forge a second record or a message into a projection
+  that is meant to be one bounded line. So the classifier (1) reads the class
+  name from the PROTOTYPE, which an own `constructor` property cannot spoof, (2)
+  accepts it only when it is a plain identifier of bounded length, (3) falls back
+  to the inherited `Error.prototype.name` for the anonymous case, which is
+  truthfully an Error, and (4) labels a thrown non-Error by its `typeof`, naming
+  `null` explicitly because `typeof null` is "object". The rule is deterministic
+  and total: every input yields one token from a closed set, the same failure
+  always renders the same line, and no message, stack, or provider payload can
+  reach the reader through the class field. Class names and `typeof` labels only
+  -- never a message, never an anonymous blank.

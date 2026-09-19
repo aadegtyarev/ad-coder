@@ -115,6 +115,37 @@ const CLOSE_FAILED_FAILURE = {
 } as const;
 
 /**
+ * A class name usable inside a single-line record: a plain identifier, bounded.
+ * Anything else (empty, non-string, whitespace, punctuation, control characters,
+ * a message smuggled into a name) is not a class name and never renders.
+ */
+const ERROR_CLASS_TOKEN = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
+
+/**
+ * The failing error's class name as ONE bounded token, for the untyped-failure
+ * fallback -- or a fixed label when there is no class to name.
+ *
+ * No part of an error object is trusted here, because the name is the only
+ * attribution an untyped failure can offer and it must not become a channel for
+ * the message the projection deliberately withholds: `constructor` and `name`
+ * are ORDINARY properties, so a crafted error can set either to arbitrary text.
+ * So the name is read from the PROTOTYPE (an own `constructor` cannot spoof it),
+ * accepted only when it matches `ERROR_CLASS_TOKEN`, and the inherited
+ * `Error.prototype.name` is the fallback for an anonymous subclass -- which has
+ * an empty `constructor.name` and is still, truthfully, an Error. A thrown value
+ * that is not an Error at all is labelled by `typeof`, with `null` named
+ * explicitly because `typeof null` is "object". Total by construction: every
+ * input yields one token from a closed set (docs/contracts/errors.md).
+ */
+function describeErrorClass(error: unknown): string {
+  if (!(error instanceof Error)) return `non-error ${error === null ? "null" : typeof error}`;
+  const prototypeName: unknown = Object.getPrototypeOf(error)?.constructor?.name;
+  if (typeof prototypeName === "string" && ERROR_CLASS_TOKEN.test(prototypeName))
+    return prototypeName;
+  return ERROR_CLASS_TOKEN.test(error.name) ? error.name : "Error";
+}
+
+/**
  * Every console failure — control and turn alike — reaches stderr through this
  * one projection: a stable `code`, safe text naming the failed operation,
  * whether a retry can succeed, and the next action (docs/contracts/errors.md).
@@ -916,7 +947,7 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
         // the request it rejected, and an untyped harness error is the case
         // most likely to quote one. Same attribution discipline as the
         // compactor: the class survives, the message does not.
-        const cause = error instanceof Error ? error.constructor.name : typeof error;
+        const cause = describeErrorClass(error);
         params.error.write(
           renderFailure(
             {

@@ -29,9 +29,16 @@ enforces that dated release headings go in non-increasing date order
   same recovery the single-turn runner already performs for a resumed stage via
   `resumeActiveOperation`) and only then dispatches the new input; a settlement
   that leaves the lane occupied by a deferred run raises the existing typed
-  `SuspendedRunError` instead of hiding it. A turn that dies before the
-  provider is reached now names the failing error's CLASS in the fallback
-  message, so the next occurrence is diagnosable from the console alone.
+  `SuspendedRunError` instead of hiding it. The recovered turn's own answer
+  stays in the durable history and the ledger and is never returned as the reply
+  to the input that followed it; the settlement's cost is attributed to the turn
+  that performed it. A turn that dies before the provider is reached now names
+  the failing error's CLASS in the fallback message, so the next occurrence is
+  diagnosable from the console alone: the classifier is total (an anonymous
+  subclass renders `(Error)`, a non-Error throw renders `(non-error <typeof>)`)
+  and cannot be spoofed, because the name is read from the prototype rather than
+  an own `constructor` property and accepted only as a bounded identifier --
+  a message can never ride out through the field that replaces it.
 
 ## [0.93.0] - 2026-09-19
 

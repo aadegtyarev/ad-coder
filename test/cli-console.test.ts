@@ -691,6 +691,77 @@ test("turn and close failures use fixed messages and close once", async () => {
   expect(error.text()).not.toContain(secret);
 });
 
+test("an untyped turn failure names a bounded class token and nothing else", async () => {
+  // The untyped fallback is the case where the class name is the ONLY evidence
+  // a reader gets, so it must be total (an anonymous subclass, a non-Error
+  // throw), deterministic, and impossible to forge: `constructor` and `name`
+  // are ordinary properties, and a crafted error must not be able to smuggle
+  // its message -- or a second record -- through the field that replaces it.
+  class CredentialShapedError extends Error {}
+  const cases: { thrown: unknown; expected: string }[] = [
+    { thrown: new Error("credential=super-secret"), expected: "console turn failed (Error)" },
+    { thrown: new TypeError("boom"), expected: "console turn failed (TypeError)" },
+    {
+      thrown: new CredentialShapedError("credential=super-secret"),
+      expected: "console turn failed (CredentialShapedError)",
+    },
+    // An anonymous subclass has an empty `constructor.name`; it is still an Error.
+    { thrown: new (class extends Error {})(), expected: "console turn failed (Error)" },
+    // An OWN `constructor` property cannot spoof the class: the name is read
+    // from the prototype, which is the class the value really is.
+    {
+      thrown: Object.assign(new Error("boom"), { constructor: { name: "Mislead" } }),
+      expected: "console turn failed (Error)",
+    },
+    // A forged `name` carrying a newline and a fake record never renders.
+    {
+      thrown: Object.assign(new Error("boom"), { name: 'Evil\n{"code":"ok"}' }),
+      expected: "console turn failed (Error)",
+    },
+    { thrown: null, expected: "console turn failed (non-error null)" },
+    { thrown: undefined, expected: "console turn failed (non-error undefined)" },
+    { thrown: "boom", expected: "console turn failed (non-error string)" },
+    {
+      thrown: { message: "credential=super-secret" },
+      expected: "console turn failed (non-error object)",
+    },
+  ];
+
+  for (const { thrown, expected } of cases) {
+    const session: ConversationSession = {
+      runId: "session",
+      ledgerPath: undefined,
+      async step() {
+        throw thrown;
+      },
+      async close() {},
+    };
+    const error = new Capture();
+    const result = await runConsole({
+      session,
+      input: ttyFrom("hello\n"),
+      output: new Capture(),
+      error,
+      mode: "json",
+    });
+    expect(result).toEqual({ reason: "turn_failed", completedTurns: 0 });
+    const records = error
+      .text()
+      .split("\n")
+      .filter((line) => line.trim() !== "")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(records.map((record) => record.type)).toEqual(["progress", "console_error"]);
+    expect(records[1]).toEqual({
+      type: "console_error",
+      code: "turn_failed",
+      message: expected,
+      action: "retry the prompt; if it keeps failing, restart the console",
+      retryable: true,
+    });
+    expect(error.text()).not.toContain("super-secret");
+  }
+});
+
 test("typed session exhaustion stops input with no fabricated JSON record", async () => {
   const session = fakeSession({ stepError: new SessionLimitError("turns", 1, 1) });
   const output = new Capture();
