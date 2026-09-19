@@ -139,7 +139,8 @@ test("stamp body-check on a blockless body: reason and action on both fronts", (
     fs.writeFileSync(ledger, "");
     const human = stampBodyCheck(dir, body, ledger);
     expect(human.code).toBe(2);
-    expect(human.stderr).toContain("the generated delivery block is absent");
+    expect(human.stderr).toContain("the generated delivery form is absent");
+    expect(human.stderr).toContain("runs=");
     expect(human.stderr).toContain("ad-coder stamp delivery");
     expect(human.stderr).not.toContain("usage: ad-coder");
     const machine = stampBodyCheck(dir, body, ledger, ["--json"]);

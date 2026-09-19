@@ -75,12 +75,14 @@ Rules for the project's own code quality. A violation is always blocking.
   `bun run check:release`, and is the version reported by `ad-coder about`. A
   version already merged as an install target is never silently reused.
 - 2026-09-17: **The delivery signature is a ledger projection (issue #240,
-  closed with #239).** `ad-coder stamp delivery` renders the PR block straight
-  from `.ad-coder/ledger/*.jsonl` -- run ids, total calls, provider-reported
-  cost, fresh/cached/output tokens, then one compact row per declared role
-  (orchestrator/planner/researcher/security/coder/reviewer) with its dominant
-  model, calls, and cost; a role with no rows says "did not run" instead of
-  vanishing. A model summarising its own cost can be wrong about it, so the
+  closed with #239).** `ad-coder stamp delivery` renders the PR form straight
+  from `.ad-coder/ledger/*.jsonl` -- a prose lead-in plus one fenced block
+  whose first line names the run COUNT, `runs=<n>`, then total calls,
+  provider-reported cost, fresh/cached/output tokens, then one compact row per
+  declared role (orchestrator/planner/researcher/security/coder/reviewer) with
+  its dominant model, calls, and cost; a role with no rows says "did not run"
+  instead of vanishing (the `runs=` first line is the published shape since
+  issue #435). A model summarising its own cost can be wrong about it, so the
   numbers are never retyped by hand; re-run the command to refresh the block.
 - 2026-09-18: **Every lane that spent money has a row, so the rows sum to the
   header (issue #336).** The orchestrator lane drives the whole run and was
