@@ -437,9 +437,49 @@ test("separate worker process refreshes owner subscription with bounded recovery
     stdout: "ignore",
     stderr: "pipe",
   });
-  // Let the separate worker outrun this owner once, proving a retained backlog
-  // becomes one dropped/pending watcher hint rather than an unbounded callback loop.
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
+  // Wait on the observable lag state rather than a fixed clock such as the old
+  // 500 ms Atomics.pause: a slow worker leaves the record's first post-subscribe
+  // watch refresh showing a pre-retention prefix — with the owner subscribed
+  // while the record already holds the `requested` event, `owner.subscribe()`
+  // seeds the subscriber cursor at entry.nextSequence - 1 = 1, and a gap page
+  // requires the oldest retained sequence (nextSequence - maxEventsPerRun) to
+  // exceed cursor + 1, which with maxEventsPerRun=3 first holds at
+  // nextSequence >= 6 — so the pause must not end before that threshold or the
+  // asserted page comes back contiguous (gap=false, droppedEvents=0) and the
+  // test reddens on correct behaviour (issue #429, CI 35460853873). Here the
+  // record has written more events than the retention cap retains (limit 3), so
+  // every retained event's sequence exceeds the cursor by more than one → the
+  // first watcher refresh is a gap page (droppedEvents>0, gap, pending) by
+  // construction. The pause runs as scan/chunk/scan: each chunk blocks the
+  // thread so no fs.watch callback of the owner can interleave a contiguous
+  // page mid-write, while the recorded lag — not the clock — decides when the
+  // pause ends, however fast or slow the worker is.
+  const recordPath = path.join(
+    targetDir,
+    ".ad-coder",
+    "runs",
+    "background",
+    `${requested.runId}.json`,
+  );
+  // record may be mid-atomic-write; unobservable lag is retried, never a fail.
+  const splicedLag = (): number => {
+    try {
+      const stored = JSON.parse(fs.readFileSync(recordPath, "utf8"));
+      const nextSequence = (stored.value ?? stored).nextSequence;
+      return typeof nextSequence === "number" ? nextSequence : 0;
+    } catch {
+      return 0;
+    }
+  };
+  const holdDeadline = Date.now() + 2_000;
+  // Cursor math: the subscribe-seeded cursor is entry.nextSequence - 1 = 1;
+  // a gap page needs the oldest retained sequence to exceed cursor + 1, i.e.
+  // nextSequence - maxEventsPerRun > cursor + 1 = 2, first true at
+  // nextSequence >= maxEventsPerRun + 3 — hence the hold threshold + 2.
+  while (splicedLag() <= limits.maxEventsPerRun + 2) {
+    if (Date.now() >= holdDeadline) throw new Error("timed out waiting for background state");
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 15);
+  }
   expect(await worker.exited).toBe(0);
   await waitUntil(() => notices.length > 0, 2_000);
 
