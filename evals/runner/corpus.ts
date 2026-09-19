@@ -32,7 +32,18 @@ type Task = CalibrationTask & {
   purpose?: "calibration" | "smoke";
   fixture?: string;
   scorer?: string;
-  scorerInput?: "target" | "artifact" | "report";
+  /**
+   * What the scorer reads, and therefore what proves the score.
+   *
+   * `target` reads the materialized target tree, `artifact` and `report` read
+   * what the model PRODUCED. `activity` reads what the run DID: the console's
+   * stderr event stream, captured verbatim and handed to the scorer as
+   * `<target>/activity.jsonl` -- the recorded tool activity the skill-trigger
+   * verification attributes loads with (docs/contracts/skill-authoring.md,
+   * Verification). The task's own `prompts` and `skillTrigger` block carry the
+   * expectations, so the scorer needs the task file beside the capture.
+   */
+  scorerInput?: "target" | "artifact" | "report" | "activity";
   /**
    * Required on every task, including the ones that invented their own problem.
    *
@@ -143,7 +154,7 @@ function loadTasks(): { file: string; task: Task }[] {
       throw new Error(`missing fixture: ${task.id}`);
     if (
       task.scorerInput !== undefined &&
-      !["target", "artifact", "report"].includes(task.scorerInput)
+      !["target", "artifact", "report", "activity"].includes(task.scorerInput)
     )
       throw new Error(`invalid scorer input: ${task.id}`);
     if (task.scorer && !fs.statSync(path.join(root, "scorers", task.scorer)).isFile())
@@ -225,10 +236,22 @@ function isReadableJson(answer: string): boolean {
   }
 }
 
-function runScorer(scorer: string, argument: string): { id: string; passed: boolean }[] {
-  const result = spawnSync("bun", [path.join(root, "scorers", scorer), argument], {
-    encoding: "utf8",
-  });
+function runScorer(
+  scorer: string,
+  argument: string,
+  taskArgument?: string,
+): { id: string; passed: boolean }[] {
+  const result = spawnSync(
+    "bun",
+    [
+      path.join(root, "scorers", scorer),
+      argument,
+      ...(taskArgument === undefined ? [] : [taskArgument]),
+    ],
+    {
+      encoding: "utf8",
+    },
+  );
   if (result.status !== 0) throw new Error(result.stderr || `scorer failed: ${scorer}`);
   return JSON.parse(result.stdout) as { id: string; passed: boolean }[];
 }
@@ -480,7 +503,15 @@ function runTask(
     const strayPaths =
       before === undefined ? undefined : outOfScope(before, snapshot(target), task.writes ?? []);
     if (scorerInput === "target") checks = runScorer(task.scorer, target);
-    else {
+    else if (scorerInput === "activity") {
+      // The scorer reads the run's RECORDED TOOL ACTIVITY, not the answer: the
+      // console's stderr stream is captured verbatim -- tool-activity records
+      // among the progress markers and prose -- and the task file goes along,
+      // because the expectations live in the task, not in the capture.
+      const file = path.join(target, "activity.jsonl");
+      fs.writeFileSync(file, execution.stderr);
+      checks = runScorer(task.scorer, file, taskFile);
+    } else {
       const file = path.join(target, scorerInput === "artifact" ? "artifact.json" : "report.json");
       // A role that produced no readable JSON has FAILED THE TASK, and that is a
       // measurement. Letting the extractor throw here made it a harness error

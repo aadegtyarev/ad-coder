@@ -1,0 +1,31 @@
+{
+  "id": "skill-trigger-overload-response-v1",
+  "role": "orchestrator",
+  "complexity": "trivial",
+  "mode": "manual-workflow",
+  "purpose": "smoke",
+  "prompt": "The Coder stage is out of room -- the context compacted twice and the rewrite is still too big for one run. Split it: tell me how to carry this work across runs. Do not dispatch anything and do not start any workflow in this turn.",
+  "checks": [
+    { "id": "activity-captured", "weight": 2 },
+    { "id": "target-prompt-loads-skill", "weight": 3 },
+    { "id": "non-target-prompts-do-not-load-skill", "weight": 4 },
+    { "id": "load-skill-calls-attributable", "weight": 2 }
+  ],
+  "scorerInput": "activity",
+  "scorer": "skill-trigger.ts",
+  "prompts": [
+    "The Coder stage is out of room -- the context compacted twice and the rewrite is still too big for one run. Split it: tell me how to carry this work across runs. Do not dispatch anything and do not start any workflow in this turn.",
+    "This initiative is too broad -- slice it. What ships first? Name the first shippable slice only. Do not start any workflow in this turn.",
+    "Size this before you dispatch: how big is the importer rewrite, and what will it cost? Give the estimate only. Do not dispatch anything and do not start any workflow in this turn."
+  ],
+  "skillTrigger": {
+    "skill": "overload-response",
+    "targetPromptIndex": 0,
+    "nonTargetPromptIndexes": [1, 2]
+  },
+  "source": {
+    "url": "original",
+    "license": "n/a",
+    "note": "Trigger/no-trigger probes written against this project's own skill descriptions (issue #366): the target prompt names the shipped overload-response situations (a stage out of room, work too big for one run) in its own phrases, the non-target prompts carry task-slicing's and delivery-calibration's. Shape invented here."
+  }
+}

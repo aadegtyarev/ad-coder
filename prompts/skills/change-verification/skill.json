@@ -1,6 +1,6 @@
 {
   "id": "change-verification",
-  "version": "2",
-  "description": "Verifying a change: attack it — captured output over appearance, reproducible breaks, and a test proven to go red against the old code.",
+  "version": "3",
+  "description": "Change verification. Use when a finished change must be proven by attacking it, not read approvingly. Phrases: 'verify it', 'try to break it'.",
   "roles": ["orchestrator", "reviewer", "auditor", "coder", "planner"]
 }

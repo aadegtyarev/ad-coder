@@ -1,6 +1,6 @@
 {
   "id": "threat-modelling",
-  "version": "2",
-  "description": "A plan that touches an elevated surface and no security stage will run: find the threats before code exists, trace each lead to the door that authorizes it, and name a mitigation per real finding.",
+  "version": "3",
+  "description": "Threat modelling. Use when a plan touches an elevated surface and no security stage will run. Phrases: 'is this safe', 'what could go wrong'.",
   "roles": ["orchestrator", "security", "planner", "reviewer", "auditor"]
 }

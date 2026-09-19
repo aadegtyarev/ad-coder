@@ -1,0 +1,119 @@
+[
+  "ad-coder: ledger=/tmp/run/ledger.jsonl",
+  {
+    "type": "progress",
+    "event": "started",
+    "stage": "console-turn",
+    "elapsedSeconds": 0
+  },
+  {
+    "schemaVersion": 1,
+    "type": "tool_activity",
+    "sequence": 1,
+    "timestamp": "2026-09-19T10:00:00.000Z",
+    "lifecycle": "requested",
+    "activity": "Read",
+    "role": "orchestrator",
+    "runId": "run-7qk",
+    "operationId": "op-3f",
+    "turnId": "turn-a1",
+    "toolCallId": "call-5",
+    "parentOperation": "console",
+    "toolName": "load_skill",
+    "droppedCount": 0,
+    "projection": {
+      "skillId": "delivery-calibration"
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "type": "tool_activity",
+    "sequence": 2,
+    "timestamp": "2026-09-19T10:00:00.000Z",
+    "lifecycle": "completed",
+    "activity": "Read",
+    "role": "orchestrator",
+    "runId": "run-7qk",
+    "operationId": "op-3f",
+    "turnId": "turn-a1",
+    "toolCallId": "call-5",
+    "parentOperation": "console",
+    "toolName": "load_skill",
+    "droppedCount": 0,
+    "durationMs": 40,
+    "projection": {
+      "skillId": "delivery-calibration"
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "type": "tool_activity",
+    "sequence": 3,
+    "timestamp": "2026-09-19T10:00:01.000Z",
+    "lifecycle": "requested",
+    "activity": "Read",
+    "role": "orchestrator",
+    "runId": "run-7qk",
+    "operationId": "op-3f",
+    "turnId": "turn-a1",
+    "toolCallId": "call-6",
+    "parentOperation": "console",
+    "toolName": "load_skill",
+    "droppedCount": 0,
+    "projection": {
+      "skillId": "overload-response"
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "type": "tool_activity",
+    "sequence": 4,
+    "timestamp": "2026-09-19T10:00:01.000Z",
+    "lifecycle": "completed",
+    "activity": "Read",
+    "role": "orchestrator",
+    "runId": "run-7qk",
+    "operationId": "op-3f",
+    "turnId": "turn-a1",
+    "toolCallId": "call-6",
+    "parentOperation": "console",
+    "toolName": "load_skill",
+    "droppedCount": 0,
+    "durationMs": 40,
+    "projection": {
+      "skillId": "overload-response"
+    }
+  },
+  {
+    "type": "progress",
+    "event": "started",
+    "stage": "console-turn",
+    "elapsedSeconds": 11
+  },
+  {
+    "schemaVersion": 1,
+    "type": "tool_activity",
+    "sequence": 6,
+    "timestamp": "2026-09-19T10:00:11.000Z",
+    "lifecycle": "completed",
+    "activity": "Web",
+    "role": "orchestrator",
+    "runId": "run-7qk",
+    "operationId": "op-3f",
+    "turnId": "turn-a1",
+    "toolCallId": "call-7",
+    "parentOperation": "console",
+    "toolName": "web_search",
+    "droppedCount": 0,
+    "durationMs": 88,
+    "projection": {
+      "query": "stage budget"
+    }
+  },
+  {
+    "type": "progress",
+    "event": "started",
+    "stage": "console-turn",
+    "elapsedSeconds": 20
+  }
+]

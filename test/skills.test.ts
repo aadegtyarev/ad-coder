@@ -81,9 +81,9 @@ test("every shipped description fits the catalogue budget", () => {
   // the trigger surface and its budget at 1,536 characters: the vendor skill
   // listing truncates a description at that length, so text past it is written
   // but never shown. The budget is the contract's number; the three-part
-  // trigger shape is reviewed, not asserted here, because shipped
-  // situation-first descriptions are grandfathered until their next wording
-  // change.
+  // trigger shape is asserted by its own marker test below (release 0.85.0
+  // carried every shipped description into that shape, ending the
+  // 0.64.0 grandfathering).
   const budget = 1536;
   const dir = path.join(REPO_ROOT, "prompts", "skills");
   const shipped = fs
@@ -98,15 +98,36 @@ test("every shipped description fits the catalogue budget", () => {
   }
 });
 
+test("every shipped description is written as a trigger, not a topic", () => {
+  // docs/contracts/skill-authoring.md (2026-09-18): the description decides
+  // whether the skill ever exists for a model, and is written in three parts --
+  // the capability named, an explicit "Use when..." stated from the side of
+  // the work, and example phrases in the operator's vocabulary. The parts a
+  // test can see are the markers, asserted here and never by prose equality:
+  // the wording is the author's, the shape is the contract's.
+  const dir = path.join(REPO_ROOT, "prompts", "skills");
+  const shipped = fs
+    .readdirSync(dir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory());
+  expect(shipped.length).toBeGreaterThan(10);
+  for (const skill of shipped) {
+    const manifest = JSON.parse(
+      fs.readFileSync(path.join(dir, skill.name, "skill.json"), "utf8"),
+    ) as { description: string };
+    expect(manifest.description).toContain("Use when");
+    expect(manifest.description).toContain("Phrases:");
+  }
+});
+
 test("loads shipped skills with a content digest", () => {
   const skill = resolveSkills(["task-slicing"])[0];
   expect(skill).toBeDefined();
   if (skill === undefined) throw new Error("missing built-in skill");
-  expect(skill).toMatchObject({ id: "task-slicing", version: "2", source: "builtin" });
+  expect(skill).toMatchObject({ id: "task-slicing", version: "3", source: "builtin" });
   const roleSelection = resolveSkills(["role-selection"])[0];
   expect(roleSelection).toBeDefined();
   if (roleSelection === undefined) throw new Error("missing built-in skill");
-  expect(roleSelection).toMatchObject({ id: "role-selection", version: "3", source: "builtin" });
+  expect(roleSelection).toMatchObject({ id: "role-selection", version: "4", source: "builtin" });
   // The static half of issue #232: what each worker role does, returns, and
   // when delegating to it is wrong -- never a restatement of the role names.
   expect(roleSelection.instructions).toContain("Roles only");

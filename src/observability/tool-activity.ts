@@ -55,6 +55,20 @@ export interface ToolActivityProjection {
    */
   readOffset?: number;
   readLimit?: number;
+  /**
+   * For `load_skill`: the skill id the call TARGETED, exactly as the
+   * available-skills list names it.
+   *
+   * An IDENTIFIER, in the same class as the `toolName` the record already
+   * carries -- never call arguments, never task text, never payload. The
+   * ledger rule "tool NAMES and COUNTS only -- never call arguments"
+   * (src/ledger/types.ts) is untouched by this field. A call whose target
+   * cannot be read projects the explicit marker `"unknown"` rather than
+   * omitting the field: an unattributable load must stay visible as one,
+   * because the skill-trigger verification scores it as a finding, not a pass
+   * (docs/contracts/tool-observability.md, 2026-09-19).
+   */
+  skillId?: string;
 }
 
 /** Numeric-only remaining stage capacity attached after a tool reaches a terminal state. */
@@ -378,6 +392,8 @@ function boundProjection(
   if (offset !== undefined && Number.isSafeInteger(offset)) out.readOffset = offset;
   const limit = projection.readLimit;
   if (limit !== undefined && Number.isSafeInteger(limit)) out.readLimit = limit;
+  const skillId = bound(projection.skillId);
+  if (skillId) out.skillId = skillId;
   return out;
 }
 
@@ -457,6 +473,18 @@ export function projectToolArguments(
     const removed = countLines(record.old_string ?? record.oldString);
     if (added !== undefined) projection.linesAdded = added;
     if (removed !== undefined) projection.linesRemoved = removed;
+  }
+  // A skill load projects its TARGET: which skill the role reached for. That is
+  // an identifier, the same class of value as `toolName` -- the task text around
+  // the call and the instructions the load returns are payload and stay out.
+  // A missing or unparseable target is recorded as the explicit marker
+  // "unknown", never silently omitted: a load that cannot be attributed to a
+  // skill must be visible as such (docs/contracts/tool-observability.md,
+  // 2026-09-19).
+  if (toolName === "load_skill") {
+    const id = record.id;
+    const skillId = typeof id === "string" ? boundToolActivityText(id.trim(), maxBytes) : "";
+    projection.skillId = skillId === "" ? "unknown" : skillId;
   }
   return Object.keys(projection).length === 0 ? undefined : projection;
 }

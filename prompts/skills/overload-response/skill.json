@@ -1,6 +1,6 @@
 {
   "id": "overload-response",
-  "version": "1",
-  "description": "When work does not fit, split it rather than making room: five signals ordered by detection cost, one bounded ceiling raise, and a decompose report distinct from changes_requested.",
+  "version": "2",
+  "description": "Overload response. Use when work does not fit one run — a stage out of room, a review failing on scope. Phrases: 'too big for one run', 'split it'.",
   "roles": ["orchestrator", "planner", "coder", "researcher", "reviewer", "auditor", "security"]
 }

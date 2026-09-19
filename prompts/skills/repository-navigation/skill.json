@@ -1,7 +1,7 @@
 {
   "id": "repository-navigation",
-  "version": "2",
-  "description": "Looking something up in the repository: one question per call — git for state, search for location, read for content.",
+  "version": "3",
+  "description": "Repository navigation. Use when the answer sits in the repository — where something is, what it says. Phrases: 'where is this', 'what changed here'.",
   "roles": [
     "orchestrator",
     "planner",

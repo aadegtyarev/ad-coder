@@ -1,7 +1,7 @@
 {
   "id": "acceptance-review",
-  "version": "2",
-  "description": "Accepting delivered work: judge it against the declared criteria and contracts, never against the author's report.",
+  "version": "3",
+  "description": "Acceptance review. Use when delivered work must be judged against its declared criteria, not the author's report. Phrases: 'review the delivery', 'is it done'.",
   "roles": [
     "orchestrator",
     "reviewer",

@@ -1,0 +1,121 @@
+[
+  "ad-coder: ledger=/tmp/run/ledger.jsonl",
+  {
+    "type": "progress",
+    "event": "started",
+    "stage": "console-turn",
+    "elapsedSeconds": 0
+  },
+  {
+    "schemaVersion": 1,
+    "type": "tool_activity",
+    "sequence": 1,
+    "timestamp": "2026-09-19T10:00:00.000Z",
+    "lifecycle": "requested",
+    "activity": "Read",
+    "role": "orchestrator",
+    "runId": "run-7qk",
+    "operationId": "op-3f",
+    "turnId": "turn-a1",
+    "toolCallId": "call-1",
+    "parentOperation": "console",
+    "toolName": "load_skill",
+    "droppedCount": 0,
+    "projection": {
+      "skillId": "delivery-calibration"
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "type": "tool_activity",
+    "sequence": 2,
+    "timestamp": "2026-09-19T10:00:00.000Z",
+    "lifecycle": "completed",
+    "activity": "Read",
+    "role": "orchestrator",
+    "runId": "run-7qk",
+    "operationId": "op-3f",
+    "turnId": "turn-a1",
+    "toolCallId": "call-1",
+    "parentOperation": "console",
+    "toolName": "load_skill",
+    "droppedCount": 0,
+    "durationMs": 40,
+    "projection": {
+      "skillId": "delivery-calibration"
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "type": "tool_activity",
+    "sequence": 4,
+    "timestamp": "2026-09-19T10:00:01.000Z",
+    "lifecycle": "completed",
+    "activity": "Read",
+    "role": "orchestrator",
+    "runId": "run-7qk",
+    "operationId": "op-3f",
+    "turnId": "turn-a1",
+    "toolCallId": "call-2",
+    "parentOperation": "console",
+    "toolName": "read",
+    "droppedCount": 0,
+    "durationMs": 12,
+    "projection": {
+      "path": "docs/contracts/skill-authoring.md",
+      "readOffset": 1,
+      "readLimit": 40
+    }
+  },
+  {
+    "type": "progress",
+    "event": "started",
+    "stage": "console-turn",
+    "elapsedSeconds": 9
+  },
+  {
+    "schemaVersion": 1,
+    "type": "tool_activity",
+    "sequence": 6,
+    "timestamp": "2026-09-19T10:00:09.000Z",
+    "lifecycle": "requested",
+    "activity": "Read",
+    "role": "orchestrator",
+    "runId": "run-7qk",
+    "operationId": "op-3f",
+    "turnId": "turn-a1",
+    "toolCallId": "call-3",
+    "parentOperation": "console",
+    "toolName": "load_skill",
+    "droppedCount": 0,
+    "projection": {
+      "skillId": "role-selection"
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "type": "tool_activity",
+    "sequence": 7,
+    "timestamp": "2026-09-19T10:00:09.000Z",
+    "lifecycle": "completed",
+    "activity": "Read",
+    "role": "orchestrator",
+    "runId": "run-7qk",
+    "operationId": "op-3f",
+    "turnId": "turn-a1",
+    "toolCallId": "call-3",
+    "parentOperation": "console",
+    "toolName": "load_skill",
+    "droppedCount": 0,
+    "durationMs": 40,
+    "projection": {
+      "skillId": "role-selection"
+    }
+  },
+  {
+    "type": "progress",
+    "event": "started",
+    "stage": "console-turn",
+    "elapsedSeconds": 17
+  }
+]

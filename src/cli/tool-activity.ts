@@ -41,13 +41,19 @@ function clockOf(at: number): string {
  * What the tool is acting on, in one short phrase.
  *
  * Preference order is what an operator scans for: the file first, then the
- * command, then the URL, then the query. An edit also carries its size, because
- * a three-line change that became three hundred is the thing worth catching
- * early.
+ * command, then the URL, then the query, then the skill a `load_skill` call
+ * targeted. An edit also carries its size, because a three-line change that
+ * became three hundred is the thing worth catching early.
  */
 function subjectOf(projection: ToolActivityProjection | undefined): string {
   if (projection === undefined) return "";
-  const subject = projection.path ?? projection.command ?? projection.url ?? projection.query ?? "";
+  const subject =
+    projection.path ??
+    projection.command ??
+    projection.url ??
+    projection.query ??
+    projection.skillId ??
+    "";
   if (subject === "") return "";
   const added = projection.linesAdded;
   const removed = projection.linesRemoved;

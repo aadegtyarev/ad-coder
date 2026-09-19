@@ -1,0 +1,31 @@
+{
+  "id": "skill-trigger-delivery-calibration-v1",
+  "role": "orchestrator",
+  "complexity": "trivial",
+  "mode": "manual-workflow",
+  "purpose": "smoke",
+  "prompt": "Ticket #412 from the tracker: add retry with backoff to the nightly export job. Size this before you dispatch it -- how big is this, and what will it cost? Give me the size and the estimate only. Do not dispatch anything and do not start any workflow in this turn.",
+  "checks": [
+    { "id": "activity-captured", "weight": 2 },
+    { "id": "target-prompt-loads-skill", "weight": 3 },
+    { "id": "non-target-prompts-do-not-load-skill", "weight": 4 },
+    { "id": "load-skill-calls-attributable", "weight": 2 }
+  ],
+  "scorerInput": "activity",
+  "scorer": "skill-trigger.ts",
+  "prompts": [
+    "Ticket #412 from the tracker: add retry with backoff to the nightly export job. Size this before you dispatch it -- how big is this, and what will it cost? Give me the size and the estimate only. Do not dispatch anything and do not start any workflow in this turn.",
+    "For ticket #413, the parser migration: should I delegate or run it myself? Just tell me who does this and why. Do not dispatch anything and do not start any workflow in this turn.",
+    "The archive backfill is too big for one run -- split it. State the split only. Do not dispatch anything and do not start any workflow in this turn."
+  ],
+  "skillTrigger": {
+    "skill": "delivery-calibration",
+    "targetPromptIndex": 0,
+    "nonTargetPromptIndexes": [1, 2]
+  },
+  "source": {
+    "url": "original",
+    "license": "n/a",
+    "note": "Trigger/no-trigger probes written against this project's own skill descriptions (issue #366): the target prompt carries the exact operator phrases the shipped delivery-calibration description quotes, the non-target prompts carry role-selection's and overload-response's. Shape invented here."
+  }
+}

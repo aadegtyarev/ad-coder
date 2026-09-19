@@ -1,7 +1,7 @@
 {
   "id": "architecture-recon",
-  "version": "2",
-  "description": "Reconnaissance before a change: bound the map to the question, name the surfaces and contracts it touches, and stop when it answers.",
+  "version": "3",
+  "description": "Architecture recon. Use when a change needs its affected surfaces and governing contracts named before editing. Phrases: 'map it first', 'what does this touch'.",
   "roles": [
     "orchestrator",
     "planner",
