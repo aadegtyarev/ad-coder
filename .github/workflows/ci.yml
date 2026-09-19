@@ -15,6 +15,11 @@ jobs:
       - run: bun run typecheck
       - run: bun run check
       - run: bun run check:release
+      # Version gate (issue #424): fetch the base ref it compares against.
+      # `|| true` keeps the fetch soft; the gate itself reds when origin/main
+      # truly cannot be resolved.
+      - run: git fetch origin main --depth=1 || true
+      - run: bun run check:version
       - run: bun run check:docs
       - run: bun test
       - run: bun run smoke:artifact
