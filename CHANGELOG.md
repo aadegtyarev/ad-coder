@@ -11,6 +11,23 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.108.0] - 2026-09-20
+
+### Fixed
+- **`ad-coder config show`'s human front printed the skills row as
+  `skills=[object Object] (built-in-default)` while `--json` was correct
+  (issue #416).** The human front stringified every resolved value, so the
+  one set-valued capability degraded into JavaScript's object placeholder.
+  Rows now render deliberately: the skills row states its resolved state and
+  count (`skills=8 skills enabled`; the explicit off prints
+  `skills=disabled`), and member ids follow the workflows row's comma-list
+  rule only while the whole row fits the 120-column line budget, so an
+  unbounded catalogue can never flood a terminal. The renderer only formats
+  what the resolver already decided -- the human row and the `--json` row
+  describe the same resolved set -- and `--json` output is unchanged. The
+  suite carries a leak-class tripwire over every resolved row, so a future
+  set-valued capability reds instead of printing a placeholder.
+
 ## [0.107.0] - 2026-09-20
 
 ### Fixed
