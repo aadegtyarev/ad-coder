@@ -3,6 +3,7 @@ import type { Api, CacheRetention, CredentialStore, Model } from "@earendil-work
 import { assertCredentialPathOutsideProject, FileCredentialStore } from "../auth/credential-store";
 import { loadModelsConfigSeam, loadSettingsConfigSeam } from "../config/seam";
 import { toRegistryAndProfile } from "../config/to-registry";
+import type { ProviderAdmissionSettings } from "../config/types";
 import { type ContextBudgetPercents, deriveContextBudget } from "../context/budget";
 import type { CompactionMode } from "../context/compactor";
 import { assertSummarizerWindow } from "../context/compactor";
@@ -42,6 +43,11 @@ import { buildReadProjectTool, READ_PROJECT_TOOL_NAME } from "../project-tools/r
 import { buildSearchProjectTool, SEARCH_PROJECT_TOOL_NAME } from "../project-tools/search";
 import { resolvePrompt } from "../prompts/prompts";
 import type { ResearchPurpose, RoleBriefSource } from "../prompts/role-briefs";
+import {
+  DEFAULT_PROVIDER_ADMISSION_CONFIG,
+  type ProviderAdmissionConfig,
+  ProviderAdmissionController,
+} from "../provider-admission";
 import { RegistryError } from "../registry/errors";
 import { deepseekPreset, openaiCodexPreset, openrouterPreset } from "../registry/presets";
 import { resolveRegistry } from "../registry/resolve";
@@ -351,6 +357,20 @@ export interface ResolvePipelineConfigOptions {
   toolActivity?: Partial<ToolActivityConfig>;
   /** Monotonic milliseconds seam for deterministic stage metrics. */
   monotonicNow?: () => number;
+  /**
+   * Operator/caller overrides for the shared provider-admission boundary
+   * (issue #365), e.g. `settings.yaml`'s `provider-admission` section. Absent
+   * means the module's finite defaults with admission ENABLED; a configured
+   * `maxConcurrentPerScope: 0` is the disable sentinel handled by the wiring
+   * gate below, never fed to the module's constructor.
+   */
+  providerAdmissionSettings?: ProviderAdmissionSettings;
+  /**
+   * Where those settings came from, so enabled-by-default is never silent
+   * (docs/contracts/config.md). A caller that supplies settings without naming
+   * a source is the source.
+   */
+  providerAdmissionSettingsSource?: "settings" | "caller";
   /** Explicit model-inventory operation that receives the shipped Researcher brief. */
   researchPurpose?: ResearchPurpose;
   /** Trusted simple skill selection for every role prompt; absent means the catalogue. */
@@ -418,6 +438,41 @@ function selectProvider(
   return present[0]?.provider ?? "openai-codex";
 }
 
+/** The five admission settings a caller may override, in resolution order. */
+const ADMISSION_SETTING_KEYS = [
+  "maxConcurrentPerScope",
+  "queueCapacityPerScope",
+  "maxWaitMs",
+  "retryDelayMs",
+  "cooldownMaxMs",
+] as const;
+
+/**
+ * The ONE wiring gate that turns resolved admission settings into the shared
+ * `ProviderAdmissionController` (issue #365).
+ *
+ * The disable sentinel lives HERE, not in the module: the config convention is
+ * numeric limits default `0` where `0` disables, but the module's own config
+ * validation refuses `maxConcurrentPerScope: 0` (a controller without
+ * concurrency admits nothing). So a configured `0` means admission DISABLED —
+ * this returns `undefined` and every seam unwraps to a pass-through chain —
+ * and the `0` never reaches the constructor. Any other configured value is
+ * fed to the constructor as an override, so the module's finite defaults stay
+ * standing and nonsense (a zero on a positive-required setting, a non-integer)
+ * fails loud with the module's `TypeError`.
+ */
+export function resolveProviderAdmissionController(
+  settings: ProviderAdmissionSettings | undefined,
+): ProviderAdmissionController | undefined {
+  if (settings?.maxConcurrentPerScope === 0) return undefined;
+  const overrides: Partial<ProviderAdmissionConfig> = {};
+  for (const key of ADMISSION_SETTING_KEYS) {
+    const value = settings?.[key];
+    if (value !== undefined) overrides[key] = value;
+  }
+  return new ProviderAdmissionController(overrides);
+}
+
 /**
  * Resolve a runnable `PipelineConfig` from the environment: select a provider,
  * build its registry from the shipped preset, route strong/mid/cheap NAMES
@@ -437,6 +492,38 @@ function resolveConfig(
   const requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   if (!Number.isSafeInteger(requestTimeoutMs) || requestTimeoutMs < 0)
     throw new Error("requestTimeoutMs must be a non-negative safe integer");
+  // Provider admission (issue #365): the shared outermost Models boundary.
+  // Constructed here for every resolved run because the contract makes a
+  // saturated scope unbypassable, and resolved here so `config show` reports
+  // the effective limits with the layer that set them. Enabled by default;
+  // a configured `maxConcurrentPerScope: 0` is the disable sentinel, judged
+  // inside the wiring gate (the module refuses a zero).
+  const providerAdmissionController = resolveProviderAdmissionController(
+    options.providerAdmissionSettings,
+  );
+  const admissionSource =
+    options.providerAdmissionSettings === undefined
+      ? "built-in-default"
+      : (options.providerAdmissionSettingsSource ?? "caller");
+  const providerAdmissionRows: Record<
+    string,
+    { value: string | number | boolean; source: string }
+  > = {
+    "providerAdmission.enabled": {
+      value: providerAdmissionController !== undefined,
+      source:
+        options.providerAdmissionSettings?.maxConcurrentPerScope !== undefined
+          ? admissionSource
+          : "built-in-default",
+    },
+  };
+  for (const key of ADMISSION_SETTING_KEYS) {
+    const configured = options.providerAdmissionSettings?.[key];
+    providerAdmissionRows[`providerAdmission.${key}`] = {
+      value: configured ?? DEFAULT_PROVIDER_ADMISSION_CONFIG[key],
+      source: configured !== undefined ? admissionSource : "built-in-default",
+    };
+  }
   const stageLimits: Required<StageLimits> = { ...DEFAULT_STAGE_LIMITS, ...options.stageLimits };
   new StageLimitController(stageLimits);
   const roleNames = new Set([
@@ -1253,6 +1340,7 @@ function resolveConfig(
     // unattended run is still standing -- and still liftable by `cost release`
     // -- when the next invocation starts.
     costAnomalyDetector: new CostAnomalyDetector({}, new FileCostAnomalyStore(options.targetDir)),
+    ...(providerAdmissionController !== undefined && { providerAdmissionController }),
     maxRounds,
     pluginTools,
     ...(pluginToolsForModel !== undefined && { pluginToolsForModel }),
@@ -1313,6 +1401,7 @@ function resolveConfig(
     },
     effectiveConfig: {
       ...contextWindowProjection,
+      ...providerAdmissionRows,
       // Set-valued capability visibility (docs/contracts/config.md): the
       // resolved names and where the selection came from. `none` names the
       // explicit off, never a silent absence.

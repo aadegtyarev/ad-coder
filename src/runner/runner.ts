@@ -38,6 +38,7 @@ import {
 } from "../orchestration/stage-limits";
 import { ProjectStore } from "../project-store/project-store";
 import type { ProjectStoreConfig } from "../project-store/types";
+import { admissionFailureFrom, type ProviderAdmissionController } from "../provider-admission";
 import type { Role } from "../role";
 import { toHarnessOptions } from "../role";
 import type { SessionLimitController } from "../session-limits";
@@ -125,6 +126,12 @@ export interface RunRoleParams {
    * path goes through this one `Models` boundary.
    */
   costAnomalyDetector?: CostAnomalyDetector;
+  /**
+   * Shared provider-capacity admission boundary (issue #365). Wrapping here
+   * rather than at a front is what makes a saturated scope unbypassable: every
+   * generation path goes through this one `Models` boundary, outermost.
+   */
+  providerAdmissionController?: ProviderAdmissionController;
   /** Per-role-stage controller; zero-valued limits preserve prior behavior. */
   stageLimitController?: StageLimitController;
   /** Zero disables each legacy read-observation limit. */
@@ -601,11 +608,25 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
   // Also at this boundary: recovery for a provider that serialized a tool call
   // as assistant text instead of a structured tool-call block (issue #292),
   // granted the names this invocation actually registered.
-  const models = wrapModelsForToolCallRecovery(
+  const recoveredModels = wrapModelsForToolCallRecovery(
     params.costAnomalyDetector?.wrap(limitedModels, params.model.provider, params.model.id) ??
       limitedModels,
     tools.map((tool) => tool.name),
   );
+  // ADMISSION OUTERMOST: the wrapper applied last is entered first, and the
+  // provider's own client can only be opened through it, so a saturated scope
+  // refuses before session/stage/cost-anomaly reserve anything and before
+  // tool-call recovery can retry. Scope identity is the provider-account
+  // id (`model.provider`, e.g. `work-openrouter` vs `home-openrouter` per
+  // docs/provider-catalogs.md) passed as both the provider and the account
+  // label — never a secret, never a raw credential — and hashed to a digest by
+  // `admissionScopeKey`, so only the SHA-256 digest is ever persisted.
+  const models =
+    params.providerAdmissionController?.wrap(
+      recoveredModels,
+      params.model.provider,
+      params.model.provider,
+    ) ?? recoveredModels;
   const explicitPolicy =
     params.compaction ??
     (params.summarizer === undefined ? undefined : { mode: "auto", summarizer: params.summarizer });
@@ -934,6 +955,17 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
       }
       const finalMessage = await newestAssistantMessage(session, context);
       const text = assistantMessageText(finalMessage);
+      // An admission refusal settles as a stream-terminal error message (the
+      // stream must return synchronously), and the durable drive composes
+      // every settled failure as `assistant_error` -- the typed class is
+      // destroyed at that boundary exactly as an HTTP status is. Recover it
+      // BEFORE the empty-turn projection: "verify authentication" is the
+      // wrong instruction for a scope this runner saturated, and
+      // `queue_saturated` is retryable while an empty turn is not.
+      if (params.providerAdmissionController !== undefined) {
+        const admissionFailure = admissionFailureFrom(result.error, params.model.provider);
+        if (admissionFailure !== undefined) throw admissionFailure;
+      }
       if (text.trim() === "" && usage.freshInput + usage.cachedInput + usage.output === 0) {
         // A settled failure with no text and no usage has two very different
         // causes, and the transcript cannot tell them apart. When the provider

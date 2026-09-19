@@ -3,11 +3,12 @@
  * `(XDG_CONFIG_HOME ?? ~/.config)/ad-coder`, as validated plain data.
  *
  * `models.yaml` declares the providers the harness may call and the role
- * routing profiles that name them; `settings.yaml` carries review policy. Both
- * are turned into these shapes by `parseModelsConfig`/`parseSettingsConfig`
- * BEFORE anything reads a field, so no consumer ever handles an unvalidated
- * value: an unknown provider or an off-vocabulary role is refused at the
- * boundary instead of becoming a lookup miss three layers down.
+ * routing profiles that name them; `settings.yaml` carries review policy and
+ * provider-admission limits. Both are turned into these shapes by
+ * `parseModelsConfig`/`parseSettingsConfig` BEFORE anything reads a field, so
+ * no consumer ever handles an unvalidated value: an unknown provider or an
+ * off-vocabulary role is refused at the boundary instead of becoming a lookup
+ * miss three layers down.
  *
  * These types carry NAMES only -- a provider name, a model name, a credential
  * REFERENCE, a `provider:model` rung. No credential value is ever a field here,
@@ -131,6 +132,26 @@ export interface ModelsConfig {
 }
 
 /**
+ * `settings.yaml`'s `provider-admission` section: the operator's overrides for
+ * the shared provider-capacity boundary (issue #365). Every field is optional;
+ * an absent field leaves the module's finite default standing. Per the numeric
+ * resource-limit convention (docs/contracts/config.md), the limits are
+ * non-negative integers and a configured `0` DISABLES — for admission that is
+ * the whole boundary: `max-concurrent-per-scope: 0` means pass-through, no
+ * controller is constructed, and the `0` never reaches the module's
+ * constructor (which refuses it). Admission ships ENABLED, so an absent
+ * section is the enabled state with module defaults, not a silent off.
+ */
+export interface ProviderAdmissionSettings {
+  /** 0 disables admission entirely; a positive integer overrides the default cap. */
+  maxConcurrentPerScope?: number;
+  queueCapacityPerScope?: number;
+  maxWaitMs?: number;
+  retryDelayMs?: number;
+  cooldownMaxMs?: number;
+}
+
+/**
  * `settings.yaml`'s `review.require-stamp`: whether the review stamp is
  * demanded of a pipeline run. `auto` is the default and means the harness
  * decides per run; `on` and `off` are the operator forcing that decision.
@@ -155,4 +176,6 @@ export interface ReviewSettings {
  */
 export interface SettingsConfig {
   review: ReviewSettings;
+  /** Absent section resolves to the enabled default with the module's finite defaults. */
+  providerAdmission: ProviderAdmissionSettings;
 }

@@ -7,7 +7,9 @@ import type {
   ModelConfig,
   ModelLadder,
   ModelsConfig,
+  ProviderAdmissionSettings,
   ProviderConfig,
+  ReviewSettings,
   SettingsConfig,
   StampRequirement,
 } from "./types";
@@ -43,9 +45,25 @@ const MODEL_KEYS = new Set([
   "format",
   "concurrency",
 ]);
-const SETTINGS_KEYS = new Set(["review"]);
+const SETTINGS_KEYS = new Set(["review", "provider-admission"]);
 const REVIEW_KEYS = new Set(["require-stamp", "cost-signature"]);
 const STAMP_REQUIREMENTS: readonly StampRequirement[] = ["auto", "on", "off"];
+
+/**
+ * `settings.yaml`'s `provider-admission` keys, in file spelling with the
+ * validated field each resolves to. A key present with a non-negative integer
+ * is kept; the `0` disable gate is a WIRING decision (`max-concurrent-per-scope:
+ * 0` disables the whole boundary; a `0` on a positive-required module setting
+ * is refused by the module's constructor with a `TypeError`), never a parse
+ * one -- the parser enforces well-typedness, not semantics.
+ */
+const ADMISSION_KEYS: ReadonlyArray<readonly [string, keyof ProviderAdmissionSettings]> = [
+  ["max-concurrent-per-scope", "maxConcurrentPerScope"],
+  ["queue-capacity-per-scope", "queueCapacityPerScope"],
+  ["max-wait-ms", "maxWaitMs"],
+  ["retry-delay-ms", "retryDelayMs"],
+  ["cooldown-max-ms", "cooldownMaxMs"],
+];
 
 type Bad = (code: ConfigError["code"], detail: string, message: string) => never;
 
@@ -145,12 +163,15 @@ export function parseModelsConfig(value: unknown): ModelsConfig {
 /**
  * Strictly validate untrusted, plain-data input into a `SettingsConfig`.
  *
- * A SEPARATE parser for a SEPARATE file: `review` is the whole vocabulary, and
- * a `models.yaml` key appearing here is refused rather than ignored.
+ * A SEPARATE parser for a SEPARATE file: `review` and `provider-admission` are
+ * the whole vocabulary, and a `models.yaml` key appearing here is refused
+ * rather than ignored.
  *
  * This is the one layer where an absent key is allowed to take its default --
- * `review.require-stamp` defaults to `auto`, `review.cost-signature` to `false`
- * -- because the file documents that default as the meaning of absence. A
+ * `review.require-stamp` defaults to `auto`, `review.cost-signature` to
+ * `false`, an absent `provider-admission` section to the enabled state with
+ * the module's finite defaults -- because the file documents that default as
+ * the meaning of absence. A
  * PRESENT key is still validated strictly: `require-stamp: maybe` is refused,
  * never read as `auto`.
  *
@@ -173,9 +194,15 @@ export function parseSettingsConfig(value: unknown): SettingsConfig {
   const document = value as Record<string, unknown>;
   refuseUnknownKeys(document, SETTINGS_KEYS, "", bad, "top-level");
 
-  const rawReview = document.review;
+  return {
+    review: parseReviewSection(document.review, bad),
+    providerAdmission: parseProviderAdmissionSection(document["provider-admission"], bad),
+  };
+}
+
+function parseReviewSection(rawReview: unknown, bad: Bad): ReviewSettings {
   if (rawReview === undefined) {
-    return { review: { requireStamp: "auto", costSignature: false } };
+    return { requireStamp: "auto", costSignature: false };
   }
   if (!isObject(rawReview)) {
     bad("invalid_config", "review", "`review` must be a map");
@@ -208,7 +235,40 @@ export function parseSettingsConfig(value: unknown): SettingsConfig {
     costSignature = rawSignature as boolean;
   }
 
-  return { review: { requireStamp, costSignature } };
+  return { requireStamp, costSignature };
+}
+
+function parseProviderAdmissionSection(value: unknown, bad: Bad): ProviderAdmissionSettings {
+  if (value === undefined) return {};
+  if (!isObject(value)) {
+    bad(
+      "invalid_config",
+      "provider-admission",
+      "`provider-admission` must be a map of admission limits",
+    );
+  }
+  const record = value as Record<string, unknown>;
+  refuseUnknownKeys(
+    record,
+    new Set(ADMISSION_KEYS.map(([name]) => name)),
+    "provider-admission",
+    bad,
+    "provider-admission",
+  );
+  const settings: ProviderAdmissionSettings = {};
+  for (const [name, field] of ADMISSION_KEYS) {
+    const raw = record[name];
+    if (raw === undefined) continue;
+    if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 0) {
+      bad(
+        "invalid_config",
+        `provider-admission.${name}`,
+        `provider-admission.${name} must be a non-negative integer when present`,
+      );
+    }
+    settings[field] = raw as number;
+  }
+  return settings;
 }
 
 function parseProvider(name: string, value: unknown, bad: Bad): ProviderConfig {

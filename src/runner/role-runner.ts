@@ -14,6 +14,7 @@ import {
   type StageLimits,
 } from "../orchestration/stage-limits";
 import type { ProjectStoreConfig } from "../project-store/types";
+import type { ProviderAdmissionController } from "../provider-admission";
 import type { Role } from "../role";
 import type { SessionLimitController } from "../session-limits";
 import type { RunRoleResult } from "./runner";
@@ -81,6 +82,8 @@ export interface RoleRunnerConfig {
   projectStoreConfig?: ProjectStoreConfig;
   sessionLimitController?: SessionLimitController;
   costAnomalyDetector?: CostAnomalyDetector;
+  /** Shared provider-capacity admission boundary; wraps the chain outermost. */
+  providerAdmissionController?: ProviderAdmissionController;
   stageLimits?: StageLimits;
   observability?: { maxReadPaths?: number; maxReadPathBytes?: number };
   activityChannel?: ToolActivityChannel;
@@ -118,6 +121,9 @@ export function createRoleRunner(config: RoleRunnerConfig): RoleRunner {
         }),
         ...(config.costAnomalyDetector !== undefined && {
           costAnomalyDetector: config.costAnomalyDetector,
+        }),
+        ...(config.providerAdmissionController !== undefined && {
+          providerAdmissionController: config.providerAdmissionController,
         }),
         ...((opts?.stageLimits !== undefined || config.stageLimits !== undefined) && {
           stageLimitController: new StageLimitController(

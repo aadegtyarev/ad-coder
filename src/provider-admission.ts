@@ -172,6 +172,47 @@ export class AdmissionCancelledError extends Error {
   }
 }
 
+/**
+ * Recover a typed admission failure from a settled harness record.
+ *
+ * WHY THIS EXISTS. Stream methods must return a stream synchronously, so the
+ * wrap seam cannot throw a refusal upward — it settles the stream as an error
+ * message (`errorResult`) — and the durable drive composes every settled
+ * failure into `{ code: "assistant_error", message }`, destroying the class
+ * exactly as it destroys an HTTP status. Both admission messages are authored
+ * strings whose only interpolation is the validated non-secret scope label
+ * and a count, so an exact-shape match reconstructs the typed failure without
+ * sniffing provider text. `scopeLabel` pins the match to the label a caller
+ * wrapped with: a message naming any other scope cannot be this caller's
+ * refusal, and is left for the generic projection.
+ */
+export function admissionFailureFrom(
+  error: unknown,
+  scopeLabel?: string,
+): QueueSaturatedError | AdmissionCancelledError | undefined {
+  if (error === null || typeof error !== "object") return undefined;
+  const message = (error as { message?: unknown }).message;
+  if (typeof message !== "string") return undefined;
+  const saturated =
+    /^admission queue for scope "([^"]+)" is full \((\d+) waiting\); retry later or raise queueCapacityPerScope$/.exec(
+      message,
+    );
+  if (saturated !== null) {
+    const label = saturated[1];
+    if (label === undefined) return undefined;
+    if (scopeLabel !== undefined && label !== scopeLabel) return undefined;
+    return new QueueSaturatedError(label, Number(saturated[2]));
+  }
+  const cancelled = /^admission for scope "([^"]+)" was cancelled$/.exec(message);
+  if (cancelled !== null) {
+    const label = cancelled[1];
+    if (label === undefined) return undefined;
+    if (scopeLabel !== undefined && label !== scopeLabel) return undefined;
+    return new AdmissionCancelledError(label);
+  }
+  return undefined;
+}
+
 export interface ProviderAdmissionSnapshot {
   readonly version: 1;
   readonly scopes: Record<string, ProviderAdmissionScopeState>;

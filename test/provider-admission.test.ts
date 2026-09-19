@@ -485,7 +485,7 @@ test("snapshot and restore preserve concurrent, queue, cooldown, and uncertain i
 
 test("cancelling a queued request removes only that request", async () => {
   const h = harness("prov", "cancel");
-  const first = h.models.complete({} as never, {} as never);
+  const _first = h.models.complete({} as never, {} as never);
   await flush();
   const secondCall = h.models.complete({} as never, {} as never);
   const secondR = capture(secondCall);
@@ -533,7 +533,7 @@ test("a settled permit is released exactly once; extra settles are idempotent no
 
 test("release() after admission returns the permit to the scope", async () => {
   const h = harness("prov", "release");
-  const first = h.models.complete({} as never, {} as never);
+  const _first = h.models.complete({} as never, {} as never);
   await flush();
   const scope = scopesOf(h.controller).get(h.key);
   const token = scope?.inFlightToken;

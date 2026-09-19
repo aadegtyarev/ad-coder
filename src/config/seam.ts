@@ -31,6 +31,7 @@ import type { ModelsConfig, SettingsConfig } from "./types";
 /** The defaults a completely absent `settings.yaml` means (documented, not bypassed). */
 export const DEFAULT_SETTINGS: SettingsConfig = {
   review: { requireStamp: "auto", costSignature: false },
+  providerAdmission: {},
 };
 
 /** True when the path names a present entry (file, symlink, or directory). */
