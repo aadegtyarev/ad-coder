@@ -141,10 +141,16 @@ runs over recorded prompts, `evals/`). What must be measured:
 - **Non-target prompts do not trigger it**: for prompts outside the skill's situation,
   the same ledger records no load of it.
 
-Current gap: `evals/scorers/` has no skill-trigger scorer, so triggering is reviewed
-under this contract but not yet measured. Writing each "Use when..." against concrete
-target and non-target prompts is required now; measuring them is tracked follow-up
-work.
+Measured by `evals/scorers/skill-trigger.ts` (2026-09-19). It reads a run's recorded tool activity -- the
+console's stderr event stream, captured on demand -- and scores, for a corpus task declaring `skillTrigger`
+expectations (its concrete target and non-target prompts and the expected skill id), that the target prompt
+produced a `load_skill` of the expected skill, that the non-target prompts produced no load of it, and that
+every `load_skill` in the capture is attributable; missing projections, empty activity, dropped events and
+unattributable loads are findings, not passes (docs/contracts/tool-observability.md, 2026-09-19). Run one
+task on demand with `bun run evals/runner/corpus.ts run skill-trigger-<skill>-v1` -- it dispatches live role
+turns and spends provider money, so it is an on-demand check (`calibration:check-skill-trigger` scores an
+existing capture), never an in-run gate. The first corpus slice covers the four skills whose descriptions the
+0.85.0 rewrite repaired: `delivery-calibration`, `task-slicing`, `role-selection`, `overload-response`.
 
 ## Enforcement
 

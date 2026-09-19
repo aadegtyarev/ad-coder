@@ -32,6 +32,19 @@ enforces that dated release headings go in non-increasing date order
   bump: the ten v2 skills to v3, `role-selection` to v4, `overload-response`
   and `tracker-work` to v2. A shape-based test asserts the "Use when" and
   "Phrases:" markers on every shipped description.
+- **Skill triggering is now measured, not only reviewed** (issue #366). A
+  `load_skill` activity event carries the skill id it targeted
+  (`projection.skillId`) -- an identifier in the class of the tool name, never
+  a call argument or payload; an unreadable target projects the explicit
+  marker "unknown" instead of passing silently.
+  `evals/scorers/skill-trigger.ts` scores a run's recorded tool activity
+  against a corpus task's declared expectations: the target prompt loaded the
+  expected skill, the non-target prompts loaded none of it, and every load is
+  attributable -- empty activity, dropped events and unattributable loads are
+  findings, not passes. The first corpus slice is one task each for the four
+  skills the rewrite above repaired. Run on demand via the corpus runner or
+  `calibration:check-skill-trigger`; it dispatches live role turns, so it is
+  never an in-run gate.
 
 ## [0.82.0] - 2026-09-19
 

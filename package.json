@@ -34,6 +34,7 @@
     "stamp:check": "bun run src/cli.ts stamp check",
     "calibration:score": "bun run scripts/calibration-score.ts",
     "calibration:check-reviewer": "bun run evals/scorers/reviewer-hidden-regression.ts",
+    "calibration:check-skill-trigger": "bun run evals/scorers/skill-trigger.ts",
     "calibration:materialize": "bun run scripts/calibration-materialize.ts",
     "calibration:check-pipeline": "bun run evals/scorers/pipeline-repair-regressions.ts",
     "smoke:artifact": "bun run scripts/artifact-smoke.ts",
