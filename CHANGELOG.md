@@ -13,6 +13,21 @@ enforces that dated release headings go in non-increasing date order
 
 ## [Unreleased]
 
+## [0.82.0] - 2026-09-19
+
+### Fixed
+- **The detached background worker repeats the credential-source launch
+  parameter verbatim (issue #101).** A `--credential-path` typed at the
+  console now crosses into the worker command, so a background pipeline
+  authenticates on the same private credential file the console was launched
+  with; the value carried is a path, never a credential value. When the
+  parameter is absent the worker keeps its own default-file resolution, and
+  nothing is persisted into the profile or the run record. The worker also
+  repeats every typed launch word next to a skills pin or an explicit skills
+  off: the skills words and the typed set-valued/credential words are
+  independent classes, and a pin no longer displaces them (a latent 2026-09-17
+  boundary-rule violation, docs/contracts/config.md).
+
 ## [0.81.0] - 2026-09-19
 
 ### Added

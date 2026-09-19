@@ -212,6 +212,17 @@ Rules the operator declared for ad-coder. A violation is always blocking.
   persistent-setting layer does not repeat: the worker re-reads it on its own,
   as it already did. The pin and the off inherit like each other -- asymmetry
   here is what #245 was (a pin inherited, the off stopped at the console).
+- 2026-09-19: The credential-source launch parameter (`--credential-path`)
+  crosses the boundary into the detached background worker verbatim when the
+  operator typed it (issue #101): the worker command repeats the parameter,
+  so the worker resolves the same private credential file the console was
+  launched with. The value carried is a path, never a credential value. When
+  the parameter is absent the worker keeps its own default-file resolution,
+  unchanged. The parameter is not persisted: it never lands in the profile or
+  the run record. This extends the 2026-09-17 boundary rule's class of
+  repeated launch words by one word that is not a capability switch; it does
+  not rewrite that rule -- the persistent-setting layer still re-reads on its
+  own.
 
 ## Sources
 
@@ -240,6 +251,13 @@ The 2026-09-17 boundary rule extends the capability table across the one
 process boundary the CLI itself owns: the detached background worker repeats
 the operator's explicit capability words verbatim (issue #245) instead of
 re-resolving them to enabled defaults.
+The 2026-09-19 entry (issue #101) extends that repeated class by one launch
+word that is not a capability switch: the credential-source path
+(`--credential-path`) crosses into the detached worker verbatim when typed,
+so a background pipeline authenticates on the same private credential file
+the console was launched with -- a path crosses, never a credential value;
+absent, the worker keeps its own default-file resolution, and nothing is
+persisted into the profile or the run record.
 The 2026-09-17 delegation-facts rule (issue #232) makes the resolver's role-to-
 model grouping -- the data the startup banner prints -- a structured field of
 the resolved config (`delegatedRoute`: source, complexity, reachable groups,
