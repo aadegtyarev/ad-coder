@@ -308,6 +308,84 @@ describe("tool activity core", () => {
     for (const record of lifecycle) expect(record.projection?.command).toBe("ls -la");
   });
 
+  test("a load_skill event carries the targeted skill id on every lifecycle record", () => {
+    // The skill-trigger verification attributes a load to a skill; that needs
+    // the id on the record, not inferred from what the role did next.
+    const records: ToolActivityRecord[] = [];
+    const channel = new ToolActivityChannel();
+    channel.subscribe((record) => {
+      records.push(record);
+    });
+    const fake = new FakeEvents();
+    const detach = attachToolActivity({
+      channel,
+      events: fake as unknown as Events,
+      targetDir: process.cwd(),
+      role: "orchestrator",
+      runId: "run-1",
+      step: "console",
+    });
+    fake.emit("message_end", message("call-1", "load_skill", { id: "delivery-calibration" }));
+    fake.emit("tool_start", {
+      toolCallId: "call-1",
+      toolName: "load_skill",
+      runId: "r",
+      turnId: "t",
+    });
+    fake.emit("tool_end", {
+      toolCallId: "call-1",
+      toolName: "load_skill",
+      runId: "r",
+      turnId: "t",
+      result: { details: undefined },
+      isError: false,
+    });
+    detach();
+    const lifecycle = records.flatMap((record) =>
+      record.type === "tool_activity" ? [record] : [],
+    );
+    expect(lifecycle.length).toBe(3);
+    for (const record of lifecycle) expect(record.projection?.skillId).toBe("delivery-calibration");
+  });
+
+  test("an unparseable or missing load_skill target is an explicit unknown, never silent", () => {
+    // Fail closed: omitting the field would let an unattributable load pass
+    // for a clean one, and the scorer treats "unknown" as a finding.
+    for (const args of [{}, { id: "" }, { id: "   " }, { id: 7 }, { id: null }, { id: [] }]) {
+      expect(projectToolArguments("load_skill", args, 160)?.skillId).toBe("unknown");
+    }
+    const records: ToolActivityRecord[] = [];
+    const channel = new ToolActivityChannel();
+    channel.subscribe((record) => {
+      records.push(record);
+    });
+    const fake = new FakeEvents();
+    const detach = attachToolActivity({
+      channel,
+      events: fake as unknown as Events,
+      targetDir: process.cwd(),
+      role: "orchestrator",
+      runId: "run-1",
+      step: "console",
+    });
+    fake.emit("message_end", message("call-1", "load_skill", {}));
+    detach();
+    expect(JSON.stringify(records)).toContain('"skillId":"unknown"');
+  });
+
+  test("the skill id is bounded and cleaned like any identifier subject", () => {
+    const long = projectToolArguments("load_skill", { id: "x".repeat(400) }, 160);
+    expect(long?.skillId).toBeDefined();
+    expect(Buffer.byteLength(long?.skillId as string)).toBeLessThanOrEqual(160);
+    // Control and format characters are stripped; the identifier stays itself.
+    expect(projectToolArguments("load_skill", { id: "role\u202eselection" }, 160)?.skillId).toBe(
+      "roleselection",
+    );
+    expect(projectToolArguments("load_skill", { id: " task-slicing " }, 160)?.skillId).toBe(
+      "task-slicing",
+    );
+  });
+
   test("sanitizes Unicode safely and validates mandatory output ceilings", () => {
     expect(boundToolActivityText("a\u202eb\n😀z", 6)).toBe("ab😀");
     expect(() => resolveToolActivityConfig({ maxEventBytes: 0 })).toThrow(RangeError);
@@ -491,6 +569,23 @@ describe("tool activity renderer", () => {
     expect(rendered).toContain("tool activity");
     expect(rendered).toContain("orchestrator\u00b7flash");
     expect(rendered).not.toMatch(/^\d{2}:\d{2}:\d{2}\s+activity(\s|$)/m);
+  });
+
+  test("a load_skill line names the skill it loaded, not an anonymous Read", () => {
+    const output = new MemoryWritable();
+    const renderer = new ToolActivityRenderer(output, "human", { groupingRefreshMs: 0 });
+    renderer.consume(
+      lifecycleEvent({
+        activity: "Read" as const,
+        toolName: "load_skill",
+        projection: { skillId: "delivery-calibration" },
+        lifecycle: "completed",
+      }),
+    );
+    renderer.close();
+    // The one thing an operator asks about a load is WHICH skill; a subjectless
+    // line is how four identical anonymous loads hid in plain sight before.
+    expect(output.text()).toContain("delivery-calibration");
   });
 
   test("reports renderer backpressure loss as valid JSON instead of prose", () => {
