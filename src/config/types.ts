@@ -108,9 +108,7 @@ export type ModelLadder = readonly ModelRef[];
  * step stays green on its own. `thinkingLevel` is a plain string at this stage
  * and is narrowed to the allow-list at the parsing boundary in a later step.
  */
-export type ModelRung =
-  | ModelRef
-  | { readonly model: ModelRef; readonly thinkingLevel?: string };
+export type ModelRung = ModelRef | { readonly model: ModelRef; readonly thinkingLevel?: string };
 
 /**
  * One profile: its name and its rows.
