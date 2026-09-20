@@ -141,8 +141,12 @@ canonical backlog instead of hiding it in a completion summary.
   retry is now built from the attempt text: `reviewRetryTask(task, priorText)`
   hands the session the review-so-far verbatim and only then asks for the
   submission, which makes the sentence true instead of unverifiable. An attempt
-  that produced no prose (a truncation, an empty turn) keeps the bare retry --
-  there is no review to carry, and the second attempt is still owed. This holds
-  on all three surfaces that retry a submission: the standalone `role reviewer`
-  CLI (src/cli.ts), the pipeline's review round (src/orchestration/session.ts)
-  and the trivial-edit cover review (src/orchestration/orchestrator.ts).
+  that produced no prose (a truncation, an empty turn) has nothing to carry, so
+  it gets the one requirement that is true of the session reading it: review the
+  work, then submit -- `REVIEW_SUBMISSION_RESTART`. The bare retry is NOT that
+  requirement: "your review stands" told to a session holding none is the same
+  unverifiable premise this entry exists to remove, merely moved to the empty
+  case, and the retry resolves it the same way. This holds on all three surfaces
+  that retry a submission: the standalone `role reviewer` CLI (src/cli.ts), the
+  pipeline's review round (src/orchestration/session.ts) and the trivial-edit
+  cover review (src/orchestration/orchestrator.ts).

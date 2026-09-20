@@ -23,6 +23,18 @@ export const REVIEW_SUBMISSION_ATTEMPTS = 2;
 export const REVIEW_SUBMISSION_RETRY = `Your preceding response did not call ${SUBMIT_VERDICT_TOOL_NAME}. Your review stands; submit it now by calling ${SUBMIT_VERDICT_TOOL_NAME} with the complete verdict object, then stop.`;
 
 /**
+ * The requirement when the preceding attempt left NO review text to carry.
+ *
+ * `REVIEW_SUBMISSION_RETRY` cannot be reused here: it asserts that a review
+ * stands, and this session -- a fresh run id, so no history -- holds none. That
+ * is the #525 premise exactly, moved to the empty case instead of removed, and a
+ * model resolves an unverifiable premise rather than declining it. So this retry
+ * asks for the REVIEW, not for a submission: the attempt that produced nothing
+ * has to be made again, and the sentence is true of the session reading it.
+ */
+export const REVIEW_SUBMISSION_RESTART = `Your preceding response produced no review text and did not call ${SUBMIT_VERDICT_TOOL_NAME}, so there is no review to submit yet. Review the work now and submit your verdict by calling ${SUBMIT_VERDICT_TOOL_NAME} with the complete verdict object, then stop.`;
+
+/**
  * The task a retry attempt receives: the work, the review the attempts so far
  * produced, and the submission requirement.
  *
@@ -36,13 +48,20 @@ export const REVIEW_SUBMISSION_RETRY = `Your preceding response did not call ${S
  * resolved by inventing the review. Handing it the text makes the sentence true,
  * so the verdict is submitted over the review that was actually made.
  *
- * An empty prior text (an attempt that produced no prose) keeps the bare retry:
- * there is no review to carry, and the caller still gets its second attempt.
+ * An attempt that produced no text at all is the one case with nothing to hand
+ * over. It gets `REVIEW_SUBMISSION_RESTART` rather than the bare submission
+ * retry: "your review stands" told to a session that has no review is the same
+ * unverifiable premise, and the retry resolves it the same way.
+ *
+ * The text travels EXACTLY as the attempt produced it -- no trimming, no
+ * reflow. Trimming only decides which of the two requirements applies; what a
+ * reviewer wrote about leading whitespace is not the caller's to edit, and a
+ * prompt that claims "verbatim" while editing the payload is a smaller version
+ * of the same defect.
  */
 export function reviewRetryTask(task: string, priorText: string): string {
-  const prior = priorText.trim();
-  if (prior === "") return `${task}\n\n${REVIEW_SUBMISSION_RETRY}`;
-  return `${task}\n\nYour review so far, verbatim:\n\n${prior}\n\n${REVIEW_SUBMISSION_RETRY}`;
+  if (priorText.trim() === "") return `${task}\n\n${REVIEW_SUBMISSION_RESTART}`;
+  return `${task}\n\nYour review so far, verbatim:\n\n${priorText}\n\n${REVIEW_SUBMISSION_RETRY}`;
 }
 
 const VERDICT_STATUSES: readonly VerdictStatus[] = [

@@ -61,6 +61,8 @@ import {
   buildSubmitVerdictTool,
   formatReviewerInstruction,
   parseVerdict,
+  REVIEW_SUBMISSION_RESTART,
+  REVIEW_SUBMISSION_RETRY,
   SUBMIT_VERDICT_TOOL_NAME,
 } from "../src/orchestration/verdict";
 import { buildDefaultProfile } from "../src/profiles/default-profile";
@@ -1640,6 +1642,85 @@ test("a reviewer that reviewed in prose is asked again, and its verdict settles 
   // One review ROUND, settled on its second ask -- not a second round, which
   // would have re-run the coder and paid for the inspection twice.
   expect(result.rounds).toBe(1);
+});
+
+test("the review retry is handed the prose the first attempt wrote (#525)", async () => {
+  const fx = fixture();
+  const coder = fx.role("coder", "You code.");
+  const reviewer = reviewerRole(fx);
+  // The measured failure (#525): the retry runs under a FRESH run id, so it
+  // opens a session with no history. A prompt that calls the first attempt's
+  // review "your review" names something that session cannot see, and the
+  // reviewer resolves the false premise by inventing a review -- the stamp then
+  // reads a verdict submitted over nothing. The review has to travel with it.
+  const prose = "blocker: the guard exits 1, not 3 -- measured with bun test";
+  let retryPrompt = "";
+  fx.faux.setResponses([
+    fauxAssistantMessage("coded"),
+    fauxAssistantMessage(prose),
+    (context) => {
+      retryPrompt = lastUserText(context);
+      return fauxAssistantMessage(
+        fauxToolCall(SUBMIT_VERDICT_TOOL_NAME, {
+          status: "approved",
+          issues: [],
+          summary: "reviewed the blocker",
+        }),
+      );
+    },
+    fauxAssistantMessage("review complete"),
+  ]);
+
+  const result = await runPipeline({
+    targetDir: fx.targetDir,
+    models: fx.models,
+    task: "implement C",
+    maxRounds: 1,
+    roles: { coder, reviewer },
+  });
+
+  expect(result.approved).toBe(true);
+  expect(retryPrompt).toContain(prose);
+  expect(retryPrompt).toContain("Your review so far, verbatim:");
+  expect(retryPrompt).toContain(REVIEW_SUBMISSION_RETRY);
+});
+
+test("a review retry with nothing to carry asks for the review, not the submission (#525)", async () => {
+  const fx = fixture();
+  const coder = fx.role("coder", "You code.");
+  const reviewer = reviewerRole(fx);
+  // The other half of #525: an attempt that produced NO text has no review to
+  // hand over, and "Your review stands" told to a session holding none is the
+  // same unverifiable premise. It gets the fresh-review requirement instead.
+  let retryPrompt = "";
+  fx.faux.setResponses([
+    fauxAssistantMessage("coded"),
+    fauxAssistantMessage(""),
+    (context) => {
+      retryPrompt = lastUserText(context);
+      return fauxAssistantMessage(
+        fauxToolCall(SUBMIT_VERDICT_TOOL_NAME, {
+          status: "approved",
+          issues: [],
+          summary: "reviewed now",
+        }),
+      );
+    },
+    fauxAssistantMessage("review complete"),
+  ]);
+
+  const result = await runPipeline({
+    targetDir: fx.targetDir,
+    models: fx.models,
+    task: "implement D",
+    maxRounds: 1,
+    roles: { coder, reviewer },
+  });
+
+  expect(result.approved).toBe(true);
+  expect(retryPrompt).toContain(REVIEW_SUBMISSION_RESTART);
+  expect(retryPrompt).not.toContain(REVIEW_SUBMISSION_RETRY);
+  expect(retryPrompt).not.toContain("Your review stands");
 });
 
 test("a reviewer that never calls submit_verdict blocks as a red review-not-run pause", async () => {

@@ -66,7 +66,7 @@ import type {
   Verdict,
 } from "../src/orchestration/types";
 import { OrchestrationError } from "../src/orchestration/types";
-import { SUBMIT_VERDICT_TOOL_NAME } from "../src/orchestration/verdict";
+import { REVIEW_SUBMISSION_RESTART, SUBMIT_VERDICT_TOOL_NAME } from "../src/orchestration/verdict";
 import { buildDefaultProfile } from "../src/profiles/default-profile";
 import type { Profile, ProfileRole } from "../src/profiles/types";
 import type { RunCheckpoint } from "../src/project-operations/run-coordinator";
@@ -2956,6 +2956,13 @@ async function startTrivialGateSession(options: {
    * the next attempt (issue #525).
    */
   reviewerProseOnlyAttempts?: number;
+  /**
+   * How many leading cover attempts answer with EMPTY text and no submission --
+   * the same failure with nothing to carry, which must reach the fresh-review
+   * requirement rather than "your review stands" (issue #525). Counted first:
+   * an attempt in this range never also counts as prose-only.
+   */
+  reviewerSilentAttempts?: number;
 }): Promise<TrivialGateSeams & { session: Awaited<ReturnType<typeof startOrchestrator>> }> {
   const seams: TrivialGateSeams = {
     wrap: undefined,
@@ -2997,12 +3004,15 @@ async function startTrivialGateSession(options: {
       };
       seams.reviewerTurns.push(turn);
       const attempt = seams.reviewerTurns.length;
-      const proseOnly = attempt <= (options.reviewerProseOnlyAttempts ?? 0);
+      // The leading attempts that never submit: silent ones first (empty text),
+      // then prose-only ones (a draft review).
+      const silent = attempt <= (options.reviewerSilentAttempts ?? 0);
+      const noSubmit = silent || attempt <= (options.reviewerProseOnlyAttempts ?? 0);
       return {
         ...fakeConversation(config.runId ?? "reviewer-run"),
         step: async (task: string) => {
           turn.task = task;
-          if (!proseOnly)
+          if (!noSubmit)
             await callTool(submit, {
               status: "approved",
               issues: [],
@@ -3015,7 +3025,7 @@ async function startTrivialGateSession(options: {
             runId: config.runId ?? "reviewer-run",
             step: "turn:1",
             status: "completed" as const,
-            assistantText: proseOnly ? `draft review ${attempt}` : "reviewed",
+            assistantText: silent ? "" : noSubmit ? `draft review ${attempt}` : "reviewed",
             toolCalls: [],
             droppedRecords: 0,
           };
@@ -3149,6 +3159,36 @@ test("the cover retry is handed the attempt that ended in prose (issue #525)", a
   // able to read what the first attempt concluded.
   expect(retryTask).toContain("draft review 1");
   // The retry is a fresh run id (a turn is keyed by run id).
+  expect(reviewerTurns[1]?.runId).not.toBe(reviewerTurns[0]?.runId);
+  expect(resultText).toContain("trivial-edit cover: approved by reviewer");
+}, 20000);
+
+test("a cover retry with nothing to carry asks for the review, not the submission (issue #525)", async () => {
+  // The other half of the #525 premise: an attempt that wrote NOTHING leaves no
+  // review to hand over, and "your review stands" told to a fresh session that
+  // holds none is the same unverifiable premise the carry exists to remove.
+  const targetDir = trivialTmpDir("gate-silent-retry");
+  const runId = "trivial-gate-silent-run";
+  const { session, wrap, reviewerTurns } = await startTrivialGateSession({
+    targetDir,
+    runId,
+    reviewerSilentAttempts: 1,
+  });
+  writeSrcFile(targetDir, "one\ntwo\n");
+
+  const resultText = await runWrappedTrivialEdit(wrap as TrivialWrap, targetDir, [
+    { oldText: "one", newText: "1\n2" },
+  ]);
+  await session.close();
+
+  expect(reviewerTurns).toHaveLength(2);
+  const retryTask = reviewerTurns[1]?.task ?? "";
+  // The retry is asked to REVIEW, and is never told a review it cannot see
+  // stands. Asserting the absence is the point: this is a fresh run id with no
+  // history (issue #525).
+  expect(retryTask).toContain("no review text");
+  expect(retryTask).not.toContain("Your review stands");
+  expect(retryTask).toContain(REVIEW_SUBMISSION_RESTART);
   expect(reviewerTurns[1]?.runId).not.toBe(reviewerTurns[0]?.runId);
   expect(resultText).toContain("trivial-edit cover: approved by reviewer");
 }, 20000);

@@ -17,7 +17,11 @@ import {
 } from "../src/cli";
 import { MemoryLedgerSink } from "../src/ledger/ledger";
 import { StageLimitError } from "../src/orchestration/stage-limits";
-import { REVIEW_SUBMISSION_RETRY, reviewRetryTask } from "../src/orchestration/verdict";
+import {
+  REVIEW_SUBMISSION_RESTART,
+  REVIEW_SUBMISSION_RETRY,
+  reviewRetryTask,
+} from "../src/orchestration/verdict";
 import { ProjectStore } from "../src/project-store/project-store";
 import { ProjectStoreError } from "../src/project-store/types";
 import type { Role } from "../src/role";
@@ -429,19 +433,58 @@ test("the standalone review retry keeps the first attempt's review and charges b
   expect(tasks[1]).toContain("the review itself");
 });
 
-test("a retry with nothing carried keeps the bare submission requirement", () => {
-  // An attempt that produced no prose leaves no review to hand over; the retry
-  // still runs, and the task stays exactly what it was before the carry existed
-  // -- no empty "your review so far" block, which would read as a review.
-  const bare = reviewRetryTask("review it", "");
-  expect(bare).toBe(`review it\n\n${REVIEW_SUBMISSION_RETRY}`);
+test("a retry after a silent first attempt is asked to review, not to submit", async () => {
+  // The same wiring on the empty branch: with nothing to carry, the retry task
+  // must be the fresh-review requirement -- the standalone path is one of the
+  // three surfaces #525 is about, so the branch is asserted where it is wired,
+  // not only where the sentence is built.
+  let submitted = false;
+  const tasks: string[] = [];
+  await runReviewWithSubmissionRetry({
+    run: async (_runId, task) => {
+      tasks.push(task);
+      if (tasks.length === 1) return { text: "", cost: 0.01 };
+      submitted = true;
+      return { text: "submitted", cost: 0.005 };
+    },
+    firstRunId: "first",
+    task: "review it",
+    retries: true,
+    submitted: () => submitted,
+    newRunId: () => "second",
+  });
+  expect(tasks[1]).toBe(`review it\n\n${REVIEW_SUBMISSION_RESTART}`);
+  expect(tasks[1]).not.toContain(REVIEW_SUBMISSION_RETRY);
+});
+
+test("a retry with nothing carried asks for the review, never for a submission", () => {
+  // An attempt that produced no prose leaves no review to hand over. It must
+  // NOT be told "your review stands": that is the #525 premise, and told to a
+  // fresh session with nothing in it, the retry resolves it by inventing the
+  // review. The empty case is where the false sentence used to survive, so the
+  // assertion is on the ABSENCE of the submission retry, not only on the
+  // presence of a restart prompt.
+  const silent = reviewRetryTask("review it", "");
+  expect(silent).toBe(`review it\n\n${REVIEW_SUBMISSION_RESTART}`);
+  expect(silent).not.toContain(REVIEW_SUBMISSION_RETRY);
+  expect(silent).not.toContain("Your review stands");
   // Whitespace is not a review either.
-  expect(reviewRetryTask("review it", "   \n  ")).toBe(bare);
-  // A real one is quoted verbatim, between the task and the requirement.
-  const carried = reviewRetryTask("review it", "  blocker: exit 1, not 3  ");
+  expect(reviewRetryTask("review it", "   \n  ")).toBe(silent);
+});
+
+test("a carried review travels exactly as the attempt wrote it", () => {
+  // "Verbatim" is the contract (docs/contracts/product-change.md, 2026-09-20),
+  // so trimming is allowed to DECIDE the branch and never to edit the payload.
+  const prior = "  blocker: exit 1, not 3  \n";
+  const carried = reviewRetryTask("review it", prior);
   expect(carried.startsWith("review it\n\nYour review so far, verbatim:\n\n")).toBe(true);
-  expect(carried).toContain("blocker: exit 1, not 3");
+  // The exact bytes, indentation and trailing newline included: nothing between
+  // the header and the requirement but what the attempt produced.
+  expect(carried).toContain(`\n\nYour review so far, verbatim:\n\n${prior}\n\n`);
   expect(carried.endsWith(REVIEW_SUBMISSION_RETRY)).toBe(true);
+  // The non-empty requirement still says the review stands -- which is true
+  // HERE, because the review is in the session that reads it.
+  expect(carried).toContain("Your review stands");
 });
 
 test("the standalone review retry does not run when the verdict already arrived", async () => {
