@@ -41,6 +41,7 @@ import {
   SuspendedRunError,
 } from "../runner/errors";
 import { type BacklogStore, FileBacklogStore } from "./backlog";
+import { consolidateFollowUps } from "./consolidate";
 import {
   appendDocumentationProposal,
   type DocumentationProposal,
@@ -765,8 +766,11 @@ export class RunCoordinator {
       });
       return undefined;
     }
-    const followUps = aggregateFollowUps(
-      [...checkpoint.followUps, ...(result.result.followUps ?? [])],
+    const followUps = consolidateFollowUps(
+      aggregateFollowUps(
+        [...checkpoint.followUps, ...(result.result.followUps ?? [])],
+        this.store.projectOperations,
+      ),
       this.store.projectOperations,
     );
     const contractReviews =
@@ -979,8 +983,11 @@ export class RunCoordinator {
     const reviews = this.persisted.value.contractReviews.map((record) =>
       record.decisionId === id ? reviewRecord : record,
     );
-    const followUps = aggregateFollowUps(
-      [...this.persisted.value.followUps, ...(review.result.followUps ?? [])],
+    const followUps = consolidateFollowUps(
+      aggregateFollowUps(
+        [...this.persisted.value.followUps, ...(review.result.followUps ?? [])],
+        this.store.projectOperations,
+      ),
       this.store.projectOperations,
     );
     if (verdict.status === "approved") {

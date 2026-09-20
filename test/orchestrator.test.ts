@@ -2134,6 +2134,129 @@ test("default decomposition creates sequential children and stops siblings on a 
   ).toBe(decision?.id);
 });
 
+test("settled escalation derives and dispatches children instead of throwing invalid_config", async () => {
+  const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-derived-children-"));
+  const ids = ["root-run", "child-one", "child-two"];
+  const order: string[] = [];
+  const scope = { allowedPaths: ["src"], allowedCapabilities: ["edit"], externalEffects: [] };
+  const decomposed: PipelineResult = {
+    outcome: "decomposition_required",
+    approved: false,
+    rounds: 1,
+    verdicts: [
+      {
+        status: "changes_requested",
+        issues: [
+          { severity: "blocker", what: "  split the module  " },
+          { severity: "major", what: "add tests" },
+        ],
+        summary: "split",
+      },
+    ],
+    runIds: [],
+    stageMetrics: [],
+    escalation: { required: true, reason: "blocking_verdicts", blockingVerdicts: 1 },
+  };
+  const control = createOrchestratorControlPlane({
+    store: new ProjectStore(targetDir),
+    id: () => ids.shift() as string,
+    execute: async (record) => {
+      order.push(record.id);
+      return { result: decomposed };
+    },
+    resolveAutoDecision: async () => ({
+      action: "accept" as const,
+      rationale: "auto mandate",
+      evidence: ["docs/contracts/operation-modes.md"],
+    }),
+  });
+  const root = control.start({ requestKey: "derived", task: "root", mode: "auto", scope });
+  await expect(control.resume(root.id)).resolves.toMatchObject({ status: "paused" });
+  expect(order).toEqual(["root-run", "child-one"]);
+  const rootRecord = control.record(root.id);
+  expect(rootRecord.childRunIds).toHaveLength(1);
+  expect(rootRecord.remainingChildren).toHaveLength(1);
+  expect(rootRecord.remainingChildren[0]?.task).toBe("add tests");
+  expect(rootRecord.decisions.at(-1)?.status).toBe("accepted");
+  expect(control.record(rootRecord.childRunIds[0] as string).task).toBe("split the module");
+});
+
+test("settled run with no escalation pauses with a deferred decomposition decision", async () => {
+  const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-derived-empty-"));
+  const scope = { allowedPaths: ["src"], allowedCapabilities: ["edit"], externalEffects: [] };
+  const decomposed: PipelineResult = {
+    outcome: "decomposition_required",
+    approved: false,
+    rounds: 1,
+    verdicts: [
+      {
+        status: "changes_requested",
+        issues: [{ severity: "blocker", what: "must fix" }],
+        summary: "block",
+      },
+    ],
+    runIds: [],
+    stageMetrics: [],
+  };
+  const control = createOrchestratorControlPlane({
+    store: new ProjectStore(targetDir),
+    id: () => "empty-decompose-run",
+    execute: async () => ({ result: decomposed }),
+    resolveAutoDecision: async () => ({
+      action: "accept" as const,
+      rationale: "auto mandate",
+      evidence: ["docs/contracts/operation-modes.md"],
+    }),
+  });
+  const root = control.start({ requestKey: "empty", task: "root", mode: "auto", scope });
+  await expect(control.resume(root.id)).resolves.toMatchObject({ status: "paused" });
+  const record = control.record(root.id);
+  expect(record.childRunIds).toEqual([]);
+  expect(record.remainingChildren).toEqual([]);
+  const decision = record.decisions.at(-1);
+  expect(decision?.status).toBe("deferred");
+  expect(decision?.action).toBe("defer");
+  expect(decision?.rationale).toContain("no escalation");
+  expect(control.events(root.id, 0).some((event) => event.type === "decomposition.required")).toBe(
+    true,
+  );
+});
+
+test("settled run whose blocking verdict has only minor issues pauses with a deferred decision", async () => {
+  const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-derived-minor-"));
+  const scope = { allowedPaths: ["src"], allowedCapabilities: ["edit"], externalEffects: [] };
+  const decomposed: PipelineResult = {
+    outcome: "decomposition_required",
+    approved: false,
+    rounds: 1,
+    verdicts: [
+      {
+        status: "changes_requested",
+        issues: [{ severity: "minor", what: "nits" }],
+        summary: "nits",
+      },
+    ],
+    runIds: [],
+    stageMetrics: [],
+    escalation: { required: true, reason: "blocking_verdicts", blockingVerdicts: 1 },
+  };
+  const control = createOrchestratorControlPlane({
+    store: new ProjectStore(targetDir),
+    id: () => "minor-decompose-run",
+    execute: async () => ({ result: decomposed }),
+    resolveAutoDecision: async () => ({
+      action: "accept" as const,
+      rationale: "auto mandate",
+      evidence: ["docs/contracts/operation-modes.md"],
+    }),
+  });
+  const root = control.start({ requestKey: "minor", task: "root", mode: "auto", scope });
+  await expect(control.resume(root.id)).resolves.toMatchObject({ status: "paused" });
+  const decision = control.record(root.id).decisions.at(-1);
+  expect(decision?.status).toBe("deferred");
+  expect(decision?.rationale).toContain("no blocker or major");
+});
+
 test("concurrent resume executes one provider turn and emits durable completion", async () => {
   const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-control-lease-"));
   let release: (() => void) | undefined;

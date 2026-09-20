@@ -11,6 +11,7 @@ import { MAX_PROVIDER_RETRY_HINT_MS, ProviderLimitError } from "../runner/errors
 import type { Tool } from "../runner/tool";
 import { defineTool } from "../runner/tool";
 import type { SessionLimitController, SessionLimitSnapshot } from "../session-limits";
+import { deriveChildSpecs } from "./decompose";
 import type { PipelineResult, PipelineStageMetrics, Verdict } from "./types";
 
 export type RunMode = "auto" | "manual";
@@ -31,7 +32,8 @@ export interface RunScope {
 
 export interface ChildPipelineSpec extends RunScope {
   task: string;
-  parentDecisionId: string;
+  // A host-supplied spec names the decision that authorized it; a derived spec gets its id attached when the decision accepts it (remainingChildren mapping below).
+  parentDecisionId?: string;
 }
 
 export interface DecisionRecord {
@@ -948,9 +950,48 @@ export class OrchestratorControlPlane {
           record.depth < this.config.maxDecompositionDepth;
         if (!depthAllowed) record.status = "paused";
         else {
-          const children = execution.children ?? [];
-          if (children.length === 0)
-            throw new ProjectOperationsError("invalid_config", "decomposition.children");
+          const hostChildren = execution.children;
+          const children =
+            hostChildren !== undefined && hostChildren.length > 0
+              ? hostChildren
+              : deriveChildSpecs(record, execution.result).map((child) => ({
+                  ...child,
+                  task: redactCredentialLike(child.task),
+                }));
+          if (children.length === 0) {
+            const lastBlocking = [...record.verdicts]
+              .reverse()
+              .find((verdict) => verdict.status === "changes_requested");
+            const rationale =
+              execution.result.escalation?.required !== true
+                ? "decomposition.required but the settled result carried no escalation signal"
+                : lastBlocking === undefined
+                  ? "decomposition.required but the escalation's blocking verdict is missing"
+                  : "decomposition.required but the last blocking verdict carries no blocker or major issue";
+            const createdAt = this.now();
+            record.decisions = [
+              ...record.decisions,
+              {
+                id: crypto
+                  .createHash("sha256")
+                  .update(`${record.id}:decomposition:${record.decisions.length}`)
+                  .digest("hex")
+                  .slice(0, 32),
+                status: "deferred",
+                action: "defer",
+                rationale,
+                evidence: evidenceReferences(["docs/contracts/operation-modes.md"]),
+                scope: structuredClone(record.scope),
+                mandateSource: record.mode === "auto" ? "auto_mode" : "operator",
+                affectedRunIds: [record.id],
+                createdAt,
+                resolvedAt: this.now(),
+              },
+            ];
+            record.status = "paused";
+            state = this.write(state, this.withEvent(record, "decomposition.required"));
+            return safeStatus(state.value);
+          }
           const existingChildren = this.records().filter(
             (item) => item.value.rootRunId === record.rootRunId && item.value.depth > 0,
           ).length;
@@ -1259,6 +1300,8 @@ export class OrchestratorControlPlane {
       }
       const [spec, ...remaining] = root.value.remainingChildren;
       if (spec === undefined) break;
+      if (spec.parentDecisionId === undefined)
+        throw new ProjectOperationsError("pending_decision", "decomposition.parentDecisionId");
       const authorization = root.value.decisions.find(
         (decision) => decision.id === spec.parentDecisionId,
       );
