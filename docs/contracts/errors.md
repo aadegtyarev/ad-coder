@@ -318,3 +318,27 @@ for machines?
   (`src/orchestration/wake.ts`). Silent catches and success-shaped fallbacks
   remain violations; containment here means one loud, bounded, attributed line
   -- not hiding the failure.
+- 2026-09-20 (issue #467): The two RESEARCH refusal pauses compose their
+  `action` under the same bounded-cause discipline the untyped stage failure
+  already follows (issue #403). `unsafe_request` (the researcher request
+  failing to prepare) and `research_rejected` (the research step failing)
+  used to interpolate the raw `error.message` into the pause `action`
+  verbatim; a message over 256 chars made the whole record -- the background
+  run record and the coordinator checkpoint alike -- undecodable on
+  round-trip (`requiredString` in src/orchestration/background-runs.ts
+  rejects any persisted string field over 256 chars), and `background status`
+  exited 1 with {"error":{"code":"not_found","detail":"background_run"}}.
+  Both pauses now record the bounded, redacted cause under `pause.cause`
+  (`pauseCauseFrom` for a typed harness-side error, `untypedPauseCause`
+  otherwise, the `WorkflowStageFailureError` wrapper unwrapped first exactly
+  like `stageFailurePause`), and the action is fixed harness text naming the
+  pause's code token and the cause's code token -- never the message -- so it
+  stays within the 256-char ceiling for ANY thrown value (measured: 656- and
+  665-char actions before the fix; 209 and 196 chars at the worst-case
+  64-char cause code after). The untyped cause's clip at the shared 512-char
+  pause-cause ceiling (`MAX_PAUSE_CAUSE_MESSAGE_CHARS`) is VISIBLE now: a
+  first line longer than the ceiling keeps its head and ends in the fixed
+  `...[clipped]` marker inside the ceiling, so a cut is legible in the record
+  instead of a silent slice; the remove-non-printables -> redact -> clip
+  order is unchanged, and identical inputs still compose identical messages
+  for the recurrence comparison.

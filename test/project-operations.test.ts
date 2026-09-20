@@ -1015,6 +1015,89 @@ test("a throwing message getter degrades the line, not the stage (issue #403 rev
   expect(JSON.stringify(checkpoint)).not.toContain("never read");
 });
 
+test("an unsafe_request pause stays decodable for a maximal message (issue #467)", async () => {
+  // The research request's failure used to be interpolated into `action`
+  // verbatim: any message over 256 chars made the whole record UNDECODABLE on
+  // round-trip (`requiredString` in src/orchestration/background-runs.ts
+  // rejects a persisted field over 256 chars) -- the same failure mode #403
+  // fixed for the untyped stage action. The action must be bounded BY
+  // CONSTRUCTION for any message, adversarial included, and the message must
+  // survive bounded, redacted and VISIBLY clipped in the recorded durable
+  // cause -- never silently cut.
+  const message = `transport failed with api_key=sk-1234567890abcdef after ${"x".repeat(600)}`;
+  const target = root();
+  const store = new ProjectStore(target);
+  const base = coordinatorSession(store, []);
+  const session: WorkflowSession = {
+    ...base,
+    initialState: () => ({ ...coordinatorState(), phase: "research" }),
+    prepareResearch: () => {
+      throw new Error(message);
+    },
+  };
+  const coordinator = new RunCoordinator(session, store, { runId: "unsafe-request-bound" });
+  expect(await coordinator.prepareStep()).toBeUndefined();
+  const pause = coordinator.checkpoint.pause;
+  expect(pause?.code).toBe("unsafe_request");
+  // THE INVARIANT: the composed action fits the 256-char persisted ceiling for
+  // ANY message, so the record decodes on round-trip.
+  expect(pause?.action.length).toBeLessThanOrEqual(256);
+  // The action names the pause's recorded code token and the cause's.
+  expect(pause?.action).toContain("unsafe_request");
+  expect(pause?.action).toContain("untyped_error");
+  // Nothing silently lost: the bounded, redacted message survives in
+  // `cause.message` (its own 512-char ceiling), its cut marked, the
+  // credential inside it redacted before the clip.
+  expect(pause?.cause?.code).toBe("untyped_error");
+  expect(pause?.cause?.recurrence).toBe(0);
+  expect(pause?.cause?.message?.length).toBeLessThanOrEqual(512);
+  expect(pause?.cause?.message?.startsWith("Error: transport failed with [redacted] after")).toBe(
+    true,
+  );
+  expect(pause?.cause?.message?.endsWith("...[clipped]")).toBe(true);
+  expect(JSON.stringify(coordinator.checkpoint)).not.toContain("sk-1234567890abcdef");
+});
+
+test("a research_rejected pause stays decodable for a maximal message (issue #467)", async () => {
+  // Same unbounded interpolation as `unsafe_request` (issue #467): the raw
+  // error message became the action, so any message over 256 chars made the
+  // record undecodable on round-trip. Same fix shape as the untyped stage
+  // action (issue #403): the action names the code tokens and never carries
+  // the message; the bounded, redacted message lives in the recorded cause,
+  // visibly clipped at its own 512-char ceiling.
+  const message = `research transport failed with api_key=sk-1234567890abcdef after ${"x".repeat(600)}`;
+  const target = root();
+  const store = new ProjectStore(target);
+  const base = coordinatorSession(store, []);
+  const session: WorkflowSession = {
+    ...base,
+    initialState: () => ({ ...coordinatorState(), phase: "research" }),
+    prepareResearch: () => ({
+      effectId: "bounded-research-effect",
+      destination: "example.invalid",
+      queryHash: "a".repeat(64),
+      surfaceIds: [],
+    }),
+    async step() {
+      throw new Error(message);
+    },
+  };
+  const coordinator = new RunCoordinator(session, store, { runId: "research-rejected-bound" });
+  expect(await coordinator.prepareStep()).toBeUndefined();
+  const pause = coordinator.checkpoint.pause;
+  expect(pause?.code).toBe("research_rejected");
+  expect(pause?.action.length).toBeLessThanOrEqual(256);
+  expect(pause?.action).toContain("research_rejected");
+  expect(pause?.action).toContain("untyped_error");
+  expect(pause?.cause?.code).toBe("untyped_error");
+  expect(pause?.cause?.message?.length).toBeLessThanOrEqual(512);
+  expect(
+    pause?.cause?.message?.startsWith("Error: research transport failed with [redacted] after"),
+  ).toBe(true);
+  expect(pause?.cause?.message?.endsWith("...[clipped]")).toBe(true);
+  expect(JSON.stringify(coordinator.checkpoint)).not.toContain("sk-1234567890abcdef");
+});
+
 test("an untyped failure records lastStageFailure and repeats its loop signature only on an identical cause (issue #403)", async () => {
   const target = root();
   const store = new ProjectStore(target);
@@ -1170,11 +1253,12 @@ test("an untyped stage failure with a 512-char cause message keeps its action wi
   // message at the 512-char ceiling, while the message itself still reaches
   // the record through `cause.message`.
   const fullCauseMessage = "x".repeat(MAX_PAUSE_CAUSE_MESSAGE_CHARS);
-  // The composed `cause.message` is `<constructor>: <first-line>` clipped to
-  // `MAX_PAUSE_CAUSE_MESSAGE_CHARS` total, so the persisted message for an
-  // Error-sourced cause at the message ceiling is `Error: ` + a
-  // (MAX - 6)-char line.
-  const persistedMessage = `Error: ${"x".repeat(MAX_PAUSE_CAUSE_MESSAGE_CHARS - "Error: ".length)}`;
+  // The composed `cause.message` is `<constructor>: <first-line>`, clipped
+  // VISIBLY (issue #467): a line longer than `MAX_PAUSE_CAUSE_MESSAGE_CHARS`
+  // keeps its head and ends in the fixed `...[clipped]` marker, all within
+  // the ceiling total, so the persisted message for an Error-sourced cause at
+  // the message ceiling is `Error: ` + the clipped head + the marker.
+  const persistedMessage = `Error: ${"x".repeat(MAX_PAUSE_CAUSE_MESSAGE_CHARS - "Error: ".length - "...[clipped]".length)}...[clipped]`;
 
   // First-occurrence stage_failed.
   const stageStore = new ProjectStore(root());

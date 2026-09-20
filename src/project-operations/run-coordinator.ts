@@ -294,6 +294,15 @@ function untypedRecurrenceOf(
 const PAUSE_CONSTRUCTOR_TOKEN = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 
 /**
+ * The fixed marker a visibly clipped untyped cause message ends in (issue
+ * #467): when the composed first line exceeds the shared 512-char pause-cause
+ * ceiling, the head is kept and this marker is appended WITHIN the ceiling,
+ * so a cut is legible in the durable record instead of a silent slice.
+ * Printable ASCII only, like every byte of the composed message.
+ */
+const PAUSE_CAUSE_CLIP_MARKER = "...[clipped]";
+
+/**
  * The bounded, redacted cause an UNTYPED error earns (issue #403), with the
  * fixed code token `untyped_error`. The message is ONLY the error's
  * constructor name plus the first line of its message -- never model text,
@@ -319,16 +328,25 @@ const PAUSE_CONSTRUCTOR_TOKEN = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
  * bounded-identifier check, and the message line falls back to the empty
  * string (line absent from the record) when it cannot be read. Total and
  * deterministic by construction: every input yields a fixed token from a
- * small closed set, never its own output.
+ * small closed set, never its own output. A first line longer than the
+ * ceiling is clipped VISIBLY: the head survives and the fixed
+ * `...[clipped]` marker is appended inside the ceiling (issue #467), so the
+ * record never drops text without saying so -- and two identical inputs
+ * still compose identical messages, which the recurrence comparison needs.
  */
 function untypedPauseCause(sourceError: unknown): PipelinePauseCause {
   const composed = `${boundedConstructorName(sourceError)}: ${boundedFirstMessageLine(sourceError)}`;
   // Order (review round 2, issue #403): remove non-printable bytes FIRST so a
   // control byte inside a credential token cannot defeat the redaction
-  // pattern, THEN redact, THEN clip.
-  const message = redactCredentialLike(composed.replace(/[^\x20-\x7E]/g, ""))
-    .trimEnd()
-    .slice(0, MAX_PAUSE_CAUSE_MESSAGE_CHARS);
+  // pattern, THEN redact, THEN clip. The clip is VISIBLE (issue #467): a
+  // first line longer than the ceiling keeps its head and ends in the fixed
+  // marker, still within the ceiling, so a cut is always legible in the
+  // record instead of a silent slice.
+  const stripped = redactCredentialLike(composed.replace(/[^\x20-\x7E]/g, "")).trimEnd();
+  const message =
+    stripped.length > MAX_PAUSE_CAUSE_MESSAGE_CHARS
+      ? `${stripped.slice(0, MAX_PAUSE_CAUSE_MESSAGE_CHARS - PAUSE_CAUSE_CLIP_MARKER.length)}${PAUSE_CAUSE_CLIP_MARKER}`
+      : stripped;
   return {
     code: "untyped_error",
     ...(message === "" ? {} : { message }),
@@ -721,12 +739,23 @@ export class RunCoordinator {
         try {
           intent = this.session.prepareResearch?.(checkpoint.workflowState);
         } catch (error) {
+          // Issue #467: the failure is uncontrolled text, and the raw message
+          // interpolated into `action` made any message over 256 chars
+          // UNDECODABLE on round-trip (`requiredString` in
+          // src/orchestration/background-runs.ts rejects the whole record) --
+          // the same failure mode #403 fixed for the untyped stage action.
+          // Same fix shape: the bounded, redacted message lives in the
+          // recorded durable cause under `pause.cause`; the action names the
+          // pause's code token and the cause's and never carries the message,
+          // so it stays within the 256-char ceiling for ANY thrown value.
+          const cause = pauseCauseFrom(error, 0) ?? untypedPauseCause(error);
           this.save({
             ...checkpoint,
             pause: {
               phase: "research",
               code: "unsafe_request",
-              action: error instanceof Error ? error.message : "narrow the research request",
+              action: `the research request could not be prepared safely (unsafe_request); see the recorded durable cause (${cause.code}), narrow the request, then resume explicitly`,
+              cause,
             },
           });
           return undefined;
@@ -935,14 +964,22 @@ export class RunCoordinator {
               stageMetrics: [...(checkpoint.workflowState.stageMetrics ?? []), error.metrics],
             }
           : checkpoint.workflowState;
+      // Issue #467: the same bounded-cause discipline as the untyped stage
+      // action (issue #403). The raw message interpolated into `action` made
+      // any message over 256 chars UNDECODABLE on round-trip; the wrapper is
+      // unwrapped first -- exactly like `stageFailurePause` above -- so the
+      // cause names the REAL failure, and the action names the pause's code
+      // token and the cause's without ever carrying the message.
+      const source = error instanceof WorkflowStageFailureError ? error.sourceError : error;
+      const cause = pauseCauseFrom(source, 0) ?? untypedPauseCause(source);
       this.save({
         ...this.persisted.value,
         workflowState: failedState,
         pause: {
           phase: "research",
           code: "research_rejected",
-          action:
-            error instanceof Error ? error.message : "inspect and retry the research response",
+          action: `the research stage failed (research_rejected); see the recorded durable cause (${cause.code}), inspect and retry the research response explicitly`,
+          cause,
         },
       });
       return undefined;

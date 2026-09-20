@@ -652,7 +652,10 @@ export interface PipelinePauseCause {
   /** The failing error's own typed code -- a fixed harness token, never free text. */
   code: string;
   /**
-   * The failing error's own message, clipped to the ceiling. For a typed
+   * The failing error's own message, clipped to the ceiling -- visibly for
+   * an untyped cause (issue #467): a line longer than the ceiling keeps its
+   * head and ends in the fixed `...[clipped]` marker inside the ceiling.
+   * For a typed
    * harness error this is its own harness-authored message. For an untyped
    * error the code is the fixed token `untyped_error` and the message is
    * ONLY the bounded, redacted constructor name plus the first message line
@@ -681,11 +684,14 @@ export interface PipelinePauseCause {
  * itself (which has its own 512-char ceiling). For an untyped stage failure
  * (issue #403) the `action` therefore names only the recorded code token
  * (`untyped_error`) and points the operator at the recorded durable cause;
- * the bounded, redacted message stays in `cause.message`. `limitReason` and
+ * the bounded, redacted message stays in `cause.message`. The research
+ * refusal pauses (`unsafe_request`, `research_rejected`, issue #467) follow
+ * the same discipline. `limitReason` and
  * `limit` are present exactly when the coordinator recorded limit evidence.
  * `cause` is present exactly when the failing error was a typed harness-side
  * error OR an untyped one (with the fixed `untyped_error` code token, issue
- * #403), so a harness failure never reads as a provider one.
+ * #403), or when a research refusal pause settled on one (issue #467), so a
+ * harness failure never reads as a provider one.
  */
 export interface PipelinePause {
   phase: WorkflowPhase;
