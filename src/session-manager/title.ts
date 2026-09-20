@@ -268,7 +268,8 @@ export function createManualSessionName(raw: string): string {
   // And the GLUED projection, because the space this strip inserts in place of a
   // sequence is itself a place to hide: one stripped byte inside the keyword
   // makes `sec ret=supersecret` out of `secret=supersecret` (round 5).
-  if (SECRET_SCREEN_PATTERNS.some((pattern) => pattern.test(glue(raw)))) return SESSION_FALLBACK_NAME;
+  if (SECRET_SCREEN_PATTERNS.some((pattern) => pattern.test(glue(raw))))
+    return SESSION_FALLBACK_NAME;
   const value = withoutSequences
     .replace(/[^\p{L}\p{N}\p{Zs}\p{P}\p{S}]/gu, " ")
     .replace(/\s{2,}/g, " ")
