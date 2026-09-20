@@ -16,7 +16,13 @@ import {
   standaloneSystemPrompt,
 } from "../src/cli";
 import { MemoryLedgerSink } from "../src/ledger/ledger";
+import { PLANNER_SUBMISSION_RESTART, plannerRetryTask } from "../src/orchestration/plan";
 import { StageLimitError } from "../src/orchestration/stage-limits";
+import {
+  REVIEW_SUBMISSION_RESTART,
+  REVIEW_SUBMISSION_RETRY,
+  reviewRetryTask,
+} from "../src/orchestration/verdict";
 import { ProjectStore } from "../src/project-store/project-store";
 import { ProjectStoreError } from "../src/project-store/types";
 import type { Role } from "../src/role";
@@ -406,7 +412,11 @@ test("the standalone review retry keeps the first attempt's review and charges b
     run: async (runId, task) => {
       runIds.push(runId);
       tasks.push(task);
-      if (runIds.length === 1) return { text: "the review itself", cost: 0.02 };
+      // Leading and trailing whitespace on purpose: the wiring carries the
+      // attempt's text itself, and a `.trim()` at the call site leaves every
+      // assertion that only asks "is the review in there" green (measured in
+      // review round 5). The exact bytes are asserted below.
+      if (runIds.length === 1) return { text: "\n  the review itself  \n", cost: 0.02 };
       submitted = true;
       return { text: "submitted", cost: 0.005 };
     },
@@ -416,12 +426,109 @@ test("the standalone review retry keeps the first attempt's review and charges b
     submitted: () => submitted,
     newRunId: () => "second",
   });
-  expect(result.text).toBe("the review itself\n\nsubmitted");
+  expect(result.text).toBe("\n  the review itself  \n\n\nsubmitted");
   expect(result.cost).toBeCloseTo(0.025, 10);
   // A fresh run id per attempt: a turn is keyed by run id in the session store,
   // so re-asking under the first is rejected as an existing session.
   expect(runIds).toEqual(["first", "second"]);
-  expect(tasks[1]).toContain("did not call submit_verdict");
+  expect(tasks[1]).toContain("Your review stands; submit it now");
+  // And the retry can SEE the review it is told stands (issue #525): a fresh
+  // run id means a fresh session, so the prompt's "your review" is only the
+  // review the caller carried into the task. Nothing in it names a response
+  // this session never made.
+  expect(tasks[1]).toContain("the review itself");
+  expect(tasks[1]).not.toContain("did not call submit_verdict");
+  expect(tasks[1]).not.toContain("Your preceding");
+  // The WIRING's bytes, not just "the review is in there": `carried` is the
+  // first attempt's text passed straight through, so a `.trim()` at the call
+  // site satisfies every assertion above and fails only this one.
+  expect(tasks[1]).toContain(`Your review so far, verbatim:\n\n\n  the review itself  \n\n`);
+});
+
+test("a retry after a silent first attempt is asked to review, not to submit", async () => {
+  // The same wiring on the empty branch: with nothing to carry, the retry task
+  // must be the fresh-review requirement -- the standalone path is one of the
+  // three surfaces #525 is about, so the branch is asserted where it is wired,
+  // not only where the sentence is built.
+  let submitted = false;
+  const tasks: string[] = [];
+  await runReviewWithSubmissionRetry({
+    run: async (_runId, task) => {
+      tasks.push(task);
+      if (tasks.length === 1) return { text: "", cost: 0.01 };
+      submitted = true;
+      return { text: "submitted", cost: 0.005 };
+    },
+    firstRunId: "first",
+    task: "review it",
+    retries: true,
+    submitted: () => submitted,
+    newRunId: () => "second",
+  });
+  expect(tasks[1]).toBe(`review it\n\n${REVIEW_SUBMISSION_RESTART}`);
+  expect(tasks[1]).not.toContain(REVIEW_SUBMISSION_RETRY);
+  // The requirement that reaches the WIRING, not only the constant: the retry
+  // opens a fresh run id, so a clause naming the reader's own prior response is
+  // a premise it cannot check. Pinned as a forbidden PATTERN as well as through
+  // the constant, because a `toBe(\`...${RESTART}\`)` follows the constant
+  // wherever its text is reverted to (review of #525, round 4).
+  expect(tasks[1]).not.toContain("Your preceding");
+  expect(tasks[1]).not.toContain("did not call");
+});
+
+test("a retry with nothing carried asks for the review, never for a submission", () => {
+  // An attempt that produced no prose leaves no review to hand over. It must
+  // NOT be told "your review stands": that is the #525 premise, and told to a
+  // fresh session with nothing in it, the retry resolves it by inventing the
+  // review. The empty case is where the false sentence used to survive, so the
+  // assertion is on the ABSENCE of the submission retry, not only on the
+  // presence of a restart prompt.
+  const silent = reviewRetryTask("review it", "");
+  expect(silent).toBe(`review it\n\n${REVIEW_SUBMISSION_RESTART}`);
+  expect(silent).not.toContain(REVIEW_SUBMISSION_RETRY);
+  expect(silent).not.toContain("Your review stands");
+  // Not merely "a different sentence": every clause naming the reader's own
+  // history is forbidden, which is what makes this an assertion about the
+  // DEFECT rather than about one wording of the fix (review of #525, round 4).
+  expect(silent).not.toContain("Your preceding");
+  expect(silent).not.toContain("did not call");
+  // Whitespace is not a review either.
+  expect(reviewRetryTask("review it", "   \n  ")).toBe(silent);
+});
+
+test("a carried review travels exactly as the attempt wrote it", () => {
+  // "Verbatim" is the contract (docs/contracts/product-change.md, 2026-09-20),
+  // so trimming is allowed to DECIDE the branch and never to edit the payload.
+  const prior = "  blocker: exit 1, not 3  \n";
+  const carried = reviewRetryTask("review it", prior);
+  expect(carried.startsWith("review it\n\nYour review so far, verbatim:\n\n")).toBe(true);
+  // The exact bytes, indentation and trailing newline included: nothing between
+  // the header and the requirement but what the attempt produced.
+  expect(carried).toContain(`\n\nYour review so far, verbatim:\n\n${prior}\n\n`);
+  expect(carried.endsWith(REVIEW_SUBMISSION_RETRY)).toBe(true);
+  // The non-empty requirement still says the review stands -- which is true
+  // HERE, because the review is in the session that reads it.
+  expect(carried).toContain("Your review stands");
+});
+
+test("a carried plan-so-far travels exactly as the attempt wrote it (#525)", () => {
+  // The twin of the review carry above, on the other surface this issue
+  // touched: the planner handoff re-asks under a fresh run id too, and its
+  // "verbatim" is the same contract (docs/contracts/product-change.md,
+  // 2026-09-20). The pipeline test asserts the prose is present -- which a
+  // TRIMMED payload also satisfies: measured in review round 5, changing
+  // `${priorText}` to `${priorText.trim()}` in `plannerRetryTask` left every
+  // planner assertion green. Only the exact bytes catch it.
+  const prior = "  step 1: rename the column  \n";
+  const carried = plannerRetryTask("plan it", prior);
+  expect(carried.startsWith("plan it\n\nYour plan so far, verbatim:\n\n")).toBe(true);
+  // Nothing between the header and the requirement but what the attempt wrote,
+  // indentation and trailing newline included.
+  expect(carried).toContain(`\n\nYour plan so far, verbatim:\n\n${prior}\n\n`);
+  expect(carried.endsWith(PLANNER_SUBMISSION_RESTART)).toBe(true);
+  // Whitespace is not a plan: trimming still decides WHICH branch is taken --
+  // it is only forbidden to edit the payload the branch carries.
+  expect(plannerRetryTask("plan it", "   \n  ")).toBe(plannerRetryTask("plan it", ""));
 });
 
 test("the standalone review retry does not run when the verdict already arrived", async () => {

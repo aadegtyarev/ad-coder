@@ -11,6 +11,34 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.147.0] - 2026-09-20
+
+### Fixed
+- **A review retry carries the review it is retrying (issue #525).** An
+  orchestrator lane stopped itself with a contradiction on its face: the second
+  review round had written an `approved` stamp while its text carried a blocker.
+  The two are not one run disagreeing with itself. Two reviewer processes ran
+  seconds apart -- the first read the diff, reproduced the blocker over ten turns
+  and ended in prose without calling `submit_verdict`; the second submitted
+  `approved` after two turns and sixteen seconds with no tool calls at all, its
+  summary asserting six gates and 1351 passing tests that it never ran. The
+  retry runs under a FRESH run id, and a turn is keyed by run id in the session
+  store, so the retry opened a session with no history -- and the retry prompt
+  told that empty session "Your review stands; submit it now". Resolving a false
+  premise is the one thing a model cannot decline to do, so it resolved it by
+  inventing the review, and the stamp, the merge gate and every later reader
+  treat the submitted verdict as the review. `reviewRetryTask(task, priorText)`
+  now builds the retry from the attempt text, handing the session the
+  review-so-far verbatim before asking for the submission, which makes the
+  sentence true rather than unverifiable. No requirement names a response the
+  session never made: an attempt that produced no prose (a truncation, a
+  tool-only turn) has nothing to carry, so it is asked to REVIEW rather than to
+  submit a review that does not exist. All three retrying surfaces are covered
+  -- the standalone `role reviewer` CLI, the pipeline's review round, and the
+  trivial-edit cover review -- and the planner's handoff retry, the other place
+  a decision is re-asked under a fresh run id, now carries the plan-so-far the
+  same way instead of naming a submission the new session cannot see.
+
 ## [0.146.0] - 2026-09-20
 
 ### Changed

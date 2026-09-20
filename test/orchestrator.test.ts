@@ -66,7 +66,11 @@ import type {
   Verdict,
 } from "../src/orchestration/types";
 import { OrchestrationError } from "../src/orchestration/types";
-import { SUBMIT_VERDICT_TOOL_NAME } from "../src/orchestration/verdict";
+import {
+  REVIEW_SUBMISSION_RESTART,
+  REVIEW_SUBMISSION_RETRY,
+  SUBMIT_VERDICT_TOOL_NAME,
+} from "../src/orchestration/verdict";
 import { buildDefaultProfile } from "../src/profiles/default-profile";
 import type { Profile, ProfileRole } from "../src/profiles/types";
 import type { RunCheckpoint } from "../src/project-operations/run-coordinator";
@@ -2949,6 +2953,20 @@ async function startTrivialGateSession(options: {
   profile?: Profile;
   /** The cover reviewer's turn throws (a stand-in for a provider failure). */
   reviewerStepThrows?: boolean;
+  /**
+   * How many leading cover attempts end in PROSE without calling
+   * `submit_verdict` -- the failure the retry exists for (issue #278). Each such
+   * attempt answers `draft review <n>`, which is what a carried retry must show
+   * the next attempt (issue #525).
+   */
+  reviewerProseOnlyAttempts?: number;
+  /**
+   * How many leading cover attempts answer with EMPTY text and no submission --
+   * the same failure with nothing to carry, which must reach the fresh-review
+   * requirement rather than "your review stands" (issue #525). Counted first:
+   * an attempt in this range never also counts as prose-only.
+   */
+  reviewerSilentAttempts?: number;
 }): Promise<TrivialGateSeams & { session: Awaited<ReturnType<typeof startOrchestrator>> }> {
   const seams: TrivialGateSeams = {
     wrap: undefined,
@@ -2989,15 +3007,21 @@ async function startTrivialGateSession(options: {
         task: "",
       };
       seams.reviewerTurns.push(turn);
+      const attempt = seams.reviewerTurns.length;
+      // The leading attempts that never submit: silent ones first (empty text),
+      // then prose-only ones (a draft review).
+      const silent = attempt <= (options.reviewerSilentAttempts ?? 0);
+      const noSubmit = silent || attempt <= (options.reviewerProseOnlyAttempts ?? 0);
       return {
         ...fakeConversation(config.runId ?? "reviewer-run"),
         step: async (task: string) => {
           turn.task = task;
-          await callTool(submit, {
-            status: "approved",
-            issues: [],
-            summary: "bounded trivial edit is correct",
-          });
+          if (!noSubmit)
+            await callTool(submit, {
+              status: "approved",
+              issues: [],
+              summary: "bounded trivial edit is correct",
+            });
           if (options.reviewerStepThrows === true) {
             throw new Error("provider connection lost");
           }
@@ -3005,7 +3029,12 @@ async function startTrivialGateSession(options: {
             runId: config.runId ?? "reviewer-run",
             step: "turn:1",
             status: "completed" as const,
-            assistantText: "reviewed",
+            // The prose-only attempts carry whitespace on purpose: the cover
+            // wiring passes the attempt's text through unchanged, and a
+            // `.trim()` at its call site (`orchestrator.ts`) leaves every
+            // assertion that only asks "is the draft in there" green (measured
+            // in review round 5). The cover-retry test asserts the exact bytes.
+            assistantText: silent ? "" : noSubmit ? `  draft review ${attempt}  \n` : "reviewed",
             toolCalls: [],
             droppedRecords: 0,
           };
@@ -3107,6 +3136,80 @@ test("a trivial edit inside the machine bound is reviewer-covered and recorded (
   expect(reviewerTurns[0]?.task).toContain(SUBMIT_VERDICT_TOOL_NAME);
 
   // The edit's own result states the cover plainly.
+  expect(resultText).toContain("trivial-edit cover: approved by reviewer");
+}, 20000);
+
+test("the cover retry is handed the attempt that ended in prose (issue #525)", async () => {
+  // The retry runs under a FRESH run id, so its session holds no review; the
+  // prompt tells it "your review stands" and the only copy of that review is
+  // what the caller carries into the task. Without the carry, the retry submits
+  // a verdict over a review it never made -- measured on a lane where a
+  // two-turn retry approved a tree whose sibling run had reproduced a blocker.
+  const targetDir = trivialTmpDir("gate-retry");
+  const runId = "trivial-gate-retry-run";
+  const { session, wrap, reviewerTurns } = await startTrivialGateSession({
+    targetDir,
+    runId,
+    reviewerProseOnlyAttempts: 1,
+  });
+  writeSrcFile(targetDir, "one\ntwo\n");
+
+  const resultText = await runWrappedTrivialEdit(wrap as TrivialWrap, targetDir, [
+    { oldText: "one", newText: "1\n2" },
+  ]);
+  await session.close();
+
+  // Two attempts: the prose-only one, then the retry that settles the cover.
+  expect(reviewerTurns).toHaveLength(2);
+  expect(reviewerTurns[0]?.task).not.toContain("Your review so far");
+  const retryTask = reviewerTurns[1]?.task ?? "";
+  expect(retryTask).toContain(REVIEW_SUBMISSION_RETRY);
+  // The retry session is fresh, so nothing may name a response it never made.
+  expect(retryTask).not.toContain("Your preceding");
+  // The carried review, verbatim, and not only its presence: the retry must be
+  // able to read what the first attempt concluded. The exact bytes are what
+  // makes it verbatim -- the fixture's draft carries an indent and a trailing
+  // newline, so a `.trim()` at this wiring's call site fails here and nowhere
+  // else in the file.
+  expect(retryTask).toContain("draft review 1");
+  expect(retryTask).toContain("Your review so far, verbatim:\n\n  draft review 1  \n\n");
+  // The retry is a fresh run id (a turn is keyed by run id).
+  expect(reviewerTurns[1]?.runId).not.toBe(reviewerTurns[0]?.runId);
+  expect(resultText).toContain("trivial-edit cover: approved by reviewer");
+}, 20000);
+
+test("a cover retry with nothing to carry asks for the review, not the submission (issue #525)", async () => {
+  // The other half of the #525 premise: an attempt that wrote NOTHING leaves no
+  // review to hand over, and "your review stands" told to a fresh session that
+  // holds none is the same unverifiable premise the carry exists to remove.
+  const targetDir = trivialTmpDir("gate-silent-retry");
+  const runId = "trivial-gate-silent-run";
+  const { session, wrap, reviewerTurns } = await startTrivialGateSession({
+    targetDir,
+    runId,
+    reviewerSilentAttempts: 1,
+  });
+  writeSrcFile(targetDir, "one\ntwo\n");
+
+  const resultText = await runWrappedTrivialEdit(wrap as TrivialWrap, targetDir, [
+    { oldText: "one", newText: "1\n2" },
+  ]);
+  await session.close();
+
+  expect(reviewerTurns).toHaveLength(2);
+  const retryTask = reviewerTurns[1]?.task ?? "";
+  // The retry is asked to REVIEW, and is never told a review it cannot see
+  // stands. Asserting the absence is the point: this is a fresh run id with no
+  // history (issue #525).
+  expect(retryTask).toContain("No review text is available in this session");
+  expect(retryTask).not.toContain("Your review stands");
+  expect(retryTask).toContain(REVIEW_SUBMISSION_RESTART);
+  // The premise itself is forbidden, not one wording of it: this session made
+  // no prior response, so no clause may name one. Asserted as a pattern so a
+  // reverted constant cannot slip through (review of #525, round 4).
+  expect(retryTask).not.toContain("Your preceding");
+  expect(retryTask).not.toContain("did not call");
+  expect(reviewerTurns[1]?.runId).not.toBe(reviewerTurns[0]?.runId);
   expect(resultText).toContain("trivial-edit cover: approved by reviewer");
 }, 20000);
 

@@ -127,3 +127,33 @@ canonical backlog instead of hiding it in a completion summary.
   and push to main. On a pull request GitHub checks out the merge ref, so the
   gate verifies the digest against the tree that would land: a rebase after
   review without a fresh re-review is red.
+- 2026-09-20: **A review retry carries the review it is retrying (#525).** The
+  second submission attempt runs under a FRESH run id, and a turn is keyed by run
+  id in the session store, so it opens with no history at all. The retry prompt
+  told that session "Your review stands; submit it now" -- a premise the session
+  could not check, because the review it referred to was in the previous
+  attempt's context and nowhere in this one. Measured 2026-09-20 on a lane whose
+  first review run had reproduced a blocker: the retry submitted `approved`
+  after two model turns and sixteen seconds, with a summary reporting six gates
+  it never ran and a test count it never measured -- and the stamp, the merge
+  gate and every later reader treat the submitted verdict as the review.
+  Resolving a false premise is the one thing a model cannot decline to do, so the
+  retry is now built from the attempt text: `reviewRetryTask(task, priorText)`
+  hands the session the review-so-far verbatim and only then asks for the
+  submission, which makes the sentence true instead of unverifiable. An attempt
+  that produced no prose (a truncation, an empty turn) has nothing to carry, so
+  it gets the one requirement that is true of the session reading it: review the
+  work, then submit -- `REVIEW_SUBMISSION_RESTART`. The bare retry is NOT that
+  requirement: "your review stands" told to a session holding none is the same
+  unverifiable premise this entry exists to remove, merely moved to the empty
+  case, and the retry resolves it the same way. NO requirement names a response
+  the session never made: "your preceding response did not call submit_verdict"
+  is the same unverifiable premise in a third costume, and it was removed from
+  the non-empty branch too. This holds on all three surfaces that retry a
+  submission: the standalone `role reviewer` CLI (src/cli.ts), the pipeline's
+  review round (src/orchestration/session.ts) and the trivial-edit cover review
+  (src/orchestration/orchestrator.ts). It holds on the planner's handoff retry
+  as well, the other place a decision is re-asked under a fresh run id
+  (`plannerRetryTask`, src/orchestration/plan.ts): the plan-so-far travels with
+  the task, and the requirement -- the restart, or the validator's own
+  correction -- is phrased about what the new session holds.

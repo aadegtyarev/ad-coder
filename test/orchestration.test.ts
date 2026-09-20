@@ -28,6 +28,7 @@ import { runPipeline } from "../src/orchestration/pipeline";
 import {
   buildSubmitPlanTool,
   formatPlannerInstruction,
+  PLANNER_SUBMISSION_RESTART,
   parsePlan,
   parsePlanText,
   SUBMIT_PLAN_TOOL_NAME,
@@ -61,6 +62,8 @@ import {
   buildSubmitVerdictTool,
   formatReviewerInstruction,
   parseVerdict,
+  REVIEW_SUBMISSION_RESTART,
+  REVIEW_SUBMISSION_RETRY,
   SUBMIT_VERDICT_TOOL_NAME,
 } from "../src/orchestration/verdict";
 import { buildDefaultProfile } from "../src/profiles/default-profile";
@@ -1642,6 +1645,99 @@ test("a reviewer that reviewed in prose is asked again, and its verdict settles 
   expect(result.rounds).toBe(1);
 });
 
+test("the review retry is handed the prose the first attempt wrote (#525)", async () => {
+  const fx = fixture();
+  const coder = fx.role("coder", "You code.");
+  const reviewer = reviewerRole(fx);
+  // The measured failure (#525): the retry runs under a FRESH run id, so it
+  // opens a session with no history. A prompt that calls the first attempt's
+  // review "your review" names something that session cannot see, and the
+  // reviewer resolves the false premise by inventing a review -- the stamp then
+  // reads a verdict submitted over nothing. The review has to travel with it.
+  // Leading and trailing whitespace on purpose: the WIRING carries the prose
+  // it was handed, and `carried.trim()` at the call site (`session.ts`) leaves
+  // every assertion that only asks "is the prose in there" green (measured in
+  // review round 5). The exact bytes are asserted below.
+  const prose = "\n  blocker: the guard exits 1, not 3 -- measured with bun test  \n";
+  let retryPrompt = "";
+  fx.faux.setResponses([
+    fauxAssistantMessage("coded"),
+    fauxAssistantMessage(prose),
+    (context) => {
+      retryPrompt = lastUserText(context);
+      return fauxAssistantMessage(
+        fauxToolCall(SUBMIT_VERDICT_TOOL_NAME, {
+          status: "approved",
+          issues: [],
+          summary: "reviewed the blocker",
+        }),
+      );
+    },
+    fauxAssistantMessage("review complete"),
+  ]);
+
+  const result = await runPipeline({
+    targetDir: fx.targetDir,
+    models: fx.models,
+    task: "implement C",
+    maxRounds: 1,
+    roles: { coder, reviewer },
+  });
+
+  expect(result.approved).toBe(true);
+  expect(retryPrompt).toContain(prose);
+  expect(retryPrompt).toContain("Your review so far, verbatim:");
+  expect(retryPrompt).toContain(REVIEW_SUBMISSION_RETRY);
+  // The wiring's own bytes, not just "the prose is in there": `carried` is the
+  // attempt's text passed straight through, so trimming at the call site is
+  // invisible to the assertions above and caught only here.
+  expect(retryPrompt).toContain(`Your review so far, verbatim:\n\n${prose}\n\n`);
+});
+
+test("a review retry with nothing to carry asks for the review, not the submission (#525)", async () => {
+  const fx = fixture();
+  const coder = fx.role("coder", "You code.");
+  const reviewer = reviewerRole(fx);
+  // The other half of #525: an attempt that produced NO text has no review to
+  // hand over, and "Your review stands" told to a session holding none is the
+  // same unverifiable premise. It gets the fresh-review requirement instead.
+  let retryPrompt = "";
+  fx.faux.setResponses([
+    fauxAssistantMessage("coded"),
+    fauxAssistantMessage(""),
+    (context) => {
+      retryPrompt = lastUserText(context);
+      return fauxAssistantMessage(
+        fauxToolCall(SUBMIT_VERDICT_TOOL_NAME, {
+          status: "approved",
+          issues: [],
+          summary: "reviewed now",
+        }),
+      );
+    },
+    fauxAssistantMessage("review complete"),
+  ]);
+
+  const result = await runPipeline({
+    targetDir: fx.targetDir,
+    models: fx.models,
+    task: "implement D",
+    maxRounds: 1,
+    roles: { coder, reviewer },
+  });
+
+  expect(result.approved).toBe(true);
+  expect(retryPrompt).toContain(REVIEW_SUBMISSION_RESTART);
+  expect(retryPrompt).not.toContain(REVIEW_SUBMISSION_RETRY);
+  expect(retryPrompt).not.toContain("Your review stands");
+  // The review retry opens a FRESH run id, so no clause may name a response the
+  // reading session never made -- pinned as a forbidden pattern, not only
+  // through the constant, so reverting the constant's wording cannot pass
+  // (review of #525, round 4).
+  expect(retryPrompt).not.toContain("Your preceding");
+  expect(retryPrompt).not.toContain("did not call");
+});
+
 test("a reviewer that never calls submit_verdict blocks as a red review-not-run pause", async () => {
   const fx = fixture();
   const coder = fx.role("coder", "You code.");
@@ -3210,8 +3306,14 @@ test("planner gets a corrective retry after a rejected submission, and is told w
   expect(result.stageMetrics.filter(({ stage }) => stage === "plan")).toHaveLength(2);
   // The retry states what was rejected instead of claiming no call was made.
   const retryPrompt = plannerPrompts.at(-1) ?? "";
-  expect(retryPrompt).toContain("submit_plan submission was rejected");
+  expect(retryPrompt).toContain("A submit_plan submission for this task was rejected");
   expect(retryPrompt).not.toContain("did not call submit_plan");
+  // The rejection is CHECKABLE from inside the retry session (issue #525): the
+  // retry opens a fresh run id, so the text the submission was made of travels
+  // with the task rather than being referred to as the reader's own history.
+  expect(retryPrompt).toContain("Your plan so far, verbatim:");
+  // And nothing in the prompt names a response this session never made.
+  expect(retryPrompt).not.toContain("Your preceding");
 });
 
 test("a planner emitting only text is told no call was made, not that one was rejected", async () => {
@@ -3240,7 +3342,11 @@ test("a planner emitting only text is told no call was made, not that one was re
       reviewer: reviewerRole(fx),
     },
   });
-  expect(plannerPrompts.at(-1) ?? "").toContain("did not call submit_plan");
+  // Nothing was written, so there is nothing to carry: the retry is asked to
+  // PLAN, and told only what this session holds (issue #525, the empty branch).
+  expect(plannerPrompts.at(-1) ?? "").toContain(PLANNER_SUBMISSION_RESTART);
+  expect(plannerPrompts.at(-1) ?? "").not.toContain("Your preceding");
+  expect(plannerPrompts.at(-1) ?? "").not.toContain("Your plan so far");
 
   const proseFx = fixture();
   const prosePrompts: string[] = [];
@@ -3269,6 +3375,76 @@ test("a planner emitting only text is told no call was made, not that one was re
   ).rejects.toMatchObject({ pause: { code: "plan_not_json" } });
   expect(prosePrompts.at(-1) ?? "").toContain("carried no JSON object");
   expect(prosePrompts.at(-1) ?? "").not.toContain("did not call submit_plan");
+  // The prose did not parse, but it EXISTS: the second attempt reads it under
+  // the carry header rather than being asked to correct something invisible.
+  expect(prosePrompts.at(-1) ?? "").toContain("Your plan so far, verbatim:");
+  expect(prosePrompts.at(-1) ?? "").toContain("a Markdown plan, but no JSON object");
+  expect(prosePrompts.at(-1) ?? "").not.toContain("Your preceding");
+});
+
+test("the planner retry carries the plan-so-far under a fresh run id (#525)", async () => {
+  // The planner surface has the same defect the review surface was fixed for: a
+  // retry attempt opens a session with no history, so a prompt that says "your
+  // preceding response did not call submit_plan" names something the reader
+  // cannot see -- and a model resolves a premise it cannot check by inventing it.
+  // Here that invention is a plan. The attempt's own text travels instead, and
+  // the attempt really is a fresh run id.
+  const fx = fixture();
+  const plannerPrompts: string[] = [];
+  const record =
+    (step: FauxResponseStep): FauxResponseFactory =>
+    (...args) => {
+      plannerPrompts.push(lastUserText(args[0]));
+      return typeof step === "function" ? step(...args) : step;
+    };
+  // The first attempt's prose carries whitespace on purpose: the wiring hands
+  // the attempt's text straight through (`plannerRetryTask(prompt, carried)` in
+  // `session.ts`), and a `.trim()` there is invisible to an assertion that only
+  // asks whether the prose is present (measured in review round 5). The exact
+  // bytes are asserted below.
+  const planSoFar =
+    "\n  I would split this into two migrations, but I have not called the tool  \n";
+  fx.faux.setResponses([
+    record(fauxAssistantMessage(planSoFar)),
+    record(fauxAssistantMessage("still prose, still no tool call")),
+  ]);
+
+  const sink = new MemoryLedgerSink();
+  let caught: unknown;
+  try {
+    await runPipeline({
+      targetDir: fx.targetDir,
+      models: fx.models,
+      task: "planner carry",
+      maxRounds: 1,
+      roles: {
+        planner: plannerRole(fx),
+        coder: fx.role("coder", "You code."),
+        reviewer: reviewerRole(fx),
+      },
+      ledgerSink: sink,
+    });
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught).toBeInstanceOf(PipelinePauseError);
+  expect(plannerPrompts).toHaveLength(2);
+  // The first attempt's plan-so-far is IN the second attempt's prompt, verbatim.
+  expect(plannerPrompts[1]).toContain("Your plan so far, verbatim:");
+  expect(plannerPrompts[1]).toContain(
+    "I would split this into two migrations, but I have not called the tool",
+  );
+  // The WIRING's bytes, not just "the prose is in there".
+  expect(plannerPrompts[1]).toContain(`Your plan so far, verbatim:\n\n${planSoFar}\n\n`);
+  // The correction names WHICH failure to fix; the carry is what makes it
+  // checkable rather than something the reader must take on faith.
+  expect(plannerPrompts[1]).toContain("carried no JSON object");
+  expect(plannerPrompts[1]).not.toContain("Your preceding");
+  // Both attempts really are FRESH run ids, which is the only reason the carry
+  // is load-bearing: the retry cannot see the attempt it carries.
+  const runIds = [...new Set(sink.records().map((record) => record.runId))];
+  expect(runIds).toHaveLength(2);
+  expect(runIds[0]).not.toBe(runIds[1]);
 });
 
 test("every node of the submit_plan schema declares a type, so a validating provider accepts it", () => {

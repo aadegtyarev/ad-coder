@@ -40,6 +40,7 @@ import {
   CONTRACT_INDEX,
   formatPlannerInstruction,
   parsePlanText,
+  plannerRetryTask,
   SUBMIT_PLAN_TOOL_NAME,
 } from "./plan";
 import { StageLimitError } from "./stage-limits";
@@ -67,7 +68,7 @@ import {
   buildSubmitVerdictTool,
   formatReviewerInstruction,
   REVIEW_SUBMISSION_ATTEMPTS,
-  REVIEW_SUBMISSION_RETRY,
+  reviewRetryTask,
 } from "./verdict";
 
 const RESEARCH_REQUEST_MAX_BYTES = 64 * 1024;
@@ -882,13 +883,20 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     let runId = firstAttempt.stage.runId;
     let capture: PlanCapture = {};
     let text = "";
+    // The plan-so-far the next attempt is handed: every attempt's text, because
+    // the retry opens a session with no history of its own (issue #525).
+    let carried = "";
     let lastRejection: OrchestrationError | undefined;
     const attemptRunIds: string[] = [];
     let attemptsRun = 0;
     let mandatoryToolCalled = false;
     let transcriptPath: string | undefined;
-    let retryInstruction =
-      "Your preceding response did not call submit_plan. Call submit_plan now with the complete required object, then stop.";
+    // The requirement the retry is asked to meet. Left undefined, the retry gets
+    // the generic one for whichever case it is in -- and every one of them is
+    // phrased about what THIS session holds, never about a preceding response
+    // (issue #525): the retry opens a fresh run id, so a claim about the
+    // previous attempt's context is a claim the session cannot check.
+    let retryInstruction: string | undefined;
     let followUps: FollowUp[] = [];
     let accumulatedState = state;
     const prompt = withStageFailureCarryOver(
@@ -922,7 +930,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       const turn = await runWorkflowTurn(
         plannerWithRequiredTool,
         selection,
-        index === 0 ? prompt : `${prompt}\n\n${retryInstruction}`,
+        index === 0 ? prompt : plannerRetryTask(prompt, carried, retryInstruction),
         "plan",
         runId,
         [
@@ -934,6 +942,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
         attempt.resume ? attempt.stage : undefined,
       );
       text = turn.text;
+      carried = carried === "" ? text : `${carried}\n\n${text}`;
       followUps = turn.followUps;
       mandatoryToolCalled ||= capture.called === true;
       transcriptPath = turn.sessionPath;
@@ -960,11 +969,15 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       if (capture.error !== undefined) {
         lastRejection = capture.error;
         // The next turn is told WHICH failure to correct. The message is fixed
-        // structure plus the validator's own wording -- never planner text.
+        // structure plus the validator's own wording -- never planner text. It is
+        // stated about the RUN rather than about the reader's own history: the
+        // retry session is fresh, so "your preceding submission" would name a
+        // submission it cannot see, and the carried text is what makes the
+        // rejection checkable (issue #525).
         retryInstruction =
           capture.error.code === "plan_not_json"
-            ? "Your preceding response carried no JSON object. Call submit_plan now with the complete required object, then stop."
-            : `Your preceding submit_plan submission was rejected: ${capture.error.message}. Call submit_plan now with the complete corrected object, then stop.`;
+            ? `A ${SUBMIT_PLAN_TOOL_NAME} submission for this task carried no JSON object. Call ${SUBMIT_PLAN_TOOL_NAME} now with the complete required object, then stop.`
+            : `A ${SUBMIT_PLAN_TOOL_NAME} submission for this task was rejected: ${capture.error.message}. Call ${SUBMIT_PLAN_TOOL_NAME} now with the complete corrected object, then stop.`;
       }
     }
     // A captured plan sets the governance and routing signals. Exhausting the
@@ -1630,6 +1643,10 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     let followUps: FollowUp[] = [];
     let rawMetrics: PipelineStageMetrics | undefined;
     let attemptRunId = runId;
+    // The review the next attempt is handed: a retry runs under a fresh run id,
+    // so its session has no history and the prompt's "your review" would name a
+    // review it cannot see (issue #525).
+    let carried = "";
     for (let index = 0; index < REVIEW_SUBMISSION_ATTEMPTS; index += 1) {
       // A FRESH run id per attempt, as the planner's handoff does: a turn is
       // keyed by run id in the session store, so re-asking under the first
@@ -1639,7 +1656,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       const turn = await runWorkflowTurn(
         config.roles.reviewer,
         selection,
-        index === 0 ? prompt : `${prompt}\n\n${REVIEW_SUBMISSION_RETRY}`,
+        index === 0 ? prompt : reviewRetryTask(prompt, carried),
         `review:${round}`,
         attemptRunId,
         [
@@ -1651,6 +1668,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
         index === 0 && attempt.resume ? attempt.stage : undefined,
       );
       text = turn.text;
+      carried = carried === "" ? text : `${carried}\n\n${text}`;
       followUps = turn.followUps;
       rawMetrics = turn.metrics;
       // A rejected submission is a DIFFERENT failure: the reviewer called the
