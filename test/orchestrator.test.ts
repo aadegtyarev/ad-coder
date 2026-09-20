@@ -1259,7 +1259,13 @@ test("the core's own settle path writes the review stamp for run_pipeline (issue
 test("a changes_requested-settled run stamps verdict:changes_requested (issue #378)", async () => {
   const fx = fixture();
   stampTarget(fx);
-  const changes: Verdict = { status: "changes_requested", issues: [], summary: "needs work" };
+  // issue #478: parseVerdict now refuses "changes_requested" with an empty
+  // issues list, so name the remaining defect this fixture pretends exists.
+  const changes: Verdict = {
+    status: "changes_requested",
+    issues: [{ severity: "major", what: "fix X" }],
+    summary: "needs work",
+  };
   // onChangesRequested defaults to "advance", so the loop exhausts maxRounds (3)
   // and settles approved:false -- the writer stamps that as changes_requested.
   fx.faux.setResponses([

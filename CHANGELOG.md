@@ -11,6 +11,29 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.124.0] - 2026-09-20
+
+### Fixed
+- **A `changes_requested` verdict with nothing to fix is refused, and a
+  resolved finding has a stated home (issue #478).** A reviewer round recorded
+  `changes_requested` whose own summary said every prior finding was resolved
+  and whose single `issues` entry began "Finding 1 ... is RESOLVED": the
+  vocabulary had no slot for "checked and cleared", so a reviewer with nothing
+  left to fix wrote its check results into the only structured field there
+  was, and the tree was stamped unlandable (measured 2026-09-20, round
+  3ca17be2: a fully paid round plus a blocked landing). The reviewer's
+  instruction now names both directions -- `issues` is only the defects that
+  REMAIN, anything verified and resolved belongs in `summary`, and `approved`
+  is exactly the verdict whose `issues` is empty -- and the same rule is
+  stated in the `issues` field of the tool schema, where a model reads the
+  vocabulary. Mechanically, `parseVerdict` now refuses `changes_requested`
+  with an EMPTY `issues` list, naming the rule and prescribing the
+  resubmission, the same way an incomplete `coverage` is refused: an empty
+  list means nothing must change, so it cannot be a request for changes.
+  `approved` with a non-empty `issues` list (approval with notes) and
+  `decomposition_required` are untouched, and the guard never guesses at the
+  wording of an issue body.
+
 ## [0.123.0] - 2026-09-20
 
 ### Fixed
