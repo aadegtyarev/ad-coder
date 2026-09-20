@@ -1499,3 +1499,53 @@ test("(#506) a snapshot in the inventory namespace never drives a models-profile
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("(#497) a route addresses the row's local name and the request carries its `id`", () => {
+  const dir = scratch();
+  try {
+    // The whole point of the key: a second provider for one upstream model.
+    // The role is named by the local key, and the id the provider is asked for
+    // is the row's `id` -- so the name an operator reads in the file is never
+    // something they have to also make true upstream.
+    const modelsPath = writeModels(
+      dir,
+      `providers:
+  openrouter-2:
+    enabled: true
+    api: openai-completions
+    baseUrl: https://openrouter.example.com/api/v1
+    credential: OPENROUTER_API_KEY_2
+    models:
+      minimax-m3-key2: {id: "minimax/minimax-m3", input: 0.3, output: 1.2}
+default: daily
+profiles:
+  daily:
+    orchestrator: openrouter-2:minimax-m3-key2
+    planner: openrouter-2:minimax-m3-key2
+    researcher: openrouter-2:minimax-m3-key2
+    coder: openrouter-2:minimax-m3-key2
+    reviewer: openrouter-2:minimax-m3-key2
+    auditor: openrouter-2:minimax-m3-key2
+    security: openrouter-2:minimax-m3-key2
+    summarizer: openrouter-2:minimax-m3-key2
+`,
+    );
+    const config = resolvePipelineConfig({
+      task: "x",
+      targetDir: dir,
+      modelsConfigPath: modelsPath,
+      settingsConfigPath: path.join(dir, "settings.yaml"),
+      env: fakeEnv({ OPENROUTER_API_KEY_2: "k" }),
+      warn: silent,
+    });
+    // YAML -> parse -> projection -> registry -> the live role, all local.
+    expect(config.roles.coder?.model.name).toBe("minimax-m3-key2");
+    // ...and the id the request carries, which is the row's `id`: the role
+    // addresses a provider by the id it answers to, and the local name is the
+    // file's business.
+    expect(config.roles.coder?.role.modelId).toBe("minimax/minimax-m3");
+    expect(config.roles.coder?.role.provider).toBe("openrouter-2");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

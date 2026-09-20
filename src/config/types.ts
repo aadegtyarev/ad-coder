@@ -42,8 +42,29 @@
  * `tools` and `format` stay model-only, because they describe an endpoint
  * variant rather than a whole provider (`tools: false` on a provider would
  * silently strip tools from a model that does support them).
+ *
+ * `id` is the provider-native model id, when it differs from the row's key
+ * (#497). The row key is the name a route spells after the colon, and the
+ * registry has ALWAYS separated the two -- a routing name and the id put on the
+ * wire are distinct fields there (`ResolvedModelConfig.name`/`modelId`) -- but
+ * this file had no spelling for the distinction, so the key was both. That is
+ * what made one upstream model unreachable through two providers: the second
+ * provider had no way to name it, and the same name twice is refused (a routing
+ * name is globally unique, which is what lets a route resolve a model without
+ * trusting its own provider prefix).
+ *
+ * With `id`, a model row is an ADDRESS the provider serves: the key is the
+ * local name every LOOKUP addresses (a route's rung, a calibration's membership
+ * check, the profile's routing banner), and `id` is what the provider is asked
+ * for -- and what a settled turn is RECORDED under, because the ledger and the
+ * charge record scope by `(provider, model id)`. That is what keeps two
+ * providers serving one upstream model in separate charge scopes instead of
+ * folding them into one, and it is what the price audit compares our declared
+ * row against. Absent keeps `id` equal to the key, which is what every existing
+ * file declares.
  */
 export interface ModelConfig {
+  id?: string;
   input: number;
   output: number;
   cacheRead?: number;

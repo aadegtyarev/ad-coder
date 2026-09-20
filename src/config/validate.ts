@@ -36,6 +36,7 @@ const PROVIDER_KEYS = new Set([
   "models",
 ]);
 const MODEL_KEYS = new Set([
+  "id",
   "input",
   "output",
   "cacheRead",
@@ -83,9 +84,9 @@ type Bad = (code: ConfigError["code"], detail: string, message: string) => never
  * A hand-edited file is where a typo lives, and `contextwindow: 200000` next to
  * `contextWindow: 200000` is not a value the operator gets told about by any
  * later layer -- it is silently inert, forever. The settings the format does
- * NOT allow on a provider but does allow on a model (`contextWindow`, `tools`,
- * `format`, the cache prices `cacheRead`/`cacheWrite`, `maxTokens`) are
- * refused there for the same reason; widening the
+ * NOT allow on a provider but does allow on a model (`id`, `contextWindow`,
+ * `tools`, `format`, the cache prices `cacheRead`/`cacheWrite`, `maxTokens`)
+ * are refused there for the same reason; widening the
  * provider shape is an additive change here plus in `config/types.ts`, not a
  * key quietly ignored today. `baseUrl` IS a provider key (a provider endpoint
  * default, narrowable per model).
@@ -299,8 +300,27 @@ function parseProvider(name: string, value: unknown, bad: Bad): ProviderConfig {
     );
   }
   const models: Record<string, ModelConfig> = {};
+  // One provider, one row per PROVIDER-NATIVE id (#497). Two local names for
+  // the same wire model are legal in the file -- that is what `id` is for --
+  // but not inside one provider: the two rows would carry one endpoint, one
+  // credential and one billing price, while every downstream consumer that
+  // scopes by (provider, model id) -- the charge record, the price audit --
+  // would fold them into a single scope and silently drop one row's numbers.
+  // Across providers the same id is the intended case and stays legal.
+  const claimedIds = new Map<string, string>();
   for (const [modelName, rawModel] of Object.entries(rawModels as Record<string, unknown>)) {
-    models[modelName] = parseModel(name, modelName, rawModel, bad);
+    const model = parseModel(name, modelName, rawModel, bad);
+    models[modelName] = model;
+    const id = model.id ?? modelName;
+    const owner = claimedIds.get(id);
+    if (owner !== undefined) {
+      bad(
+        "invalid_config",
+        `${name}.models.${modelName}.id`,
+        `provider "${name}" declares model id "${id}" twice (rows "${owner}" and "${modelName}"); two rows of one provider cannot share a provider-native model id`,
+      );
+    }
+    claimedIds.set(id, modelName);
   }
 
   return {
@@ -322,6 +342,11 @@ function parseModel(provider: string, name: string, value: unknown, bad: Bad): M
   const record = value as Record<string, unknown>;
   refuseUnknownKeys(record, MODEL_KEYS, path, bad, `model "${name}"`);
 
+  // The provider-native id, when the row's key is a local name (#497). A row
+  // whose key IS the wire id declares none, which is every row written before
+  // this key existed, so absence is the common case and not a legacy branch.
+  const id = optionalString(record.id, `${path}.id`, bad);
+
   const input = requirePrice(record.input, `${path}.input`, bad);
   const output = requirePrice(record.output, `${path}.output`, bad);
   const cacheRead = optionalPrice(record.cacheRead, `${path}.cacheRead`, bad);
@@ -337,6 +362,7 @@ function parseModel(provider: string, name: string, value: unknown, bad: Bad): M
   }
 
   return {
+    ...(id !== undefined ? { id } : {}),
     input,
     output,
     ...(cacheRead !== undefined ? { cacheRead } : {}),
