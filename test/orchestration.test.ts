@@ -454,6 +454,19 @@ test("parseVerdict accepts a well-formed verdict", () => {
   expect(verdict.summary).toBe("s");
 });
 
+test("reviewer instruction says issues only names REMAINING defects and approved means an empty issues list", () => {
+  // issue #478: the instruction named only one direction (approved vs
+  // otherwise), so a reviewer with nothing left to fix recorded
+  // "changes_requested" over resolved findings. Pin the reverse direction in
+  // words, where the model reads it.
+
+  const instruction = formatReviewerInstruction();
+  expect(instruction).toContain("issues");
+  expect(instruction).toContain("REMAIN");
+  expect(instruction).toContain("approved\" is exactly the verdict whose issues list is empty");
+  expect(instruction).toContain("belongs in the summary");
+});
+
 test("parseVerdict rejects a bad status, non-array issues, a missing what, and a non-object", () => {
   const cases: unknown[] = [
     { status: "yes", issues: [], summary: "s" },

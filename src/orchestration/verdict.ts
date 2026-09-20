@@ -224,8 +224,11 @@ export function buildSubmitVerdictTool(
             Type.String({ description: "the issue itself; required for every issue" }),
           ),
         }),
+        {
+          description:
+            'each remaining defect you found; a defect you verified as resolved belongs in "summary" instead, and "approved" is exactly the verdict whose issues list is empty',
+        },
       ),
-      summary: Type.String({ description: "a short summary of the review" }),
       coverage: Type.Optional(
         Type.Array(
           Type.Object({
@@ -299,5 +302,6 @@ export function formatReviewerInstruction(expected?: SurfaceAnalysis): string {
           )}.`,
         ]),
     'Use "approved" only when no further changes are required; otherwise "changes_requested" with each required change as an issue.',
+    'Issues name only defects that REMAIN; anything you verified and resolved belongs in the summary, and "approved" is exactly the verdict whose issues list is empty.',
   ].join("\n");
 }
