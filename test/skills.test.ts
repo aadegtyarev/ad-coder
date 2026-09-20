@@ -127,7 +127,7 @@ test("loads shipped skills with a content digest", () => {
   const roleSelection = resolveSkills(["role-selection"])[0];
   expect(roleSelection).toBeDefined();
   if (roleSelection === undefined) throw new Error("missing built-in skill");
-  expect(roleSelection).toMatchObject({ id: "role-selection", version: "4", source: "builtin" });
+  expect(roleSelection).toMatchObject({ id: "role-selection", version: "5", source: "builtin" });
   // The static half of issue #232: what each worker role does, returns, and
   // when delegating to it is wrong -- never a restatement of the role names.
   expect(roleSelection.instructions).toContain("Roles only");

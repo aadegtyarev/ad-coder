@@ -1,6 +1,8 @@
 {
   "id": "role-selection",
-  "version": "4",
-  "description": "Role selection. Use when work must be matched to its execution path before any edit or dispatch. Phrases: 'should I delegate or run it myself', 'who does this'.",
-  "roles": ["orchestrator"]
+  "version": "5",
+  "description": "Role selection. Use when work must be matched to its execution path before any edit or dispatch, including an operator ask. Phrases: 'should I delegate or run it myself', 'who does this'.",
+  "roles": [
+    "orchestrator"
+  ]
 }
