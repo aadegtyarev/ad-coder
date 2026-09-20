@@ -81,15 +81,27 @@ test("this repository commits no routing override of its own (#513)", () => {
  * correct statement of THIS change -- failed the pin (3 pass / 1 fail) with no
  * route restored. Two things changed. The match is per LINE, so a pattern
  * cannot be satisfied by two unrelated halves of a paragraph; and a line that
- * says the surface is gone is an obituary, which is not an advertisement. The
- * escape is deliberately narrow: a present-tense claim that routing comes from
- * an inventory carries no such word and is still rejected (control C1), while
- * an obituary that quotes the dead invocation is admitted (control C2).
+ * says the surface is gone is an obituary, which is not an advertisement.
+ *
+ * Round 5 then walked a live recommendation straight through that escape, with
+ * the word `previously` doing the work: "The previously recommended `ad-coder
+ * profile snapshot --inventory work` command is available for routing work."
+ * was admitted. So the marker list is now only the words that STATE
+ * unavailability -- is retired, was removed, is gone, no longer exists, was
+ * dropped. Words that merely place something in the past (`previously`,
+ * `used to`) are not obituaries: they say when, not that it stopped, and a
+ * recommendation can carry them (control E, which must stay red). What the
+ * escape still admits is stated rather than hidden: a sentence that advertises
+ * the route AND calls it retired ("...was retired, but still works") passes.
+ * Any lexical rule has that sentence; the alternative -- matching with no
+ * escape at all -- is the false positive round 4 measured on a CORRECT tree,
+ * and a pin that fails on a correct tree is worse than one that misses a
+ * contrived line.
  */
 const LIVE_DOCS = ["README.md", "docs/ARCHITECTURE.md", "docs/ROADMAP.md"] as const;
 
-/** Words that mark a mention as an obituary: the document says the route is GONE. */
-const RETIREMENT_MARKERS = /\b(?:retired|removed|gone|no longer|previously|used to|dropped)\b/i;
+/** The words that state a surface is UNAVAILABLE, and only those. */
+const RETIREMENT_MARKERS = /\b(?:retired|removed|gone|no longer|dropped)\b/i;
 
 const RETIRED_CLAIMS: ReadonlyArray<readonly [string, RegExp]> = [
   ["the deleted migration action", /\bconfig migrate\b/],
