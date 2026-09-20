@@ -148,6 +148,26 @@ test("loads shipped skills with a content digest", () => {
   });
 });
 
+test("role-selection prices the middle rung instead of selling it as free (#527)", () => {
+  const skill = resolveSkills(["role-selection"])[0];
+  if (skill === undefined) throw new Error("missing built-in skill");
+  const text = skill.instructions;
+  // The rung's PRICE, not merely its existence. A delegated reviewer advises
+  // and writes no stamp, so a delegation that MUTATES the tree still owes the
+  // declared gates and an independent review round -- the standalone reviewer
+  // run when no pipeline is arranging it. A skill that names the rung without
+  // its price routes an operator's small ask into work that quietly leaves both
+  // behind, which is the defect the paragraph exists to prevent; a paraphrase
+  // that keeps only the rung is therefore not enough to pass here.
+  expect(text).toContain("advisory");
+  expect(text).toContain("writes no stamp");
+  expect(text).toContain("its declared gates");
+  expect(text).toContain("standalone `ad-coder role reviewer`");
+  // And the alternative the skill owes the operator when the review is what the
+  // ask actually needs -- said before the code is written, not after.
+  expect(text).toContain("offer the pipeline");
+});
+
 test("project skill shadows a built-in skill", () => {
   const root = project();
   const dir = path.join(root, ".ad-coder", "skills", "task-slicing");
