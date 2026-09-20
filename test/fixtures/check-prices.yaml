@@ -1,0 +1,22 @@
+# Fixture ONLY for scripts/check-prices.ts (never the operator's ~/.config/ad-coder/models.yaml).
+providers:
+  openrouter:
+    enabled: true
+    api: openai-completions
+    baseUrl: https://openrouter.ai/api/v1
+    credential: OPENROUTER_API_KEY
+    models:
+      deepseek/deepseek-v4-pro: {input: 0.422298, output: 0.844596, cacheRead: 0.0351915}
+      minimax/minimax-m3: {input: 0.3, output: 1.2, cacheRead: 0.06}
+      z-ai/glm-5.3-flash: {input: 0.09, output: 0.3, cacheRead: 0.018}
+default: audit
+profiles:
+  audit:
+    orchestrator: openrouter:minimax/minimax-m3
+    planner: openrouter:minimax/minimax-m3
+    researcher: openrouter:minimax/minimax-m3
+    coder: openrouter:minimax/minimax-m3
+    reviewer: openrouter:minimax/minimax-m3
+    auditor: openrouter:minimax/minimax-m3
+    security: openrouter:minimax/minimax-m3
+    summarizer: openrouter:minimax/minimax-m3

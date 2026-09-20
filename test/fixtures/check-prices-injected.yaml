@@ -1,0 +1,20 @@
+# Fixture ONLY for the injected-fetch test (never the operator's file live path).
+providers:
+  openrouter:
+    enabled: true
+    api: openai-completions
+    baseUrl: https://openrouter.ai/api/v1
+    credential: OPENROUTER_API_KEY
+    models:
+      z-ai/glm-5.3-flash: {input: 0.09, output: 0.3, cacheRead: 0.018}
+default: audit
+profiles:
+  audit:
+    orchestrator: openrouter:z-ai/glm-5.3-flash
+    planner: openrouter:z-ai/glm-5.3-flash
+    researcher: openrouter:z-ai/glm-5.3-flash
+    coder: openrouter:z-ai/glm-5.3-flash
+    reviewer: openrouter:z-ai/glm-5.3-flash
+    auditor: openrouter:z-ai/glm-5.3-flash
+    security: openrouter:z-ai/glm-5.3-flash
+    summarizer: openrouter:z-ai/glm-5.3-flash

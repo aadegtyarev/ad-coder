@@ -11,6 +11,26 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.129.0] - 2026-09-20
+
+### Added
+- **Declared price rows are now audited against what the provider actually
+  charges, offline and on demand (issue #475).** The effective price row comes
+  from the pinned catalogue or from a declared `cost` block that overrides it,
+  and nothing ever compared either with the provider's own answer, so one model
+  could be declared 3.35x more expensive under one provider than under another
+  inside the same settings file and no gate would say a word. `bun run
+  check:prices` now reads the charge record `.ad-coder/cost-anomaly.json` (the
+  provider's `usage.cost` divided by our declared row, `observed` and `pending`
+  alike) and judges DIRECTIONALLY: a row the provider bills ABOVE is
+  UNDER-DECLARED -- a finding, exit 1 -- while a row we print above what is
+  billed is a note that never blocks. The public OpenRouter list is demoted to a
+  hint, because it can name the cheapest backend's price while the account is
+  billed for a dearer one, and a disagreement with it is a reason to measure,
+  not a verdict. A second, offline judgement catches the same model declared
+  under two routes at different prices. Exits: 0 clean, 1 a finding, 2 an anchor
+  that could not be read.
+
 ## [0.127.0] - 2026-09-20
 
 ### Fixed

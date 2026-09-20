@@ -1,0 +1,22 @@
+# Fixture ONLY for the public-list hint test: the declared row prints 1.60x the
+# public list's (cheapest backend's) price, so the old live anchor would have
+# flagged it and the new hint half must only hint.
+providers:
+  openrouter:
+    enabled: true
+    api: openai-completions
+    baseUrl: https://openrouter.ai/api/v1
+    credential: OPENROUTER_API_KEY
+    models:
+      deepseek/deepseek-v4-pro: {input: 0.672, output: 1.344, cacheRead: 0.056}
+default: audit
+profiles:
+  audit:
+    orchestrator: openrouter:deepseek/deepseek-v4-pro
+    planner: openrouter:deepseek/deepseek-v4-pro
+    researcher: openrouter:deepseek/deepseek-v4-pro
+    coder: openrouter:deepseek/deepseek-v4-pro
+    reviewer: openrouter:deepseek/deepseek-v4-pro
+    auditor: openrouter:deepseek/deepseek-v4-pro
+    security: openrouter:deepseek/deepseek-v4-pro
+    summarizer: openrouter:deepseek/deepseek-v4-pro

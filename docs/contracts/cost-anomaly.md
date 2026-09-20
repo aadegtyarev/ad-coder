@@ -84,6 +84,40 @@ agreed to pay.
   not implement its own threshold, and must not be able to start a blocked run
   by bypassing the core.
 
+## Declared price audit
+
+
+`bun run check:prices` audits the operator's declared prices. The judgement is
+DIRECTIONAL, because the two directions do not cost the same:
+
+- **The provider's own charge answer is the verdict.** Per `(provider, model)`
+  scope, the command compares what the provider billed against what the
+  declared row predicts (the same charged/expected ratio the cost-anomaly
+  detector records), read from the project's charge record (`--charges <path>`,
+  defaulting to `.ad-coder/cost-anomaly.json` in the target directory) with the
+  module that owns that file.
+  - A ratio ABOVE `1 + tolerance` means the provider charges MORE than the row
+    says: the row is UNDER-DECLARED, a FINDING and exit 1. An under-declared
+    row must stop being invisible.
+  - A ratio BELOW `1 - tolerance` means the row prints MORE than reality
+    (OVER-DECLARED): a visible NOTE, never a block, exit stays 0.
+  - Within tolerance the row is clean. Every scope with no declared route, and
+    every route with no observation, is named -- never silently skipped.
+- **The public OpenRouter list is a HINT, not a verdict.** A disagreement is
+  printed as `hint` -- "a reason to measure" -- and never sets exit 1, because
+  the list can name the cheapest backend's price while the account is billed
+  for a dearer one. It is never a verdict and never grounds to edit.
+- **The offline self-consistency judgement still runs and still sets exit 1**:
+  the same model declared differently under two routes, grouped by the model
+  id's last path segment and reported verbatim.
+
+Exits: 0 clean (notes and hints included), 1 a finding (under-declared,
+self-inconsistency, or a hostile row), 2 an explicitly requested `--charges`
+anchor could not be read. An absent or unreadable DEFAULT charge record is
+stated as "no charge observations available", never a silent pass. The command
+only makes a wrong row visible; fixing it is the operator's act, never an
+automatic rewrite.
+
 ## Sources
 
 The operator's 2026-09-14 rule: warn on a sharp jump in per-request model cost,
