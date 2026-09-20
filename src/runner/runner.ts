@@ -711,6 +711,9 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
   }
   const compaction = resolveCompactionPolicy(explicitPolicy, models, params.model);
   const usage = { freshInput: 0, cachedInput: 0, output: 0, reasoning: 0, costUsd: 0 };
+  // Issue #469: responses whose `reasoning` exceeded `output` are absorbed here,
+  // not discarded; the counters below become the persisted clamp observation.
+  const reasoningClamp = { count: 0, maxExcessTokens: 0 };
   let providerLimitObservation: ReturnType<typeof providerLimitFrom>;
   let usageFailure: RangeError | undefined;
   const readFiles = new Set<string>();
@@ -845,8 +848,24 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
       const freshInput = boundedUsageInteger(event.message.usage.input, "input");
       const cachedInput = boundedUsageInteger(event.message.usage.cacheRead, "cacheRead");
       const output = boundedUsageInteger(event.message.usage.output, "output");
-      const reasoning = boundedUsageInteger(event.message.usage.reasoning ?? 0, "reasoning");
-      if (reasoning > output) throw new RangeError("provider reasoning usage exceeds output");
+      const reasoningRaw = boundedUsageInteger(event.message.usage.reasoning ?? 0, "reasoning");
+      let reasoning = reasoningRaw;
+      // Issue #469: `output` is `completion_tokens` and already CONTAINS
+      // `reasoning_tokens` (`reasoning` is `completion_tokens_details.reasoning_tokens`)
+      // per the provider's own contract -- pi-ai's openai-completions converter notes
+      // this itself and therefore does not add reasoning to its totalTokens. So a
+      // `reasoning > output` pair is a provider accounting anomaly to be ABSORBED,
+      // never a fatal error: `reasoning` is clamped DOWN to `output`, and the round
+      // runs to its end instead of discarding it (the old throw landed after the
+      // verdict and re-threw before the review stamp, killing a fully paid round).
+      // Every OTHER bounded-usage violation (NaN, negative, non-integer, out of
+      // range) still throws below via boundedUsageInteger/addUsageInteger.
+      if (reasoning > output) {
+        const excess = reasoning - output;
+        reasoning = output;
+        reasoningClamp.count += 1;
+        reasoningClamp.maxExcessTokens = Math.max(reasoningClamp.maxExcessTokens, excess);
+      }
       const costUsd = boundedUsageNumber(event.message.usage.cost.total, "cost");
       usage.freshInput = addUsageInteger(usage.freshInput, freshInput, "input");
       usage.cachedInput = addUsageInteger(usage.cachedInput, cachedInput, "cacheRead");

@@ -6,9 +6,11 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
-import type { Api, Model, Models } from "@earendil-works/pi-ai";
+import type { Api, AssistantMessage, Model, Models } from "@earendil-works/pi-ai";
 import {
+  createAssistantMessageEventStream,
   createModels,
+  createProvider,
   fauxAssistantMessage,
   fauxProvider,
   fauxThinking,
@@ -1404,4 +1406,110 @@ test("the request dump is off by default and writes what was sent when asked", (
   // Private: a dump holds task text and project content.
   expect(fs.statSync(file).mode & 0o777).toBe(0o600);
   fs.rmSync(target, { recursive: true, force: true });
+});
+
+/**
+ * Like harnessFixture, but responses arrive with EXACT provider usage
+ * (input/cacheRead/output/reasoning/cost) instead of the faux provider's
+ * re-estimated totals, which would erase anything a test writes. The pi-ai
+ * provider surface is implemented directly over `createProvider`; each stream
+ * ends immediately with the next scripted message.
+ */
+function usageFixture(steps: Array<AssistantMessage | (() => AssistantMessage)>) {
+  let consumed = 0;
+  const model = {
+    id: "usage-faux-1",
+    name: "Usage Faux 1",
+    api: "usage-faux",
+    provider: "usage-faux",
+    baseUrl: "http://localhost:0",
+    reasoning: true,
+    input: ["text"] as ("text" | "image")[],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: CONTEXT_WINDOW,
+    maxTokens: 16384,
+  } as Model<Api>;
+  const singleStream = () => {
+    const events = createAssistantMessageEventStream();
+    const step = steps[consumed++] ?? fauxAssistantMessage("done");
+    events.end(typeof step === "function" ? step() : step);
+    return events;
+  };
+  const provider = createProvider({
+    id: "usage-faux",
+    auth: { apiKey: { name: "UsageFaux", resolve: async () => ({ auth: {} }) } },
+    models: [model],
+    api: {
+      stream: singleStream,
+      streamSimple: singleStream,
+    },
+  });
+  const models = createModels();
+  models.setProvider(provider);
+  const role = defineRole(
+    {
+      name: "coder",
+      provider: "usage-faux",
+      modelId: model.id,
+      systemPrompt: "You code.",
+      activeToolNames: ["bash", "read", "write", "edit"],
+      cacheRetention: "none",
+      contextBudget: { maxTokens: 100_000, reserveTokens: 10_000, keepRecentTokens: 20_000 },
+    },
+    model,
+  );
+  return { models, model, role };
+}
+
+/** An exact-usage assistant message: the runner hook's numeric seams. */
+function messageWithUsage(usage: {
+  input?: number;
+  cacheRead?: number;
+  output: number;
+  reasoning?: number;
+  costTotal?: number;
+}): AssistantMessage {
+  const message = fauxAssistantMessage("done");
+  const total = (usage.input ?? 0) + (usage.cacheRead ?? 0) + usage.output + (usage.reasoning ?? 0);
+  message.usage = {
+    input: usage.input ?? 0,
+    output: usage.output,
+    cacheRead: usage.cacheRead ?? 0,
+    cacheWrite: 0,
+    ...(usage.reasoning !== undefined && { reasoning: usage.reasoning }),
+    totalTokens: total,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: usage.costTotal ?? 0 },
+  };
+  return message;
+}
+
+test("#469: a reasoning>output anomaly is clamped down, not fatal, and the paid round finishes", async () => {
+  // The anomalous pair is the provider's own accounting: `output` is
+  // `completion_tokens` and already contains `reasoning_tokens`, so reasoning
+  // 250 vs output 100 cannot both be true. Before #469 this threw inside the
+  // after_response hook and re-threw after the verdict, discarding the round.
+  const { models, model, role } = usageFixture([
+    messageWithUsage({ input: 10, output: 100, reasoning: 250 }),
+  ]);
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-469-"));
+  const result = await runRole({ role, targetDir: tmp, models, model, prompt: "do it" });
+  expect(result.result.status).toBe("completed");
+  // Accumulation stays on the clamped numbers: reasoning no longer exceeds
+  // output, and the excess is absorbed, not propagated.
+  expect(result.observations.output).toBe(100);
+  expect(result.observations.reasoning).toBe(100);
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+test("#469: every other bounded-usage violation still kills the round", async () => {
+  // The clamp owns ONLY the reasoning>output anomaly; hostile numbers stay
+  // fatal. NaN reasoning trips boundedUsageInteger and still poisons the run.
+  for (const hostileReasoning of [Number.NaN, -1, 1.5, 2_000_000_000_000]) {
+    const { models, model, role } = usageFixture([
+      messageWithUsage({ input: 10, output: 100, reasoning: hostileReasoning }),
+    ]);
+    await expect(
+      runRole({ role, targetDir, models, model, prompt: "do it" }),
+    ).rejects.toBeInstanceOf(RangeError);
+  }
 });
