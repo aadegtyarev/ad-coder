@@ -11,6 +11,14 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.143.0] - 2026-09-20
+
+### Fixed
+- **Runs can be stopped by their run ID without matching or killing another
+  lane (issue #479).** The stop command verifies the recorded process identity,
+  target directory, process start time, and witness tokens before signalling;
+  stopped runs also report that they were stopped.
+
 ## [0.151.0] - 2026-09-21
 
 ### Changed
