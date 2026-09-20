@@ -1,11 +1,13 @@
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Complexity } from "../orchestration/types";
 import type { ProfileRole } from "../profiles/types";
-import { PROFILE_ROLES } from "../profiles/validate";
+import { PROFILE_ROLES, THINKING_LEVELS } from "../profiles/validate";
 import { ConfigError } from "./errors";
 import type {
   ConfigProfile,
   ModelConfig,
   ModelLadder,
+  ModelRung,
   ModelsConfig,
   ProviderAdmissionSettings,
   ProviderConfig,
@@ -449,16 +451,21 @@ function parseLadder(
     );
   }
 
-  const ladder: string[] = [];
+  const ladder: ModelRung[] = [];
   for (const rawRung of rungs as unknown[]) {
-    if (typeof rawRung !== "string" || rawRung.length === 0) {
+    const isMapping = typeof rawRung === "object" && rawRung !== null && !Array.isArray(rawRung);
+    const modelValue = isMapping ? (rawRung as { model?: unknown }).model : rawRung;
+    const levelValue = isMapping
+      ? (rawRung as { thinkingLevel?: unknown }).thinkingLevel
+      : undefined;
+    if (typeof modelValue !== "string" || modelValue.length === 0) {
       bad(
         "invalid_config",
         path,
-        `every rung of row "${key}" in profile "${profile}" must be a non-empty "provider:model" string`,
+        `every rung of row "${key}" in profile "${profile}" must be a non-empty "provider:model" string, or a mapping { model, thinkingLevel }`,
       );
     }
-    const rung = rawRung as string;
+    const rung = modelValue as string;
     const colon = rung.indexOf(":");
     const providerName = colon === -1 ? "" : rung.slice(0, colon);
     const modelName = colon === -1 ? rung.slice(1) : rung.slice(colon + 1);
@@ -486,7 +493,21 @@ function parseLadder(
       );
     }
 
-    ladder.push(rung);
+    if (levelValue !== undefined) {
+      if (
+        typeof levelValue !== "string" ||
+        !THINKING_LEVELS.includes(levelValue as ThinkingLevel)
+      ) {
+        bad(
+          "invalid_config",
+          `${path}.thinkingLevel`,
+          `rung thinkingLevel must be one of ${THINKING_LEVELS.join(", ")} when present`,
+        );
+      }
+      ladder.push({ model: rung, thinkingLevel: levelValue as string });
+    } else {
+      ladder.push(rung);
+    }
   }
 
   return ladder;

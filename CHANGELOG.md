@@ -11,6 +11,21 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.125.0] - 2026-09-20
+
+### Added
+- **A routing rung can carry a thinking level, and the migration stops dropping
+  one (issue #477).** A rung in `models.yaml` was a bare `provider:model`
+  string, so a thinking level had nowhere to live: the field exists in the
+  profile schema and is consumed when a role is created, but no YAML path could
+  supply it, and the JSON migration dropped it into `report.dropped`. A rung
+  may now also be a mapping -- a `model:` line with a `thinkingLevel:` line
+  under it -- while a bare string keeps parsing exactly as before, meaning
+  "level not specified"; an unknown level is refused with the existing
+  `THINKING_LEVELS` message, the level reaches `selection.thinkingLevel`, and
+  the migration carries it into the level-bearing rung instead of discarding
+  it.
+
 ## [0.124.0] - 2026-09-20
 
 ### Fixed

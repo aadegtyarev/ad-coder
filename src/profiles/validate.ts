@@ -24,7 +24,7 @@ export const PROFILE_ROLES: readonly ProfileRole[] = [
 const COMPLEXITIES: readonly Complexity[] = ["trivial", "medium", "complex"];
 
 const CACHE_RETENTIONS: readonly CacheRetention[] = ["none", "short", "long"];
-const THINKING_LEVELS: readonly ThinkingLevel[] = [
+export const THINKING_LEVELS: readonly ThinkingLevel[] = [
   "off",
   "minimal",
   "low",

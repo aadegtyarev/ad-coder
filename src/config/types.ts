@@ -98,7 +98,17 @@ export type ModelRef = string;
  * single string in the file becomes a one-rung ladder, so a consumer never
  * branches on "string or list" -- that ambiguity is resolved once, here.
  */
-export type ModelLadder = readonly ModelRef[];
+export type ModelLadder = readonly ModelRung[];
+
+/**
+ * A rung that MAY carry a thinking level (#477). The accepted YAML forms are a
+ * bare `provider:model` string (level not specified, exactly as today) or a
+ * mapping `{ model: "provider:model", thinkingLevel: low }`. The ladder itself
+ * is deliberately NOT widened here: widening it is a later step, so that each
+ * step stays green on its own. `thinkingLevel` is a plain string at this stage
+ * and is narrowed to the allow-list at the parsing boundary in a later step.
+ */
+export type ModelRung = ModelRef | { readonly model: ModelRef; readonly thinkingLevel?: string };
 
 /**
  * One profile: its name and its rows.
