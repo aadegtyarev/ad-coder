@@ -376,9 +376,9 @@ workflows — one substrate, swappable drivers.
   therefore `(profile, provider)`, never merely a model name; CreditWallet and
   ProviderAdmission keep those scopes separate. Switching profiles changes future
   work through the operator-facing stored routing source
-  `~/.config/ad-coder/models.yaml`; `ad-coder config migrate` converts an
-  existing stored `inventories.json`, which is retired as a routing source and
-  no longer seeded on first use. Profile
+  `~/.config/ad-coder/models.yaml`, which is the ONLY routing source: the stored
+  `inventories.json` route is gone from the code (issue #513), so a file left on
+  disk is read by nothing and there is no migration command to name. Profile
   changes affect future work without changing workflow semantics; a live or
   paused durable run remains
   pinned to its original profile. **Complexity** selects the most
@@ -441,11 +441,11 @@ workflows — one substrate, swappable drivers.
   local corpus from the cheapest plausible model at low effort. Store the
   corpus-calibrated base in user configuration and layer project-calibrated
   `(role, complexity)` overrides from `.ad-coder/`, with source provenance in
-  effective configuration and no cross-project mutation of the base.
-  Inventories may span providers; prefer cross-family Coder/Reviewer pairs when
+  effective configuration and no cross-project mutation of the base. A profile
+  may span providers; prefer cross-family Coder/Reviewer pairs when
   available to reduce correlated blind spots, and use provider-recommended
-  within-family variants when an inventory cannot span families. Routing never
-  reaches outside the operator-authored inventory.
+  within-family variants when a profile cannot span families. Routing never
+  reaches outside the profile the operator authored.
   Economic calibration keeps token-billed API cost separate from subscription
   capacity. Prefer provider-reported request cost, retain a token-price estimate
   for reconciliation, and model context-window price tiers explicitly. For

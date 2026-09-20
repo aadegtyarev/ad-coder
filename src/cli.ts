@@ -31,14 +31,8 @@ import {
 } from "./cli/resolve-config";
 import { resolveResumeRun, resumeOrchestratorConfig, resumeSeedNote } from "./cli/resume";
 import { ToolActivityRenderer } from "./cli/tool-activity";
-import { migrateInventoriesToModels } from "./config/migrate";
 import { loadModelsConfigSeam, loadSettingsConfigSeam } from "./config/seam";
-import {
-  defaultModelsPath,
-  defaultSettingsPath,
-  loadSettingsConfig,
-  writeFreshModelsConfig,
-} from "./config/store";
+import { defaultModelsPath, defaultSettingsPath, loadSettingsConfig } from "./config/store";
 import { modelsProfileSource } from "./config/to-registry";
 import type { ProviderAdmissionSettings, SettingsConfig } from "./config/types";
 import type { CompactionPolicy } from "./context/compactor";
@@ -49,8 +43,6 @@ import {
   forecastCost,
   latestCreditBalance,
 } from "./economics/forecast";
-import { defaultInventoryPath, readInventory } from "./inventory/store";
-import { parseModelInventoryConfig } from "./inventory/validate";
 import { readLedgerFiles, renderLedgerReport } from "./ledger/analytics";
 import {
   FileLedgerSink,
@@ -179,7 +171,7 @@ import {
 
 // The orchestrator is included because it is a configured role like any other --
 // its own prompt, its own profile row, its own ceilings -- and excluding it made
-// `ad-coder role orchestrator` fail with "unknown role" while every inventory
+// `ad-coder role orchestrator` fail with "unknown role" while every profile
 // listed it (issue #306). A one-shot orchestrator task, a scripted invocation,
 // or simply asking it a question had no route but an interactive console.
 const ROLE_NAMES = [
@@ -1477,6 +1469,30 @@ function modelsProfileSourceRef(
   return { kind: "models-profile", ...modelsProfileSource(models, name) };
 }
 
+/**
+ * The provider a `models.yaml` route would authenticate against, for the
+ * console's login hint: the first provider the SELECTED profile reaches, walked
+ * the same way the resolver dispatches.
+ *
+ * A hint must never be the reason a console fails to start. `models.yaml` is
+ * the only stored route left (issue #513), and if it is malformed or names a
+ * profile that does not exist, the RESOLVE raises the typed error naming the
+ * field -- which is where an operator can act on it. So the hint answers
+ * `undefined` for anything it cannot read and says nothing.
+ */
+function storedRouteProvider(
+  modelsConfigPath: string | undefined,
+  modelsProfile: string | undefined,
+): string | undefined {
+  try {
+    const models = loadModelsConfigSeam(modelsConfigPath ?? defaultModelsPath());
+    if (models === undefined) return undefined;
+    return modelsProfileSource(models, modelsProfile).providers[0]?.id;
+  } catch {
+    return undefined;
+  }
+}
+
 async function profileCommand(positionals: string[], flags: Record<string, string | undefined>) {
   const action = positionals[1];
   if (
@@ -1511,15 +1527,19 @@ async function profileCommand(positionals: string[], flags: Record<string, strin
     const inventory = flags["--inventory"];
     const modelsProfile = flags["--models-profile"];
     if (targetDir === undefined) fail("profile snapshot requires --target-dir");
-    // EXACTLY ONE SOURCE (#506). The two namespaces resolve against different
-    // model sets, so naming both would leave the snapshot's own provenance
-    // ambiguous -- and naming neither has nothing to calibrate.
-    if ((inventory === undefined) === (modelsProfile === undefined))
-      fail("profile snapshot requires exactly one of --inventory and --models-profile");
-    const source: CalibrationSourceRef =
-      inventory !== undefined
-        ? { kind: "inventory", name: inventory }
-        : modelsProfileSourceRef(modelsProfile as string, flags["--models-config"]);
+    // A JSON inventory is no longer a routing source (issue #513), so the only
+    // source a snapshot can name is a models.yaml profile. The flag is refused
+    // by name rather than ignored: a caller still passing it is naming a
+    // namespace nothing resolves against any more.
+    if (inventory !== undefined)
+      fail(
+        "profile snapshot no longer takes --inventory: a JSON inventory is not a routing source; name a models.yaml profile with --models-profile <name> (issue #513)",
+      );
+    if (modelsProfile === undefined) fail("profile snapshot requires --models-profile <name>");
+    const source: CalibrationSourceRef = modelsProfileSourceRef(
+      modelsProfile,
+      flags["--models-config"],
+    );
     const snapshot = createProjectCalibrationSnapshot(current, source);
     const file = writeProjectCalibrationSnapshot(resolveTargetDir(targetDir), snapshot);
     process.stdout.write(`${JSON.stringify({ file, snapshot })}\n`);
@@ -2089,11 +2109,8 @@ function inheritedCapabilityFlags(flags: Record<string, string | undefined>): re
   if (flags["--settings-config"] !== undefined) {
     inherited.push("--settings-config", flags["--settings-config"] as string);
   }
-  if (flags["--inventory-profile"] !== undefined) {
-    inherited.push("--inventory-profile", flags["--inventory-profile"] as string);
-  }
-  if (flags["--inventory-config"] !== undefined) {
-    inherited.push("--inventory-config", flags["--inventory-config"] as string);
+  if (flags["--models-profile"] !== undefined) {
+    inherited.push("--models-profile", flags["--models-profile"] as string);
   }
   if (flags["--registry-config"] !== undefined) {
     inherited.push("--registry-config", flags["--registry-config"] as string);
@@ -2360,21 +2377,12 @@ function buildConfigOptions(
   ].some((value) => value !== undefined);
   // The stored YAML config (issue #280). `settings.yaml` (behaviour) applies to
   // every run; `models.yaml` (routing) applies only when no independent model
-  // override is given and no `--inventory-config`. The paths are injected
-  // (defaulting to the XDG config location) so tests point them at temp files;
-  // `--models-config`/`--settings-config` let an operator override them.
+  // override is given. The paths are injected (defaulting to the XDG config
+  // location) so tests point them at temp files; `--models-config` /
+  // `--settings-config` let an operator override them.
   const modelsConfigPath =
-    flags["--models-config"] ??
-    (!hasIndependentModelConfig && flags["--inventory-config"] === undefined
-      ? defaultModelsPath()
-      : undefined);
+    flags["--models-config"] ?? (!hasIndependentModelConfig ? defaultModelsPath() : undefined);
   const settingsConfigPath = flags["--settings-config"] ?? defaultSettingsPath();
-  const inventoryConfig =
-    flags["--inventory-config"] !== undefined
-      ? parseModelInventoryConfig(readJsonConfig(flags["--inventory-config"], "--inventory-config"))
-      : hasIndependentModelConfig
-        ? undefined
-        : undefined;
   const profile =
     flags["--profile-config"] === undefined
       ? undefined
@@ -2571,11 +2579,10 @@ function buildConfigOptions(
     ...(flags["--mid-model"] !== undefined && { midModel: flags["--mid-model"] }),
     ...(flags["--cheap-model"] !== undefined && { cheapModel: flags["--cheap-model"] }),
     ...(registryConfig !== undefined && { registryConfig }),
-    ...(inventoryConfig !== undefined && { inventoryConfig }),
     ...(modelsConfigPath !== undefined && { modelsConfigPath }),
     ...(settingsConfigPath !== undefined && { settingsConfigPath }),
-    ...(flags["--inventory-profile"] !== undefined && {
-      inventoryProfile: flags["--inventory-profile"],
+    ...(flags["--models-profile"] !== undefined && {
+      modelsProfile: flags["--models-profile"],
     }),
     ...(profile !== undefined && { profile }),
     ...(flags["--planner-model"] !== undefined && { plannerModel: flags["--planner-model"] }),
@@ -2984,12 +2991,9 @@ async function consoleCommand(
   // orchestrator's prompt regardless of task.
   const configOptions = buildConfigOptions(targetDirArg, flags);
   const selectedSkills = configOptions.selectedSkills ?? [];
-  const selectedInventory = configOptions.inventoryConfig?.profiles.find(
-    (entry) =>
-      entry.name === (configOptions.inventoryProfile ?? configOptions.inventoryConfig?.default),
-  );
   const authenticationProvider =
-    configOptions.provider ?? selectedInventory?.registry.providers[0]?.id;
+    configOptions.provider ??
+    storedRouteProvider(configOptions.modelsConfigPath, configOptions.modelsProfile);
   const authenticationCommand =
     authenticationProvider === "openrouter" || authenticationProvider === "openai-codex"
       ? `ad-coder auth login --provider ${authenticationProvider} --target-dir ${shellArgument(path.resolve(targetDirArg))}`
@@ -3174,14 +3178,10 @@ const PIPELINE_OPTIONS: CommandDefinition["options"] = [
     description: "Load an explicitly selected trusted provider/model registry as JSON.",
   },
   {
-    name: "--inventory-config",
-    value: "<file.json>",
-    description: "Load named atomic registry/profile inventories as JSON.",
-  },
-  {
-    name: "--inventory-profile",
+    name: "--models-profile",
     value: "<name>",
-    description: "Select one profile from --inventory-config or models.yaml.",
+    description:
+      "Select one named profile from models.yaml (default: the document's own `default:`).",
   },
   {
     name: "--models-config",
@@ -3516,45 +3516,6 @@ const BACKGROUND_RUN_OPTIONS: CommandDefinition["options"] = [
   },
 ];
 
-/**
- * `config migrate`: transform every stored inventory profile into a fresh
- * `models.yaml`, ALL OR NOTHING. The pure transform (`migrateInventoriesToModels`)
- * never throws on data content -- every anomaly lands in the report, and THIS
- * caller decides: any provider conflict, a not-expressible provider (oauth),
- * or a parity failure prints the full report and writes NOTHING. Only a fully
- * proven migration writes, and only to a path with no file on it -- a
- * hand-edited models.yaml is never clobbered (`assertModelsFileAbsent`). The
- * report and the summary carry names only: provider ids, env-var NAMES,
- * profile names -- never a credential value (the transform never reads one).
- */
-function runConfigMigrate(flags: Record<string, string | undefined>): void {
-  const inventoryPath = flags["--inventory"] ?? defaultInventoryPath();
-  const outputPath = flags["--output"] ?? defaultModelsPath();
-  const inventory = readInventory(inventoryPath);
-  const { models, report } = migrateInventoriesToModels(inventory);
-  const blocked =
-    report.errors.length > 0 ||
-    report.providerConflicts.length > 0 ||
-    report.notExpressible.length > 0 ||
-    report.parity.some((row) => !row.equal);
-  if (blocked) {
-    // Serializable, names-only (the transform's contract): safe to print whole.
-    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
-    process.exit(1);
-  }
-  writeFreshModelsConfig(outputPath, models);
-  const migrated = report.profiles.filter((profile) => profile.status === "migrated");
-  const lines = [
-    `profiles migrated: ${migrated.length} (${migrated.map((p) => p.name).join(", ")})`,
-    ...(report.defaultProfile === undefined ? [] : [`default profile: ${report.defaultProfile}`]),
-    `providers written: ${report.providers.length} (${report.providers.join(", ")})`,
-    `routing rows: ${report.parity.length}`,
-    `dropped extras: ${report.dropped.length}`,
-    "profile names are preserved; renaming a profile to a purpose name is a hand edit.",
-  ];
-  for (const line of lines) process.stdout.write(`${line}\n`);
-}
-
 const COMMANDS: readonly CommandDefinition[] = [
   {
     name: "about",
@@ -3641,9 +3602,8 @@ const COMMANDS: readonly CommandDefinition[] = [
         fail("--method must be browser or device_code");
       const provider = flags["--provider"];
       // A non-built-in `--provider` id must name a DECLARED env-var provider from
-      // the same source routing uses (models.yaml first, else inventories.json).
-      // The error names the IDs only, never a credential value, and never the
-      // operator's config path.
+      // the same source routing uses (models.yaml). The error names the IDs only,
+      // never a credential value, and never the operator's config path.
       if (provider !== undefined && provider !== "openai-codex" && provider !== "openrouter") {
         const declared = declaredEnvProviderIds();
         if (!declared.includes(provider)) {
@@ -3663,20 +3623,18 @@ const COMMANDS: readonly CommandDefinition[] = [
         json: booleans["--json"] === true,
         ...(provider !== undefined && { provider }),
         ...(method !== undefined && { method }),
-        inventoryPath: defaultInventoryPath(),
         modelsConfigPath: defaultModelsPath(),
       });
     },
   },
   {
     name: "config",
-    description:
-      "Show effective secret-free configuration, or migrate stored inventories into models.yaml.",
+    description: "Show effective secret-free configuration.",
     positionals: [
       {
-        name: "<show|migrate>",
+        name: "<show>",
         description:
-          "show: resolved configuration. migrate: inventories.json -> fresh models.yaml, all or nothing.",
+          "show: resolved configuration. (`migrate` was removed with the JSON inventory route, issue #513.)",
       },
     ],
     options: [
@@ -3684,26 +3642,11 @@ const COMMANDS: readonly CommandDefinition[] = [
         option.name === "--target-dir" ? { ...option, required: false } : option,
       ),
       { name: "--json", description: "Emit stable JSON." },
-      {
-        name: "--inventory",
-        value: "<path>",
-        description: "migrate: inventories.json to read (default: the standard inventory path).",
-      },
-      {
-        name: "--output",
-        value: "<path>",
-        description:
-          "migrate: models.yaml to create (default: the standard path; an existing file is refused, never clobbered).",
-      },
     ],
     run: async ({ positionals, flags, booleans }) => {
       const action = positionals[1];
-      if ((action !== "show" && action !== "migrate") || positionals[2] !== undefined)
-        fail("config requires exactly one action: show or migrate");
-      if (action === "migrate") {
-        runConfigMigrate(flags);
-        return;
-      }
+      if (action !== "show" || positionals[2] !== undefined)
+        fail("config requires exactly one action: show");
       const target = flags["--target-dir"] ?? process.cwd();
       const config = resolvePipelineConfig({
         ...buildConfigOptions(target, flags),

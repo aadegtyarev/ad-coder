@@ -11,9 +11,6 @@ import { assertSummarizerWindow } from "../context/compactor";
 import { CostAnomalyDetector, FileCostAnomalyStore } from "../economics/cost-anomaly";
 import { DEFAULT_PROJECT_GATES } from "../gates/project-gates";
 import type { QualityGate } from "../gates/types";
-import { resolveModelInventory } from "../inventory/resolve";
-import { defaultInventoryPath, storedInventoryExists } from "../inventory/store";
-import type { ModelInventoryConfig, ResolvedModelInventory } from "../inventory/types";
 import { MemoryLedgerSink } from "../ledger/ledger";
 import type {
   ToolActivityChannel,
@@ -289,24 +286,21 @@ export interface ResolvePipelineConfigOptions {
   /** Explicit operator-authored registry data; never discovered from targetDir. */
   registryConfig?: RegistryConfig;
   profile?: Profile;
-  inventoryConfig?: ModelInventoryConfig;
-  inventoryProfile?: string;
   /**
-   * The `models.yaml` path the stored-config seam reads. When set and
-   * `inventoryConfig` is absent with no independent overrides, the resolver
-   * tries this file FIRST (issue #280); absent/malformed follows the seam's
-   * typed rules. Never read from the real home config in tests -- inject a
-   * temp path.
+   * The named routing profile the operator selected from `models.yaml`
+   * (`--models-profile`). Absent means the document's own `default:`, which is
+   * the route every fleet process runs unless it names another profile.
+   */
+  modelsProfile?: string;
+  /**
+   * The `models.yaml` path the stored-config seam reads. When set with no
+   * independent overrides, the resolver tries this file (issue #280);
+   * absent/malformed follows the seam's typed rules. Never read from the real
+   * home config in tests -- inject a temp path.
    */
   modelsConfigPath?: string;
   /** The `settings.yaml` path (behaviour). Always honoured when set, independent of routing. */
   settingsConfigPath?: string;
-  /**
-   * The `inventories.json` path the stored-config seam falls back to when
-   * `models.yaml` is absent. Injectable so tests confine every read to a temp
-   * dir -- never the operator's real config.
-   */
-  inventoryPath?: string;
   /** Read a matching committed .ad-coder/calibration.json routing override. Defaults to true. */
   useProjectCalibration?: boolean;
   overrides?: Partial<Record<ProfileRole, import("../profiles/types").SpawnOverride>>;
@@ -644,34 +638,17 @@ function resolveConfig(
   if (options.registryConfig !== undefined && options.provider !== undefined) {
     throw new Error("provider cannot be combined with registryConfig");
   }
-  // The `--<role>-model` family COMPOSES with an inventory (issue #101 item 3):
-  // pinning one role's model must not drop the operator's selected registry, so
-  // those flags are deliberately absent from this guard. What stays forbidden
-  // with `inventoryConfig` is everything that REPLACES the inventory wholesale:
-  // provider, profile, the strong/mid/cheap tier names, registryConfig, and raw
-  // `overrides`.
+  // The `--<role>-model` family COMPOSES with a stored routing config
+  // (issue #101 item 3): pinning one role's model must not drop the operator's
+  // selected registry, so those flags are deliberately absent from this guard.
+  // `--models-profile` is a SELECTION, not a replacement, so it is absent too --
+  // it names a profile inside the document the seam already reads.
   if (
-    options.inventoryConfig !== undefined &&
-    [
-      options.registryConfig,
-      options.profile,
-      options.provider,
-      options.strongModel,
-      options.midModel,
-      options.cheapModel,
-      options.overrides,
-    ].some((value) => value !== undefined)
-  ) {
-    throw new Error(
-      "inventoryConfig cannot be combined with independent provider, profile, or model overrides",
-    );
-  }
-  if (
-    options.inventoryProfile !== undefined &&
-    options.inventoryConfig === undefined &&
-    options.modelsConfigPath === undefined
+    options.modelsProfile !== undefined &&
+    options.modelsConfigPath === undefined &&
+    options.registryConfig === undefined
   )
-    throw new Error("inventoryProfile requires inventoryConfig or modelsConfigPath");
+    throw new Error("modelsProfile requires modelsConfigPath or registryConfig");
   const env = options.env ?? ((name: string) => process.env[name]);
   if (
     options.orchestratorThinkingLevel !== undefined &&
@@ -700,18 +677,16 @@ function resolveConfig(
       : loadSettingsConfigSeam(options.settingsConfigPath);
   const requireStamp = resolveStampRequirement(settingsConfig);
 
-  // THE STORED-CONFIG SEAM (issue #280). YAML-first, never silent. The branch
-  // is entered only when `inventoryConfig` is absent AND no independent
-  // REPLACE-semantic override is in play (the exact complement of the
-  // combination guard above). The `--<role>-model` family composes instead of
-  // disabling (issue #101 item 3): pinning one role's model keeps the stored
-  // routing config and overrides just that role. `models.yaml` present -> it
-  // wins; a present-but-unusable YAML is a typed error; ABSENT -> a PRESENT
-  // stored `inventories.json` is a loud retire error naming `config migrate`,
-  // and ABSENT BOTH falls through to the built-in env-preset/codex route,
+  // THE STORED-CONFIG SEAM (issue #280). It is now the ONLY stored routing
+  // source (issue #513 retired the JSON inventory): the branch is entered when
+  // `modelsConfigPath` is set and no independent REPLACE-semantic override is
+  // in play (the exact complement of the combination guard above). The
+  // `--<role>-model` family composes instead of disabling (issue #101 item 3):
+  // pinning one role's model keeps the stored routing config and overrides just
+  // that role. `models.yaml` present -> it wins; a present-but-unusable YAML is
+  // a typed error; ABSENT falls through to the built-in env-preset/codex route,
   // unchanged. Nothing is seeded on first use.
   const useStoredConfig =
-    options.inventoryConfig === undefined &&
     options.modelsConfigPath !== undefined &&
     ![
       options.registryConfig,
@@ -723,8 +698,6 @@ function resolveConfig(
       options.overrides,
     ].some((value) => value !== undefined);
 
-  let inventory: ResolvedModelInventory | undefined;
-  let rawInventoryConfig: ModelInventoryConfig | undefined;
   let yamlSelection:
     | {
         registry: RegistryConfig;
@@ -737,45 +710,29 @@ function resolveConfig(
   if (useStoredConfig) {
     const models = loadModelsConfigSeam(options.modelsConfigPath as string);
     if (models !== undefined) {
-      const projected = toRegistryAndProfile(models, options.inventoryProfile);
+      const projected = toRegistryAndProfile(models, options.modelsProfile);
       yamlSelection = {
         registry: projected.registry,
         profile: projected.profile,
         name: projected.name,
         reachableProviders: projected.reachableProviders,
-        source: options.inventoryProfile === undefined ? "default" : "selection",
+        source: options.modelsProfile === undefined ? "default" : "selection",
       };
-    } else {
-      // models.yaml ABSENT. The stored `inventories.json` route is retired:
-      // a PRESENT file is a loud operator-facing error pointing at
-      // `ad-coder config migrate` -- never a silent switch to env presets,
-      // never a seeding write. ABSENT both leaves yamlSelection and inventory
-      // undefined so the existing selectProvider flow decides below.
-      const storedInventory = options.inventoryPath ?? defaultInventoryPath();
-      if (storedInventoryExists(storedInventory)) {
-        throw new Error(
-          "stored inventories.json is no longer a routing source: models.yaml is " +
-            "the operator-facing stored routing source. " +
-            "Run `ad-coder config migrate` to convert it.",
-        );
-      }
     }
-  } else if (options.inventoryConfig !== undefined) {
-    rawInventoryConfig = options.inventoryConfig;
-    inventory = resolveModelInventory(options.inventoryConfig, options.inventoryProfile, {
-      env,
-      credentials,
-      ...(storedIds !== undefined && { storedCredentialIds: storedIds }),
-    });
+    // models.yaml ABSENT leaves `yamlSelection` undefined so the existing
+    // selectProvider flow decides below. The stored `inventories.json` route is
+    // gone from the code (issue #513), not merely retired: a file left on disk
+    // is read by nothing and is not an error -- there is no second stored
+    // routing source to point the operator at, and no migration command to name.
   }
 
   const provider =
-    yamlSelection === undefined && inventory === undefined && options.registryConfig === undefined
+    yamlSelection === undefined && options.registryConfig === undefined
       ? selectProvider(env, options.provider, warn)
       : undefined;
   // NO STORED SELECTION (issue #453). When the resolve cannot find a route
-  // -- no models.yaml, no inventory, no registry config, no explicit provider,
-  // and no env-preset key present -- the existing selectProvider flow would
+  // -- no models.yaml, no registry config, no explicit provider, and no
+  // env-preset key present -- the existing selectProvider flow would
   // fall through to the codex OAuth default. The detached worker entry opts
   // out of that substitution: a worker re-running the same resolve with a
   // different credential store or a different env can land on a route the
@@ -786,7 +743,6 @@ function resolveConfig(
   if (
     options.requireResolvableRoute === true &&
     yamlSelection === undefined &&
-    inventory === undefined &&
     options.registryConfig === undefined &&
     options.provider === undefined &&
     PROVIDER_BY_ENV.every(({ envVar }) => {
@@ -797,25 +753,17 @@ function resolveConfig(
     // Detail is a names-only list of the absent rungs and the env-var NAMES
     // that could have selected a provider -- never a credential value,
     // never a provider URL, never raw provider prose. Names only.
-    const absentRungs = [
-      "models.yaml",
-      "--inventory-config",
-      "--registry-config",
-      "--provider",
-    ].join(", ");
+    const absentRungs = ["models.yaml", "--registry-config", "--provider"].join(", ");
     const envVars = PROVIDER_BY_ENV.map(({ envVar }) => envVar).join(", ");
     throw new ConfigError(
       "route_unresolved",
       `absent:${absentRungs}; env-present:none; env-options:${envVars}`,
-      `no routing selection resolved (${absentRungs} all absent and no env-preset provider key present); pass --models-config, --inventory-config, --registry-config, --provider, or set one of ${envVars}`,
+      `no routing selection resolved (${absentRungs} all absent and no env-preset provider key present); pass --models-config, --registry-config, --provider, or set one of ${envVars}`,
     );
   }
   const presetSelection = provider === undefined ? undefined : PROVIDER_PRESETS[provider];
   let authoredRegistry: RegistryConfig;
   if (yamlSelection !== undefined) authoredRegistry = yamlSelection.registry;
-  else if (inventory !== undefined)
-    authoredRegistry = rawInventoryConfig?.profiles.find((entry) => entry.name === inventory?.name)
-      ?.registry as RegistryConfig;
   else if (options.registryConfig !== undefined) authoredRegistry = options.registryConfig;
   else if (presetSelection !== undefined)
     authoredRegistry = { providers: [presetSelection.preset()] };
@@ -869,8 +817,9 @@ function resolveConfig(
   // selection, config contract #101, so they can reach a provider the profile
   // itself does not name). Model -> owner resolution goes through the same
   // validated registry projection the resolver indexes, never the rung's
-  // textual prefix. The inventory (JSON) route scopes itself with a
-  // per-profile registry and keeps resolving every provider: no option there.
+  // textual prefix. The routes with no stored selection (env preset, explicit
+  // `--provider`, `--registry-config`) keep resolving every provider: no option
+  // there.
   const preflightCredentialSet = ((): ReadonlySet<string> | undefined => {
     if (yamlSelection === undefined) return undefined;
     const ownerOf = (name: string): string | undefined =>
@@ -896,16 +845,14 @@ function resolveConfig(
     return ids;
   })();
 
-  const registry: ResolvedRegistry =
-    inventory?.registry ??
-    resolveRegistry(registryConfig, {
-      env,
-      credentials,
-      ...(storedIds !== undefined && { storedCredentialIds: storedIds }),
-      ...(preflightCredentialSet !== undefined && {
-        preflightCredentialIds: preflightCredentialSet,
-      }),
-    });
+  const registry: ResolvedRegistry = resolveRegistry(registryConfig, {
+    env,
+    credentials,
+    ...(storedIds !== undefined && { storedCredentialIds: storedIds }),
+    ...(preflightCredentialSet !== undefined && {
+      preflightCredentialIds: preflightCredentialSet,
+    }),
+  });
   // The providers are validated here and nowhere printed: naming an environment
   // variable and a host is naming the plumbing, not a decision, and the banner
   // below carries the selection and the role->model ladder the operator checks
@@ -917,18 +864,14 @@ function resolveConfig(
   }
   const defaultProfile = buildDefaultProfile({ strong, mid, cheap });
   // A committed project snapshot applies when it names the SAME source the run
-  // resolved, in the SAME namespace (#506): a JSON inventory matches an
-  // inventory, a `models.yaml` profile matches a models profile. Two sources
-  // that merely share a name are different sources, and a snapshot calibrated
-  // against one must never drive the other. With the YAML route the snapshot
-  // used to be skipped entirely -- the target directory's own calibration
-  // could never apply once routing moved to `models.yaml`.
+  // resolved (#506): a `models.yaml` profile matches a models profile. With the
+  // YAML route the snapshot used to be skipped entirely -- the target
+  // directory's own calibration could never apply once routing moved to
+  // `models.yaml`. The retired JSON-inventory namespace (#513) is gone with the
+  // route: a snapshot calibrated against an inventory naming the same string is
+  // no longer the same source, because there is no such source to be.
   const selectedSource: CalibrationSource | undefined =
-    inventory !== undefined
-      ? { kind: "inventory", name: inventory.name }
-      : yamlSelection !== undefined
-        ? { kind: "models-profile", name: yamlSelection.name }
-        : undefined;
+    yamlSelection !== undefined ? { kind: "models-profile", name: yamlSelection.name } : undefined;
   // Read only when a source is selected: a snapshot can apply to nothing else,
   // and a target directory's malformed snapshot must not fail a run that could
   // never have used it. A route that CAN use it still fails loudly, as before.
@@ -957,7 +900,6 @@ function resolveConfig(
   const profile: Profile = parseProfile(
     projectProfile ??
       yamlSelection?.profile ??
-      inventory?.profile ??
       options.profile ??
       (useCodexOAuthDefaults
         ? {
@@ -1000,14 +942,14 @@ function resolveConfig(
     overrides[role as ProfileRole] = { model };
   }
 
-  // Per-role model overrides COMPOSE with an inventory, so an override naming a
-  // model the selected inventory's registry does not register must fail HERE,
-  // naming both the inventory/profile and the override model, instead of
+  // Per-role model overrides COMPOSE with a stored selection, so an override
+  // naming a model the selected profile's registry does not register must fail
+  // HERE, naming both the selection and the override model, instead of
   // surfacing later as the generic `unknown_model` (which no longer names the
-  // selection that made the name wrong). The preset path (no inventory) keeps
-  // the registry's own error, unchanged.
-  const inventorySelectionName = inventory?.name ?? yamlSelection?.name;
-  if (inventorySelectionName !== undefined) {
+  // selection that made the name wrong). The preset path (no stored selection)
+  // keeps the registry's own error, unchanged.
+  const selectionName = yamlSelection?.name;
+  if (selectionName !== undefined) {
     const registered = (name: string): boolean => {
       try {
         registry.getModel(name);
@@ -1021,14 +963,14 @@ function resolveConfig(
       throw new RegistryError(
         "unknown_model",
         override.model,
-        `override model "${override.model}" for role "${role}" is not registered by the selected inventory "${inventorySelectionName}"`,
+        `override model "${override.model}" for role "${role}" is not registered by the selected profile "${selectionName}"`,
       );
     }
     if (options.visionModel !== undefined && !registered(options.visionModel)) {
       throw new RegistryError(
         "unknown_model",
         options.visionModel,
-        `override model "${options.visionModel}" for role "vision" is not registered by the selected inventory "${inventorySelectionName}"`,
+        `override model "${options.visionModel}" for role "vision" is not registered by the selected profile "${selectionName}"`,
       );
     }
   }
@@ -1041,8 +983,8 @@ function resolveConfig(
   // from the work it delegates; before that it silently read the coder's cell,
   // which made every measurement of the orchestrator a measurement of the
   // coder. Profiles authored before the cell existed have no orchestrator
-  // entry, and a hand-written inventory is operator configuration we do not get
-  // to invalidate -- so a MISSING orchestrator cell falls back to the coder
+  // entry, and an operator-authored profile is configuration we do not get to
+  // invalidate -- so a MISSING orchestrator cell falls back to the coder
   // route it used to take, once and audibly. Only that one gap is absorbed:
   // every other profile error, and every other role, still raises.
   let orchestratorFallbackWarned = false;
@@ -1070,8 +1012,8 @@ function resolveConfig(
   const summarizerModel = resolveRole("summarizer").model;
 
   // What the run will ACTUALLY do, not the three tiers the default profile is
-  // built from: under an inventory those tiers all collapse onto one default
-  // model, so the old banner printed `strong "x" mid "x" cheap "x"` for a
+  // built from: under a stored selection whose tiers all collapse onto one
+  // default model, the old banner printed `strong "x" mid "x" cheap "x"` for a
   // profile routing every role across several models -- true of nothing.
   // Roles are grouped by the model they resolve to at the default complexity,
   // which is the routing decision an operator checks before letting a run go.
@@ -1100,14 +1042,12 @@ function resolveConfig(
   const source =
     yamlSelection !== undefined
       ? `models.yaml "${yamlSelection.name}"`
-      : inventory !== undefined
-        ? `inventory "${inventory.name}"`
-        : `provider "${provider ?? "custom"}"`;
+      : `provider "${provider ?? "custom"}"`;
   const routing = [...layout]
     .map(([modelName, roles]) => `${modelName}: ${roles.join(", ")}`)
     .join(" | ");
   // The operator asked for the provider by name (issue #501): a selection of
-  // `models.yaml "x"` or `inventory "y"` names a cell, not a destination, and
+  // `models.yaml "x"` names a cell, not a destination, and
   // a routing is not checkable without knowing who serves it. The distinct
   // provider ids the routed models actually resolve to -- never a host, never
   // a credential variable name -- are named here, but only where `source` does
@@ -1573,10 +1513,9 @@ function resolveConfig(
           options.workflowsSource ??
           (options.selectedWorkflows === undefined ? "built-in-default" : "caller"),
       },
-      inventoryProfile: {
-        value: yamlSelection?.name ?? inventory?.name ?? "not-configured",
-        source:
-          yamlSelection !== undefined ? "models.yaml" : (inventory?.source ?? "built-in-default"),
+      modelsProfile: {
+        value: yamlSelection?.name ?? "not-configured",
+        source: yamlSelection !== undefined ? "models.yaml" : "built-in-default",
       },
       provider: {
         value: provider ?? "custom",

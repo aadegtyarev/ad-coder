@@ -14,7 +14,7 @@ import * as path from "node:path";
  */
 
 const SCRIPT = path.resolve(import.meta.dir, "../scripts/check-prices.ts");
-const INVENTORY = "test/fixtures/check-prices.yaml";
+const MODELS_CONFIG = "test/fixtures/check-prices.yaml";
 
 function runCheckPrices(args: string[]): { code: number; stdout: string; stderr: string } {
   const proc = Bun.spawnSync(["bun", "run", SCRIPT, ...args], {
@@ -32,8 +32,8 @@ function runCheckPrices(args: string[]): { code: number; stdout: string; stderr:
 describe("check-prices: the provider's own charge answer is the verdict", () => {
   test("under-declared (billed x3.3530 and x1.6500): a FINDING naming the route and the ratio, exit 1", () => {
     const run = runCheckPrices([
-      "--inventory",
-      INVENTORY,
+      "--models-config",
+      MODELS_CONFIG,
       "--charges",
       "test/fixtures/cost-anomaly-under-declared.json",
       "--offline",
@@ -57,8 +57,8 @@ describe("check-prices: the provider's own charge answer is the verdict", () => 
 
   test("over-declared (billed x0.8100): a NOTE, NO finding, exit 0 -- a discount never blocks", () => {
     const run = runCheckPrices([
-      "--inventory",
-      INVENTORY,
+      "--models-config",
+      MODELS_CONFIG,
       "--charges",
       "test/fixtures/cost-anomaly-over-declared.json",
       "--offline",
@@ -77,8 +77,8 @@ describe("check-prices: the provider's own charge answer is the verdict", () => 
 
   test("clean (every scope billed x1.0): exit 0, no findings, no notes", () => {
     const run = runCheckPrices([
-      "--inventory",
-      INVENTORY,
+      "--models-config",
+      MODELS_CONFIG,
       "--charges",
       "test/fixtures/cost-anomaly-clean.json",
       "--offline",
@@ -97,8 +97,8 @@ describe("check-prices: the provider's own charge answer is the verdict", () => 
   test("unreadable/absent EXPLICIT charge record: the absence stated explicitly, exit 2", () => {
     // A version-1 file: not a readable version-2 charge record.
     const unreadable = runCheckPrices([
-      "--inventory",
-      INVENTORY,
+      "--models-config",
+      MODELS_CONFIG,
       "--charges",
       "test/fixtures/cost-anomaly-unreadable.json",
       "--offline",
@@ -109,8 +109,8 @@ describe("check-prices: the provider's own charge answer is the verdict", () => 
 
     // A path that does not exist at all is the same contract: named, exit 2.
     const absent = runCheckPrices([
-      "--inventory",
-      INVENTORY,
+      "--models-config",
+      MODELS_CONFIG,
       "--charges",
       "test/fixtures/cost-anomaly-missing.json",
       "--offline",
@@ -122,8 +122,8 @@ describe("check-prices: the provider's own charge answer is the verdict", () => 
 
   test("--offline states that the public-list hint half was skipped by request", () => {
     const run = runCheckPrices([
-      "--inventory",
-      INVENTORY,
+      "--models-config",
+      MODELS_CONFIG,
       "--charges",
       "test/fixtures/cost-anomaly-clean.json",
       "--offline",

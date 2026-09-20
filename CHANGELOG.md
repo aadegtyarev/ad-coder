@@ -11,6 +11,42 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.148.0] - 2026-09-20
+
+### Removed
+- **The routed JSON inventory is gone from the code, not merely unselected
+  (issue #513).** `models.yaml` became the routing source on 2026-09-14, which
+  left every JSON path alive as a second format kept running by nothing but its
+  own parser: `src/inventory/{types,validate,resolve,store,errors,default-config}.ts`,
+  `src/config/migrate.ts`, the `--inventory-config` and `--inventory-profile`
+  options, the `config migrate` action (`config` now takes the `show` action
+  alone), and the `inventory` arm of `ProjectCalibrationSnapshot`. A file left on
+  disk is read by nothing and is not an error -- there is no second stored
+  routing source to point at and no migration command to name. What IS refused
+  is naming an inventory as a source: `ad-coder profile snapshot --inventory
+  <name>` fails naming the flag and the replacement, and a committed snapshot
+  whose fields name an inventory fails with the command that re-takes it
+  (`profile snapshot --models-profile <name>`), never as an anonymous shape
+  error. `scripts/check-prices.ts` takes `--models-config`, the name the CLI
+  already used, instead of `--inventory`.
+
+### Changed
+- **This repository no longer commits a calibration snapshot, and the reason is
+  the trap the migration walked into.** `.ad-coder/calibration.json` was a
+  2026-09-13 fossil: its `inventory` arm named a source no run can select, so it
+  applied to nothing, and its routing named model ids that no longer exist
+  (`codex-luna`/`codex-terra`/`codex-sol`, now `gpt-5.6-*`). Renaming the arm
+  alone -- the obvious "migration" -- was measured to break every run in the
+  repository at once (`profile model "codex-luna" is not registered`), because a
+  snapshot whose source MATCHES takes over the routing; and re-taking it against
+  `codex-pro100` would have pinned a copy of the operator's own `models.yaml`
+  ladder inside the repository, the one place a later `models.yaml` edit could
+  not take effect. The mechanism is untouched and still available to a project
+  that genuinely needs to pin a routing; routing in this repository lives in
+  `models.yaml` alone. Nothing reads a snapshot's `economics` or
+  `subscriptionCapacityRanges` at run time (the only reader is `resolveConfig`,
+  which takes the `routing` field and the source name), so no project that
+  carries none loses anything else.
 ## [0.147.0] - 2026-09-20
 
 ### Fixed

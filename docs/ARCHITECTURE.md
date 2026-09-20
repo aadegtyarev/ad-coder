@@ -25,12 +25,11 @@ by `docs/BACKLOG.md`.
 |---|---|---|
 | CLI | `src/cli.ts`, `src/cli/` | Parse commands, render human or JSON output, and call headless APIs. |
 | Authentication | `src/auth/` | Store Codex OAuth and OpenRouter API-key credentials outside target projects; expose secret-free status. |
-| Model inventories | `src/inventory/` | Seed, persist, validate, and resolve named registry/routing profiles. |
-| Registry and profiles | `src/registry/`, `src/profiles/` | Resolve providers, models, role routing, and effective configuration. |
-| Portable user profile | `src/user-profile/` | Atomically persist validated inventories, calibrated routing, and append-only economics, with deterministic JSON import, export, and recording. |
-| Project calibration | `src/project-calibration/` | Materialize a bounded anonymous snapshot at `.ad-coder/calibration.json`; matching inventories consume its routing unless disabled by an API switch. |
+| Registry and profiles | `src/registry/`, `src/profiles/`, `src/config/` | Resolve providers, models, role routing, and effective configuration from `models.yaml` (#513). |
+| Portable user profile | `src/user-profile/` | Atomically persist validated calibrated routing and append-only economics, with deterministic JSON import, export, and recording. |
+| Project calibration | `src/project-calibration/` | Materialize a bounded anonymous snapshot at `.ad-coder/calibration.json`; one naming the resolved `models.yaml` profile consumes its routing unless an API switch disables it. |
 | Stage-attempt accounting | `src/orchestration/session.ts`, `src/project-operations/run-coordinator.ts` | Persist partial metrics and role identity before a limit pause, then resume without losing accepted-result economics. |
-| Roles and prompts | `src/role.ts`, `src/prompts/`, `prompts/` | Validate roles, resolve built-in or project prompts, compose versioned model-inventory Researcher briefs without persisting content. |
+| Roles and prompts | `src/role.ts`, `src/prompts/`, `prompts/` | Validate roles, resolve built-in or project prompts, compose versioned Researcher briefs without persisting content. |
 | Runner | `src/runner/` | Execute one role turn with tools rooted at the target directory. |
 | Context | `src/context/` | Enforce context budgets and optional ad-coder-owned compaction. |
 | Ledger | `src/ledger/` | Records and reports usage, cost, role, and tool counts. |
@@ -158,7 +157,7 @@ automatically inserted into role prompts.
 
 ### Credentials
 
-Credentials come from the configured credential store or an explicit environment
+Credentials come from the configured store or an explicit environment
 accessor, never the target's configuration. Credential paths are
 canonicalized, kept outside the target and Git metadata, privately permissioned,
 and updated atomically without following symlinks.
@@ -166,11 +165,11 @@ Bun's startup dotenv load destroys environment provenance, so the CLI disables
 the environment credential accessor when cwd is inside `targetDir`; OAuth and
 the external private store remain usable.
 
-Named model inventories compose the existing registry and role-routing profile
-without copying either; only the selected entry resolves
-credentials. The CLI refuses to combine an inventory with independent provider,
-registry, or profile sources; its projection reports the selected
-name without URLs or credential metadata.
+A named `models.yaml` profile composes the registry and role-routing profile that
+document declares, copying neither; only the models it reaches resolve
+credentials. The CLI refuses to combine a profile selection with independent
+provider, registry, or profile sources; its projection names the selection
+without URLs or credential metadata. The JSON inventory is gone (issue #513).
 
 ### Persistent content
 

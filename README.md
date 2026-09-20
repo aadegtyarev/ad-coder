@@ -156,7 +156,6 @@ explicitly previewed or applied:
 ad-coder profile export > profile.json
 ad-coder profile import-preview --input profile.json --mode merge
 ad-coder profile import-apply --input profile.json --mode merge
-ad-coder profile snapshot --inventory work --target-dir ./my-project
 ad-coder profile snapshot --models-profile daily --target-dir ./my-project
 ```
 
@@ -168,19 +167,22 @@ observation with `profile record --input <record.json>`. Use
 the value is `0.02`. Two balance observations linked by `previousId` measure
 credits consumed without exporting account identity or raw provider responses.
 
-A calibrated routing entry names exactly one source: `inventory` for a portable
-inventory declared in the same document, or `modelsProfile` for a profile in
-`models.yaml` — the same file the run is routed from, never a copy of it. Which
-one it is decides which routing the calibration belongs to, so an inventory and
-a profile that share a name never stand in for each other. `models.yaml` is read
-where the snapshot is built (`--models-profile` with `--models-config`, default
-the standard models path), which refuses a cell the named profile cannot serve.
+A calibrated routing entry names its source: a `modelsProfile` for a profile in
+`models.yaml` — the same file the run is routed from, never a copy of it. The
+routed JSON inventory used to be a second source a calibration could name; it is
+gone (issue #513), because a source no run can select is a second format kept
+alive by nothing but its own parser. `models.yaml` is read where the snapshot is
+built (`--models-profile` with `--models-config`, default the standard models
+path), which refuses a cell the named profile cannot serve.
 
 The snapshot contains only the selected source, calibrated routing, current
-economics, and capacity ranges, and it names that source in its own namespace.
-A matching source automatically uses its project routing — on the `models.yaml`
-route as well as the inventory route; API callers can set
-`useProjectCalibration: false`.
+economics, and capacity ranges. A snapshot whose source matches the one the run
+resolved automatically uses its project routing; API callers can set
+`useProjectCalibration: false`. The mechanism is an override — a project may
+commit `.ad-coder/calibration.json` to pin its routing ahead of `models.yaml` —
+and this repository deliberately does not: routing lives in `models.yaml` alone,
+so a profile edit takes effect everywhere instead of being silently outranked by
+a copy of the old ladder.
 
 Validate and smoke-test the calibration corpus with
 `bun run calibration:corpus -- smoke`.
@@ -441,9 +443,9 @@ under, so the two providers keep separate charge scopes; the key stays the local
 name, and a row that omits `id` is one where the two are the same. That is how
 one upstream model is reached through two providers -- and so through two keys,
 each stored under its own provider id -- because a routing name is unique across
-the whole file. `config migrate` converts a stored `inventories.json` into this file; the
-stored inventory is no longer a routing source, and ad-coder refuses loudly when
-it finds one without a `models.yaml` beside it.
+the whole file. The stored `inventories.json` route is gone (issue #513): the
+file is read by nothing, and a machine that still holds one runs on this file
+plus its `default:` profile.
 
 `credential` is a REFERENCE, never a secret: a bare word names the env-var the
 resolver reads, and the reserved literal `oauth` selects the OAuth route whose
@@ -506,22 +508,20 @@ resolved with invented economics, and an account-scoped id such as an OpenRouter
 `cost` and `maxTokens` by hand. See
 [provider catalogs](docs/provider-catalogs.md).
 
-To switch a complete account/provider model inventory atomically, put named
-registry and routing-profile pairs in one trusted JSON file, then select one:
+To switch between complete account/provider model sets, declare the whole thing
+once in `models.yaml` — providers, prices and named routing profiles — and pick
+a profile by name:
 
 ```sh
-ad-coder config show --inventory-config ./inventories.json \
-  --inventory-profile codex-secondary --json
+ad-coder config show --models-config ~/.config/ad-coder/models.yaml \
+  --models-profile codex-secondary --json
 ```
 
-An inventory entry has `{ "name", "registry", "profile" }`; the top-level
-object has `profiles` and an optional `default`. The pair is validated together,
-and inventory options cannot be mixed with separate `--provider`,
-`--registry-config`, or `--profile-config` sources, which likewise act only as
-per-run overrides. `config show` exposes only the selected name and ordinary
-secret-free effective configuration. Model-selection overrides are rejected
-while an inventory is active; budget, context, and execution-limit overrides
-remain available.
+The file's own `default:` profile is used when nothing is named. A profile
+cannot be mixed with the separate `--provider`, `--registry-config`, or
+`--profile-config` sources, which likewise act only as per-run overrides.
+`config show` exposes only the selected name and ordinary secret-free effective
+configuration. Budget, context, and execution-limit overrides remain available.
 Built-in plugin groups default to `explore,web,vision`; select a subset with
 `--plugins`, or pass `--plugins none`. Programmatic hosts may replace them with
 their own `pluginTools`.

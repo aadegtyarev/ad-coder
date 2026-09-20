@@ -16,11 +16,9 @@ import {
   CostAnomalyDetector,
   FileCostAnomalyStore,
 } from "../src/economics/cost-anomaly";
-import type { ModelInventoryConfig } from "../src/inventory/types";
 import { buildDefaultProfile } from "../src/profiles/default-profile";
 import { ProfileError } from "../src/profiles/errors";
 import { resolveProfile } from "../src/profiles/resolve";
-import { writeProjectCalibrationSnapshot } from "../src/project-calibration";
 import { RegistryError } from "../src/registry/errors";
 import type { RegistryConfig } from "../src/registry/types";
 import { parseRegistryConfig } from "../src/registry/validate";
@@ -1115,140 +1113,6 @@ test("every role's own ceiling is below the global default, which the help and R
         DEFAULT_STAGE_LIMITS[dimension],
       );
     }
-  }
-});
-
-test("named inventory selects one atomic registry/profile pair and rejects source mixing", () => {
-  const inventory: ModelInventoryConfig = {
-    profiles: [
-      {
-        name: "primary",
-        registry: mixedRegistry(),
-        profile: buildDefaultProfile({ strong: "large", mid: "small", cheap: "small" }),
-      },
-    ],
-    default: "primary",
-  };
-  const config = resolvePipelineConfig({
-    task: "x",
-    targetDir: "/tmp",
-    inventoryConfig: inventory,
-    compactionMode: "disabled-then-halt",
-    env: fakeEnv({ LOCAL_KEY: "k" }),
-    warn: silent,
-  });
-  expect(config.roles.planner?.model.id).toBe("large");
-  expect(config.roles.coder.model.id).toBe("small");
-  expect(config.effectiveConfig?.inventoryProfile).toEqual({
-    value: "primary",
-    source: "default",
-  });
-  expect(() =>
-    resolvePipelineConfig({
-      task: "x",
-      targetDir: "/tmp",
-      inventoryConfig: inventory,
-      registryConfig: mixedRegistry(),
-      env: fakeEnv({ LOCAL_KEY: "k" }),
-      warn: silent,
-    }),
-  ).toThrow("cannot be combined");
-  // A per-role model flag COMPOSES with the inventory (issue #101 item 3): it
-  // keeps the selected registry/profile and overrides only that role, rather
-  // than being refused as a source-mixing combination the way a REPLACE-semantic
-  // override (registryConfig, raw overrides) is.
-  const composed = resolvePipelineConfig({
-    task: "x",
-    targetDir: "/tmp",
-    inventoryConfig: inventory,
-    coderModel: "large",
-    compactionMode: "disabled-then-halt",
-    env: fakeEnv({ LOCAL_KEY: "k" }),
-    warn: silent,
-  });
-  // The inventory is kept (its profile still routes the other roles), the coder
-  // role alone is overridden to the registered "large" model.
-  expect(composed.effectiveConfig?.inventoryProfile).toEqual({
-    value: "primary",
-    source: "default",
-  });
-  expect(composed.roles.coder.model.id).toBe("large");
-  expect(composed.roles.planner?.model.id).toBe("large");
-  expect(() =>
-    resolvePipelineConfig({
-      task: "x",
-      targetDir: "/tmp",
-      inventoryConfig: inventory,
-      coderModel: "does-not-exist",
-      env: fakeEnv({ LOCAL_KEY: "k" }),
-      warn: silent,
-    }),
-  ).toThrow(/not registered by the selected inventory/);
-  expect(() =>
-    resolvePipelineConfig({
-      task: "x",
-      targetDir: "/tmp",
-      inventoryConfig: inventory,
-      overrides: { coder: { model: "large" } },
-      env: fakeEnv({ LOCAL_KEY: "k" }),
-      warn: silent,
-    }),
-  ).toThrow("cannot be combined");
-  expect(
-    resolvePipelineConfig({
-      task: "x",
-      targetDir: "/tmp",
-      inventoryConfig: inventory,
-      compactionMode: "disabled-then-halt",
-      pipelineContextMode: "full",
-      stageLimits: { maxInputTokens: 123_456 },
-      env: fakeEnv({ LOCAL_KEY: "k" }),
-      warn: silent,
-    }).stageLimits?.maxInputTokens,
-  ).toBe(123_456);
-});
-
-test("matching project calibration overrides named inventory routing and can be disabled", () => {
-  const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-project-routing-"));
-  const inventory: ModelInventoryConfig = {
-    profiles: [
-      {
-        name: "primary",
-        registry: mixedRegistry(),
-        profile: buildDefaultProfile({ strong: "large", mid: "small", cheap: "small" }),
-      },
-    ],
-    default: "primary",
-  };
-  try {
-    const calibrated = buildDefaultProfile({ strong: "large", mid: "small", cheap: "small" });
-    calibrated.entries = calibrated.entries.map((entry) =>
-      entry.role === "coder" && entry.complexity === "medium"
-        ? { ...entry, model: "large" }
-        : entry,
-    );
-    writeProjectCalibrationSnapshot(targetDir, {
-      version: 1,
-      inventory: { name: "primary", providers: [{ id: "local", models: ["small", "large"] }] },
-      routing: calibrated,
-      observedOn: "2026-09-13",
-      economics: [],
-      subscriptionCapacityRanges: [],
-    });
-    const base = {
-      task: "x",
-      targetDir,
-      inventoryConfig: inventory,
-      compactionMode: "disabled-then-halt" as const,
-      env: fakeEnv({ LOCAL_KEY: "k" }),
-      warn: silent,
-    };
-    expect(resolvePipelineConfig(base).roles.coder.model.id).toBe("large");
-    expect(
-      resolvePipelineConfig({ ...base, useProjectCalibration: false }).roles.coder.model.id,
-    ).toBe("small");
-  } finally {
-    fs.rmSync(targetDir, { recursive: true, force: true });
   }
 });
 

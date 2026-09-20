@@ -564,46 +564,26 @@ function writeInventory(dir: string, name: string): string {
   return file;
 }
 
-test("(a) models.yaml wins when both it and inventories.json are present", () => {
+test("(a) models.yaml is the route even with a leftover inventories.json present", () => {
   const dir = scratch();
   try {
     const modelsPath = writeModels(dir, modelsYaml());
+    // The JSON inventory is read by NOTHING (issue #513): a file left on disk
+    // is neither a competing source nor a fallback, so models.yaml is the
+    // route and the file beside it changes nothing.
     writeInventory(dir, "json-profile");
     const config = resolvePipelineConfig({
       task: "x",
       targetDir: dir,
       modelsConfigPath: modelsPath,
-      inventoryPath: path.join(dir, "inventories.json"),
       settingsConfigPath: path.join(dir, "settings.yaml"),
       env: fakeEnv({ OPENCODE_API_KEY: "k" }),
       warn: silent,
     });
-    // YAML won: the banner/effectiveConfig name models.yaml, not the JSON name.
+    // YAML is the route: the banner/effectiveConfig name models.yaml.
     expect(config.delegatedRoute?.source).toBe('models.yaml "daily"');
-    expect(config.effectiveConfig?.inventoryProfile?.source).toBe("models.yaml");
-    expect(config.effectiveConfig?.inventoryProfile?.value).toBe("daily");
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test("(a) only-JSON is retired: an absent models.yaml with a stored inventories.json errors", () => {
-  const dir = scratch();
-  try {
-    writeInventory(dir, "json-profile");
-    // The stored JSON route is retired (2026-09-19): loud, never a silent
-    // fallback to env presets, never a silent switch to the seeded file.
-    expect(() =>
-      resolvePipelineConfig({
-        task: "x",
-        targetDir: dir,
-        modelsConfigPath: path.join(dir, "models.yaml"), // absent
-        inventoryPath: path.join(dir, "inventories.json"),
-        settingsConfigPath: path.join(dir, "settings.yaml"),
-        env: fakeEnv({ JSON_KEY: "k" }),
-        warn: silent,
-      }),
-    ).toThrow(/no longer a routing source/);
+    expect(config.effectiveConfig?.modelsProfile?.source).toBe("models.yaml");
+    expect(config.effectiveConfig?.modelsProfile?.value).toBe("daily");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -619,12 +599,10 @@ test("(a2) a role-model flag keeps the models.yaml seam entered, overriding just
       "models:\n      glm-5.3-flash: {input: 0.15, output: 0.5}\n      glm-5.3-pro: {input: 0.5, output: 2.0}\n",
     );
     const modelsPath = writeModels(dir, twoModels);
-    writeInventory(dir, "json-profile");
     const config = resolvePipelineConfig({
       task: "x",
       targetDir: dir,
       modelsConfigPath: modelsPath,
-      inventoryPath: path.join(dir, "inventories.json"),
       settingsConfigPath: path.join(dir, "settings.yaml"),
       coderModel: "glm-5.3-pro",
       env: fakeEnv({ OPENCODE_API_KEY: "k" }),
@@ -632,7 +610,7 @@ test("(a2) a role-model flag keeps the models.yaml seam entered, overriding just
     });
     // The seam stays ENTERED (models.yaml won), not disabled by the role flag.
     expect(config.delegatedRoute?.source).toBe('models.yaml "daily"');
-    expect(config.effectiveConfig?.inventoryProfile?.source).toBe("models.yaml");
+    expect(config.effectiveConfig?.modelsProfile?.source).toBe("models.yaml");
     // The override pinches just the coder cell; the planner still takes the
     // profile's own route.
     expect(config.roles.coder.model.name).toBe("glm-5.3-pro");
@@ -642,63 +620,16 @@ test("(a2) a role-model flag keeps the models.yaml seam entered, overriding just
   }
 });
 
-test("(a3) an override naming an unregistered model with an inventory selected is a typed error naming both", () => {
-  const dir = scratch();
-  try {
-    const inventoryPath = writeInventory(dir, "json-profile");
-    try {
-      resolvePipelineConfig({
-        task: "x",
-        targetDir: dir,
-        inventoryConfig: JSON.parse(fs.readFileSync(inventoryPath, "utf8")),
-        coderModel: "not-registered",
-        env: fakeEnv({ JSON_KEY: "k" }),
-        warn: silent,
-      });
-      expect.unreachable();
-    } catch (error) {
-      // Typed `unknown_model` naming BOTH the inventory/profile and the override.
-      expect(error).toBeInstanceOf(RegistryError);
-      const re = error as RegistryError;
-      expect(re.code).toBe("unknown_model");
-      expect(re.detail).toBe("not-registered");
-      expect(re.message).toContain('inventory "json-profile"');
-      expect(re.message).toContain('"not-registered"');
-    }
-    // The preset path (no inventory) keeps the registry's own error, which does
-    // NOT name an inventory: it is the existing generic `unknown_model`/profile
-    // refusal, unchanged.
-    try {
-      resolvePipelineConfig({
-        task: "x",
-        targetDir: dir,
-        registryConfig: defaultRegistry(),
-        coderModel: "not-registered",
-        env: fakeEnv({ LOCAL_KEY: "k" }),
-        warn: silent,
-      });
-      expect.unreachable();
-    } catch (error) {
-      expect(error).toBeInstanceOf(Error);
-      expect((error as Error).message).not.toContain("inventory");
-      expect((error as Error).message).toContain("not-registered");
-    }
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
-
 test("(e2) present models.yaml with no default and no selected profile is a typed error", () => {
   const dir = scratch();
   try {
-    // No `default:` key, and no `inventoryProfile` flag.
+    // No `default:` key, and no `--models-profile` selection.
     const modelsPath = writeModels(dir, modelsYaml().replace("default: daily\n", ""));
     expect(() =>
       resolvePipelineConfig({
         task: "x",
         targetDir: dir,
         modelsConfigPath: modelsPath,
-        inventoryPath: path.join(dir, "inventories.json"),
         settingsConfigPath: path.join(dir, "settings.yaml"),
         env: fakeEnv({ OPENCODE_API_KEY: "k" }),
         warn: silent,
@@ -1061,8 +992,10 @@ test("(#453) requireResolvableRoute: nothing resolvable throws the typed error",
     const ce = thrown as ConfigError;
     expect(ce.code).toBe("route_unresolved");
     // Names only -- absent rungs and env-var NAMES, never a value, never a URL.
+    // The rungs are the sources a run can still select: the retired
+    // `--inventory-config` is not one of them (issue #513) and naming it would
+    // send the operator to a flag that does not exist.
     expect(ce.detail).toContain("models.yaml");
-    expect(ce.detail).toContain("--inventory-config");
     expect(ce.detail).toContain("--registry-config");
     expect(ce.detail).toContain("--provider");
     expect(ce.detail).toContain("DEEPSEEK_API_KEY");
@@ -1456,45 +1389,6 @@ test("(#506) an unreadable snapshot cannot fail a run with nothing to apply it t
         warn: silent,
       }),
     ).toThrow(UserProfileError);
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test("(#506) a snapshot in the inventory namespace never drives a models-profile selection", () => {
-  const dir = scratch();
-  try {
-    const modelsPath = writeModels(dir, modelsYamlTwoModels());
-    const calibrated = buildDefaultProfile({
-      strong: "glm-5.3-pro",
-      mid: "glm-5.3-flash",
-      cheap: "glm-5.3-flash",
-    });
-    // Same NAME, other namespace: an inventory-arm snapshot called "daily"
-    // must not be mistaken for the models.yaml profile of the same name. The
-    // two resolve against different model sets, and a snapshot says which one
-    // it was calibrated against.
-    writeProjectCalibrationSnapshot(dir, {
-      version: 1,
-      inventory: {
-        name: "daily",
-        providers: [{ id: "opencode-go", models: ["glm-5.3-flash", "glm-5.3-pro"] }],
-      },
-      routing: calibrated,
-      observedOn: "2026-09-20",
-      economics: [],
-      subscriptionCapacityRanges: [],
-    });
-    expect(
-      resolvePipelineConfig({
-        task: "x",
-        targetDir: dir,
-        modelsConfigPath: modelsPath,
-        settingsConfigPath: path.join(dir, "settings.yaml"),
-        env: fakeEnv({ OPENCODE_API_KEY: "k" }),
-        warn: silent,
-      }).roles.planner?.model.name,
-    ).toBe("glm-5.3-flash");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

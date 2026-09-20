@@ -3,7 +3,6 @@ import type {
   CalibrationSource,
   EconomicConfidence,
   EconomicRecordKind,
-  ModelInventoryConfig,
   SubscriptionCapacityRange,
 } from "../user-profile";
 export interface ProjectEconomicSnapshot {
@@ -19,18 +18,22 @@ export interface ProjectEconomicSnapshot {
 
 /**
  * A committed project snapshot names the routing source it was calibrated
- * against in THAT source's own namespace: `inventory` for a portable JSON
- * inventory block, `modelsProfile` for the name of a profile in the operator's
- * `models.yaml` (issue #506). Exactly one is present, and which one it is
- * decides which namespace the name must match at run time -- a JSON inventory
- * and a models.yaml profile that share a name are still different sources.
+ * against: the name of a profile in the operator's `models.yaml` (issue #506).
  *
- * The models arm carries no provider/model list: that list lives in
- * `models.yaml` and is not copied here (settings live in one place, and the
- * snapshot is committed to a repository). The pairs it was scoped by are
- * already applied to `economics` and `subscriptionCapacityRanges` at write
- * time, and a model the selected profile cannot serve is refused by the
- * resolver at run time, loudly.
+ * It carries no provider/model list: that list lives in `models.yaml` and is
+ * not copied here (settings live in one place, and the snapshot is committed to
+ * a repository). The pairs it was scoped by are already applied to `economics`
+ * and `subscriptionCapacityRanges` at write time, and a model the selected
+ * profile cannot serve is refused by the resolver at run time, loudly.
+ *
+ * The `inventory` arm this type used to carry -- a portable JSON inventory
+ * block named as the source -- is GONE (issue #513). The routed JSON inventory
+ * was retired with the YAML route, which left that arm naming a source no run
+ * could ever select: a snapshot carrying it parsed and then never matched, a
+ * second format kept alive by nothing but its own parser. Refusing it by name
+ * is the point of the change: a repository that still holds one is told which
+ * source to name instead, and the routing a project actually runs is in one
+ * place for every checkout at once.
  */
 export type ProjectCalibrationSnapshot = {
   version: 1;
@@ -38,16 +41,16 @@ export type ProjectCalibrationSnapshot = {
   observedOn: string;
   economics: ProjectEconomicSnapshot[];
   subscriptionCapacityRanges: SubscriptionCapacityRange[];
-} & (
-  | { inventory: ModelInventoryConfig; modelsProfile?: never }
-  | { modelsProfile: string; inventory?: never }
-);
+  modelsProfile: string;
+};
 
-/** The routing source a project snapshot was built from, whichever arm it is. */
+/**
+ * The routing source a project snapshot was built from. One arm, one answer:
+ * the snapshot names a `models.yaml` profile, and that is the only kind of
+ * source a run can resolve.
+ */
 export function snapshotSource(snapshot: ProjectCalibrationSnapshot): CalibrationSource {
-  return snapshot.inventory !== undefined
-    ? { kind: "inventory", name: snapshot.inventory.name }
-    : { kind: "models-profile", name: snapshot.modelsProfile };
+  return { kind: "models-profile", name: snapshot.modelsProfile };
 }
 
 export interface ProjectCalibrationLimits {

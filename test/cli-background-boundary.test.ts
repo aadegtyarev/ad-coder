@@ -153,8 +153,11 @@ test("the profile off reaches the worker command without a flag", async () => {
 const ROUTING_CREDENTIAL_FLAGS = [
   "--models-config",
   "--settings-config",
-  "--inventory-profile",
-  "--inventory-config",
+  // The two JSON-inventory flags this table carried were retired with the JSON
+  // route (issue #513) and are refused as unknown options now; the routing
+  // selection is `--models-profile`, a profile inside the models.yaml the seam
+  // already reads.
+  "--models-profile",
   "--registry-config",
   "--profile-config",
   "--credential-path",

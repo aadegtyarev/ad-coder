@@ -1,4 +1,3 @@
-import type { ModelInventoryConfig as RegistryInventoryConfig } from "../inventory/types";
 import type { Profile } from "../profiles/types";
 
 /** A provider/model inventory that is safe to move between machines. */
@@ -136,6 +135,3 @@ export interface UserProfileImportPreview {
   conflicts: string[];
   result?: UserProfile;
 }
-
-// Keep this alias available to consumers migrating from the inventory module.
-export type ExistingModelInventoryConfig = RegistryInventoryConfig;
