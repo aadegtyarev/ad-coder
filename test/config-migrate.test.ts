@@ -296,13 +296,35 @@ test("oauth provider: migrated with the reserved literal, and the file reads bac
   const provider = models.providers["openai-codex"]!;
   expect(provider.credential).toBe("oauth");
   expect(provider.api).toBe("openai-codex-responses");
+  expect(provider.baseUrl).toBe("https://chatgpt.com/backend-api");
   expect(Object.keys(provider.models)).toEqual(["gpt-5.6-terra"]);
+
+  // Every declared cell resolved, and the projected side resolves to the SAME
+  // provider and model id the inventory named. The facts themselves come from
+  // the delegated codex catalog on both sides, so the assertion is identity --
+  // the parity rows are the proof that the migrated file routes where the
+  // inventory routed (#503).
+  expect(report.parity).toHaveLength(3);
+  expect(report.parity.every((row) => row.equal)).toBe(true);
+  for (const row of report.parity) {
+    expect(row.projected).toMatchObject({
+      providerId: "openai-codex",
+      modelId: "gpt-5.6-terra",
+    });
+  }
 
   // Round trip: the migrated row projects back to the oauth source, so a
   // migrated file routes to the same provider the inventory declared (#503).
   const projected = toRegistryAndProfile(models, "p1");
   expect(projected.registry.providers[0]!.credential).toEqual({ kind: "oauth" });
   expect(projected.profile.entries).toHaveLength(3);
+  // The rungs name the provider the inventory named, and the model id is the
+  // FILE's row key -- an alias would not resolve against the codex catalog.
+  expect(projected.profile.entries.map((entry) => entry.model)).toEqual([
+    "gpt-5.6-terra",
+    "gpt-5.6-terra",
+    "gpt-5.6-terra",
+  ]);
 });
 
 test("provider union: two profiles sharing one identical provider merge", () => {

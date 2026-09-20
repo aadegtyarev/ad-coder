@@ -423,14 +423,16 @@ to name -- so `credential: oauth` is the only spelling that reaches it. An
 enabled provider that declares no credential is refused by name.
 
 A row key is the role (`coder`) or the tier override (`coder@complex`), and its
-value is an ordered ladder: the first rung that can be served wins, so a
-fallback is a second list entry. A rung is `provider:model`, or a mapping when
-it also carries `thinkingLevel` (`off`, `minimal`, `low`, `medium`, `high`,
-`xhigh`, `max`). A `role@complexity` row replaces the bare row for that tier and
-may not exist without it. A profile a run selects must route every role that run
-needs -- the eight are `orchestrator`, `planner`, `researcher`, `coder`,
-`reviewer`, `auditor`, `security`, and `summarizer` -- and a run refuses by name
-the `(role, complexity)` pair it could not resolve.
+value is a list of rungs. Only the FIRST rung is served today -- writing a
+second one is a declaration of intent that the runtime does not walk yet
+(docs/contracts/config.md), not a fallback you can rely on. A rung is
+`provider:model`, or a mapping when it also carries `thinkingLevel` (`off`,
+`minimal`, `low`, `medium`, `high`, `xhigh`, `max`). A `role@complexity` row
+replaces the bare row for that tier and may not exist without it. A profile a
+run selects must route every role that run needs -- the eight are `orchestrator`,
+`planner`, `researcher`, `coder`, `reviewer`, `auditor`, `security`, and
+`summarizer` -- and a run refuses by name the `(role, complexity)` pair it could
+not resolve.
 
 A provider whose API mandates a non-auth request header -- a routing or tenancy
 marker -- declares it once on the provider, with `{{session}}` for an opaque
@@ -452,8 +454,7 @@ rather than transmitted literally.
 
 A model may override `baseUrl` when one account fronts two request APIs under
 different path prefixes, since each adapter appends its own suffix to whatever
-base URL it is given. Both the provider and model forms are https-only. A model
-row also accepts `tools`, `format`, and `concurrency`.
+base URL it is given. Both the provider and model forms are https-only.
 
 The shared role/pipeline options include provider/model tier overrides,
 `--registry-config`, `--profile-config`, per-role model overrides,
