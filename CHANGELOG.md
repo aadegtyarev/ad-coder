@@ -11,6 +11,11 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.145.0] - 2026-09-20
+
+### Fixed
+- **Research coverage validation rejects unresolvable plans (#411).** Empty contract IDs now receive actionable remediation guidance.
+
 ## [0.144.0] - 2026-09-20
 
 ### Fixed
