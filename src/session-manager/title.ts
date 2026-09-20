@@ -104,28 +104,44 @@ export function sanitizeTitle(
  * that strips to nothing is still the typed refusal it always was. What no
  * later step may do is replace a manual name with a GENERATED one — the source
  * stays `manual` (`SessionManager.setTitleFromGeneration`).
+ *
+ * Note the two transforms this path does NOT apply: control and zero-width
+ * characters are removed by the character-class strip below rather than by
+ * their own patterns (the class already covers `\p{Cc}`, `\p{Cf}`, `\p{Zl}`,
+ * `\p{Zp}` and runs first, which is why the zero-width call that used to sit
+ * there was provably dead and is gone), and markdown characters are KEPT in the
+ * persisted name — the contract does not ask a manual name to be flattened. The
+ * screen still sees the flattened projection, so keeping them hides nothing.
  */
 export function createManualSessionName(raw: string): string {
-  // Screen BEFORE the transforms, on the raw draft, for the shared screen's own
-  // reason: a separator the transforms move or delete would otherwise hide a
-  // secret from its pattern. (Measured: on this path the POST-strip screen
-  // dominates -- removing THIS line leaves the suite green, 48 pass / 0 fail,
-  // because the manual strip maps every character its patterns care about
-  // either to itself or to an ordinary separator. It is kept because both
-  // paths must screen in the same order, and a widening of the strip set is
-  // exactly what would make the two forms diverge.)
-  if (SECRET_SCREEN_PATTERNS.some((pattern) => pattern.test(raw))) return SESSION_FALLBACK_NAME;
-  // A manual name is parsed, not generated: this pattern strips control
-  // characters BEFORE the whitespace collapse, so no invisible byte survives.
+  // The manual strip, in the order the contract's clauses imply: ANSI sequences
+  // go FIRST, as whole sequences. Round 2 measured what happens otherwise:
+  // ESC is a control character and the class strip below only replaces it, so
+  // `token<ESC>[31m=supersecret` became `token [31m=supersecret` -- the screen
+  // saw no assignment and the secret persisted into a display name.
   const value = raw
+    .replace(ANSI_PATTERN, " ")
     .replace(/[^\p{L}\p{N}\p{Zs}\p{P}\p{S}]/gu, " ")
-    .replace(ZERO_WIDTH_PATTERN, "")
     .replace(/\s{2,}/g, " ")
     .trim();
   if (value.length === 0)
     throw new RangeError("a manual name must contain at least one visible character");
-  // Screen AGAIN after the transforms: a secret split by a zero-width or
-  // control character is caught once the separator is gone.
+  // Screen the form this path will PERSIST. It is also every form the RAW draft
+  // can match, and that is why there is no separate raw screen here: these
+  // transforms only ever REPLACE a character with an ordinary space, they never
+  // delete, and every pattern either spans whitespace freely (`\s*`, `\S+`) or
+  // works on characters the strip keeps, so nothing that matches the raw draft
+  // stops matching after normalization. What this screen catches on its own is
+  // the separator the FLATTENED form destroys: `sk-abcdefg_h1234` is one token
+  // to this screen and two to the next.
   if (SECRET_SCREEN_PATTERNS.some((pattern) => pattern.test(value))) return SESSION_FALLBACK_NAME;
+  // And screen the markdown-flattened PROJECTION -- the exact form the
+  // generated path screens. A manual name keeps `* _ ` # ~` (the contract does
+  // not ask this path to flatten them), and a separator it KEEPS must not hide
+  // a secret the generated path would catch: `token*=supersecret` is caught
+  // here and nowhere else. The projection is never persisted.
+  const flattened = value.replace(MARKDOWN_PATTERN, " ").replace(/\s{2,}/g, " ");
+  if (SECRET_SCREEN_PATTERNS.some((pattern) => pattern.test(flattened)))
+    return SESSION_FALLBACK_NAME;
   return clamp(value, MANUAL_NAME_MAX_LENGTH);
 }

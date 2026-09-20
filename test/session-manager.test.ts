@@ -27,6 +27,7 @@ import {
   deriveSessionId,
   SessionManager,
 } from "../src/session-manager/manager";
+import { ucredBuffer, ucredUid } from "../src/session-manager/peer-credentials";
 import {
   AllowedRoots,
   assertRealPathInsideRoot,
@@ -57,6 +58,7 @@ import {
   type SessionManagerErrorCode,
 } from "../src/session-manager/types";
 
+const ESC = String.fromCharCode(0x1b);
 const REPO_ROOT = path.resolve(import.meta.dir, "..");
 const scratch = (): string => fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-smtest-"));
 const uidOr0 = (): number => process.getuid?.() ?? 0;
@@ -491,6 +493,52 @@ test("a manual name is secret-screened and leaves the neutral fallback (#365)", 
   expect(fs.readFileSync(path.join(stateDir, "bindings.json"), "utf8")).not.toContain(
     "sk-abcdefghijk",
   );
+});
+
+test("no separator hides a secret from the manual screen (#365)", async () => {
+  // Round 2 measured the bypass: the manual strip REPLACED the ESC byte of an
+  // ANSI sequence instead of removing the sequence, so the persisted name was
+  // `token [31m=supersecret` -- no assignment for the screen to see -- and the
+  // secret reached bindings.json. A markdown character the manual path KEEPS
+  // hid the same assignment the generated path catches.
+  for (const draft of [
+    `token${ESC}[31m=supersecret`,
+    "token*=supersecret",
+    "token`=supersecret",
+    "token#=supersecret",
+    "token~=supersecret",
+  ])
+    expect(createManualSessionName(draft)).toBe(SESSION_FALLBACK_NAME);
+  // The separator the FLATTENED projection destroys, caught by the
+  // persisted-form screen alone: `_` is a markdown character, so flattening
+  // splits this token in two and the next screen can no longer see 8+ chars.
+  expect(createManualSessionName("sk-abcdefg_h1234")).toBe(SESSION_FALLBACK_NAME);
+  // The durable path, not just the function: a rename leaves no fragment of
+  // the sequence and no secret in the store.
+  const { manager, stateDir } = makeManager();
+  await manager.ensureSession("separator-screen", "telegram:bridge");
+  const record = await manager.renameSession("separator-screen", "token*=supersecret");
+  expect(record.name).toBe(SESSION_FALLBACK_NAME);
+  const durable = fs.readFileSync(path.join(stateDir, "bindings.json"), "utf8");
+  expect(durable).not.toContain("supersecret");
+  expect(durable).not.toContain("[31m");
+  // An ordinary name with punctuation the manual path keeps is untouched: the
+  // screen works on a projection that is never persisted.
+  expect(createManualSessionName("Fix *urgent* thing")).toBe("Fix *urgent* thing");
+  expect(createManualSessionName("snake_case name")).toBe("snake_case name");
+});
+
+test("a uid with the high bit set decodes as the kernel's unsigned uid (#365)", () => {
+  // uid_t is an UNSIGNED 32-bit integer. Round 2 measured the signed decode:
+  // 3_000_000_000 came back as -1294967296, which can never equal
+  // `process.getuid()`'s positive value, so the owner of such a uid would be
+  // refused on every connection on such a system.
+  const ucred = ucredBuffer();
+  ucred[1] = 3_000_000_000;
+  expect(ucredUid(ucred)).toBe(3_000_000_000);
+  ucred[1] = 0;
+  expect(ucredUid(ucred)).toBe(0);
+  expect(ucredBuffer().byteLength).toBe(12);
 });
 
 test("the secret screen covers raw and flattened forms plus the full Cc category", () => {

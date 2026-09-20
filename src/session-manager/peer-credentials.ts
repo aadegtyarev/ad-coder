@@ -35,13 +35,32 @@ const UCRED_UID_INDEX = 1;
 
 type NativeLookup = (fd: number) => PeerCredentials | undefined;
 
+/**
+ * The output buffer for `struct ucred`, and the uid slot inside it. `uid_t` is
+ * an UNSIGNED 32-bit integer, so the buffer must be a `Uint32Array`: with a
+ * signed view a uid whose high bit is set (>= 2^31, which real systems hand
+ * out) decodes NEGATIVE, can never equal `process.getuid()`'s positive value,
+ * and its owner would be refused on every connection forever. Measured on the
+ * signed view: 3_000_000_000 decoded as -1294967296.
+ */
+export function ucredBuffer(): Uint32Array {
+  return new Uint32Array(UCRED_BYTES / 4);
+}
+
+export function ucredUid(ucred: Uint32Array): number | undefined {
+  const uid = ucred[UCRED_UID_INDEX];
+  return typeof uid === "number" ? uid : undefined;
+}
+
 function openLinuxLookup(): NativeLookup | undefined {
   try {
     const library = dlopen("libc.so.6", {
       getsockopt: { args: ["i32", "i32", "i32", "ptr", "ptr"], returns: "i32" },
     });
     return (fd: number) => {
-      const ucred = new Int32Array(UCRED_BYTES / 4);
+      const ucred = ucredBuffer();
+      // `socklen_t` is the syscall's in/out length, not a uid: a signed view is
+      // the right one for it.
       const length = new Int32Array([UCRED_BYTES]);
       const status = library.symbols.getsockopt(
         fd,
@@ -51,8 +70,8 @@ function openLinuxLookup(): NativeLookup | undefined {
         ptr(length),
       );
       if (status !== 0 || length[0] !== UCRED_BYTES) return undefined;
-      const uid = ucred[UCRED_UID_INDEX];
-      return typeof uid === "number" ? { uid } : undefined;
+      const uid = ucredUid(ucred);
+      return uid === undefined ? undefined : { uid };
     };
   } catch {
     // An unloadable libc is "no lookup", never a crash at import time.
@@ -66,8 +85,9 @@ function openDarwinLookup(): NativeLookup | undefined {
       getpeereid: { args: ["i32", "ptr", "ptr"], returns: "i32" },
     });
     return (fd: number) => {
-      const uid = new Int32Array(1);
-      const gid = new Int32Array(1);
+      // `uid_t` and `gid_t` are unsigned on Darwin too.
+      const uid = new Uint32Array(1);
+      const gid = new Uint32Array(1);
       if (library.symbols.getpeereid(fd, ptr(uid), ptr(gid)) !== 0) return undefined;
       const value = uid[0];
       return typeof value === "number" ? { uid: value } : undefined;
