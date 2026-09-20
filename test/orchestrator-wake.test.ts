@@ -5,6 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { CredentialStore } from "@earendil-works/pi-ai";
 import {
+  BackgroundRunError,
   BackgroundRunManager,
   WAKE_INITIATING_LIFECYCLES,
   type WakeEntry,
@@ -685,4 +686,240 @@ test("buildWakeTurnPrompt names safe fields and never raw prose", () => {
   expect(prompt).toContain("540000");
   expect(prompt).toContain("resume_pipeline");
   expect(prompt).not.toContain("increase or disable the duration stage limit" + "RAW");
+});
+
+test("(k) a failing listPending is contained by the drain: one bounded line, inFlight resets, idle resolves", async () => {
+  // A broken durable read (issue #430) must not escape `void this.drain()` as
+  // an unhandled rejection, must not wedge the pump single-flight, and must
+  // still resolve a waiting startupScan -- with the wakes unhandled, ready for
+  // the next nudge.
+  const logged: string[] = [];
+  const originalError = console.error;
+  console.error = (...args: unknown[]) => logged.push(args.map(String).join(" "));
+  const turns: { prompt: string; step: string }[] = [];
+  // A tiny durable-state model: "fail" re-throws; "ok" yields the claim exactly
+  // once (markHandled consumes it), so the pump's post-drain re-read really
+  // sees an empty ledger instead of rescheduling a second turn forever.
+  let readState = "fail";
+  const pump = new WakePump({
+    listPending: () => {
+      if (readState === "fail") throw new BackgroundRunError("state_unavailable");
+      if (readState === "spent") return [];
+      return [
+        {
+          runId: "run-430",
+          kind: "paused",
+          firstAt: 1,
+          lastAt: 2,
+          count: 1,
+          handled: false,
+        },
+      ];
+    },
+    markHandled: () => {
+      readState = "spent";
+    },
+    turnActive: () => false,
+    runTurn: async (prompt, step) => {
+      turns.push({ prompt, step });
+    },
+  });
+  try {
+    pump.notifyChange();
+    await settle();
+    await settle();
+    expect(logged).toHaveLength(1);
+    expect(logged.join(" ")).toContain("wake state unavailable");
+    expect(logged.join(" ")).toContain("state_unavailable");
+    // The failure path contained the error: nothing reached the model lane.
+    expect(turns.length).toBe(0);
+    // No hot loop: the failed drain stays quiescent until the next nudge.
+    await settle();
+    await settle();
+    expect(turns.length).toBe(0);
+    // inFlight was reset: the next nudge drains normally.
+    readState = "ok";
+    pump.notifyChange();
+    await settle();
+    await settle();
+    expect(turns).toHaveLength(1);
+    const firstTurn = turns[0];
+    if (firstTurn === undefined) throw new Error("expected one wake turn");
+    expect(firstTurn.step.startsWith("wake:")).toBe(true);
+    // The failed read still resolves an idle waiter (startupScan would hang).
+    readState = "fail";
+    const idle = pump.startupScan();
+    await settle();
+    await idle;
+  } finally {
+    console.error = originalError;
+  }
+});
+
+/**
+ * One contained drain driven by `error` at the boundary named by `where`, with
+ * every stderr line it wrote returned in order. `listPending` fails on the read
+ * and `runTurn` throws before anything is marked handled, so each call is
+ * exactly one drain: the failed path leaves `succeeded` false and the pump's
+ * post-drain re-read is short-circuited, never a second read or a hot loop.
+ */
+async function drainLinesForError(
+  error: unknown,
+  where: "listPending" | "runTurn",
+): Promise<string[]> {
+  const logged: string[] = [];
+  const originalError = console.error;
+  console.error = (...args: unknown[]) => logged.push(args.map(String).join(" "));
+  try {
+    const pump = new WakePump({
+      listPending: () => {
+        if (where === "listPending") throw error;
+        return [
+          { runId: "run-430", kind: "paused", firstAt: 1, lastAt: 2, count: 1, handled: false },
+        ];
+      },
+      markHandled: () => {},
+      turnActive: () => false,
+      runTurn: async () => {
+        if (where === "runTurn") throw error;
+      },
+    });
+    pump.notifyChange();
+    await settle();
+    await settle();
+  } finally {
+    console.error = originalError;
+  }
+  return logged;
+}
+
+/**
+ * The bounded line the drain owes for `where` when the code was dropped or could
+ * not be read at all: the fallback token in the slot the identifier would have
+ * occupied.
+ */
+function fallbackLineFragment(where: "listPending" | "runTurn"): string {
+  return where === "listPending" ? "failed to read pending wakes (unknown)" : "code=unknown";
+}
+
+/**
+ * Assert that NO part of the hostile value `hostile` reached `line`: not the
+ * sentinel the value carries, and not any `width`-character window of it -- a
+ * truncating boundary would emit the value's prefix, so a window check is what
+ * separates DROP from truncation.
+ */
+function expectNoPartOf(line: string, hostile: string, width = 8): void {
+  expect(line).not.toContain("HOSTILE");
+  for (let start = 0; start + width <= hostile.length; start += 1) {
+    expect(line).not.toContain(hostile.slice(start, start + width));
+  }
+}
+
+const CONTAINED_DRAIN_BOUNDARIES = ["listPending", "runTurn"] as const;
+
+/**
+ * Hostile `code` values: each carries the sentinel `HOSTILE` and each fails the
+ * canonical `[A-Za-z0-9_.-]{1,64}` bound for a different reason (length,
+ * whitespace, an embedded newline -- the last one could forge a second line).
+ */
+const HOSTILE_CODES: readonly string[] = [
+  `HOSTILE${"A".repeat(80)}`,
+  "HOSTILE code with spaces",
+  "HOSTILE\nsecond line",
+];
+
+test("(l) a `code` that fails the bound is DROPPED, never truncated, on both contained lines", async () => {
+  // Issue #430 documents the drain's line as one bounded, identifier-only stderr
+  // line, so an arbitrary `code` -- long, whitespace-laden, or carrying an
+  // embedded newline -- must not reach it. The documented rule (issue #418) is
+  // DROP, never truncate: a truncating boundary still leaks the value's prefix.
+  for (const where of CONTAINED_DRAIN_BOUNDARIES) {
+    for (const code of HOSTILE_CODES) {
+      const lines = await drainLinesForError({ code }, where);
+      expect(lines).toHaveLength(1);
+      const line = lines[0] ?? "";
+      // Exactly one line, carrying the fallback token where the code would be.
+      expect(line).toContain(fallbackLineFragment(where));
+      expectNoPartOf(line, code);
+      // ...and an embedded newline cannot forge a second line either.
+      expect(line.includes("\n")).toBe(false);
+      expect(line.length).toBeLessThan(200);
+    }
+  }
+});
+
+test("(m) a normal typed `code` still renders verbatim in the contained line", async () => {
+  // The bound drops only codes that FAIL it: the real `state_unavailable` read
+  // failure keeps its identifier on both contained lines (#430: "failure code,
+  // never record content").
+  const stateLines = await drainLinesForError(
+    new BackgroundRunError("state_unavailable"),
+    "listPending",
+  );
+  expect(stateLines).toHaveLength(1);
+  expect(stateLines[0]).toContain("failed to read pending wakes (state_unavailable)");
+  expect(stateLines[0]).not.toContain("unknown");
+
+  const turnLines = await drainLinesForError(
+    new BackgroundRunError("state_unavailable"),
+    "runTurn",
+  );
+  expect(turnLines).toHaveLength(1);
+  expect(turnLines[0]).toContain("code=state_unavailable");
+  expect(turnLines[0]).not.toContain("unknown");
+});
+
+test("(n) an unreadable or non-string `code` is total: the fallback, never junk", async () => {
+  // Totality: a poisoned `code` getter, or a Proxy that refuses `has`/`get`,
+  // degrades to the fallback instead of escaping through the boundary itself.
+  // And a value that is NOT a string is dropped too -- `String(...)` coercion
+  // would render `[object Object]`-shaped junk into the operator's line.
+  const unreadable: readonly unknown[] = [
+    // A `code` getter that throws on read.
+    Object.defineProperty({}, "code", {
+      enumerable: true,
+      get() {
+        throw new Error("HOSTILE getter");
+      },
+    }),
+    // Proxies that refuse the two operations the read performs.
+    new Proxy(
+      { code: "HOSTILE has" },
+      {
+        has: () => {
+          throw new Error("HOSTILE has trap");
+        },
+      },
+    ),
+    new Proxy(
+      { code: "HOSTILE get" },
+      {
+        get: () => {
+          throw new Error("HOSTILE get trap");
+        },
+      },
+    ),
+    // Non-string codes, at the error and as the error itself.
+    { code: 430 },
+    { code: { toString: () => "HOSTILE object" } },
+    { code: Symbol("HOSTILE symbol") },
+    { code: new String("HOSTILE boxed") },
+    { code: null },
+    { code: undefined },
+    {},
+    "HOSTILE bare string",
+    null,
+    undefined,
+  ];
+  for (const where of CONTAINED_DRAIN_BOUNDARIES) {
+    for (const error of unreadable) {
+      const lines = await drainLinesForError(error, where);
+      expect(lines).toHaveLength(1);
+      const line = lines[0] ?? "";
+      expect(line).toContain(fallbackLineFragment(where));
+      expect(line).not.toContain("HOSTILE");
+      expect(line).not.toContain("[object");
+      expect(line.includes("\n")).toBe(false);
+    }
+  }
 });

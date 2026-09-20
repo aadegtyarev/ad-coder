@@ -666,11 +666,32 @@ export class BackgroundRunManager {
     }
     return this.statusOf(entry);
   }
-  /** Unhandled wake windows, refreshing non-active entries off durable state. */
+  /** Unhandled wake windows, refreshing non-active entries off durable state.
+   *
+   * One unreadable run record must not kill the whole drain (issue #430): the
+   * pump's `listPending` reaches here through `void this.drain()` with nothing
+   * above it to catch, so a single corrupt state file used to surface as an
+   * unhandled rejection. Here a record that fails to re-parse is skipped with
+   * one bounded, identifier-only stderr line (names and counts only -- the
+   * errors contract forbids file contents). Explicit caller paths
+   * (`status()`, `result()`, `events()`) keep the strict, typed
+   * `state_unavailable` throw.
+   */
   pendingWakes(): PendingWake[] {
     for (const runId of this.entries.keys()) {
       const entry = this.entries.get(runId);
-      if (entry !== undefined && !entry.active) this.refresh(runId);
+      if (entry !== undefined && !entry.active) {
+        try {
+          this.refresh(runId);
+        } catch (error) {
+          if (!(error instanceof BackgroundRunError && error.code === "state_unavailable"))
+            throw error;
+          console.error(
+            `ad-coder: skipped background run ${runId}: state_unavailable; ` +
+              "the record is unreadable and stays out of wake draining until repaired",
+          );
+        }
+      }
     }
     const pending: PendingWake[] = [];
     for (const entry of this.entries.values()) {
@@ -1268,12 +1289,24 @@ function copyEvent(event: BackgroundRunEvent): BackgroundRunEvent {
     ...(event.metrics === undefined ? {} : { metrics: copyMetrics(event.metrics) }),
   };
 }
+// Reader/writer symmetry (issue #430): this list is the writer's own key set.
+// `timeout`, `cancel` of a paused run, and `load`'s abandoned branch all write
+// `recoveryDetail` (the fixed code-built constants / `resumeRecoveryDetail`)
+// and can carry `pause` (statusOf projects the entry's pause), and the strict
+// object REJECTED them -- the code could not read its own record, and refresh
+// turned that into `BackgroundRunError("state_unavailable", runId)` unhandled
+// through `pendingWakes()` -> `void this.drain()`. The reader learns exactly
+// the fields its OWN writers emit and stays strict otherwise: an outcome field
+// from a NEWER/FOREIGN writer must still throw -- a silently ignored unknown
+// field would accept drifted durable state without a trace.
 function parseOutcome(value: unknown, runId: string): BackgroundTerminalOutcome {
   const object = strictObject(value, [
     "runId",
     "lifecycle",
     "metrics",
+    "pause",
     "recovery",
+    "recoveryDetail",
     "approved",
     "rounds",
     "verdict",
@@ -1286,7 +1319,16 @@ function parseOutcome(value: unknown, runId: string): BackgroundTerminalOutcome 
     runId,
     lifecycle,
     metrics: parseMetrics(object.metrics),
+    ...(object.pause === undefined ? {} : { pause: parsePause(object.pause) }),
     ...(object.recovery === undefined ? {} : { recovery: enumValue(object.recovery, RECOVERIES) }),
+    // The detail is always the code-built recovery instruction, never model or
+    // task content; parse bounds it as a non-empty string so a corrupted record
+    // still fails closed on junk or unbounded values. The read bound is NOT a
+    // fit to today's text (see `outcomeString`): the longest shipped constant is
+    // `RESUME_PIPELINE_NO_RAISE_DETAIL` at 279 chars, and the bound is 1024.
+    ...(object.recoveryDetail === undefined
+      ? {}
+      : { recoveryDetail: outcomeString(object.recoveryDetail) }),
     ...(object.approved === undefined ? {} : { approved: object.approved }),
     ...(object.rounds === undefined ? {} : { rounds: safeInteger(object.rounds) }),
     ...(object.verdict === undefined
@@ -1300,15 +1342,35 @@ function copyOutcome(outcome: BackgroundRunOutcome): BackgroundTerminalOutcome {
   // A paused run reports through status/result synthesis, never as a terminal
   // outcome; this guard is unreachable at runtime and exists to narrow.
   if (outcome.lifecycle === "paused") throw new TypeError("paused runs have no terminal outcome");
+  // A cancel of a paused run carries the run's pause in the terminal outcome
+  // (issue #430): dropping it made a plain refresh+persist erase a field the
+  // strict writer had just written -- the round-trip must be loss-free, not
+  // merely non-throwing.
   return {
     runId: outcome.runId,
     lifecycle: outcome.lifecycle,
     metrics: copyMetrics(outcome.metrics),
+    ...(outcome.pause === undefined ? {} : { pause: copyPause(outcome.pause) }),
     ...(outcome.recovery === undefined ? {} : { recovery: outcome.recovery }),
+    ...(outcome.recoveryDetail === undefined ? {} : { recoveryDetail: outcome.recoveryDetail }),
     ...(outcome.approved === undefined ? {} : { approved: outcome.approved }),
     ...(outcome.rounds === undefined ? {} : { rounds: outcome.rounds }),
     ...(outcome.verdict === undefined ? {} : { verdict: outcome.verdict }),
   };
+}
+/**
+ * A bounded, non-empty detail string. The writer side only ever stores the two
+ * fixed code-built constants (issue #310/#261 wording), and the LONGEST of them
+ * is `RESUME_PIPELINE_NO_RAISE_DETAIL` at 279 chars (`RESUME_PIPELINE_DETAIL`
+ * is 227): naming the longest constant keeps this true when either text is
+ * reworded, and 1024 stays generous headroom rather than a fit to today's text
+ * -- a longer added constant fails the author's own test, not the operator's
+ * state read.
+ */
+function outcomeString(value: unknown): string {
+  if (typeof value !== "string" || value.length === 0 || value.length > 1024)
+    throw new TypeError("outcome detail is invalid");
+  return value;
 }
 function hasFreshLease(lease: PersistedEntry["lease"], leaseMs: number): boolean {
   return lease !== undefined && Date.now() - lease.heartbeatAt <= leaseMs;

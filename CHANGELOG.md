@@ -11,6 +11,40 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.111.0] - 2026-09-20
+
+### Fixed
+- **A background run's terminal outcome round-trips through its own persisted
+  record (issue #430).** The durable writer stored `recoveryDetail` (the coded
+  resume instruction written by the `timeout` and abandoned paths) and, through
+  `statusOf`-based outcome fixation, a paused run's `pause`, but the strict
+  persisted-outcome reader (`parseOutcome`) did not list them: `refresh` turned
+  the code's own record into `BackgroundRunError("state_unavailable", runId)`,
+  which reached the wake pump unhandled through `pendingWakes()` inside
+  `void this.drain()` -- an operator console turn died inside a 0-second wake
+  turn with an empty ledger. Now the strict reader and the post-parse copy
+  (`copyOutcome`) carry both optional fields
+  (`src/orchestration/background-runs.ts`). Strictness is kept: a field no
+  writer of this version emits still fails the read loudly, and every other
+  persisted field group already paired with its parser in the read-write audit
+  below the fold.
+- **One unreadable durable background record cannot kill the wake drain
+  (issue #430).** `pendingWakes()` skips a run whose persisted state fails to
+  re-parse with one bounded, identifier-only stderr line (run id and code, never
+  content), while explicit caller paths (`status()`, `result()`, `events()`)
+  keep the typed, strict rejection. In `src/orchestration/wake.ts`, every
+  boundary entered through `void this.drain()` -- the initial and the post-drain
+  durable read plus `markHandled` -- is contained: one code-first stderr line,
+  `inFlight` reset in `finally`, and unhandled wakes stay durably pending for
+  the next nudge, so the pump never hot-loops and never wedges a waiting
+  startup scan.
+
+### Changed
+- The wake pump's contained failure lines come from one shared, code-first
+  helper (`drainErrorLine`, src/orchestration/wake.ts); no behavior beyond the
+  contained failure above changes.
+
+
 ## [0.110.0] - 2026-09-20
 
 ### Added
