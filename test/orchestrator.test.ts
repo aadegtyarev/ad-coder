@@ -3195,6 +3195,11 @@ test("a cover retry with nothing to carry asks for the review, not the submissio
   expect(retryTask).toContain("No review text is available in this session");
   expect(retryTask).not.toContain("Your review stands");
   expect(retryTask).toContain(REVIEW_SUBMISSION_RESTART);
+  // The premise itself is forbidden, not one wording of it: this session made
+  // no prior response, so no clause may name one. Asserted as a pattern so a
+  // reverted constant cannot slip through (review of #525, round 4).
+  expect(retryTask).not.toContain("Your preceding");
+  expect(retryTask).not.toContain("did not call");
   expect(reviewerTurns[1]?.runId).not.toBe(reviewerTurns[0]?.runId);
   expect(resultText).toContain("trivial-edit cover: approved by reviewer");
 }, 20000);

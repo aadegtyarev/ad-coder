@@ -1722,6 +1722,12 @@ test("a review retry with nothing to carry asks for the review, not the submissi
   expect(retryPrompt).toContain(REVIEW_SUBMISSION_RESTART);
   expect(retryPrompt).not.toContain(REVIEW_SUBMISSION_RETRY);
   expect(retryPrompt).not.toContain("Your review stands");
+  // The review retry opens a FRESH run id, so no clause may name a response the
+  // reading session never made -- pinned as a forbidden pattern, not only
+  // through the constant, so reverting the constant's wording cannot pass
+  // (review of #525, round 4).
+  expect(retryPrompt).not.toContain("Your preceding");
+  expect(retryPrompt).not.toContain("did not call");
 });
 
 test("a reviewer that never calls submit_verdict blocks as a red review-not-run pause", async () => {

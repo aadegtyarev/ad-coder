@@ -458,6 +458,13 @@ test("a retry after a silent first attempt is asked to review, not to submit", a
   });
   expect(tasks[1]).toBe(`review it\n\n${REVIEW_SUBMISSION_RESTART}`);
   expect(tasks[1]).not.toContain(REVIEW_SUBMISSION_RETRY);
+  // The requirement that reaches the WIRING, not only the constant: the retry
+  // opens a fresh run id, so a clause naming the reader's own prior response is
+  // a premise it cannot check. Pinned as a forbidden PATTERN as well as through
+  // the constant, because a `toBe(\`...${RESTART}\`)` follows the constant
+  // wherever its text is reverted to (review of #525, round 4).
+  expect(tasks[1]).not.toContain("Your preceding");
+  expect(tasks[1]).not.toContain("did not call");
 });
 
 test("a retry with nothing carried asks for the review, never for a submission", () => {
@@ -471,6 +478,11 @@ test("a retry with nothing carried asks for the review, never for a submission",
   expect(silent).toBe(`review it\n\n${REVIEW_SUBMISSION_RESTART}`);
   expect(silent).not.toContain(REVIEW_SUBMISSION_RETRY);
   expect(silent).not.toContain("Your review stands");
+  // Not merely "a different sentence": every clause naming the reader's own
+  // history is forbidden, which is what makes this an assertion about the
+  // DEFECT rather than about one wording of the fix (review of #525, round 4).
+  expect(silent).not.toContain("Your preceding");
+  expect(silent).not.toContain("did not call");
   // Whitespace is not a review either.
   expect(reviewRetryTask("review it", "   \n  ")).toBe(silent);
 });
