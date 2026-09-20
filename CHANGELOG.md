@@ -46,6 +46,23 @@ enforces that dated release headings go in non-increasing date order
   amounts read as different failures. This change gives each boundary its own
   typed code and its own action wording on top of that path.
 
+  Both review rounds then found the same class of defect in the composed action.
+  The durable writer rejects any persisted string over
+  `MAX_PERSISTED_STRING_CHARS`, and the closeout action interpolates two GROWING
+  pieces -- the detail `StageLimits` composes from the configured limits, whose
+  numbers reach 16 digits because a valid limit may be
+  `Number.MAX_SAFE_INTEGER`, and the recurrence count, whose digits grow as the
+  loop repeats -- so the REPEATED pause failed durable serialization instead of
+  producing a clearable pause (216 characters for the first action, 274 for the
+  recurrence-1 one). The ceiling now lives once, in
+  `src/orchestration/types.ts`, shared by the writer and both composers, and a
+  composition that would not fit shortens its detail -- visibly, with the
+  `...[clipped]` marker the untyped cause message already uses -- while the
+  reason, the remedy and the recurrence tail always survive intact. The second
+  round measured the same overflow in the context-compaction action, whose
+  conditional aside about choosing a summarizer is now bounded and clipped under
+  the same rule (206 characters without the recurrence tail, 264 with it).
+
 ## [0.140.0] - 2026-09-20
 
 ### Fixed

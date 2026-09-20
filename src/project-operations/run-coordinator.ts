@@ -448,6 +448,14 @@ function recordStageFailure(
  * `StageCloseoutReason`) and every safe-integer count, the room left for the
  * detail stays positive, so the bound is total: the action never exceeds the
  * ceiling, and a pause never fails durable serialization.
+ *
+ * The SAME budget governs the context-compaction action, and for the same
+ * reason (issue #458 second review round): its recurrence tail grows too, and
+ * an unbounded composition measured 206 characters without the tail against
+ * 264 with it. Both boundary classes therefore compose as head + detail +
+ * tail + recurrence tail through ONE rule -- the detail is the only piece a
+ * too-long composition may lose, it is cut visibly, and the reason, the remedy
+ * and the loop signature survive intact.
  */
 function harnessFailureAction(sourceError: unknown, cause: PipelinePauseCause): string {
   const recurrenceSuffix =
@@ -470,13 +478,28 @@ function harnessFailureAction(sourceError: unknown, cause: PipelinePauseCause): 
     );
     return `${head}${sourceError.detail.slice(0, roomForDetail)}${PAUSE_CAUSE_CLIP_MARKER}${tail}${recurrenceSuffix}`;
   }
-  if (sourceError instanceof ContextCompactionLostError)
-    return (
-      "the stage's context can no longer be compacted; reopen the session from its durable state " +
-      "(choosing a different summarizer model when the summarizer itself failed) -- " +
-      "retrying the same prompt cannot succeed" +
-      recurrenceSuffix
+  if (sourceError instanceof ContextCompactionLostError) {
+    // The same budget as the closeout branch, for the same reason: the
+    // recurrence tail grows, so a composition that fits on the first pause can
+    // still cross the ceiling on a repeated one (the second review round
+    // measured exactly that -- 206 characters without the tail, 264 with it).
+    // The conditional aside about WHICH summarizer to choose is this cause's
+    // only shorten-able detail: the reason (the context cannot be compacted),
+    // the remedy (reopen from durable state) and the tail that turns a fault
+    // into a loop signature always survive, and a cut is always visible.
+    const head =
+      "the stage's context can no longer be compacted; reopen the session from its durable state (";
+    const detail = "choosing a different summarizer model when the summarizer itself failed";
+    const tail = ") -- retrying the same prompt cannot succeed";
+    const composed = head + detail + tail + recurrenceSuffix;
+    if (composed.length <= MAX_PERSISTED_STRING_CHARS) return composed;
+    const roomForDetail = Math.max(
+      0,
+      MAX_PERSISTED_STRING_CHARS -
+        (head.length + tail.length + recurrenceSuffix.length + PAUSE_CAUSE_CLIP_MARKER.length),
     );
+    return `${head}${detail.slice(0, roomForDetail)}${PAUSE_CAUSE_CLIP_MARKER}${tail}${recurrenceSuffix}`;
+  }
   return cause.recurrence > 0
     ? `the stage failed inside the harness (${cause.code}); the same cause has now been recorded ` +
         `${cause.recurrence + 1} consecutive times -- resolve it, then retry the stage explicitly`

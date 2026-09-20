@@ -1006,6 +1006,85 @@ test("a closeout action that would not fit is clipped visibly, never mid-remedy 
   );
 });
 
+test("a context-compaction pause action fits the persisted ceiling at every recurrence (issue #458 review round 3)", async () => {
+  // The closeout branch gained the bound in the first review round; the
+  // compaction branch kept composing unbounded and the SECOND round measured
+  // it over the writer's ceiling -- 206 characters without the recurrence
+  // tail, 264 with it -- so a REPEATED context-compaction pause failed durable
+  // serialization instead of producing a clearable pause. The ceiling here is
+  // read from the writer's own constant, and the assertion is made at three
+  // recurrence depths, because the tail that broke it only appears from the
+  // second pause on.
+  const failure: CompactionFailure = {
+    attempt: 1,
+    errorName: "CompactionError",
+    stopReason: "summarization_failed",
+    measuredTokens: 190_000,
+    thresholdTokens: 160_000,
+  };
+  const compactionError = new ContextCompactionLostError({
+    role: "coder",
+    budget: { maxTokens: 180_000, reserveTokens: 20_000, keepRecentTokens: 50_000 },
+    measuredTokens: 203_000,
+    contextWindow: 200_000,
+    failures: [failure],
+  });
+  const target = root();
+  const store = new ProjectStore(target);
+  const base = coordinatorSession(store, []);
+  let attempts = 0;
+  const session: WorkflowSession = {
+    ...base,
+    async step(state) {
+      attempts += 1;
+      if (attempts <= 3)
+        throw new WorkflowStageFailureError(compactionError, "failed-code", { ...failureMetrics });
+      return base.step(state);
+    },
+  };
+  const coordinator = new RunCoordinator(session, store, { runId: "compaction-ceiling" });
+  const first = await coordinator.run();
+  const firstAction = first.checkpoint.pause?.action;
+  expect(first.checkpoint.pause?.cause).toMatchObject({
+    code: "context_compaction_lost",
+    recurrence: 0,
+  });
+  expect(firstAction).toBeDefined();
+  // The first pause still fits whole -- and the conditional aside is what the
+  // later clippings are allowed to shorten, never the remedy.
+  expect(firstAction).toContain(
+    "choosing a different summarizer model when the summarizer itself failed",
+  );
+  expect(firstAction!.length).toBeLessThanOrEqual(MAX_PERSISTED_STRING_CHARS);
+  const recurrences: readonly (readonly [number, string])[] = [
+    [1, "2 consecutive times"],
+    [2, "3 consecutive times"],
+  ];
+  for (const [depth, tail] of recurrences) {
+    coordinator.resumeStage({ source: "operator", action: "retry" });
+    const next = await coordinator.run();
+    const action = next.checkpoint.pause?.action;
+    expect(next.checkpoint.pause?.cause).toMatchObject({
+      code: "context_compaction_lost",
+      recurrence: depth,
+    });
+    expect(action).toBeDefined();
+    expect(action!.length).toBeLessThanOrEqual(MAX_PERSISTED_STRING_CHARS);
+    // The loop signature is the whole point of the tail: it must survive the
+    // cut, along with the reason and the remedy the stage has to act on.
+    expect(action).toContain(`the same cause has now been recorded ${tail}`);
+    expect(action).toContain("can no longer be compacted");
+    expect(action).toContain("reopen the session from its durable state (");
+    expect(action).toContain("retrying the same prompt cannot succeed");
+    // And the cut is legible, never silent.
+    expect(action).toContain("...[clipped]");
+    expect(action).not.toContain(
+      "choosing a different summarizer model when the summarizer itself failed",
+    );
+  }
+  expect(attempts).toBe(3);
+});
+
 test("a budget-boundary pause stays clearable by an explicit operator act (issue #458)", async () => {
   const target = root();
   const store = new ProjectStore(target);
