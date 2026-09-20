@@ -3397,12 +3397,15 @@ test("the planner retry carries the plan-so-far under a fresh run id (#525)", as
       plannerPrompts.push(lastUserText(args[0]));
       return typeof step === "function" ? step(...args) : step;
     };
+  // The first attempt's prose carries whitespace on purpose: the wiring hands
+  // the attempt's text straight through (`plannerRetryTask(prompt, carried)` in
+  // `session.ts`), and a `.trim()` there is invisible to an assertion that only
+  // asks whether the prose is present (measured in review round 5). The exact
+  // bytes are asserted below.
+  const planSoFar =
+    "\n  I would split this into two migrations, but I have not called the tool  \n";
   fx.faux.setResponses([
-    record(
-      fauxAssistantMessage(
-        "I would split this into two migrations, but I have not called the tool",
-      ),
-    ),
+    record(fauxAssistantMessage(planSoFar)),
     record(fauxAssistantMessage("still prose, still no tool call")),
   ]);
 
@@ -3431,6 +3434,8 @@ test("the planner retry carries the plan-so-far under a fresh run id (#525)", as
   expect(plannerPrompts[1]).toContain(
     "I would split this into two migrations, but I have not called the tool",
   );
+  // The WIRING's bytes, not just "the prose is in there".
+  expect(plannerPrompts[1]).toContain(`Your plan so far, verbatim:\n\n${planSoFar}\n\n`);
   // The correction names WHICH failure to fix; the carry is what makes it
   // checkable rather than something the reader must take on faith.
   expect(plannerPrompts[1]).toContain("carried no JSON object");
