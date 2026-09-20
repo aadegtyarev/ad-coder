@@ -267,3 +267,40 @@ test("a committed models-profile snapshot parses from the fixture this test writ
   expect(parsed.modelsProfile).toBe("work");
   expect(snapshotSource(parsed)).toEqual({ kind: "models-profile", name: "work" });
 });
+
+test("a snapshot naming a JSON inventory is refused by name, with the command that re-takes it", () => {
+  // This repository's own committed snapshot carried this arm (issue #513), so
+  // it is the exact file a checkout upgrading across the retirement still has
+  // on disk. The refusal has to name the source it FOUND and the command that
+  // replaces it: the anonymous shape error it would otherwise fall into
+  // ("must be one of ...", naming fields) tells the operator which keys are
+  // legal and nothing about how to get back to a working snapshot.
+  const legacy = {
+    version: 1,
+    inventory: { name: "work", providers: [{ id: "codex", models: ["luna"] }] },
+    routing: { entries: [{ role: "coder", complexity: "trivial", model: "luna" }] },
+    observedOn: "2026-09-13",
+  };
+  let thrown: unknown;
+  try {
+    parseProjectCalibrationSnapshot(legacy);
+  } catch (error) {
+    thrown = error;
+  }
+  expect(thrown).toBeInstanceOf(UserProfileError);
+  const refusal = thrown as UserProfileError;
+  expect(refusal.code).toBe("invalid_profile");
+  expect(refusal.detail).toBe("inventory");
+  // The source it found, by name...
+  expect(refusal.message).toContain('"work"');
+  // ...the namespace that replaces it...
+  expect(refusal.message).toContain("models.yaml");
+  // ...and the command that re-takes the snapshot, which is the whole point:
+  // an operator who is told only that the arm is gone has no way back.
+  expect(refusal.message).toContain("--models-profile");
+  // The shape error this arm exists to preempt, asserted as its absence: the
+  // legacy file is missing `modelsProfile`, so without the check above it would
+  // fail the exact-field-set comparison instead and never mention any of this.
+  expect(refusal.message).not.toContain("fields are invalid");
+  expect(refusal.detail).not.toBe("snapshot");
+});

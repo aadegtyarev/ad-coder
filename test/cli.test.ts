@@ -769,6 +769,15 @@ test("profile CLI snapshots a models.yaml profile, and refuses an ambiguous sour
       expect(result.code).toBe(code);
       expect(result.stderr.length).toBeGreaterThan(0);
     }
+    // The retired flag's refusal NAMES the replacement (issue #513), asserted
+    // apart from the loop above because the loop reads the exit code only. A
+    // usage error that names the flag it refuses and no route forward leaves
+    // the operator holding a command that stopped working -- and after this
+    // branch there is no other surface left that reads this text.
+    const retired = bad(["--inventory", "work", "--models-profile", "daily"]);
+    expect(retired.stderr).toContain("--inventory");
+    expect(retired.stderr).toContain("--models-profile");
+    expect(retired.stderr).toContain("models.yaml");
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
