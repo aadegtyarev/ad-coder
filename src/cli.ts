@@ -30,6 +30,7 @@ import {
   resolveProviderAdmissionController,
 } from "./cli/resolve-config";
 import { resolveResumeRun, resumeOrchestratorConfig, resumeSeedNote } from "./cli/resume";
+import { DEFAULT_KILL_AFTER_MS, runsStopCommand } from "./cli/runs-stop";
 import { ToolActivityRenderer } from "./cli/tool-activity";
 import { loadModelsConfigSeam, loadSettingsConfigSeam } from "./config/seam";
 import { defaultModelsPath, defaultSettingsPath, loadSettingsConfig } from "./config/store";
@@ -73,6 +74,12 @@ import {
 } from "./orchestration/control-plane";
 import { startOrchestrator } from "./orchestration/orchestrator";
 import { runPipeline } from "./orchestration/pipeline";
+import {
+  consumeRunStopRequest,
+  type RunProcessIdentity,
+  readRunStopRequest,
+  selfProcessIdentity,
+} from "./orchestration/run-stop";
 import { createWorkflowSession } from "./orchestration/session";
 import {
   type StageCloseoutFact,
@@ -137,7 +144,7 @@ import {
 import { parseRegistryConfig } from "./registry/validate";
 import type { Role } from "./role";
 import { defineRole } from "./role";
-import { RunInterruptedError, resolveTargetDir } from "./runner/errors";
+import { assertRunId, RunInterruptedError, resolveTargetDir } from "./runner/errors";
 import { createRoleRunner } from "./runner/role-runner";
 import type { Tool } from "./runner/tool";
 import type { SessionLimits } from "./session-limits";
@@ -331,6 +338,12 @@ type CommandDefinition = {
     optional?: boolean;
   }[];
   run: (args: ParsedArgs) => Promise<void>;
+  /**
+   * Free help lines rendered after the options, supplied by the command's own
+   * registry entry (e.g. a command's exit-code ladder) -- derived help stays
+   * the only help, and the lines travel with the declaration that owns them.
+   */
+  notes?: readonly string[];
 };
 
 /** Split a command's positionals from its registry-declared options. */
@@ -574,6 +587,13 @@ export async function runRoleStandalone(params: {
   providerAdmissionController?: ProviderAdmissionController;
   /** Cancels a live role run and persists a resumable pause. */
   abortSignal?: AbortSignal;
+  /**
+   * The signal the caller caught, read when the run's pause is written (issue
+   * #479): the checkpoint says WHICH signal ended the run. A closure because
+   * the value exists only after the caller's own signal handler fires, which
+   * can be long after this call started.
+   */
+  interruptSignal?: () => "SIGINT" | "SIGTERM" | undefined;
 }): Promise<{
   text: string;
   cost: number;
@@ -597,6 +617,13 @@ export async function runRoleStandalone(params: {
       "elapsedMs" | "modelTurns" | "toolTurns" | "inputTokens" | "lastInputTokens" | "costUsd"
     >;
     status: "running" | "paused" | "complete";
+    /**
+     * The process that owns (last owned) this run, recorded by the run's own
+     * process at start and re-recorded by the process that resumes (issue
+     * #479). Absent in checkpoints written before #479; `runs stop` refuses
+     * those -- without a pid there is nothing addressable to signal.
+     */
+    process?: RunProcessIdentity;
     result?: {
       text: string;
       cost: number;
@@ -611,7 +638,20 @@ export async function runRoleStandalone(params: {
           limit: number;
           observed: number;
         }
-      | { code: "interrupted" };
+      | {
+          code: "interrupted";
+          /**
+           * Which signal ended the run (issue #479): an external stop is not
+           * the same fact as a run that fell over, and the record is the
+           * only place that distinction survives a dead process.
+           */
+          signal?: "SIGINT" | "SIGTERM";
+          /**
+           * Present only when a `runs stop` request asked for this stop; the
+           * witness file it is read from is consumed by this write.
+           */
+          stopRequest?: { requestedAt: number; requesterPid: number };
+        };
   };
   const taskDigest = new Bun.CryptoHasher("sha256").update(params.task).digest("hex");
   let checkpoint: import("./project-store/types").VersionedState<Checkpoint>;
@@ -682,9 +722,19 @@ export async function runRoleStandalone(params: {
     const { pause: _pause, ...resumed } = prior;
     checkpoint = store.writeVersionedJson(
       checkpointPath,
-      { ...resumed, cumulativeUsage, status: "running" },
+      {
+        ...resumed,
+        cumulativeUsage,
+        status: "running",
+        // The resuming process takes over the run: the recorded pid must be
+        // its own, or `runs stop` would aim at the dead predecessor's pid
+        // (issue #479). Resuming past a stop request answers it; the witness
+        // is consumed so it cannot brand a later unrelated interruption.
+        process: selfProcessIdentity(),
+      },
       checkpoint.version,
     );
+    consumeRunStopRequest(store, runId);
     session = await store.resumeSession(runId, BACKGROUND_CONTEXT);
   } else {
     checkpoint = store.writeVersionedJson(
@@ -705,6 +755,7 @@ export async function runRoleStandalone(params: {
           costUsd: 0,
         },
         status: "running",
+        process: selfProcessIdentity(),
       },
       0,
     );
@@ -795,15 +846,32 @@ export async function runRoleStandalone(params: {
       );
     }
     if (error instanceof RunInterruptedError || params.abortSignal?.aborted === true) {
+      // Issue #479: the pause names the signal that ended the run and, when a
+      // `runs stop` request asked for it, that too -- "I was killed" must be
+      // readable from the record long after the process is gone. The witness
+      // file is read then consumed here: it stays the ONLY witness for a
+      // victim that died before reaching this write.
+      const signal = params.interruptSignal?.();
+      const stopRequest = readRunStopRequest(store, runId);
       store.writeVersionedJson(
         checkpointPath,
         {
           ...checkpoint.value,
           status: "paused",
-          pause: { code: "interrupted" },
+          pause: {
+            code: "interrupted",
+            ...(signal !== undefined && { signal }),
+            ...(stopRequest !== undefined && {
+              stopRequest: {
+                requestedAt: stopRequest.requestedAt,
+                requesterPid: stopRequest.requesterPid,
+              },
+            }),
+          },
         },
         checkpoint.version,
       );
+      if (stopRequest !== undefined) consumeRunStopRequest(store, runId);
     }
     throw error;
   }
@@ -2769,6 +2837,9 @@ async function roleCommand(
         providerAdmissionController: config.providerAdmissionController,
       }),
       abortSignal: abortController.signal,
+      // The pause names the signal that ended the run (issue #479); only the
+      // handlers above know which one fired.
+      interruptSignal: () => receivedSignal,
     });
   const standaloneResult = await (async () => {
     try {
@@ -4001,6 +4072,86 @@ const COMMANDS: readonly CommandDefinition[] = [
     },
   },
   {
+    name: "runs",
+    description: "Stop one run by the process identity its own record carries.",
+    positionals: [
+      { name: "<stop>", description: "Action: stop." },
+      {
+        name: "<run-id>",
+        description: "Run identifier; its record lives under <target>/.ad-coder/runs/.",
+      },
+    ],
+    options: [
+      {
+        name: "--target-dir",
+        value: "<dir>",
+        description:
+          "Directory whose run record names the run; spelled as the run was started, the token the run's own command line must carry.",
+        required: true,
+      },
+      {
+        name: "--json",
+        description:
+          "Emit a stable JSON result; refusals emit the structured error shape with every check.",
+      },
+      {
+        name: "--kill",
+        description: "After the bounded wait, SIGKILL a run still alive past SIGTERM.",
+      },
+      {
+        name: "--kill-after-ms",
+        value: "<n>",
+        description: `SIGTERM-to-escalation wait in ms (default ${DEFAULT_KILL_AFTER_MS}); requires --kill.`,
+      },
+      {
+        name: "--group",
+        description:
+          "Signal the run's process group; refused unless the record proves the run leads that group.",
+      },
+    ],
+    notes: [
+      "Exit codes:",
+      "  0  a signal was delivered to the verified pid (escalated when --kill was set)",
+      "  1  nothing to stop: no record names this run id, or the run is already gone; nothing was signalled",
+      "  2  usage error (unknown action, missing run id, missing --target-dir, invalid flag value)",
+      "  3  refusal: the record's identity does not positively tie its pid to this run and target -- no",
+      "     recorded pid, unreadable identity, wrong target directory, wrong run, or a start time that",
+      "     suggests pid reuse; every check is printed and NOTHING is signalled",
+    ],
+    run: ({ positionals, flags, booleans }) => {
+      const action = positionals[1];
+      if (action === undefined) fail("runs requires an action: stop");
+      if (action !== "stop") fail(`unknown runs action: ${action} (only stop exists)`);
+      const runId = positionals[2];
+      if (runId === undefined) fail("runs stop requires a run id");
+      if (positionals[3] !== undefined) fail("runs stop accepts exactly one run id");
+      try {
+        assertRunId(runId);
+      } catch (error) {
+        fail(errorMessage(error));
+      }
+      const targetArg = flags["--target-dir"];
+      if (targetArg === undefined) fail("--target-dir is required for runs stop");
+      const kill = booleans["--kill"] === true;
+      const killAfterMs =
+        parseNonNegativeIntegerFlag("--kill-after-ms", flags["--kill-after-ms"]) ??
+        DEFAULT_KILL_AFTER_MS;
+      if (flags["--kill-after-ms"] !== undefined && !kill)
+        fail("--kill-after-ms is only meaningful with --kill");
+      return runsStopCommand({
+        runId,
+        // The RAW spelling the operator passed, not a resolved form: a run's
+        // own command line carries the spelling its starter typed, and the
+        // identity check compares exact argv tokens (src/cli/runs-stop.ts).
+        targetDir: targetArg,
+        json: booleans["--json"] === true,
+        kill,
+        group: booleans["--group"] === true,
+        killAfterMs,
+      });
+    },
+  },
+  {
     name: "drive",
     description: "Interactively drive the built-in pipeline.",
     positionals: [{ name: "<task>", description: "Task for the pipeline." }],
@@ -4169,7 +4320,7 @@ function renderCommandHelp(command: CommandDefinition): string {
         `  ${`${name}${value === undefined ? "" : ` ${value}`}${required ? " (required)" : ""}`.padEnd(35)} ${description}`,
     ),
   ];
-  return [usage, ...positionals, ...options].join("\n");
+  return [usage, ...positionals, ...options, ...(command.notes ?? [])].join("\n");
 }
 
 async function main(argv: string[]): Promise<void> {
@@ -4191,7 +4342,8 @@ async function main(argv: string[]): Promise<void> {
     ((commandName === "update" ||
       commandName === "cost" ||
       commandName === "ledger" ||
-      commandName === "stamp") &&
+      commandName === "stamp" ||
+      commandName === "runs") &&
       passedJsonFlag);
   const command = COMMANDS.find(({ name }) => name === commandName);
   if (command === undefined)

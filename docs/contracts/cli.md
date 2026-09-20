@@ -171,3 +171,33 @@ Rules for ad-coder's command-line front. A violation is always blocking.
   retries it — and shutdown stays finite (ui-responsiveness.md). This restores
   the promise from issue #397 that a dispatched line's queue position is
   exactly where it was typed.
+- 2026-09-20 (issue #479): `ad-coder runs stop <run-id> --target-dir <dir>`
+  stops ONE run through the process identity the run's own record carries
+  (`<target>/.ad-coder/runs/standalone-<runId>.json` for a standalone role
+  run, `background/<runId>.json` for a background worker). It exists because
+  the machine-wide spelling of "stop my run" -- a command-line pattern match
+  -- matches every lane on the machine at once and killed another lane's run
+  (measured 2026-09-20). Options: `--target-dir <dir>` (required; spelled as
+  the run was started, because the identity check compares exact argv
+  tokens), `--json` (stable JSON result on stdout; misses and refusals as
+  the structured error shape on stderr with every check inside it), `--kill`
+  (bounded wait after SIGTERM, then SIGKILL), `--kill-after-ms <n>` (default
+  2000, requires `--kill`), `--group` (signal the run's process group;
+  refused unless the record proves the run leads that group, so a lane's
+  shared group is never signalled). Exit codes: 0 a signal was delivered to
+  the verified pid (escalated when `--kill`); 1 nothing to stop -- no record
+  names the id, or the run is already gone; 2 usage error; 3 refusal, with
+  nothing signalled. The refusal is an INVARIANT, not a heuristic: NOTHING
+  is signalled unless the pid is positively tied to that run and that target
+  -- the record must be readable (a corrupt record is a refusal, never a
+  crash and never a licence to signal anything), must carry a pid, that pid
+  must be alive and not an unreaped zombie, its `/proc` start time must
+  match the recorded one (a reused pid fails here), and its command line
+  must carry BOTH the stopper's `--target-dir` spelling and the run's own
+  witness tokens; a directory that is merely a PREFIX of the real one is a
+  refusal, not a near-hit. Every miss prints exactly what was checked. The
+  one miss that is not a refusal is a dead pid: the run reads as already
+  gone (exit 1), not as a crash and not as a stop. A stop writes its
+  stop-request witness (`stop-<runId>.json`) BEFORE the first signal
+  leaves, so a victim that dies before it can record anything is still
+  distinguishable from one that fell over.

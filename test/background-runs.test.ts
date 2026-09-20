@@ -1207,3 +1207,89 @@ test("one unreadable record does not kill the pendingWakes of the others (issue 
   }
   await manager.close();
 });
+
+test("a claimed detached worker records its process identity and a blind owner persist keeps it (issue #479)", async () => {
+  const targetDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-worker-pid-")));
+  const ownerId = "worker-pid-owner";
+  const limits = { maxEventsPerRun: 4, maxPageSize: 2, maxPageBytes: 8_192 };
+  const owner = new BackgroundRunManager(
+    async () => completedResult("unused"),
+    limits,
+    targetDir,
+    ownerId,
+    () => undefined,
+  );
+  const requested = await owner.startDetached("SECRET worker-pid task");
+  const workerModule = new URL("../src/orchestration/background-runs.ts", import.meta.url).href;
+  const workerSource = `
+    import { BackgroundRunManager } from ${JSON.stringify(workerModule)};
+    const manager = new BackgroundRunManager(
+      // Never settles: the worker must stay alive while the pid is asserted.
+      async () => new Promise(() => undefined),
+      ${JSON.stringify(limits)},
+      ${JSON.stringify(targetDir)},
+      ${JSON.stringify(ownerId)},
+    );
+    manager.claim(${JSON.stringify(requested.runId)}, "worker task");
+    await manager.wait(${JSON.stringify(requested.runId)});
+  `;
+  // node:child_process spawn, like the real launcher, whose `detached` makes
+  // the worker its own process-group leader -- exactly what the recorded
+  // group id must show for an escalated stop to prove leadership. (Bun's
+  // detached applies the child's own process group; measured 2026-09-20 under
+  // both `bun run` and `bun test`: a detached child reports pgrp == pid. The
+  // recorded value is read from /proc by the worker itself, so it reflects
+  // the live group, whatever runtime produced it.)
+  const child = (await import("node:child_process")).spawn(process.execPath, ["-e", workerSource], {
+    cwd: process.cwd(),
+    stdio: "ignore",
+    detached: true,
+  });
+  const worker = { pid: child.pid ?? -1 };
+  const recordPath = path.join(
+    targetDir,
+    ".ad-coder",
+    "runs",
+    "background",
+    `${requested.runId}.json`,
+  );
+  // The record may be mid-atomic-write; unreadable instants are retried.
+  const record = (): {
+    lifecycle?: string;
+    process?: { pid?: number; startTime?: string; groupId?: number };
+  } => {
+    try {
+      return (JSON.parse(fs.readFileSync(recordPath, "utf8")).value ?? {}) as never;
+    } catch {
+      return {};
+    }
+  };
+  try {
+    const holdDeadline = Date.now() + 5_000;
+    while (record().process?.pid !== worker.pid) {
+      if (Date.now() >= holdDeadline)
+        throw new Error(`timed out waiting for the claimed record to name pid ${worker.pid}`);
+      await new Promise((resolve) => setTimeout(resolve, 15));
+    }
+    // Issue #479: the claim writes the worker's own pid, the /proc start time
+    // that pins it against reuse, and the group id proving it is its own
+    // process-group leader (the spawn is detached).
+    expect(record().process?.startTime).toMatch(/^\d+$/);
+    expect(record().process?.groupId).toBe(worker.pid);
+
+    // A blind owner persist (the cancel path refreshes, mutates, appends) must
+    // never erase the runId -> pid link the worker recorded.
+    owner.cancel(requested.runId);
+    await waitUntil(() => record().lifecycle === "cancelled", 2_000);
+    expect(record().process?.pid).toBe(worker.pid);
+  } finally {
+    // Cleanup kills the worker by its OWN recorded pid -- never by a pattern.
+    try {
+      process.kill(worker.pid, "SIGKILL");
+    } catch {
+      // Already gone; nothing to clean.
+    }
+    fs.rmSync(targetDir, { recursive: true, force: true });
+    await owner.close();
+  }
+});

@@ -5,6 +5,7 @@ import { clearsOnExplicitAct } from "../project-operations/run-coordinator";
 import { ProjectStore } from "../project-store/project-store";
 import { ProjectStoreError } from "../project-store/types";
 import type { RunPipelineResult, StepCost } from "./orchestrator";
+import { type RunProcessIdentity, selfProcessIdentity } from "./run-stop";
 import type { PipelinePause, PipelinePauseCause } from "./types";
 import {
   MAX_PAUSE_CAUSE_CODE_CHARS,
@@ -227,6 +228,13 @@ interface PersistedEntry {
   lease?: { workerId: string; heartbeatAt: number } | undefined;
   outcome?: BackgroundRunOutcome | undefined;
   wake?: { entries: WakeEntry[] } | undefined;
+  /**
+   * The detached worker's own pid, recorded by the worker at claim (issue
+   * #479), so `runs stop` can signal exactly this run's process. Absent in
+   * records written before #479 and for in-process runs, which have no
+   * process of their own to name.
+   */
+  process?: RunProcessIdentity | undefined;
 }
 export interface BackgroundDetachedLaunch {
   runId: string;
@@ -401,6 +409,10 @@ export class BackgroundRunManager {
     if (entry.lifecycle !== "requested" || entry.lease !== undefined)
       throw new BackgroundRunError("invalid_request");
     const workerId = crypto.randomUUID();
+    // The claiming worker records its own pid, /proc start time, and group
+    // (issue #479): this is the runId -> pid link `runs stop` resolves. It is
+    // written by the process that owns the run, never by an observer.
+    const process = selfProcessIdentity();
     if (this.store !== undefined) {
       const file = path.join(this.stateDir as string, `${runId}.json`);
       try {
@@ -408,7 +420,7 @@ export class BackgroundRunManager {
           const value = current?.value;
           if (value === undefined || value.lifecycle !== "requested" || value.lease !== undefined)
             throw new BackgroundRunError("invalid_request", runId);
-          return { ...value, lease: { workerId, heartbeatAt: Date.now() } };
+          return { ...value, lease: { workerId, heartbeatAt: Date.now() }, process };
         });
       } catch (error) {
         if (error instanceof BackgroundRunError) throw error;
@@ -419,6 +431,7 @@ export class BackgroundRunManager {
     }
     entry.active = true;
     entry.lease = { workerId, heartbeatAt: Date.now() };
+    entry.process = process;
     this.launch(entry, task);
   }
   private create(task: string, detached: boolean): { runId: string; lifecycle: "requested" } {
@@ -869,6 +882,7 @@ export class BackgroundRunManager {
       ...(e.pause && { pause: copyPause(e.pause) }),
       ...(e.lease && { lease: e.lease }),
       ...(e.outcome && { outcome: e.outcome }),
+      ...(e.process && { process: e.process }),
       wake: { entries: e.wake.entries.map((w) => ({ ...w })) },
     };
     if (this.store !== undefined) {
@@ -878,7 +892,16 @@ export class BackgroundRunManager {
       // unions by kind and lets a handled window win over a stale unhandled one.
       this.store.mutateVersionedJson<PersistedEntry>(file, (current) => {
         const wake = mergeWake(current?.value?.wake, data.wake);
-        return { ...data, ...(wake === undefined ? {} : { wake }) };
+        return {
+          ...data,
+          ...(wake === undefined ? {} : { wake }),
+          // Same preservation for the claimed worker's process identity (issue
+          // #479): an owner persist racing the claim must not erase the
+          // runId -> pid link the worker recorded.
+          ...(data.process === undefined && current?.value?.process !== undefined
+            ? { process: current.value.process }
+            : {}),
+        };
       });
       return;
     }
@@ -908,6 +931,7 @@ export class BackgroundRunManager {
     entry.pause = persisted.pause === undefined ? undefined : copyPause(persisted.pause);
     entry.lease = persisted.lease;
     entry.outcome = persisted.outcome === undefined ? undefined : copyOutcome(persisted.outcome);
+    entry.process = persisted.process;
     entry.wake = { entries: (persisted.wake?.entries ?? []).map((w) => ({ ...w })) };
     if (changed) this.notify(entry);
   }
@@ -1397,6 +1421,7 @@ function parsePersistedEntry(value: unknown): PersistedEntry {
     "lease",
     "outcome",
     "wake",
+    "process",
   ]);
   if (object.version !== 1 || !Array.isArray(object.events))
     throw new TypeError("record schema version is invalid");
@@ -1426,6 +1451,11 @@ function parsePersistedEntry(value: unknown): PersistedEntry {
   const pause = object.pause === undefined ? undefined : parsePause(object.pause);
   const outcome = object.outcome === undefined ? undefined : parseOutcome(object.outcome, runId);
   const wake = object.wake === undefined ? undefined : parseWake(object.wake);
+  // The claimed worker's process identity (issue #479) is optional so records
+  // written before #479 -- and in-process runs, which have none -- stay
+  // readable. pid and group must be positive; the start time is the /proc
+  // field-22 token, digits only, bounded like every other read field.
+  const process = object.process === undefined ? undefined : parseProcessIdentity(object.process);
   if (outcome !== undefined && outcome.lifecycle !== lifecycle)
     throw new TypeError("outcome lifecycle does not match record");
   if (isTerminal(lifecycle) !== (outcome !== undefined))
@@ -1441,7 +1471,21 @@ function parsePersistedEntry(value: unknown): PersistedEntry {
     ...(pause === undefined ? {} : { pause }),
     ...(lease === undefined ? {} : { lease }),
     ...(outcome === undefined ? {} : { outcome }),
+    ...(process === undefined ? {} : { process }),
     ...(wake === undefined ? {} : { wake }),
+  };
+}
+function parseProcessIdentity(value: unknown): RunProcessIdentity {
+  const object = strictObject(value, ["pid", "startTime", "groupId"]);
+  const pid = safeInteger(object.pid, 1);
+  if (object.startTime !== undefined) {
+    if (typeof object.startTime !== "string" || !/^\d{1,32}$/.test(object.startTime))
+      throw new TypeError("record process start time is invalid");
+  }
+  return {
+    pid,
+    ...(object.startTime === undefined ? {} : { startTime: object.startTime }),
+    ...(object.groupId === undefined ? {} : { groupId: safeInteger(object.groupId, 1) }),
   };
 }
 function isTerminal(x: BackgroundLifecycle): x is BackgroundTerminalLifecycle {

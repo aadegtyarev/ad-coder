@@ -226,6 +226,14 @@ start over. Update the existing thematic note instead of scattering equivalent
 research. Never leave useful research only in `.ad-coder/` or chat.
 ## Working-tree and harness notes
 
+- Stop a run with `ad-coder runs stop <runId> --target-dir <dir>` (the run's
+  record lives under `<target>/.ad-coder/runs/`); the command signals only a
+  pid the record positively ties to that target. When that command is
+  unavailable, address the run by the unique `--target-dir <path>` in its
+  command line or by its recorded pid. NEVER stop runs by a command-line
+  pattern (`pgrep -f "cli.ts role ..."`, `pkill -f`): the pattern matches
+  every lane on the machine at once, and on 2026-09-20 it killed another
+  lane's run (pids 1650952/1650955/1650958).
 - Every change merged into `main`, including documentation-only work, must bump
   the package version according to SemVer and add a dated changelog entry.
 - Changes go through a feature branch/worktree and PR; merge green PRs immediately

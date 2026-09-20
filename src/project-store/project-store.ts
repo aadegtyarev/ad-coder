@@ -370,7 +370,21 @@ export class ProjectStore {
       );
     if (this.byteLimits.state > 0 && stat.size > this.byteLimits.state)
       throw new ProjectStoreError("resource_limit", source, "state exceeds configured byte limit");
-    return JSON.parse(fs.readFileSync(source, "utf8")) as VersionedState<T>;
+    let parsed: VersionedState<T>;
+    try {
+      parsed = JSON.parse(fs.readFileSync(source, "utf8")) as VersionedState<T>;
+    } catch (error) {
+      if (!(error instanceof SyntaxError)) throw error;
+      // Corrupt bytes are a typed store failure, not a crash. A raw
+      // SyntaxError escaped every handler that keys on ProjectStoreError --
+      // `runs stop` reported a corrupt run record as a crash instead of a
+      // refusal (issue #479), and the same gap turned any corrupt state file
+      // into an untyped failure. The parse error's own message is dropped
+      // deliberately: the JSON parser embeds a content snippet in it, and
+      // error text stays identifiers and numbers only.
+      throw new ProjectStoreError("corrupt_state", source, "managed state is not parseable JSON");
+    }
+    return parsed;
   }
 
   appendJsonl(destination: string, record: unknown): void {
