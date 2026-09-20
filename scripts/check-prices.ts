@@ -274,10 +274,6 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
     // (issue #513): the generic usage line below names the supported flags, but
     // an operator still passing `--inventory` deserves to read which flag is
     // gone and what replaced it, not to diff two usage strings.
-    // The one flag this command RETIRED says so, the way the CLI's refusals do
-    // (issue #513): the generic usage line below names the supported flags, but
-    // an operator still passing `--inventory` deserves to read which flag is
-    // gone and what replaced it, not to diff two usage strings.
     if (flag === "--inventory") {
       return {
         kind: "bad",
