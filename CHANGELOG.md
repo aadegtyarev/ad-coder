@@ -990,6 +990,9 @@ enforces that dated release headings go in non-increasing date order
   carries provider ids only; no env variable is read for an out-of-set
   provider. The JSON inventory route keeps its per-profile scoped registries.
 
+### Fixed
+- Reject `research_required` plan coverage with empty `contractIds` at submission, with actionable validation guidance.
+
 ## [0.95.0] - 2026-09-19
 
 ### Added

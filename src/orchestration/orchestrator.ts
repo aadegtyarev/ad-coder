@@ -57,7 +57,7 @@ import {
   BackgroundRunManager,
 } from "./background-runs";
 import { pipelinePauseFromCheckpoint } from "./pipeline";
-import { COMPLEXITY_RUBRIC } from "./plan";
+import { COMPLEXITY_RUBRIC, CONTRACT_INDEX } from "./plan";
 import type { WorkflowSession } from "./session";
 import { autoDriver, createWorkflowSession } from "./session";
 import { STAGE_LIMIT_KEY, type StageLimitReason } from "./stage-limits";
@@ -69,16 +69,17 @@ import {
   type TrivialEditCoverSettle,
   trivialEditGuardPlan,
 } from "./trivial-edit";
-import type {
-  AvailableTransition,
-  Complexity,
-  PipelineConfig,
-  PipelineResult,
-  Plan,
-  TransitionKind,
-  Verdict,
-  WorkflowPhase,
-  WorkflowState,
+import {
+  type AvailableTransition,
+  type Complexity,
+  OrchestrationError,
+  type PipelineConfig,
+  type PipelineResult,
+  type Plan,
+  type TransitionKind,
+  type Verdict,
+  type WorkflowPhase,
+  type WorkflowState,
 } from "./types";
 import {
   buildSubmitVerdictTool,
@@ -806,6 +807,19 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
  *    generic text itself stays (compat).
  */
 function safeErrorText(error: unknown): string {
+  // `malformed_plan` is the one typed error whose authored message names the
+  // rejected field and the repair. Keep that message at this boundary, but
+  // only after matching the validator's fixed message vocabulary. Do not add
+  // OrchestrationError to SAFE_HOUSE_ERRORS: its other messages are not all
+  // safe to expose, and this must never become an arbitrary Error.message
+  // projection.
+  if (
+    error instanceof OrchestrationError &&
+    error.code === "malformed_plan" &&
+    SAFE_MALFORMED_PLAN_MESSAGE.test(error.message)
+  ) {
+    return `error: ${error.code} (${error.detail}): ${error.message}`;
+  }
   if (
     error !== null &&
     typeof error === "object" &&
@@ -844,6 +858,35 @@ function safeErrorText(error: unknown): string {
 }
 
 const SAFE_NAME_PATTERN = /^[\w$.-]{1,64}$/;
+
+// These are the structural messages authored by parsePlan/parsePlanText. The
+// only interpolated values are bounded indexes/counts; plan values, task text,
+// paths, and provider/exception messages do not match this allow-list.
+const SAFE_CONTRACT_IDS = Object.keys(CONTRACT_INDEX).join(", ");
+const SAFE_MALFORMED_PLAN_MESSAGE = new RegExp(
+  [
+    "plan is not an object",
+    "plan\\.(?:complexity|securitySurface) must be one of (?:trivial, medium, complex|none, low, elevated)",
+    "plan\\.summary must be a string",
+    "plan\\.(?:contractRequirements|affectedFiles) must be an array of non-empty strings",
+    "surfaceAnalysis (?:exceeds (?:aggregate byte|nesting) limit|must be an object)",
+    "surfaceAnalysis\\.projectType is required",
+    "surfaceAnalysis\\.surfaces exceeds the configured item limit",
+    "surfaces\\[\\d+\\]\\.\\w+ (?:is not an object|must be a non-empty string)",
+    "surface ids must be unique",
+    "coverage must contain exactly one entry per surface",
+    "coverage\\[\\d+\\]\\.\\w+ must be (?:a non-empty string|one of covered, not_applicable, research_required|bounded non-empty strings)",
+    'coverage\\[\\d+\\] is "covered" and requires contractIds and evidence',
+    'coverage\\[\\d+\\] is "not_applicable" and requires evidence and no contracts',
+    'coverage\\[\\d+\\] is "research_required" and requires evidence of the gap',
+    'coverage\\[\\d+\\]\\.contractIds must be non-empty when status is "research_required"; resubmit with canonical contract IDs',
+    `coverage\\[\\d+\\]\\.contractIds contains \\d+ unknown id\\(s\\); known ids are ${SAFE_CONTRACT_IDS}`,
+    "planner JSON handoff is (?:invalid|truncated: the submitted object never closes)",
+    "planner text contains more than one distinct plan; submit exactly one",
+  ]
+    .map((pattern) => `^(?:${pattern})$`)
+    .join("|"),
+);
 
 const SAFE_HOUSE_ERRORS = [
   // Field-by-field audit (errors contract 2026-09-19 / issue #418):
