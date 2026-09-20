@@ -188,6 +188,13 @@ export interface RoleObservations {
   output: number;
   reasoning?: number;
   costUsd?: number;
+  /**
+   * Issue #469 clamp trace: provider rounds whose `reasoning > output` anomaly
+   * was absorbed. Absent when nothing was clamped, so ordinary observations
+   * stay byte-identical. Persisted with the run record only; rendering is
+   * owned elsewhere.
+   */
+  clampedReasoning?: { responses: number; maxExcess: number };
   /** UTF-8 request-assembly sizes before provider-specific serialization. */
   requestBytes: {
     systemPrompt: number;
@@ -1183,6 +1190,15 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
         output: usage.output,
         reasoning: usage.reasoning,
         costUsd: usage.costUsd,
+        // Issue #469: the clamp trace rides with the observations that are
+        // already persisted into the run record; absent when nothing was
+        // clamped so ordinary runs stay byte-identical.
+        ...(reasoningClamp.count > 0 && {
+          clampedReasoning: {
+            responses: reasoningClamp.count,
+            maxExcess: reasoningClamp.maxExcessTokens,
+          },
+        }),
         requestBytes: {
           systemPrompt: systemPromptBytes,
           prompt: promptBytes,

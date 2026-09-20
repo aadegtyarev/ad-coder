@@ -1528,6 +1528,9 @@ test("#469: a reasoning>output anomaly is clamped down, not fatal, and the paid 
   // output, and the excess is absorbed, not propagated.
   expect(result.observations.output).toBe(100);
   expect(result.observations.reasoning).toBe(100);
+  // The clamp is traceable in the observations that persist with the run
+  // record: one clamped response, largest excess 250 - 100 = 150.
+  expect(result.observations.clampedReasoning).toEqual({ responses: 1, maxExcess: 150 });
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 
@@ -1579,4 +1582,16 @@ test("#469: usedTokens does not add reasoning on top of output", async () => {
   // + output 100 = 105. With the removed `+ usage.reasoning` addend restored,
   // this total would read 205 (reasoning counted twice).
   expect(budgets.at(-1)?.usedTokens).toBe(105);
+});
+
+test("#469: a run with no anomaly carries no clamp field", async () => {
+  // Absence is the signal: an ordinary pair (reasoning inside output) leaves
+  // observations byte-identical to pre-#469 shape -- no clampedReasoning key.
+  const { models, model, role } = usageFixture([
+    messageWithUsage({ input: 10, output: 100, reasoning: 50 }),
+  ]);
+  const result = await runRole({ role, targetDir, models, model, prompt: "do it" });
+  expect(result.result.status).toBe("completed");
+  expect(result.observations.reasoning).toBe(50);
+  expect("clampedReasoning" in result.observations).toBe(false);
 });
