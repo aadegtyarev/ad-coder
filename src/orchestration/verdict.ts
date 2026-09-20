@@ -238,6 +238,24 @@ export function buildSubmitVerdictTool(
             'each remaining defect you found; a defect you verified as resolved belongs in "summary" instead, and "approved" is exactly the verdict whose issues list is empty',
         },
       ),
+      // issue #489: this field was DELETED from the schema by #484 (0.124.0)
+      // in the same hunk that added the `issues` description above, and
+      // nothing noticed -- `parseVerdict` still refuses a submission without
+      // it (`verdict.summary must be a string`, three branches down),
+      // `formatReviewerInstruction` still draws it in the shape it tells the
+      // reviewer to send, and `record.summary` is what the verdict record
+      // keeps. The tool asks providers for a strict JSON schema
+      // (`constrainedSampling` above), so the declared shape is the one the
+      // model is held to: the field was required by the validator and offered
+      // by no schema at all. Measured cost: 6 of 7 `submit_verdict` calls
+      // across #477's three lost rounds omitted it, each refusal was retried
+      // with the identical payload, and the third round ended on
+      // `stage input limit reached (2045632/2000000)` with no verdict. The
+      // description states the requirement where the model reads it, beside
+      // `status`'s -- a JSON shape example alone reads as illustrative.
+      summary: Type.String({
+        description: "REQUIRED. a short summary of the review",
+      }),
       coverage: Type.Optional(
         Type.Array(
           Type.Object({
@@ -297,6 +315,12 @@ export function formatReviewerInstruction(expected?: SurfaceAnalysis): string {
   return [
     `When your review is complete, submit your verdict by calling the ${SUBMIT_VERDICT_TOOL_NAME} tool.`,
     "Call it with this shape:",
+    // issue #489: the shape alone read as illustrative -- the fields a model
+    // must not drop were only implied by the drawing. Name them, and name the
+    // cost of dropping one, because the retry is paid out of the same round
+    // budget: that is how a round which had already decided its verdict
+    // reached the ceiling with nothing submitted.
+    "Every field in that shape is required on the FIRST call -- `status`, `issues` and `summary`, plus `coverage` whenever it appears below. A submission that omits one is refused, and the corrected resubmission is paid from the same round budget.",
     applicable.length === 0
       ? '{ "status": "approved" | "changes_requested", "issues": [ { "severity": "blocker" | "major" | "minor", "what": "<one issue>" } ], "summary": "<short summary>" }'
       : '{ "status": "approved" | "changes_requested", "issues": [ { "severity": "blocker" | "major" | "minor", "what": "<one issue>" } ], "summary": "<short summary>", "coverage": [{"surfaceId":"<id>","contractIds":["<id>"],"evidence":["<verification>"]}] }',

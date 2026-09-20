@@ -36,6 +36,25 @@ enforces that dated release headings go in non-increasing date order
   the then-current `origin/main` -- with the rule that a future legitimate case
   is added there by name instead of the pattern being narrowed: narrowing to
   `^=======+$` would mute an eight-equals run inside a real conflict region.
+- **The `submit_verdict` schema declares `summary` again, and the instruction
+  says which fields are required (issue #489).** `#484` (0.124.0) added a
+  `description` to `issues` and, in the same hunk, deleted the neighbouring
+  `summary: Type.String({...})` from the tool's parameters. Nothing referenced
+  the deletion because nothing was supposed to move: `parseVerdict` still
+  refuses a submission without the field (`verdict.summary must be a string`),
+  `formatReviewerInstruction` still draws it in the shape it tells the reviewer
+  to send, and `record.summary` is what the verdict record keeps. The tool
+  asks providers for a strict JSON schema (`constrainedSampling`), so the
+  declared shape is the one the model is held to -- the field was required by
+  the validator and offered by no schema at all. Measured cost over `#477`'s
+  three lost rounds: **6 of 7** `submit_verdict` calls omitted it, each refusal
+  was retried with the identical payload, and the third round ended on
+  `stage input limit reached (2045632/2000000)` having decided its verdict and
+  recorded none -- while the durable ledger showed a 0-token `faux/faux-1` row
+  that reads as a provider failure. `summary` is restored with its requirement
+  stated where the model reads it, beside `status`'s, and the instruction now
+  names the fields required on the first call and the cost of dropping one,
+  because a JSON shape example alone reads as illustrative.
 
 ## [0.126.0] - 2026-09-20
 
