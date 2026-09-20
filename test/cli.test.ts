@@ -986,6 +986,45 @@ test("each command renders its own help before validating required input", () =>
   expect(profileHelp.stdout).not.toContain("--inventory-profile");
 }, 10_000);
 
+test("the retired config action and the JSON inventory options are refused, not merely gone", () => {
+  // Issue #513 deleted the `config migrate` action and the `--inventory-config`
+  // and `--inventory-profile` options. An absence is a contract only if
+  // RESTORING the surface fails a test, so every assertion below was measured
+  // against a tree with the surface put back (counts in the commit message).
+  // Exit codes alone would not carry it: an option restored to the table is
+  // parsed and then dies on its own missing file, which reads exactly like a
+  // refusal from the outside. The text is the sharper half -- "unknown option"
+  // is what the parse table says when it does not know a name.
+  const configHelp = runCli(["config", "--help"]);
+  expect(configHelp.code).toBe(0);
+  // One action, and the usage line offers exactly that one.
+  expect(configHelp.stdout).toContain("usage: ad-coder config <show>");
+  // It also says out loud that `migrate` left, rather than dropping the word:
+  // the operator who typed it finds out why instead of hunting a flag that no
+  // longer exists on any surface.
+  expect(configHelp.stdout).toContain("was removed with the JSON inventory route");
+  expect(configHelp.stdout).not.toContain("--inventory-config");
+
+  const migrated = runCli(["config", "migrate"]);
+  expect(migrated.code).toBe(2);
+  expect(migrated.stdout).toBe("");
+  expect(migrated.stderr).toContain("config requires exactly one action: show");
+
+  const retired: ReadonlyArray<readonly [string[], string]> = [
+    [
+      ["config", "show", "--inventory-config", path.join(CONFIG_HOME, "inventory.json")],
+      "--inventory-config",
+    ],
+    [["profile", "snapshot", "--inventory-profile", "work"], "--inventory-profile"],
+  ];
+  for (const [args, flag] of retired) {
+    const refused = runCli(args);
+    expect(refused.code).toBe(2);
+    expect(refused.stdout).toBe("");
+    expect(refused.stderr).toContain(`unknown option: ${flag}`);
+  }
+}, 10_000);
+
 test("drive research retry requires a durable run id", () => {
   const result = runCli([
     "drive",
