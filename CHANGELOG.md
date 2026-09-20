@@ -11,6 +11,12 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.138.0] - 2026-09-20
+
+### Fixed
+**A paused foreground run is now readable by the tools that describe it (issue #515).** `run_pipeline` reports the coordinator's `runId` when it pauses, but `pipeline_status` and `pipeline_result` resolved identifiers through the background registry only, so they answered `not_found (background_run)` for a run sitting on disk at
+`.ad-coder/runs/coordinator-<runId>.json` -- the orchestrator reported that the pipeline never started, and the operator had to know which path to consult. Both tools now fall back to the coordinator record and answer in the shape the background path already uses: status names the run as a foreground one with its phase, round, pause and spend, and says which actions apply; result reports a foreground pause as an outcome, and says in words when a foreground run has no outcome yet. `pipeline_events` and `cancel_pipeline` refuse a foreground identifier explicitly, because a foreground run has no event log and no separate process, instead of pretending it does not exist. Only a safe projection is returned -- phase, round, pause, metrics and the foreground marker, never the plan, the task digest or any task content.
+
 ## [0.136.0] - 2026-09-20
 
 ### Fixed

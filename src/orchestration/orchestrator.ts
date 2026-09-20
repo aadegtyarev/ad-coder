@@ -20,8 +20,13 @@ import { StageCloseoutError, StageLimitError } from "../orchestration/stage-limi
 import type { ProfileRole } from "../profiles/types";
 import { PROFILE_ROLES } from "../profiles/validate";
 import { ProjectOperationsError } from "../project-operations/errors";
-import { clearsOnExplicitAct, RunCoordinator } from "../project-operations/run-coordinator";
+import {
+  clearsOnExplicitAct,
+  type RunCheckpoint,
+  RunCoordinator,
+} from "../project-operations/run-coordinator";
 import { ProjectStore } from "../project-store/project-store";
+import { ProjectStoreError } from "../project-store/types";
 import type { Role } from "../role";
 import { defineRole } from "../role";
 import {
@@ -312,6 +317,27 @@ export interface OrchestratorDeps {
  * model-supplied `toPhase`/`toRound`, so a run can never be driven off its own
  * graph (e.g. jumped straight to `done`).
  */
+export interface ForegroundRunProjection {
+  runId: string;
+  lifecycle: "pending" | "paused" | "completed";
+  foreground: true;
+  phase: WorkflowPhase;
+  round: number;
+  metrics: { steps: number; totalCost: number };
+  pause?: RunCheckpoint["pause"];
+  outcome?: PipelineResult["outcome"];
+  approved?: boolean;
+  rounds?: number;
+  verdict?: string;
+  message?: string;
+  actions: {
+    status: "applicable";
+    result: "applicable";
+    events: "not_applicable";
+    cancel: "not_applicable";
+  };
+}
+
 export interface Orchestrator {
   /**
    * `complexity` is the orchestrator's own pre-read classification (issue
@@ -334,6 +360,9 @@ export interface Orchestrator {
   readonly backgroundRuns: BackgroundRunManager;
   /** True while a stepping run is in progress and not yet settled. */
   isStepping(): boolean;
+  /** Safe lookup for the foreground coordinator record; never returns task content. */
+  foregroundStatus(runId: string): ForegroundRunProjection | undefined;
+  foregroundExists(runId: string): boolean;
 }
 
 /**
@@ -553,6 +582,20 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     deps.backgroundOwnerId,
     deps.backgroundHostLauncher,
   );
+  const foregroundStore =
+    deps.backgroundTargetDir === undefined ? undefined : new ProjectStore(deps.backgroundTargetDir);
+  const readForeground = (runId: string): RunCheckpoint | undefined => {
+    if (foregroundStore === undefined) return undefined;
+    foregroundStore.validateId(runId);
+    try {
+      return foregroundStore.readVersionedJson<RunCheckpoint>(
+        path.join(foregroundStore.layout.runs, `coordinator-${runId}.json`),
+      ).value;
+    } catch (error) {
+      if (error instanceof ProjectStoreError && error.code === "not_found") return undefined;
+      throw error;
+    }
+  };
 
   const decomposeTask = async (
     task: string,
@@ -662,6 +705,50 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     return state.phase;
   };
 
+  const foregroundProjection = (checkpoint: RunCheckpoint): ForegroundRunProjection => {
+    const metrics = checkpoint.workflowState.stageMetrics ?? [];
+    const pause = checkpoint.pause === undefined ? undefined : structuredClone(checkpoint.pause);
+    const base = {
+      runId: checkpoint.runId,
+      foreground: true as const,
+      phase: checkpoint.workflowState.phase,
+      round: checkpoint.workflowState.round,
+      metrics: {
+        steps: metrics.length,
+        totalCost: metrics.reduce((sum, metric) => sum + (metric.costUsd ?? 0), 0),
+      },
+      ...(pause === undefined ? {} : { pause }),
+      actions: {
+        status: "applicable" as const,
+        result: "applicable" as const,
+        events: "not_applicable" as const,
+        cancel: "not_applicable" as const,
+      },
+    };
+    if (checkpoint.closeout !== undefined) {
+      const lastVerdict = checkpoint.closeout.pipeline.verdicts.at(-1);
+      return {
+        ...base,
+        lifecycle: "completed",
+        outcome: checkpoint.closeout.pipeline.outcome,
+        approved: checkpoint.closeout.pipeline.approved,
+        rounds: checkpoint.closeout.pipeline.rounds,
+        ...(lastVerdict === undefined ? {} : { verdict: lastVerdict.status }),
+      };
+    }
+    if (pause !== undefined) return { ...base, lifecycle: "paused" };
+    return {
+      ...base,
+      lifecycle: "pending",
+      message: "This foreground run has no outcome yet; it is still pending.",
+    };
+  };
+  const foregroundStatus = (runId: string): ForegroundRunProjection | undefined => {
+    const checkpoint = readForeground(runId);
+    return checkpoint === undefined ? undefined : foregroundProjection(checkpoint);
+  };
+  const foregroundExists = (runId: string): boolean => readForeground(runId) !== undefined;
+
   const showCost = (): CostReport => {
     let totalCost = 0;
     for (const record of sink.records()) {
@@ -686,6 +773,8 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     showCost,
     backgroundRuns,
     isStepping,
+    foregroundStatus,
+    foregroundExists,
   };
 }
 
@@ -1139,6 +1228,12 @@ export function buildBuiltInPipelineTools(core: Orchestrator): Tool[] {
         const status = core.backgroundRuns.status(params.runId);
         return { content: [{ type: "text", text: JSON.stringify(status) }], details: undefined };
       } catch (error) {
+        const foreground = core.foregroundStatus(params.runId);
+        if (foreground !== undefined)
+          return {
+            content: [{ type: "text", text: JSON.stringify(foreground) }],
+            details: undefined,
+          };
         return { content: [{ type: "text", text: safeErrorText(error) }], details: undefined };
       }
     },
@@ -1158,6 +1253,16 @@ export function buildBuiltInPipelineTools(core: Orchestrator): Tool[] {
         const page = core.backgroundRuns.events(params.runId, params.cursor, params.limit);
         return { content: [{ type: "text", text: JSON.stringify(page) }], details: undefined };
       } catch (error) {
+        if (core.foregroundExists(params.runId))
+          return {
+            content: [
+              {
+                type: "text",
+                text: "error: foreground_run (pipeline_events does not apply: a foreground run has no event log or separate process)",
+              },
+            ],
+            details: undefined,
+          };
         return { content: [{ type: "text", text: safeErrorText(error) }], details: undefined };
       }
     },
@@ -1177,6 +1282,12 @@ export function buildBuiltInPipelineTools(core: Orchestrator): Tool[] {
           details: undefined,
         };
       } catch (error) {
+        const foreground = core.foregroundStatus(params.runId);
+        if (foreground !== undefined)
+          return {
+            content: [{ type: "text", text: JSON.stringify(foreground) }],
+            details: undefined,
+          };
         return { content: [{ type: "text", text: safeErrorText(error) }], details: undefined };
       }
     },
@@ -1196,6 +1307,16 @@ export function buildBuiltInPipelineTools(core: Orchestrator): Tool[] {
           details: undefined,
         };
       } catch (error) {
+        if (core.foregroundExists(params.runId))
+          return {
+            content: [
+              {
+                type: "text",
+                text: "error: foreground_run (cancel_pipeline does not apply: a foreground run has no separate process to cancel)",
+              },
+            ],
+            details: undefined,
+          };
         return { content: [{ type: "text", text: safeErrorText(error) }], details: undefined };
       }
     },
