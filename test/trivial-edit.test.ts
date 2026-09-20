@@ -114,7 +114,21 @@ describe("record store", () => {
     const runId = "run_cap";
     expect(readTrivialEditRecord(target, runId)).toEqual({ schemaVersion: 1, entries: [] });
 
-    for (let index = 0; index < TRIVIAL_EDIT_MAX_ENTRIES + 5; index += 1) {
+    // The cap is observable once the record holds MAX ENTRIES, which does not
+    // require MAX API CALLS: seed all 50 entries with one store write (the
+    // same {version, value} envelope the module's reader expects), then append
+    // the rest through the real API -- a cap invariant must not be paid for
+    // with 50 durable writes (3 fsyncs each), or the 5 s budget measures the
+    // runner's disk rather than the capping behavior.
+    target.writeVersionedJson(path.join(target.layout.targetDir, trivialEditRecordPath(runId)), {
+      schemaVersion: 1,
+      entries: Array.from({ length: TRIVIAL_EDIT_MAX_ENTRIES }, (_, index) =>
+        entry({ file: `src/${index}.ts` }),
+      ),
+    } satisfies TrivialEditRecord);
+    expect(readTrivialEditRecord(target, runId).entries.length).toBe(TRIVIAL_EDIT_MAX_ENTRIES);
+
+    for (let index = TRIVIAL_EDIT_MAX_ENTRIES; index < TRIVIAL_EDIT_MAX_ENTRIES + 5; index += 1) {
       appendTrivialEditEntry(target, runId, entry({ file: `src/${index}.ts` }));
     }
     const record = readTrivialEditRecord(target, runId);

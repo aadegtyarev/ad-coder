@@ -11,6 +11,20 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.123.0] - 2026-09-20
+
+### Fixed
+
+- **The trivial-edit capping test pays for the cap, not for the disk (issue
+  #464).** It appended 55 entries through `appendTrivialEditEntry` -- 165 fsync
+  barriers -- to observe a pure logic invariant, so its 5 s default budget
+  measured the runner's filesystem rather than the capping. The test now seeds
+  the 50 entries with one store write through the same `{version, value}`
+  envelope the module's reader expects, reads that seed back and asserts its
+  length, and crosses the cap with the remaining five real appends: the
+  assertions and the capping path are unchanged, 20 barriers replace 167, and
+  the disk bill no longer decides whether the test passes.
+
 ## [0.121.0] - 2026-09-20
 
 - **A task dispatched mid-turn keeps its place and is never dropped (issue
