@@ -220,6 +220,11 @@ function parseSurfaceAnalysis(
       );
     if (status === "not_applicable" && (contractIds.length !== 0 || evidence.length === 0))
       return bad(`coverage[${index}] is "not_applicable" and requires evidence and no contracts`);
+    if (status === "research_required" && contractIds.length === 0)
+      return bad(
+        `coverage[${index}].contractIds must be non-empty when status is "research_required"; ` +
+          "resubmit with canonical contract IDs",
+      );
     if (status === "research_required" && evidence.length === 0)
       return bad(`coverage[${index}] is "research_required" and requires evidence of the gap`);
     return {
