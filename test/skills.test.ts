@@ -357,6 +357,140 @@ test("a role receives the catalogue, and loads instructions only when it asks", 
   expect(loaded).toHaveLength(1);
 });
 
+test("the row the catalogue advertises loads: `id@version` is an address, not a refusal", async () => {
+  // The failure this guards (issue #524): the catalogue renders every row as
+  // `- <id>@<version> — <description>`, and the tool's own parameter says
+  // "exactly as listed in available skills", while the executor compared the
+  // request against the BARE id. So every copied row was refused as
+  // `skill_not_available` -- an answer that accuses the caller's role scope,
+  // which was false. The model reads that as "this skill does not exist in
+  // this configuration" and works from memory instead, which is how the whole
+  // machinery stays inert while every gate stays green.
+  const catalogue = skillCatalogue("orchestrator");
+  const first = catalogue[0];
+  expect(first).toBeDefined();
+  const advertised = `${first!.id}@${first!.version}`;
+  // The rendering and this test must agree that the row IS the advertised
+  // string, or the case below passes against a catalogue nobody gets shown.
+  expect(formatSkillCatalogue(catalogue)).toContain(`- ${advertised} — `);
+
+  const loaded: SkillLoadRecord[] = [];
+  const tool = buildLoadSkillTool({ role: "orchestrator", loaded });
+  const call = tool.execute as unknown as (
+    id: string,
+    params: unknown,
+  ) => Promise<{ content: { text: string }[] }>;
+
+  const byRow = await call("c1", { id: advertised });
+  expect(byRow.content[0]?.text).toContain(`## ${advertised}`);
+  expect(loaded.map((entry) => entry.id)).toEqual([first!.id]);
+
+  // Both spellings name the same skill, so the second one is answered rather
+  // than loaded again -- otherwise a role could reach its per-turn ceiling by
+  // re-requesting one skill in the other form.
+  const byId = await call("c2", { id: first!.id });
+  expect(byId.content[0]?.text).toContain("already loaded");
+  expect(loaded).toHaveLength(1);
+});
+
+test("every row the catalogue renders loads through the string it renders", async () => {
+  // The invariant rather than a sample: a catalogue row's contract with the
+  // model is that what is shown is what the loader takes. A single-row case
+  // would stay green while a row written by a different author regressed, and
+  // the property being protected is about the rendering, not about one skill.
+  const catalogue = skillCatalogue("orchestrator");
+  expect(catalogue.length).toBeGreaterThan(3);
+  const rows = formatSkillCatalogue(catalogue)
+    .split("\n")
+    .filter((line) => line.startsWith("- "));
+  expect(rows).toHaveLength(catalogue.length);
+
+  for (const row of rows) {
+    const advertised = row.slice(2, row.indexOf(" — "));
+    const loaded: SkillLoadRecord[] = [];
+    const tool = buildLoadSkillTool({ role: "orchestrator", loaded });
+    const call = tool.execute as unknown as (
+      id: string,
+      params: unknown,
+    ) => Promise<{ content: { text: string }[] }>;
+    const answer = await call("c1", { id: advertised });
+    expect(answer.content[0]?.text).toContain(`## ${advertised}`);
+  }
+});
+
+test("a version containing `@` is still an address: the row is compared, never re-split", async () => {
+  // A version is any non-empty string (src/skills/resolver.ts), so `@` inside
+  // one is legal -- and a loader that split the rendered row on `@` would
+  // refuse a row this very catalogue renders (found in review of #524: version
+  // `v@2` renders `row-address@v@2`, and splitting at the last `@` answers
+  // `row-address@v is not in the available skills for this role`).
+  const root = project();
+  const { projectDir, builtinDir } = isolated(root);
+  writeSkill(root, "row-address", {
+    version: "v@2",
+    description: "a row whose version carries the delimiter",
+    roles: ["orchestrator"],
+  });
+  const catalogue = skillCatalogue("orchestrator", { projectDir, builtinDir });
+  const row = catalogue.find((entry) => entry.id === "row-address");
+  expect(row).toBeDefined();
+  const advertised = `${row!.id}@${row!.version}`;
+  expect(advertised).toBe("row-address@v@2");
+  expect(formatSkillCatalogue(catalogue)).toContain(`- ${advertised} — `);
+
+  const loaded: SkillLoadRecord[] = [];
+  const tool = buildLoadSkillTool({ role: "orchestrator", loaded, projectDir, builtinDir });
+  const call = tool.execute as unknown as (
+    id: string,
+    params: unknown,
+  ) => Promise<{ content: { text: string }[] }>;
+
+  const answer = await call("c1", { id: advertised });
+  expect(answer.content[0]?.text).toContain(`## ${advertised}`);
+  expect(loaded.map((entry) => entry.id)).toEqual(["row-address"]);
+
+  // The same row with whitespace around it is the same address.
+  const padded = await call("c2", { id: `  ${advertised}  ` });
+  expect(padded.content[0]?.text).toContain("already loaded");
+
+  // An address that truncates the version is attributed to the live one: the
+  // refusal names what the session lists rather than claiming the skill is
+  // unavailable for this role.
+  const partial = await call("c3", { id: "row-address@v" });
+  expect(partial.content[0]?.text).toContain("skill_version_mismatch");
+  expect(partial.content[0]?.text).toContain(`this session lists ${advertised}`);
+  expect(loaded).toHaveLength(1);
+});
+
+test("a version this session does not list is refused by name, and nothing loads", async () => {
+  // The other half of accepting `id@version`: the version has to mean
+  // something. A caller that names a revision the session does not have is
+  // told which one exists, in its own code -- not answered with a different
+  // revision, and not told the skill is unavailable for its role, which would
+  // be a false statement about the catalogue.
+  const catalogue = skillCatalogue("orchestrator");
+  const first = catalogue[0];
+  expect(first).toBeDefined();
+  const loaded: SkillLoadRecord[] = [];
+  const tool = buildLoadSkillTool({ role: "orchestrator", loaded });
+  const call = tool.execute as unknown as (
+    id: string,
+    params: unknown,
+  ) => Promise<{ content: { text: string }[] }>;
+
+  const answer = await call("c1", { id: `${first!.id}@99` });
+  expect(answer.content[0]?.text).toContain("skill_version_mismatch");
+  expect(answer.content[0]?.text).toContain(`this session lists ${first!.id}@${first!.version}`);
+  expect(answer.content[0]?.text).not.toContain("skill_not_available");
+  expect(loaded).toHaveLength(0);
+
+  // A bare `@` is not a version: it stays an id the catalogue does not have,
+  // so a malformed address cannot load a skill by accident.
+  const malformed = await call("c2", { id: `${first!.id}@` });
+  expect(malformed.content[0]?.text).toContain("skill_not_available");
+  expect(loaded).toHaveLength(0);
+});
+
 test("refuses malformed always and requires declarations", () => {
   const root = project();
   const bad = (id: string, manifest: Record<string, unknown>): void => {

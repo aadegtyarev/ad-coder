@@ -207,11 +207,35 @@ export function readExpectations(task: unknown): {
   };
 }
 
+/**
+ * Whether a projected request names the expected skill.
+ *
+ * The catalogue a role prompt carries renders every row as `<id>@<version>` and
+ * the loader accepts that address as the same skill (docs/contracts/skills.md,
+ * 2026-09-20, issue #524), so a role that names the row it was shown has
+ * triggered the skill and this check must credit it. The projection stays RAW --
+ * it records which skill the role reached for, and that is the value the
+ * observability contract wants -- so the normalization belongs here, at the
+ * comparison.
+ *
+ * The `@` boundary is authoritative rather than a decoration: the id pattern
+ * forbids `@`, so no other skill's id can hide behind it (`slicing-extra@1` is
+ * not `slicing`). The suffix must be non-empty, because `id@` names no version
+ * and is therefore not an address for `id` -- the same rule the loader applies.
+ * The check is written out rather than imported from the loader: a scorer runs
+ * against a CAPTURE and must score it without the build under test.
+ */
+function namesSkill(asked: string | undefined, skill: string): boolean {
+  if (asked === undefined) return false;
+  if (asked === skill) return true;
+  return asked.startsWith(`${skill}@`) && asked.length > skill.length + 1;
+}
+
 function loadCallsOf(segment: StreamEvent[] | undefined, skill: string): Set<string> {
   const calls = new Set<string>();
   for (const event of segment ?? []) {
     if (event.kind !== "activity" || event.toolName !== "load_skill") continue;
-    if (event.skillId === skill) calls.add(event.toolCallId);
+    if (namesSkill(event.skillId, skill)) calls.add(event.toolCallId);
   }
   return calls;
 }

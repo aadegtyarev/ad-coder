@@ -147,6 +147,43 @@ describe("skill-trigger scorer", () => {
     expect(passed(checks)).toEqual([true, false, true, true]);
   });
 
+  test("a load through the advertised address is a load of that skill (issue #524)", () => {
+    // The catalogue shows `<id>@<version>` and the loader accepts it, so the
+    // capture of a role that copied the row must score as a trigger. Before
+    // this, the projected identity `delivery-calibration@3` was compared to the
+    // bare expected id and every address-shaped load scored a MISS -- an eval
+    // that reports the loader's fix as a regression.
+    const checks = scoreSkillTrigger(session([loadSkill("delivery-calibration@3")], [], []), TASK);
+    expect(passed(checks)).toEqual([true, true, true, true]);
+    // A version is any non-empty string, `@` inside one included: the row is
+    // matched whole, never re-split at the last `@`.
+    const atInVersion = scoreSkillTrigger(
+      session([loadSkill("delivery-calibration@v@2")], [], []),
+      TASK,
+    );
+    expect(passed(atInVersion)).toEqual([true, true, true, true]);
+  });
+
+  test("the address boundary is the `@`, not a prefix and not a bare one", () => {
+    // An id that merely STARTS with the expected one is a different skill.
+    const neighbour = scoreSkillTrigger(
+      session([loadSkill("delivery-calibration-extra@1")], [], []),
+      TASK,
+    );
+    expect(passed(neighbour)).toEqual([true, false, true, true]);
+    // `id@` names no version, so it is not an address for `id`: the load is not
+    // credited, and the record is still attributable (it names a skill id).
+    const dangling = scoreSkillTrigger(session([loadSkill("delivery-calibration@")], [], []), TASK);
+    expect(passed(dangling)).toEqual([true, false, true, true]);
+    // The advertised address also fires on a NON-target turn -- the misfire rule
+    // is about the skill, not about the spelling it was named in.
+    const misfire = scoreSkillTrigger(
+      session([loadSkill("delivery-calibration")], [loadSkill("delivery-calibration@3", "c2")], []),
+      TASK,
+    );
+    expect(passed(misfire)).toEqual([true, true, false, true]);
+  });
+
   test("an unattributable load_skill record is a finding, never a pass", () => {
     for (const skillId of [undefined, "unknown"]) {
       const checks = scoreSkillTrigger(session([loadSkill(skillId)], [], []), TASK);
