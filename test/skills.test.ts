@@ -168,6 +168,31 @@ test("role-selection prices the middle rung instead of selling it as free (#527)
   expect(text).toContain("offer the pipeline");
 });
 
+test("role-selection states the order of preference, and its rungs hold that order (#527)", () => {
+  const skill = resolveSkills(["role-selection"])[0];
+  if (skill === undefined) throw new Error("missing built-in skill");
+  const text = skill.instructions;
+  // The CLAIM, not the presence of three phrases. The skill's answer to a
+  // direct ask is an ORDER -- own hands, then one role, then the pipeline --
+  // and naming the three rungs without stating which one wins is a catalogue,
+  // not a routing rule. Measured in review round 4: deleting this sentence
+  // left `bun test test/skills.test.ts test/prompts.test.ts` green at 43/43,
+  // because the surrounding assertions only asked whether each rung exists.
+  expect(text).toContain(
+    "The order of preference is your own hands, then one role, then the pipeline",
+  );
+  // And the document's own body must hold that order. A rung list opening with
+  // the pipeline while the sentence above it claims otherwise is the
+  // two-answers defect the sentence exists to prevent -- the operator reads the
+  // cheapest rung and the run takes the dearest.
+  const own = text.indexOf("**Your own hands**");
+  const oneRole = text.indexOf("**One role**");
+  const pipeline = text.indexOf("**The pipeline**");
+  expect(own).toBeGreaterThan(-1);
+  expect(oneRole).toBeGreaterThan(own);
+  expect(pipeline).toBeGreaterThan(oneRole);
+});
+
 test("project skill shadows a built-in skill", () => {
   const root = project();
   const dir = path.join(root, ".ad-coder", "skills", "task-slicing");
