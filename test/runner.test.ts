@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -88,6 +89,130 @@ test("safe Git diff projection is bounded and redacts credential-like additions"
   await expect(readSafeGitDiffProjection(dir, 8)).rejects.toMatchObject({
     code: "diff_metric_failed",
   });
+});
+
+/** An empty git repo with one commit, so a diff measure can run against it. */
+function initEmptyRepo(prefix: string): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  execFileSync("git", ["init", "-q"], { cwd: dir });
+  execFileSync("git", ["config", "user.name", "Test"], { cwd: dir });
+  execFileSync("git", ["config", "user.email", "test@example.invalid"], { cwd: dir });
+  execFileSync("git", ["commit", "-qm", "base", "--allow-empty"], { cwd: dir });
+  return dir;
+}
+
+test("untracked content past the aggregate ceiling truncates UTF-8-safely instead of failing (issue #449)", async () => {
+  const dir = initEmptyRepo("ad-coder-untracked-");
+  // One unbroken 4-byte codepoint run on a single line: with a 158-byte
+  // ceiling the cap lands on the 3rd (continuation) byte of rocket #26, so
+  // only the boundary walk-back can keep the cut lossless.
+  const rocket = "🚀";
+  const big = rocket.repeat(2_000); // 8 000 bytes, no newlines
+  fs.writeFileSync(path.join(dir, "b.md"), big);
+
+  const changed = await readSafeGitChangedFiles(dir);
+  expect(changed.files).toEqual(["b.md"]);
+  const tracked = await readSafeGitDiffProjection(dir, 4096);
+  expect(tracked.bytes).toBe(0);
+
+  const projected = appendSafeUntrackedDiffProjection(dir, tracked, changed.untrackedFiles, 158);
+  // Bounded: the ceiling caps content instead of throwing the measurement away.
+  // The 50-byte file header plus the "+" line opener plus 26 WHOLE rockets:
+  // 155 bytes -- the cap walked back off rocket #26's three continuation bytes
+  // instead of leaving a partial codepoint, so never 156..158 bytes.
+  expect(projected.bytes).toBe(155);
+  // UTF-8 boundary safety: the cap never cuts a multi-byte codepoint in half.
+  // After the 3 header lines the kept text is the "+" line opener followed by
+  // whole rockets only -- no U+FFFD replacement, no partial codepoint.
+  const body = projected.text.slice(projected.text.lastIndexOf("\n") + 1);
+  expect(body).toMatch(/^\+(?:🚀)+$/u);
+  expect(projected.text).not.toContain("\u{FFFD}");
+  // The capped file is counted, and the TRUE measured size (8 000 bytes,
+  // before truncation) survives as the material signal.
+  expect(projected.text).toContain("diff --git a/b.md b/b.md");
+  expect(projected.untrackedTruncatedFiles).toBe(1);
+  expect(projected.untrackedMeasuredBytes).toBe(Buffer.byteLength(big));
+  // The digest still describes the bounded text exactly.
+  expect(projected.sha256).toBe(createHash("sha256").update(projected.text).digest("hex"));
+});
+
+test("zero remaining budget caps an untracked file to nothing without reading it (issue #449)", () => {
+  const dir = initEmptyRepo("ad-coder-untracked-budget-");
+  // Non-UTF-8 content: with no budget left it is never read, so the bounded
+  // projection stays a success -- the path is kept and the cap is counted.
+  fs.writeFileSync(path.join(dir, "blob.bin"), Buffer.from([0xff, 0xfe, 0x00, 0x01]));
+  const base = { text: "x".repeat(4096), bytes: 4096, sha256: "", redactedLines: 0 };
+  const projected = appendSafeUntrackedDiffProjection(dir, base, ["blob.bin"], 4096);
+  expect(projected.text).toBe(base.text);
+  expect(projected.bytes).toBe(4096);
+  expect(projected.untrackedTruncatedFiles).toBe(1);
+  expect(projected.untrackedMeasuredBytes).toBe(4);
+});
+
+test("a truncated untracked projection recounts redaction markers on the KEPT text (issue #449)", () => {
+  const dir = initEmptyRepo("ad-coder-untracked-redact-");
+  const secretLine = "password: supersecret9";
+  fs.writeFileSync(
+    path.join(dir, "sec.md"),
+    `${"a".repeat(300)}\n${secretLine}\n${"b".repeat(300)}\n`,
+  );
+  // The projected file is header (56) + "aaa..." line (301) + the redaction
+  // marker (32) + "bbb..." line. A 370-byte ceiling cuts INSIDE the marker
+  // line, so no marker line is fully visible and the count must be 0.
+  const cut = appendSafeUntrackedDiffProjection(
+    dir,
+    { text: "", bytes: 0, sha256: "", redactedLines: 0 },
+    ["sec.md"],
+    370,
+  );
+  expect(cut.bytes).toBeLessThanOrEqual(370);
+  expect(cut.redactedLines).toBe(0);
+  // With room for the whole marker line the count is the truthful 1.
+  const whole = appendSafeUntrackedDiffProjection(
+    dir,
+    { text: "", bytes: 0, sha256: "", redactedLines: 0 },
+    ["sec.md"],
+    400,
+  );
+  expect(whole.redactedLines).toBe(1);
+  expect(whole.text).toContain("+[REDACTED: possible credential]");
+});
+
+test("an untracked file that vanished mid-measurement is a typed failure, not a crash (issue #449)", () => {
+  const dir = initEmptyRepo("ad-coder-untracked-vanish-");
+  let thrown: unknown;
+  try {
+    appendSafeUntrackedDiffProjection(
+      dir,
+      { text: "", bytes: 0, sha256: "", redactedLines: 0 },
+      ["ghost.txt"],
+      4096,
+    );
+  } catch (error) {
+    thrown = error;
+  }
+  expect(thrown).toBeInstanceOf(RunnerError);
+  expect((thrown as RunnerError).code).toBe("diff_metric_failed");
+  expect((thrown as RunnerError).message).toContain("untracked file is unreadable");
+});
+
+test("a non-UTF-8 untracked file is still a typed measurement failure (issue #449)", () => {
+  const dir = initEmptyRepo("ad-coder-untracked-bin-");
+  fs.writeFileSync(path.join(dir, "blob.bin"), Buffer.from([0xff, 0xfe, 0x00, 0x01]));
+  let thrown: unknown;
+  try {
+    appendSafeUntrackedDiffProjection(
+      dir,
+      { text: "", bytes: 0, sha256: "", redactedLines: 0 },
+      ["blob.bin"],
+      4096,
+    );
+  } catch (error) {
+    thrown = error;
+  }
+  expect(thrown).toBeInstanceOf(RunnerError);
+  expect((thrown as RunnerError).code).toBe("diff_metric_failed");
+  expect((thrown as RunnerError).message).toContain("untracked diff is not UTF-8");
 });
 
 /** A rejected runRole: plain Error with the harness `code` field attached. */

@@ -103,6 +103,8 @@ export interface PipelineContextDecisionInput {
   diffBytes: number;
   changedFiles: readonly string[];
   changedFilesTruncated: number;
+  /** True only when the diff measurement itself failed, not merely hit a ceiling. */
+  projectionFailed?: boolean;
   evidencePresent: boolean;
   riskChanged?: boolean;
 }
@@ -115,10 +117,16 @@ export function selectPipelineContext(input: PipelineContextDecisionInput): {
   const policy = input.mode ?? { mode: "incremental", maxFocusedDiffBytes: 64 * 1024 };
   if (policy.mode === "full") return { selection: "full", fallbackReason: "configured_full" };
   if (policy.mode === "off") return { selection: "broad", fallbackReason: "manual_control" };
-  if (input.changedFilesTruncated > 0)
+  // Issue #449: only a FAILED git measurement forces full via projection_failure.
+  // A ceiling only bounds content; the measured facts below keep deciding.
+  if (input.projectionFailed === true)
     return { selection: "full", fallbackReason: "projection_failure" };
   if (input.changedFiles.some((file) => SENSITIVE_PATH.test(file)))
     return { selection: "full", fallbackReason: "projection_redacted" };
+  // A real path-list truncation (more than maxPaths changed paths) widens the
+  // handoff under its own honest reason; it is a measured ceiling, not a failure.
+  if (input.changedFilesTruncated > 0)
+    return { selection: "full", fallbackReason: "path_list_truncated" };
   if (input.changedFiles.some((file) => REVIEW_CONTROL_PATH.test(file)))
     return { selection: "full", fallbackReason: "scope_drift" };
   if (input.riskChanged === true) return { selection: "full", fallbackReason: "risk_changed" };
@@ -128,24 +136,45 @@ export function selectPipelineContext(input: PipelineContextDecisionInput): {
   return { selection: "focused" };
 }
 
-async function safeChangedFilesWithConfig(config: PipelineConfig): Promise<{
+/**
+ * Measure the changed paths and the bounded diff projection as two separate
+ * facts (issue #449): a ceiling only bounds content, so the path list survives
+ * any projection failure, and each outcome carries its own record field --
+ * `truncated` counts real path-list truncation, `redactedPaths` counts
+ * sensitive-path redaction, `projectionFailed` marks a failed measurement.
+ */
+export async function safeChangedFilesWithConfig(config: PipelineConfig): Promise<{
   files: string[];
   total: number;
   truncated: number;
+  redactedPaths: number;
+  projectionFailed: boolean;
   diff?: Awaited<ReturnType<typeof readSafeGitDiffProjection>>;
 }> {
+  let files: Awaited<ReturnType<typeof readSafeGitChangedFiles>>;
   try {
-    const files = await readSafeGitChangedFiles(
+    files = await readSafeGitChangedFiles(
       config.targetDir,
       undefined,
       config.pipelineContext?.projection,
     );
-    if (files.files.some((file) => SENSITIVE_PATH.test(file)))
-      return { ...files, truncated: Math.max(1, files.truncated) };
-    const maxBytes = config.pipelineContext?.projection?.maxAggregateBytes ?? 32 * 1024;
+  } catch {
+    // The path-list measurement itself failed: recorded explicitly, never as
+    // an empty "no changes" result.
+    return { files: [], total: 0, truncated: 0, redactedPaths: 0, projectionFailed: true };
+  }
+  const redactedPaths = files.files.filter((file) => SENSITIVE_PATH.test(file)).length;
+  if (redactedPaths > 0)
+    // Credential-bearing paths keep the projection untrustworthy: widen on the
+    // explicit redaction fact instead of overloading the truncated path count.
+    return { ...files, redactedPaths, projectionFailed: false };
+  const maxBytes = config.pipelineContext?.projection?.maxAggregateBytes ?? 32 * 1024;
+  try {
     const tracked = await readSafeGitDiffProjection(config.targetDir, maxBytes);
     return {
       ...files,
+      redactedPaths,
+      projectionFailed: false,
       diff: appendSafeUntrackedDiffProjection(
         config.targetDir,
         tracked,
@@ -154,8 +183,10 @@ async function safeChangedFilesWithConfig(config: PipelineConfig): Promise<{
       ),
     };
   } catch {
-    // Measurement failure is represented explicitly and forces full context.
-    return { files: [], total: 0, truncated: 1 };
+    // The diff projection failed its ceiling or its read: the measured path
+    // list SURVIVES, and the widened full context replaces the missing diff
+    // evidence instead of leaving the stage searching blind.
+    return { ...files, redactedPaths, projectionFailed: true };
   }
 }
 
@@ -1242,12 +1273,19 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       .find((metric) => metric.stage.startsWith("code:"));
     const changed = await safeChangedFilesWithConfig(config);
     const currentRiskFingerprint = riskFingerprint(state, changed.files);
+    // The material signal the decision escalates on: the cumulative tracked
+    // diff the prior stage measured, or the true size of untracked additions.
+    const decisionDiffBytes = Math.max(
+      priorCodeMetrics?.diffBytes ?? 0,
+      changed.diff?.untrackedMeasuredBytes ?? 0,
+    );
     const decision = selectPipelineContext({
       mode: config.pipelineContext,
       round,
-      diffBytes: priorCodeMetrics?.diffBytes ?? 0,
+      diffBytes: decisionDiffBytes,
       changedFiles: changed.files,
       changedFilesTruncated: changed.truncated,
+      projectionFailed: changed.projectionFailed,
       evidencePresent: previousVerdict !== undefined && priorCodeMetrics !== undefined,
       riskChanged:
         state.pipelineContext?.riskFingerprint !== undefined &&
@@ -1325,11 +1363,16 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
         changedFiles: changed.files,
         changedFilesTotal: changed.total,
         changedFilesTruncated: changed.truncated,
-        diffBytes: priorCodeMetrics?.diffBytes ?? 0,
+        ...(changed.redactedPaths > 0 && { redactedPaths: changed.redactedPaths }),
+        ...(changed.projectionFailed && { projectionFailed: true }),
+        diffBytes: decisionDiffBytes,
         ...(changed.diff !== undefined && {
           diffProjectionSha256: changed.diff.sha256,
           diffProjectionBytes: changed.diff.bytes,
           diffProjectionRedactedLines: changed.diff.redactedLines,
+          ...((changed.diff.untrackedTruncatedFiles ?? 0) > 0 && {
+            untrackedTruncatedFiles: changed.diff.untrackedTruncatedFiles,
+          }),
         }),
         riskFingerprint: currentRiskFingerprint,
       },
@@ -1434,12 +1477,19 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       .find((metric) => metric.stage.startsWith("code:"));
     const changed = await safeChangedFilesWithConfig(config);
     const currentRiskFingerprint = riskFingerprint(state, changed.files);
+    // Same material signal as the coder step: prior measured tracked diff or
+    // the true size of untracked additions, whichever is larger.
+    const decisionDiffBytes = Math.max(
+      coderMetrics?.diffBytes ?? 0,
+      changed.diff?.untrackedMeasuredBytes ?? 0,
+    );
     const decision = selectPipelineContext({
       mode: config.pipelineContext,
       round,
-      diffBytes: coderMetrics?.diffBytes ?? 0,
+      diffBytes: decisionDiffBytes,
       changedFiles: changed.files,
       changedFilesTruncated: changed.truncated,
+      projectionFailed: changed.projectionFailed,
       evidencePresent: state.changeSummary.trim() !== "" && coderMetrics !== undefined,
       riskChanged:
         state.pipelineContext?.riskFingerprint !== undefined &&
@@ -1548,11 +1598,16 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
         changedFiles: changed.files,
         changedFilesTotal: changed.total,
         changedFilesTruncated: changed.truncated,
-        diffBytes: coderMetrics?.diffBytes ?? 0,
+        ...(changed.redactedPaths > 0 && { redactedPaths: changed.redactedPaths }),
+        ...(changed.projectionFailed && { projectionFailed: true }),
+        diffBytes: decisionDiffBytes,
         ...(changed.diff !== undefined && {
           diffProjectionSha256: changed.diff.sha256,
           diffProjectionBytes: changed.diff.bytes,
           diffProjectionRedactedLines: changed.diff.redactedLines,
+          ...((changed.diff.untrackedTruncatedFiles ?? 0) > 0 && {
+            untrackedTruncatedFiles: changed.diff.untrackedTruncatedFiles,
+          }),
         }),
         riskFingerprint: currentRiskFingerprint,
       },
@@ -1767,8 +1822,19 @@ function formatVerificationEvidence(
   if (metrics === undefined) return "Verification evidence: unavailable.";
   const paths = metrics.readFiles.map((file) => JSON.stringify(file)).join(", ") || "none";
   const changedPaths = changed?.files.map((file) => JSON.stringify(file)).join(", ") || "none";
+  // Issue #449: a failed measurement is stated as one -- "changed paths (0,
+  // 0 omitted): none" alone would read as "no changes" to the stage.
+  const measurementFailed =
+    changed?.projectionFailed === true
+      ? [
+          changed.total === 0
+            ? "- the git measurement failed: no changed-path list and no bounded diff is available"
+            : "- the git diff projection failed: no bounded diff is available",
+        ]
+      : [];
   return [
     "Preserved bounded verification evidence:",
+    ...measurementFailed,
     `- changed paths (${changed?.total ?? 0}, ${changed?.truncated ?? 0} omitted): ${changedPaths}`,
     `- read paths (${metrics.readFilesTotal}, ${metrics.readFilesTruncated} omitted): ${paths}`,
     `- cumulative diff bytes: ${metrics.diffBytes}`,

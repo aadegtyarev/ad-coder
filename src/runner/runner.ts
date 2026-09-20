@@ -349,10 +349,22 @@ export interface SafeGitDiffProjection {
   bytes: number;
   sha256: string;
   redactedLines: number;
+  /** Total byte size of every untracked file measured before any truncation. */
+  untrackedMeasuredBytes?: number;
+  /** Count of untracked files whose projected content was capped by the ceiling. */
+  untrackedTruncatedFiles?: number;
 }
 
 const DIFF_SECRET =
   /(?:bearer\s+|api[_-]?key\s*[:=]|password\s*[:=]|secret\s*[:=]|(?:^|\W)sk-[a-z0-9_-]{8,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)/i;
+
+/** The whole replacement line redactDiffText writes for a credential-like addition. */
+const DIFF_REDACTED_LINE = "+[REDACTED: possible credential]";
+
+/** Count the redaction-marker lines actually present in a (possibly sliced) diff text. */
+function countRedactedLines(text: string): number {
+  return text.split("\n").filter((line) => line === DIFF_REDACTED_LINE).length;
+}
 
 function redactDiffText(decoded: string): { text: string; redactedLines: number } {
   let redactedLines = 0;
@@ -367,7 +379,7 @@ function redactDiffText(decoded: string): { text: string; redactedLines: number 
         line.startsWith("@@ ");
       if (!isHeader && DIFF_SECRET.test(line)) {
         redactedLines += 1;
-        return "+[REDACTED: possible credential]";
+        return DIFF_REDACTED_LINE;
       }
       return line;
     })
@@ -430,7 +442,35 @@ export function readSafeGitDiffProjection(
   });
 }
 
-/** Add bounded, redacted evidence for untracked paths omitted by ordinary git diff. */
+/**
+ * Slice UTF-8 text to a byte cap, never splitting inside a multi-byte
+ * codepoint: the cap walks back over UTF-8 continuation bytes (10xxxxxx) so
+ * the cut lands on a codepoint boundary and re-decodes losslessly.
+ */
+function utf8SafeSlice(text: string, maxBytes: number): string {
+  const bytes = Buffer.from(text, "utf8");
+  if (bytes.byteLength <= maxBytes) return text;
+  let end = maxBytes;
+  while (end > 0 && ((bytes[end] ?? 0) & 0xc0) === 0x80) end -= 1;
+  return bytes.subarray(0, end).toString("utf8");
+}
+
+function projectUntrackedFile(relative: string, contents: string): string {
+  return `diff --git a/${relative} b/${relative}\n--- /dev/null\n+++ b/${relative}\n${contents
+    .split("\n")
+    .map((line) => `+${line}`)
+    .join("\n")}\n`;
+}
+
+/**
+ * Add bounded, redacted evidence for untracked paths omitted by ordinary git
+ * diff. Issue #449: the aggregate ceiling bounds content instead of failing
+ * the measurement -- content past it is truncated at a UTF-8-safe boundary,
+ * every untracked file's true size stays in `untrackedMeasuredBytes`, and each
+ * capped file is counted in `untrackedTruncatedFiles`. Only a genuine failure
+ * (unsafe path, unreadable file, non-UTF-8 content) still throws the typed
+ * measurement error.
+ */
 export function appendSafeUntrackedDiffProjection(
   targetDir: string,
   base: SafeGitDiffProjection,
@@ -439,6 +479,11 @@ export function appendSafeUntrackedDiffProjection(
 ): SafeGitDiffProjection {
   let text = base.text;
   let redactedLines = base.redactedLines;
+  // Issue #449: a ceiling overflow is a bounded projection, not a measurement
+  // failure -- cap that file's content at a UTF-8-safe boundary and keep going.
+  let budget = maxBytes - Buffer.byteLength(text);
+  let untrackedMeasuredBytes = 0;
+  let untrackedTruncatedFiles = 0;
   for (const relative of untrackedFiles) {
     if (
       relative === "" ||
@@ -452,27 +497,52 @@ export function appendSafeUntrackedDiffProjection(
     const contained = path.relative(targetDir, absolute);
     if (contained.startsWith("..") || path.isAbsolute(contained))
       throw new RunnerError("diff_metric_failed", targetDir, "git changed path is unsafe");
+    // The true size is recorded even when the content cannot fit: it is the
+    // honest material signal the context decision escalates on.
+    let size: number;
+    try {
+      size = fs.statSync(absolute).size;
+    } catch {
+      // A file that vanished between the git listing and this read is a
+      // measurement failure with a typed code, not an accidental fs throw.
+      throw new RunnerError("diff_metric_failed", targetDir, "untracked file is unreadable");
+    }
+    untrackedMeasuredBytes += size;
+    if (budget <= 0) {
+      // No budget left: the content caps to zero -- counted, path kept.
+      untrackedTruncatedFiles += 1;
+      continue;
+    }
     let contents: string;
     try {
       contents = new TextDecoder("utf-8", { fatal: true }).decode(fs.readFileSync(absolute));
     } catch {
       throw new RunnerError("diff_metric_failed", targetDir, "untracked diff is not UTF-8");
     }
-    const candidate = `diff --git a/${relative} b/${relative}\n--- /dev/null\n+++ b/${relative}\n${contents
-      .split("\n")
-      .map((line) => `+${line}`)
-      .join("\n")}\n`;
-    if (Buffer.byteLength(text) + Buffer.byteLength(candidate) > maxBytes)
-      throw new RunnerError("diff_metric_failed", targetDir, "git diff projection exceeded limit");
+    const candidate = projectUntrackedFile(relative, contents);
     const redacted = redactDiffText(candidate);
-    text += redacted.text;
-    redactedLines += redacted.redactedLines;
+    if (Buffer.byteLength(redacted.text) > budget) {
+      // Truncate at a UTF-8-safe boundary; the path list and digest stay true,
+      // and the redaction count is recounted on the KEPT text so a marker line
+      // cut away by the ceiling is never counted as still visible.
+      const kept = utf8SafeSlice(redacted.text, budget);
+      untrackedTruncatedFiles += 1;
+      text += kept;
+      redactedLines += countRedactedLines(kept);
+      budget = 0;
+    } else {
+      budget -= Buffer.byteLength(redacted.text);
+      text += redacted.text;
+      redactedLines += redacted.redactedLines;
+    }
   }
   return {
     text,
     bytes: Buffer.byteLength(text),
     sha256: createHash("sha256").update(text).digest("hex"),
     redactedLines,
+    untrackedMeasuredBytes,
+    untrackedTruncatedFiles,
   };
 }
 
