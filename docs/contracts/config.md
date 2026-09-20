@@ -132,10 +132,14 @@ Rules the operator declared for ad-coder. A violation is always blocking.
   selected, so a project's committed calibration could never apply once routing
   moved to `models.yaml`.
 - 2026-09-20: **A model row may declare the provider-native model `id` its key
-  stands for (issue #497).** The row key is what a route, a calibration scope
-  and the ledger's route column address; `id` is what the provider is asked for,
-  and absent keeps the two equal -- which is what every row written before this
-  entry declares. The registry has always separated the routing NAME from the
+  stands for (issue #497).** The row key is what a route's rung, a calibration's
+  membership check and the routing banner address; `id` is what the provider is
+  asked for AND what the settled turn is recorded under, because the ledger and
+  the charge record scope by `(provider, model id)` -- which is what keeps two
+  providers serving one upstream model in separate charge scopes instead of
+  folding them into one, and what the price audit compares our declared row
+  against. Absent keeps the two equal -- which is what every row written before
+  this entry declares. The registry has always separated the routing NAME from the
   wire id (`ResolvedModelConfig.name`/`modelId`, projected onto pi's
   `Model.name`/`Model.id`); `models.yaml` had no spelling for the distinction,
   so the row key was both. That is what made one upstream model unreachable

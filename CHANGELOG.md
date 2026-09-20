@@ -15,10 +15,12 @@ enforces that dated release headings go in non-increasing date order
 
 ### Added
 - **A `models.yaml` model row may declare the provider-native model `id` its
-  key stands for (issue #497).** The row key is the routing name -- what a
-  route spells after the colon, what a calibration scope and the ledger's route
-  column carry -- and `id` is what the provider is actually asked for; absent
-  keeps them equal, which is every row written before this change. The registry
+  key stands for (issue #497).** The row key is the routing name -- what a route
+  spells after the colon, and what routing, calibration membership and the
+  startup banner address -- and `id` is what the provider is actually asked for
+  and what the settled turn is recorded under, since the ledger and the charge
+  record scope by `(provider, model id)`; absent keeps the two equal, which is
+  every row written before this change. The registry
   has always separated the two (`ResolvedModelConfig.name`/`modelId`, projected
   onto pi's `Model.name`/`Model.id`); the file had no spelling for the
   distinction, so the key was both, and that is what made a second credential

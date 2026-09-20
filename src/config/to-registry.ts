@@ -51,7 +51,7 @@ function levelOf(rung: ModelRung): string | undefined {
 
 /**
  * One models.yaml model row as a registry model. `name` is the file's row key
- * -- the routing name every consumer addresses -- and `modelId` is the row's
+ * -- the routing name every lookup addresses -- and `modelId` is the row's
  * declared `id`, defaulting to that key (#497). This layer derives no catalog
  * and no other alias, and the registry documents `name` defaulting to
  * `modelId`; here the DEFAULT runs the other way (the key is required, the id

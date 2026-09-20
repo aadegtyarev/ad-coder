@@ -54,11 +54,14 @@
  * trusting its own provider prefix).
  *
  * With `id`, a model row is an ADDRESS the provider serves: the key is the
- * local name every consumer -- routes, calibration scopes, the ledger's route
- * column -- addresses, and `id` is what the provider is asked for. Two
- * providers with two credentials (two keys for one upstream, one billing
- * account each) can each declare the model under their own local name. Absent
- * keeps `id` equal to the key, which is what every existing file declares.
+ * local name every LOOKUP addresses (a route's rung, a calibration's membership
+ * check, the profile's routing banner), and `id` is what the provider is asked
+ * for -- and what a settled turn is RECORDED under, because the ledger and the
+ * charge record scope by `(provider, model id)`. That is what keeps two
+ * providers serving one upstream model in separate charge scopes instead of
+ * folding them into one, and it is what the price audit compares our declared
+ * row against. Absent keeps `id` equal to the key, which is what every existing
+ * file declares.
  */
 export interface ModelConfig {
   id?: string;

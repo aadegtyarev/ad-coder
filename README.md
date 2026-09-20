@@ -422,9 +422,9 @@ profiles:
 
 A provider block declares `enabled`, the `api` protocol, a `baseUrl`, the
 credential REFERENCE, and one row per model -- that row key is the name a route
-spells after the colon, and it is the name every other part of the harness
-addresses (calibration scopes, the ledger's route column). A row whose key is
-not the id the provider publishes declares it:
+spells after the colon, and the name routing, calibration membership and the
+startup banner address. A row whose key is not the id the provider publishes
+declares it:
 
 ```yaml
   openrouter-2:
@@ -436,11 +436,12 @@ not the id the provider publishes declares it:
       minimax-m3-key2: {id: "minimax/minimax-m3", input: 0.3, output: 1.2}
 ```
 
-`id` is what the provider is asked for; the key stays the local name, and a row
-that omits `id` is one where the two are the same. That is how one upstream
-model is reached through two providers -- and so through two keys, each stored
-under its own provider id -- because a routing name is unique across the whole
-file. `config migrate` converts a stored `inventories.json` into this file; the
+`id` is what the provider is asked for, and what the ledger records the turn
+under, so the two providers keep separate charge scopes; the key stays the local
+name, and a row that omits `id` is one where the two are the same. That is how
+one upstream model is reached through two providers -- and so through two keys,
+each stored under its own provider id -- because a routing name is unique across
+the whole file. `config migrate` converts a stored `inventories.json` into this file; the
 stored inventory is no longer a routing source, and ad-coder refuses loudly when
 it finds one without a `models.yaml` beside it.
 
