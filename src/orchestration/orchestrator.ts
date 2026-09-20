@@ -806,7 +806,23 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
  *    investigation" the fixed string denied #236 and #237, while the fixed
  *    generic text itself stays (compat).
  */
+const SAFE_RESEARCH_REQUIRED_CONTRACT_IDS_PREFIX =
+  /^coverage\[\d+\]\.contractIds must be non-empty when status is "research_required"; resubmit with canonical contract IDs/;
+
 function safeErrorText(error: unknown): string {
+  if (
+    error !== null &&
+    typeof error === "object" &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "malformed_plan" &&
+    "message" in error &&
+    typeof (error as { message?: unknown }).message === "string"
+  ) {
+    const prefix = SAFE_RESEARCH_REQUIRED_CONTRACT_IDS_PREFIX.exec(
+      (error as { message: string }).message,
+    )?.[0];
+    if (prefix !== undefined) return `error: malformed_plan (${prefix})`;
+  }
   // `malformed_plan` is the one typed error whose authored message names the
   // rejected field and the repair. Keep that message at this boundary, but
   // only after matching the validator's fixed message vocabulary. Do not add

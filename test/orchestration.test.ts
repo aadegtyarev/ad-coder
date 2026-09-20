@@ -2409,8 +2409,9 @@ test("empty research_required contractIds are rejected before research or coding
       },
     }),
   ]);
-  await expect(
-    runPipeline({
+  let caught: unknown;
+  try {
+    await runPipeline({
       targetDir: fx.targetDir,
       models: fx.models,
       task: "implement",
@@ -2420,12 +2421,14 @@ test("empty research_required contractIds are rejected before research or coding
         coder: fx.role("coder", "code"),
         reviewer: reviewerRole(fx),
       },
-    }),
-  ).rejects.toMatchObject({
-    code: "malformed_plan",
-    message:
-      'coverage[0].contractIds must be non-empty when status is "research_required"; resubmit with canonical contract IDs',
-  });
+    });
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught).toMatchObject({ code: "malformed_plan" });
+  expect((caught as OrchestrationError).message).toMatch(
+    /^coverage\[0\]\.contractIds must be non-empty when status is "research_required"; resubmit with canonical contract IDs/,
+  );
 });
 
 test("accepted research_required coverage becomes unresolved when canonical evidence is absent", async () => {

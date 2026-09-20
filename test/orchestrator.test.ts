@@ -1581,10 +1581,22 @@ test("run_pipeline tool projects safe malformed-plan field and remediation", asy
 
   const text = await callTool(runPipelineTool, { task: "implement X" });
 
-  expect(text).toContain("error: malformed_plan");
-  expect(text).toContain("coverage[0].contractIds");
-  expect(text).toContain("resubmit with canonical contract IDs");
+  expect(text).toContain(
+    'error: malformed_plan (coverage[0].contractIds must be non-empty when status is "research_required"; resubmit with canonical contract IDs)',
+  );
   expect(text).not.toContain("safe fixture plan");
+  for (const diagnostic of [
+    "attempts=",
+    "submit_plan_called=",
+    "json_candidate=",
+    "response_length=",
+    "evidence=",
+    "transcript=",
+    "attempt_run_ids=",
+    ".ad-coder",
+  ]) {
+    expect(text).not.toContain(diagnostic);
+  }
 });
 
 test("resume_pipeline reopens a durable stage pause and completes it", async () => {
