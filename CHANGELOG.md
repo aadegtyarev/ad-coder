@@ -11,6 +11,33 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.120.0] - 2026-09-20
+
+### Fixed
+- **A provider usage anomaly is clamped instead of discarding a paid round
+  (issue #469).** The harness treated `reasoning > output` as fatal and threw
+  from the `after_response` usage hook -- after `submit_verdict` and before the
+  review stamp -- so one anomalous provider line discarded a fully paid round
+  whose other stages had all succeeded. The invariant was read from the wrong
+  contract: `output` is `completion_tokens`, which ALREADY contains
+  `completion_tokens_details.reasoning_tokens` (pi-ai's own converter says so
+  and therefore does not add reasoning to its total), so a `reasoning > output`
+  pair is a provider accounting anomaly to absorb, never a state this harness
+  may call fatal. `reasoning` is now clamped DOWN to `output` -- the boundary
+  and its reason named at the site -- the accumulated totals stay
+  non-negative, integral and non-decreasing, and the round runs to its end.
+  Every other bounded-usage violation (NaN, negative, non-integer, out of
+  range) still kills the round, pinned by its own test. The same misreading
+  counted reasoning twice on the spend line: `usedTokens` is now
+  `freshInput + cachedInput + output`, with the rule stated at the site and
+  pinned by a test so the second addend cannot return. The clamp is not
+  silent: `RoleObservations` carries `clampedReasoning: { responses,
+  maxExcess }` in the persisted run record, and the field is absent whenever
+  nothing was clamped. That trace matters because the anomaly is not rare on
+  the cheap coder rung -- 324 usage lines across the measured fleet, inside
+  7.2% of runs -- and a trace that only exists when it fires keeps it visible
+  without a new setting.
+
 ## [0.119.0] - 2026-09-20
 
 ### Fixed
