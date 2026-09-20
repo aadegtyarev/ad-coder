@@ -128,17 +128,17 @@ decisions, decomposition, and publication are durable states and events.
 
 ### Session manager
 
-The headless SessionManager owns one shared durable Orchestrator conversation
-per project; fronts reach it only through the owner-private Unix
-socket and its peer-uid check (`docs/contracts/session-manager.md`).
+The SessionManager owns one shared durable Orchestrator conversation per
+project; fronts reach it only through the owner-private Unix socket and its
+peer-uid check (`docs/contracts/session-manager.md`).
 
 ### Background runs
 
 The session API exposes start, resume, status, events, result, cancel. CLI
 start persists an owner-scoped request and launches a detached worker; the
-live owner watches atomic updates and refreshes status without reconstruction.
+live owner watches atomic updates and refreshes status.
 
-Subscriptions provide bounded, asynchronous, content-free tail hints; pages
+Subscriptions provide bounded, content-free tail hints; pages
 expose cursor position, pending work, and dropped events. Polling recovers
 retained history or watcher failure. Limits bound queues, pages, and
 retention; leases distinguish live workers from abandoned ones.
@@ -153,8 +153,8 @@ scope is not authentication; execution is not a sandbox.
 ### Target project
 
 `targetDir` selects the project and `.ad-coder/` runtime state location.
-Tools begin there, but shell access can leave it and reach the
-network; use an external sandbox for untrusted projects.
+Tools begin there, but shell access can leave it and reach the network;
+sandbox untrusted projects externally.
 
 Project prompt overrides under `.ad-coder/prompts/` are trusted operator input
 and replace built-in prompts byte-for-byte; `AGENTS.md` is not auto-inserted
