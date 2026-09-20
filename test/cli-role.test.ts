@@ -16,6 +16,7 @@ import {
   standaloneSystemPrompt,
 } from "../src/cli";
 import { MemoryLedgerSink } from "../src/ledger/ledger";
+import { PLANNER_SUBMISSION_RESTART, plannerRetryTask } from "../src/orchestration/plan";
 import { StageLimitError } from "../src/orchestration/stage-limits";
 import {
   REVIEW_SUBMISSION_RESTART,
@@ -500,6 +501,26 @@ test("a carried review travels exactly as the attempt wrote it", () => {
   // The non-empty requirement still says the review stands -- which is true
   // HERE, because the review is in the session that reads it.
   expect(carried).toContain("Your review stands");
+});
+
+test("a carried plan-so-far travels exactly as the attempt wrote it (#525)", () => {
+  // The twin of the review carry above, on the other surface this issue
+  // touched: the planner handoff re-asks under a fresh run id too, and its
+  // "verbatim" is the same contract (docs/contracts/product-change.md,
+  // 2026-09-20). The pipeline test asserts the prose is present -- which a
+  // TRIMMED payload also satisfies: measured in review round 5, changing
+  // `${priorText}` to `${priorText.trim()}` in `plannerRetryTask` left every
+  // planner assertion green. Only the exact bytes catch it.
+  const prior = "  step 1: rename the column  \n";
+  const carried = plannerRetryTask("plan it", prior);
+  expect(carried.startsWith("plan it\n\nYour plan so far, verbatim:\n\n")).toBe(true);
+  // Nothing between the header and the requirement but what the attempt wrote,
+  // indentation and trailing newline included.
+  expect(carried).toContain(`\n\nYour plan so far, verbatim:\n\n${prior}\n\n`);
+  expect(carried.endsWith(PLANNER_SUBMISSION_RESTART)).toBe(true);
+  // Whitespace is not a plan: trimming still decides WHICH branch is taken --
+  // it is only forbidden to edit the payload the branch carries.
+  expect(plannerRetryTask("plan it", "   \n  ")).toBe(plannerRetryTask("plan it", ""));
 });
 
 test("the standalone review retry does not run when the verdict already arrived", async () => {
