@@ -11,6 +11,48 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.144.0] - 2026-09-20
+
+### Fixed
+- **The skill loader accepts the address its own catalogue prints (issue
+  #524).** The catalogue renders each row as `- <id>@<version> — <description>`
+  and the loader's own parameter says to name the id "exactly as listed in
+  available skills", while the executor compared the request against the bare
+  id: every copied row was refused as `skill_not_available`, an answer that
+  accuses the caller's role scope and reads as "this skill does not exist in
+  this configuration". Measured 2026-09-20 in the operator's own console: 22
+  distinct ids refused across one checkout's sessions -- `tracker-work@2` at
+  20:00:52 among them -- while the bare ids loaded in the same runs, so no role
+  in any console followed a skill and the catalogue was a locked kitchen whose
+  gates all stayed green. The row is matched against what the catalogue PRINTED
+  rather than re-split into an id and a version -- a version is any non-empty
+  string, so a version containing `@` is legal and splitting the row would
+  refuse a row the catalogue itself shows (found in review of #524, version
+  `v@2`). `<id>@<version>` and `<id>` now name the same skill
+  and share the once-per-turn answer; a version the session does not list is
+  refused in its own right (`skill_version_mismatch`, naming the version that
+  exists) rather than answered with a different revision or misfiled as a scope
+  refusal; a bare trailing `@` is not a version and stays an unknown id. The
+  invariant is covered as a property rather than a sample: one test walks every
+  row the catalogue renders and loads it through the exact string it rendered.
+- **The skill-trigger evaluation credits a load made through the advertised
+  address (issue #524, second review round).** The tool-activity projection
+  records the identity a role REACHED FOR, so a role that copies the catalogue
+  row is captured as `<id>@<version>` -- and the scorer compared that projection
+  against the bare expected id, scoring a successful load as a MISS. Left alone
+  the fix above would have read in the evals as a regression: the more faithfully
+  a role used the catalogue, the more reliably the trigger check failed, and the
+  first run that measured a real trigger would have been filed as a defect. The
+  scorer now credits both spellings -- the bare id, or the row the catalogue
+  prints -- on the `@` boundary and with a non-empty version suffix, the same
+  rule the loader applies, so the two cannot drift apart. The projection itself
+  stays raw: it answers "which skill did the role name", and the normalization
+  belongs at the comparison (docs/contracts/tool-observability.md, 2026-09-20).
+  Both sides of the boundary are covered: a neighbouring id
+  (`delivery-calibration-extra@1`) and a dangling `id@` are not the skill, while
+  a version containing `@` is. Verified by negative control: with the bare-id
+  comparison restored, 2 of the 16 scorer tests fail.
+
 ## [0.142.0] - 2026-09-20
 
 ### Added

@@ -40,6 +40,20 @@ arguments or drowning in implementation noise?
   `maxWakesPerTurn` windows per turn) on a dedicated durable path between
   orchestrator turns. The notice callbacks themselves remain rendering-only;
   wake delivery is separate from them.
+- 2026-09-20: The projected `skillId` is the identity the role REACHED FOR --
+  the request as it was made -- and it stays raw once the loader accepts more
+  than one spelling of it. Since the 2026-09-20 catalogue-address rule
+  (docs/contracts/skills.md, issue #524) the loader takes both the bare id and
+  the `<id>@<version>` row the catalogue prints, so a capture can carry either,
+  and a consumer comparing against a catalogue id normalizes at the COMPARISON
+  rather than having the projection rewrite the request: the field answers
+  "which skill did the role name", which is a fact about the role. The
+  skill-trigger scorer is the first such consumer -- it credits a load named as
+  the advertised row on the `@` boundary with a non-empty version suffix, the
+  same rule the loader applies, so the two cannot drift into disagreeing about
+  what the operator's role actually did. Measured in review of #524: comparing
+  the raw projection to the bare expected id scored every address-shaped load a
+  MISS, which would have reported this fix as a regression in the evals.
 - 2026-09-19: A `load_skill` event projects the skill id it TARGETED as `skillId` -- an IDENTIFIER in the
   same class as the tool name the record already carries, never call arguments, never task text, never
   payload -- so the ledger rule "tool NAMES and COUNTS only -- never call arguments" (src/ledger/types.ts)

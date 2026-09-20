@@ -188,3 +188,19 @@ unbounded prompt directory.
   thirteen because it is a rule about skills, not a habit of each author; a test
   reads the shipped directory and fails on the first skill whose opening line
   differs.
+- 2026-09-20: **A catalogue row is an address, not a label.** The catalogue
+  renders each entry as `- <id>@<version> — <description>` and the loader's
+  parameter says to name the id "exactly as listed", so the loader accepts the
+  advertised string: `<id>@<version>` names the same skill as the bare `<id>`,
+  both spellings share the once-per-turn answer, and a version the session does
+  not list is refused in its own right (`skill_version_mismatch`, naming the
+  version that exists) rather than answered with a different revision or
+  reported as a skill the caller's role cannot reach. Measured 2026-09-20
+  (issue #524): the executor compared the request against the bare id alone, so
+  every copied row was refused as `skill_not_available` -- a false statement
+  about the caller's scope that reads as "this skill does not exist here", and
+  the reason no role in any console followed a skill. The row is compared WHOLE:
+  a version is any non-empty string, so `@` inside one is legal and re-splitting
+  the rendered row would refuse a row this catalogue prints (review of #524,
+  version `v@2`). Splitting remains only how an unlisted version is attributed
+  to the version the session does have.
