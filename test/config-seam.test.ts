@@ -1178,3 +1178,54 @@ test("(#477) an off-vocabulary rung thinkingLevel is refused, naming the allowed
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+/**
+ * The operator's own pre-#477 file shape for one row (step (vii) back-compat):
+ * a BLOCK SEQUENCE under the role key, whose first rung is a bare
+ * `provider:model` string and whose second is the mapping form carrying a
+ * level. The `openrouter` provider is declared so that second rung's model is a
+ * real ladder entry, not a typo the parser would have to refuse.
+ */
+function modelsYamlMixedRungList(): string {
+  return modelsYaml()
+    .replace(
+      "default: daily",
+      `  openrouter:
+    enabled: true
+    api: openai-completions
+    baseUrl: https://openrouter.example.com
+    credential: OPENROUTER_API_KEY
+    models:
+      minimax/minimax-m3: {input: 0.2, output: 0.8}
+default: daily`,
+    )
+    .replace(
+      "    coder: opencode-go:glm-5.3-flash\n",
+      "    coder:\n      - opencode-go:glm-5.3-flash\n      - model: openrouter:minimax/minimax-m3\n        thinkingLevel: low\n",
+    );
+}
+
+test("(#477) a bare rung beside a level-bearing one keeps projecting as before", () => {
+  const dir = scratch();
+  try {
+    const config = loadModelsConfigSeam(writeModels(dir, modelsYamlMixedRungList()));
+    if (config === undefined) throw new Error("expected the seam to load the mixed-rung fixture");
+    const ladder = config.profiles.daily?.routes.coder;
+    if (ladder === undefined) throw new Error("expected the block-sequence coder row to parse");
+    // Rung 0 is the bare reference, byte-for-byte; rung 1 is the mapping form
+    // and it is where the level lives (the parse, not the projection, is level-
+    // bearing: ladder failover still reads rung 0 only).
+    expect(ladder[0]).toBe("opencode-go:glm-5.3-flash");
+    expect(ladder[1]).toEqual({ model: "openrouter:minimax/minimax-m3", thinkingLevel: "low" });
+    const entries = toRegistryAndProfile(config, "daily").profile.entries;
+    const coder = entries.find((e) => e.role === "coder" && e.complexity === "trivial");
+    if (coder === undefined) throw new Error("expected the coder entry to project");
+    // The bare rung projects EXACTLY as before #477: no key materialised and
+    // no level inherited from the mapping rung beside it.
+    expect(Object.keys(coder)).toEqual(["role", "complexity", "model"]);
+    expect(coder.thinkingLevel).toBeUndefined();
+    expect(coder.model).toBe("glm-5.3-flash");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
