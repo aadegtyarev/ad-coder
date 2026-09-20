@@ -17,6 +17,7 @@ import {
   driveWorkflow,
   silentNoopWarning,
 } from "../src/cli/drive";
+import { resetPauseAnnouncements } from "../src/cli/pause-notice";
 import { FileLedgerSink, MemoryLedgerSink } from "../src/ledger/ledger";
 import { SUBMIT_FOLLOW_UP_TOOL_NAME } from "../src/orchestration/follow-up";
 import { runPipeline } from "../src/orchestration/pipeline";
@@ -188,6 +189,8 @@ test("a stage-limit pause is reported as recovery guidance, not a pending decisi
   pipeline.stageLimits = { maxModelTurns: 1 };
   const session = createWorkflowSession(pipeline);
 
+  resetPauseAnnouncements();
+  const errorCapture = new Capture();
   let caught: unknown;
   try {
     await driveWorkflow({
@@ -196,7 +199,7 @@ test("a stage-limit pause is reported as recovery guidance, not a pending decisi
       auto: true,
       input: Readable.from(""),
       output: new Capture(),
-      error: new Capture(),
+      error: errorCapture,
     });
   } catch (error) {
     caught = error;
@@ -206,6 +209,13 @@ test("a stage-limit pause is reported as recovery guidance, not a pending decisi
   expect((caught as Error).message).toBe(
     "stage_limit: increase or disable the model_turns stage limit, then resume explicitly",
   );
+  expect(errorCapture.text()).toContain("pipeline paused (");
+  expect(errorCapture.text()).toContain("): stage_limit, limit model_turns -- ");
+  expect(errorCapture.text()).toContain(
+    "increase or disable the model_turns stage limit, then resume explicitly",
+  );
+  expect(errorCapture.text()).toContain("the run is resumable, not failed");
+  expect(errorCapture.text()).toContain("resume: ad-coder drive");
 });
 
 test("a paused drive resumes its incomplete stage from the coordinator checkpoint", async () => {

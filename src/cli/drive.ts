@@ -238,20 +238,26 @@ export async function driveWorkflow(params: DriveWorkflowParams): Promise<Pipeli
         // ONE announcement per pause occurrence (issue #501): this result-path
         // line and the pushed background notice render the SAME pause record,
         // so both ask the shared keyed memo before writing -- the first wins,
-        // the second stays silent. The one line that prints keeps the
-        // checkpoint path and the actionable resume command: the operator's
-        // next act is right there, not one scroll away.
+        // the second stays silent. Whoever wins the memo must carry the WHOLE
+        // record -- phase, code, limit, the action in words, resumable not
+        // failed -- plus the checkpoint path and the actionable resume
+        // command, because winning silences the other renderer: the
+        // operator's next act is right there, not one scroll away.
         const pauseRecord = completed.checkpoint.pause;
         if (
           announcePauseOnce(
             pauseAnnouncementKey(completed.checkpoint.runId, pauseRecord.phase, pauseRecord.code),
           )
-        )
+        ) {
+          const limit =
+            pauseRecord.limitReason !== undefined ? `, limit ${pauseRecord.limitReason}` : "";
           error.write(
-            `ad-coder: pipeline paused; runId=${completed.checkpoint.runId} ` +
-              `checkpoint=${coordinator.checkpointFile} -- ` +
+            `ad-coder: pipeline paused (${pauseRecord.phase}): ${pauseRecord.code}${limit} -- ` +
+              `${pauseRecord.action} -- the run is resumable, not failed; ` +
+              `runId=${completed.checkpoint.runId} checkpoint=${coordinator.checkpointFile} -- ` +
               `resume: ad-coder drive <same-task> --resume-run ${completed.checkpoint.runId} <same-options>\n`,
           );
+        }
         // A pause is reported as a resumable pause, not a failure (issue #261);
         // the thrown error carries the coordinator's own pause record and the
         // metrics of what the run had already spent.

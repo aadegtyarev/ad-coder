@@ -17,9 +17,15 @@
 
 const announced = new Set<string>();
 
-/** The occurrence key shared by every renderer of one pause record. */
+/**
+ * The occurrence key shared by every renderer of one pause record. The fields
+ * join as a JSON tuple, not with an unescaped delimiter: the ids are
+ * sanitized strings this module does not control, and a raw `|` join lets
+ * distinct occurrences like ("r|plan", "x", "y") and ("r", "plan", "x|y")
+ * collide -- a collision would suppress the announcement of a NEW pause.
+ */
 export function pauseAnnouncementKey(runId: string, phase: string, code: string): string {
-  return `${runId}|${phase}|${code}`;
+  return JSON.stringify([runId, phase, code]);
 }
 
 /** True the first time this exact pause occurrence is announced in this process. */

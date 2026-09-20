@@ -6,7 +6,11 @@ import * as path from "node:path";
 import { PassThrough, Readable, Writable } from "node:stream";
 import { createModels, fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 import { DEFAULT_CONSOLE_MAX_RETRY_ATTEMPTS, runConsole } from "../src/cli/console";
-import { resetPauseAnnouncements } from "../src/cli/pause-notice";
+import {
+  announcePauseOnce,
+  pauseAnnouncementKey,
+  resetPauseAnnouncements,
+} from "../src/cli/pause-notice";
 import { DEFAULT_STAGE_LIMITS } from "../src/cli/resolve-config";
 import { resolveResumeRun, resumeOrchestratorConfig, resumeSeedNote } from "../src/cli/resume";
 import { resetStartupBanners } from "../src/cli/startup-banner";
@@ -142,6 +146,16 @@ function fakeSession(
 beforeEach(() => {
   resetPauseAnnouncements();
   resetStartupBanners();
+});
+
+// The memo key must keep delimiter-bearing occurrences distinct (issue #501,
+// review round 1): an unescaped "|" join would collide ("r|plan", "x", "y")
+// with ("r", "plan", "x|y") and suppress a NEW pause.
+test("the pause announcement key keeps delimiter-bearing occurrences distinct", () => {
+  resetPauseAnnouncements();
+  expect(announcePauseOnce(pauseAnnouncementKey("r|plan", "x", "y"))).toBe(true);
+  expect(announcePauseOnce(pauseAnnouncementKey("r", "plan", "x|y"))).toBe(true);
+  expect(announcePauseOnce(pauseAnnouncementKey("r", "plan", "x|y"))).toBe(false);
 });
 
 test("keeps one session across ordered turns, ignores blanks, and closes once on exit", async () => {
