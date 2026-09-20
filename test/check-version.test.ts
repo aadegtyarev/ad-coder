@@ -13,6 +13,7 @@ import {
   highestOpenClaim,
   isMainContext,
   type OpenClaim,
+  readBaseVersion,
   readOpenClaims,
 } from "../scripts/check-version";
 
@@ -374,5 +375,56 @@ describe("the version ladder end to end (#383): both ways of being wrong, one se
     expect(claims.ok).toBe(true);
     if (claims.ok)
       expect(decideClaimConflict({ candidate: "0.137.0", claims: claims.claims }).ok).toBe(true);
+  });
+});
+
+// Review fix: the gate's direct git reads (base version from origin/main,
+// current branch) run through the same failure boundary as the claim reads --
+// unavailable git is a named, actionable refusal on the `check:version:`
+// stderr channel with exit 1, never an unhandled "Executable not found" crash.
+describe("readBaseVersion (git via injected seam)", () => {
+  const BASE_SHA = "0123456789abcdef0123456789abcdef01234567";
+
+  test("green: reads the version from origin/main's package.json", () => {
+    const git: GitRun = (args) => {
+      const [cmd, ref] = args;
+      if (cmd === "rev-parse") return { exitCode: 0, stdout: `${BASE_SHA}\n`, stderr: "" };
+      if (cmd === "show" && ref === `${BASE_SHA}:package.json`)
+        return { exitCode: 0, stdout: JSON.stringify({ version: "0.139.0" }), stderr: "" };
+      return { exitCode: 2, stdout: "", stderr: `unexpected command: ${String(cmd)}` };
+    };
+    expect(readBaseVersion(git)).toBe("0.139.0");
+  });
+  test("red: unresolved origin/main still refuses with fetch-first guidance", () => {
+    const git: GitRun = (args) => {
+      const [cmd] = args;
+      if (cmd === "rev-parse") return { exitCode: 128, stdout: "", stderr: "unknown revision" };
+      return { exitCode: 0, stdout: "", stderr: "" };
+    };
+    const result = readBaseVersion(git);
+    expect(typeof result).toBe("object");
+    if (typeof result === "object" && result !== null) {
+      expect(result.error).toContain("origin/main could not be resolved");
+      expect(result.error).toContain("git fetch origin main");
+    }
+  });
+  test("red: git unavailable (seam returns null) is a named, actionable refusal, not a throw", () => {
+    const result = readBaseVersion(() => null);
+    expect(result).not.toBeNull();
+    if (typeof result === "object" && result !== null) {
+      expect(result.error).toContain("git is unavailable");
+      expect(result.error).toContain("git is on PATH");
+    }
+  });
+  test("red: git dying before the show (seam nulls the second read) is the same named refusal", () => {
+    const git: GitRun = (args) => {
+      const [cmd] = args;
+      if (cmd === "rev-parse") return { exitCode: 0, stdout: `${BASE_SHA}\n`, stderr: "" };
+      return null;
+    };
+    const result = readBaseVersion(git);
+    expect(result).not.toBeNull();
+    if (typeof result === "object" && result !== null)
+      expect(result.error).toContain("git is unavailable");
   });
 });

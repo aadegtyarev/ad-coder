@@ -308,36 +308,47 @@ function readTreeVersion(): string | null {
   return typeof manifest.version === "string" ? manifest.version : null;
 }
 
-function readBaseVersion(): string | { error: string } | null {
-  const ref = Bun.spawnSync(["git", "rev-parse", "--verify", "origin/main"], {
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+/**
+ * Named refusal when git itself cannot run at the gate's direct reads (base
+ * version, current branch): a missing or unusable git executable is a named,
+ * actionable failure -- never an unhandled crash.
+ */
+const GATE_GIT_UNAVAILABLE =
+  "git is unavailable, so the base version and current branch cannot be read and the version gate cannot " +
+  "pass silently. Run `check:version` where git is on PATH.";
+
+/**
+ * Read the base version from origin/main's package.json. Git is injected for
+ * tests and defaults to the production seam; unavailable git is a named error,
+ * never a throw.
+ */
+export function readBaseVersion(git: GitRun = runGit): string | { error: string } | null {
+  const ref = git(["rev-parse", "--verify", "origin/main"]);
+  if (ref === null) return { error: GATE_GIT_UNAVAILABLE };
   if (ref.exitCode !== 0)
     return {
       error:
         "origin/main could not be resolved, so the version gate cannot compare against the base branch. " +
         "Run `git fetch origin main`, then re-run `check:version`.",
     };
-  const show = Bun.spawnSync(["git", "show", `${ref.stdout.toString().trim()}:package.json`], {
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+  const show = git(["show", `${ref.stdout.trim()}:package.json`]);
+  if (show === null) return { error: GATE_GIT_UNAVAILABLE };
   if (show.exitCode !== 0)
     return {
       error:
         "failed to read package.json from origin/main; run `git fetch origin main` and re-run `check:version`.",
     };
-  const json = JSON.parse(show.stdout.toString()) as { version?: unknown };
+  const json = JSON.parse(show.stdout) as { version?: unknown };
   return typeof json.version === "string" ? json.version : null;
 }
 
 async function main(): Promise<number> {
-  const branch = Bun.spawnSync(["git", "branch", "--show-current"], {
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const currentBranch = branch.exitCode === 0 ? branch.stdout.toString().trim() : null;
+  const branch = runGit(["branch", "--show-current"]);
+  if (branch === null) {
+    process.stderr.write(`check:version: ${GATE_GIT_UNAVAILABLE}\n`);
+    return 1;
+  }
+  const currentBranch = branch.exitCode === 0 ? branch.stdout.trim() || null : null;
   if (
     isMainContext({
       eventName: process.env.GITHUB_EVENT_NAME ?? null,
