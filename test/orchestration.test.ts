@@ -28,6 +28,7 @@ import { runPipeline } from "../src/orchestration/pipeline";
 import {
   buildSubmitPlanTool,
   formatPlannerInstruction,
+  PLANNER_SUBMISSION_RESTART,
   parsePlan,
   parsePlanText,
   SUBMIT_PLAN_TOOL_NAME,
@@ -3291,8 +3292,14 @@ test("planner gets a corrective retry after a rejected submission, and is told w
   expect(result.stageMetrics.filter(({ stage }) => stage === "plan")).toHaveLength(2);
   // The retry states what was rejected instead of claiming no call was made.
   const retryPrompt = plannerPrompts.at(-1) ?? "";
-  expect(retryPrompt).toContain("submit_plan submission was rejected");
+  expect(retryPrompt).toContain("A submit_plan submission for this task was rejected");
   expect(retryPrompt).not.toContain("did not call submit_plan");
+  // The rejection is CHECKABLE from inside the retry session (issue #525): the
+  // retry opens a fresh run id, so the text the submission was made of travels
+  // with the task rather than being referred to as the reader's own history.
+  expect(retryPrompt).toContain("Your plan so far, verbatim:");
+  // And nothing in the prompt names a response this session never made.
+  expect(retryPrompt).not.toContain("Your preceding");
 });
 
 test("a planner emitting only text is told no call was made, not that one was rejected", async () => {
@@ -3321,7 +3328,11 @@ test("a planner emitting only text is told no call was made, not that one was re
       reviewer: reviewerRole(fx),
     },
   });
-  expect(plannerPrompts.at(-1) ?? "").toContain("did not call submit_plan");
+  // Nothing was written, so there is nothing to carry: the retry is asked to
+  // PLAN, and told only what this session holds (issue #525, the empty branch).
+  expect(plannerPrompts.at(-1) ?? "").toContain(PLANNER_SUBMISSION_RESTART);
+  expect(plannerPrompts.at(-1) ?? "").not.toContain("Your preceding");
+  expect(plannerPrompts.at(-1) ?? "").not.toContain("Your plan so far");
 
   const proseFx = fixture();
   const prosePrompts: string[] = [];
@@ -3350,6 +3361,71 @@ test("a planner emitting only text is told no call was made, not that one was re
   ).rejects.toMatchObject({ pause: { code: "plan_not_json" } });
   expect(prosePrompts.at(-1) ?? "").toContain("carried no JSON object");
   expect(prosePrompts.at(-1) ?? "").not.toContain("did not call submit_plan");
+  // The prose did not parse, but it EXISTS: the second attempt reads it under
+  // the carry header rather than being asked to correct something invisible.
+  expect(prosePrompts.at(-1) ?? "").toContain("Your plan so far, verbatim:");
+  expect(prosePrompts.at(-1) ?? "").toContain("a Markdown plan, but no JSON object");
+  expect(prosePrompts.at(-1) ?? "").not.toContain("Your preceding");
+});
+
+test("the planner retry carries the plan-so-far under a fresh run id (#525)", async () => {
+  // The planner surface has the same defect the review surface was fixed for: a
+  // retry attempt opens a session with no history, so a prompt that says "your
+  // preceding response did not call submit_plan" names something the reader
+  // cannot see -- and a model resolves a premise it cannot check by inventing it.
+  // Here that invention is a plan. The attempt's own text travels instead, and
+  // the attempt really is a fresh run id.
+  const fx = fixture();
+  const plannerPrompts: string[] = [];
+  const record =
+    (step: FauxResponseStep): FauxResponseFactory =>
+    (...args) => {
+      plannerPrompts.push(lastUserText(args[0]));
+      return typeof step === "function" ? step(...args) : step;
+    };
+  fx.faux.setResponses([
+    record(
+      fauxAssistantMessage(
+        "I would split this into two migrations, but I have not called the tool",
+      ),
+    ),
+    record(fauxAssistantMessage("still prose, still no tool call")),
+  ]);
+
+  const sink = new MemoryLedgerSink();
+  let caught: unknown;
+  try {
+    await runPipeline({
+      targetDir: fx.targetDir,
+      models: fx.models,
+      task: "planner carry",
+      maxRounds: 1,
+      roles: {
+        planner: plannerRole(fx),
+        coder: fx.role("coder", "You code."),
+        reviewer: reviewerRole(fx),
+      },
+      ledgerSink: sink,
+    });
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught).toBeInstanceOf(PipelinePauseError);
+  expect(plannerPrompts).toHaveLength(2);
+  // The first attempt's plan-so-far is IN the second attempt's prompt, verbatim.
+  expect(plannerPrompts[1]).toContain("Your plan so far, verbatim:");
+  expect(plannerPrompts[1]).toContain(
+    "I would split this into two migrations, but I have not called the tool",
+  );
+  // The correction names WHICH failure to fix; the carry is what makes it
+  // checkable rather than something the reader must take on faith.
+  expect(plannerPrompts[1]).toContain("carried no JSON object");
+  expect(plannerPrompts[1]).not.toContain("Your preceding");
+  // Both attempts really are FRESH run ids, which is the only reason the carry
+  // is load-bearing: the retry cannot see the attempt it carries.
+  const runIds = [...new Set(sink.records().map((record) => record.runId))];
+  expect(runIds).toHaveLength(2);
+  expect(runIds[0]).not.toBe(runIds[1]);
 });
 
 test("every node of the submit_plan schema declares a type, so a validating provider accepts it", () => {

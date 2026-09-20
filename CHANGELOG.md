@@ -30,12 +30,15 @@ enforces that dated release headings go in non-increasing date order
   treat the submitted verdict as the review. `reviewRetryTask(task, priorText)`
   now builds the retry from the attempt text, handing the session the
   review-so-far verbatim before asking for the submission, which makes the
-  sentence true rather than unverifiable. An attempt that produced no prose (a
-  truncation, an empty turn) keeps the bare retry: there is no review to carry
-  and the second attempt is still owed. All three retrying surfaces are covered
+  sentence true rather than unverifiable. No requirement names a response the
+  session never made: an attempt that produced no prose (a truncation, a
+  tool-only turn) has nothing to carry, so it is asked to REVIEW rather than to
+  submit a review that does not exist. All three retrying surfaces are covered
   -- the standalone `role reviewer` CLI, the pipeline's review round, and the
-  trivial-edit cover review -- and the cover-review surface additionally gives
-  its reviewer the prose it had produced before the retry.
+  trivial-edit cover review -- and the planner's handoff retry, the other place
+  a decision is re-asked under a fresh run id, now carries the plan-so-far the
+  same way instead of naming a submission the new session cannot see.
+
 ## [0.146.0] - 2026-09-20
 
 ### Changed

@@ -66,7 +66,11 @@ import type {
   Verdict,
 } from "../src/orchestration/types";
 import { OrchestrationError } from "../src/orchestration/types";
-import { REVIEW_SUBMISSION_RESTART, SUBMIT_VERDICT_TOOL_NAME } from "../src/orchestration/verdict";
+import {
+  REVIEW_SUBMISSION_RESTART,
+  REVIEW_SUBMISSION_RETRY,
+  SUBMIT_VERDICT_TOOL_NAME,
+} from "../src/orchestration/verdict";
 import { buildDefaultProfile } from "../src/profiles/default-profile";
 import type { Profile, ProfileRole } from "../src/profiles/types";
 import type { RunCheckpoint } from "../src/project-operations/run-coordinator";
@@ -3152,9 +3156,11 @@ test("the cover retry is handed the attempt that ended in prose (issue #525)", a
 
   // Two attempts: the prose-only one, then the retry that settles the cover.
   expect(reviewerTurns).toHaveLength(2);
-  expect(reviewerTurns[0]?.task).not.toContain("did not call submit_verdict");
+  expect(reviewerTurns[0]?.task).not.toContain("Your review so far");
   const retryTask = reviewerTurns[1]?.task ?? "";
-  expect(retryTask).toContain("did not call submit_verdict");
+  expect(retryTask).toContain(REVIEW_SUBMISSION_RETRY);
+  // The retry session is fresh, so nothing may name a response it never made.
+  expect(retryTask).not.toContain("Your preceding");
   // The carried review, verbatim, and not only its presence: the retry must be
   // able to read what the first attempt concluded.
   expect(retryTask).toContain("draft review 1");
@@ -3186,7 +3192,7 @@ test("a cover retry with nothing to carry asks for the review, not the submissio
   // The retry is asked to REVIEW, and is never told a review it cannot see
   // stands. Asserting the absence is the point: this is a fresh run id with no
   // history (issue #525).
-  expect(retryTask).toContain("no review text");
+  expect(retryTask).toContain("No review text is available in this session");
   expect(retryTask).not.toContain("Your review stands");
   expect(retryTask).toContain(REVIEW_SUBMISSION_RESTART);
   expect(reviewerTurns[1]?.runId).not.toBe(reviewerTurns[0]?.runId);

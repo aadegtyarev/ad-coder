@@ -426,11 +426,14 @@ test("the standalone review retry keeps the first attempt's review and charges b
   // A fresh run id per attempt: a turn is keyed by run id in the session store,
   // so re-asking under the first is rejected as an existing session.
   expect(runIds).toEqual(["first", "second"]);
-  expect(tasks[1]).toContain("did not call submit_verdict");
+  expect(tasks[1]).toContain("Your review stands; submit it now");
   // And the retry can SEE the review it is told stands (issue #525): a fresh
   // run id means a fresh session, so the prompt's "your review" is only the
-  // review the caller carried into the task.
+  // review the caller carried into the task. Nothing in it names a response
+  // this session never made.
   expect(tasks[1]).toContain("the review itself");
+  expect(tasks[1]).not.toContain("did not call submit_verdict");
+  expect(tasks[1]).not.toContain("Your preceding");
 });
 
 test("a retry after a silent first attempt is asked to review, not to submit", async () => {

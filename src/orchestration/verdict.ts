@@ -19,20 +19,34 @@ export const SUBMIT_VERDICT_TOOL_NAME = "submit_verdict";
  */
 export const REVIEW_SUBMISSION_ATTEMPTS = 2;
 
-/** Re-states only the submission requirement; the inspection already happened. */
-export const REVIEW_SUBMISSION_RETRY = `Your preceding response did not call ${SUBMIT_VERDICT_TOOL_NAME}. Your review stands; submit it now by calling ${SUBMIT_VERDICT_TOOL_NAME} with the complete verdict object, then stop.`;
+/**
+ * Re-states only the submission requirement; the inspection already happened.
+ *
+ * Every clause here is checkable from INSIDE the session reading it. That is the
+ * whole defect (#525): a retry runs under a fresh run id, so "your preceding
+ * response did not call submit_verdict" names a response the session never made,
+ * and a claim about a context the reader cannot see is resolved by inventing the
+ * context. "Your review" is redeemable -- `reviewRetryTask` put that text in this
+ * prompt, under a header that says where it came from -- and the requirement
+ * that follows is the only thing being asked for.
+ */
+export const REVIEW_SUBMISSION_RETRY = `Your review stands; submit it now by calling ${SUBMIT_VERDICT_TOOL_NAME} with the complete verdict object, then stop.`;
 
 /**
- * The requirement when the preceding attempt left NO review text to carry.
+ * The requirement when the attempt left NO review text to carry.
  *
  * `REVIEW_SUBMISSION_RETRY` cannot be reused here: it asserts that a review
  * stands, and this session -- a fresh run id, so no history -- holds none. That
  * is the #525 premise exactly, moved to the empty case instead of removed, and a
  * model resolves an unverifiable premise rather than declining it. So this retry
  * asks for the REVIEW, not for a submission: the attempt that produced nothing
- * has to be made again, and the sentence is true of the session reading it.
+ * has to be made again. Nothing here refers to a prior attempt either -- "your
+ * preceding response produced no review text" is the same unverifiable premise
+ * in a new costume (review of #525, round 3) -- and one sentence covers every
+ * way an attempt can leave nothing behind: a truncation, a tool-only turn, a
+ * provider that dropped the text.
  */
-export const REVIEW_SUBMISSION_RESTART = `Your preceding response produced no review text and did not call ${SUBMIT_VERDICT_TOOL_NAME}, so there is no review to submit yet. Review the work now and submit your verdict by calling ${SUBMIT_VERDICT_TOOL_NAME} with the complete verdict object, then stop.`;
+export const REVIEW_SUBMISSION_RESTART = `No review text is available in this session, so there is no verdict to submit yet. Review the work now and submit your verdict by calling ${SUBMIT_VERDICT_TOOL_NAME} with the complete verdict object, then stop.`;
 
 /**
  * The task a retry attempt receives: the work, the review the attempts so far
@@ -51,7 +65,9 @@ export const REVIEW_SUBMISSION_RESTART = `Your preceding response produced no re
  * An attempt that produced no text at all is the one case with nothing to hand
  * over. It gets `REVIEW_SUBMISSION_RESTART` rather than the bare submission
  * retry: "your review stands" told to a session that has no review is the same
- * unverifiable premise, and the retry resolves it the same way.
+ * unverifiable premise, and the retry resolves it the same way. Neither branch
+ * tells the session anything about a response it made, because a fresh session
+ * made none.
  *
  * The text travels EXACTLY as the attempt produced it -- no trimming, no
  * reflow. Trimming only decides which of the two requirements applies; what a

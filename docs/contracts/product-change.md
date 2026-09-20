@@ -146,7 +146,14 @@ canonical backlog instead of hiding it in a completion summary.
   work, then submit -- `REVIEW_SUBMISSION_RESTART`. The bare retry is NOT that
   requirement: "your review stands" told to a session holding none is the same
   unverifiable premise this entry exists to remove, merely moved to the empty
-  case, and the retry resolves it the same way. This holds on all three surfaces
-  that retry a submission: the standalone `role reviewer` CLI (src/cli.ts), the
-  pipeline's review round (src/orchestration/session.ts) and the trivial-edit
-  cover review (src/orchestration/orchestrator.ts).
+  case, and the retry resolves it the same way. NO requirement names a response
+  the session never made: "your preceding response did not call submit_verdict"
+  is the same unverifiable premise in a third costume, and it was removed from
+  the non-empty branch too. This holds on all three surfaces that retry a
+  submission: the standalone `role reviewer` CLI (src/cli.ts), the pipeline's
+  review round (src/orchestration/session.ts) and the trivial-edit cover review
+  (src/orchestration/orchestrator.ts). It holds on the planner's handoff retry
+  as well, the other place a decision is re-asked under a fresh run id
+  (`plannerRetryTask`, src/orchestration/plan.ts): the plan-so-far travels with
+  the task, and the requirement -- the restart, or the validator's own
+  correction -- is phrased about what the new session holds.

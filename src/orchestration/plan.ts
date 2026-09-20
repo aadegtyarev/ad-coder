@@ -683,6 +683,48 @@ export function buildSubmitPlanTool(
 }
 
 /**
+ * The requirement for a session that holds no plan text: nothing to submit yet.
+ *
+ * Every clause is checkable from INSIDE the session reading it. That is the
+ * whole point (#525): a retry opens a fresh run id, so "your preceding response
+ * did not call submit_plan" names a response that session never made -- and a
+ * model resolves a premise it cannot check by inventing it, which on this
+ * surface means inventing a plan (review of #525, round 3).
+ */
+export const PLANNER_SUBMISSION_RESTART = `No plan text and no ${SUBMIT_PLAN_TOOL_NAME} call are present in this session, so there is nothing to submit yet. Plan the task above now and submit it by calling ${SUBMIT_PLAN_TOOL_NAME} with the complete required object, then stop.`;
+
+/**
+ * The task a planner retry attempt receives: the work, the plan-so-far, and the
+ * requirement it has to meet now.
+ *
+ * The same mechanism #525 fixed on the review surface, on the other decision
+ * surface that re-asks under a fresh run id. Two things make the prompt true for
+ * the session that reads it: the attempt's own text travels with the task under a
+ * header that says where it came from, and the requirement is phrased about what
+ * THIS session holds rather than about a history it does not have.
+ *
+ * `correction` is the rejection path's own wording -- it names WHICH failure the
+ * validator reported, which is the only route to a correct resubmission. It is
+ * used even when nothing was carried: a planner that submitted through the tool
+ * and wrote no prose still has to be told what was refused. The default is the
+ * restart requirement, reached exactly when nothing was written: non-empty text
+ * always leaves either a parsed plan (the loop breaks) or a correction
+ * (`parsePlanText` throws for non-empty text rather than returning), so at the
+ * shipped two-attempt budget a carry and a correction travel together.
+ *
+ * The text travels EXACTLY as the attempt produced it; trimming only decides
+ * whether there is anything to carry.
+ */
+export function plannerRetryTask(
+  task: string,
+  priorText: string,
+  correction: string = PLANNER_SUBMISSION_RESTART,
+): string {
+  const carried = priorText.trim() === "" ? "" : `Your plan so far, verbatim:\n\n${priorText}\n\n`;
+  return `${task}\n\n${carried}${correction}`;
+}
+
+/**
  * The fixed instruction appended to the planner's prompt, telling it to CALL the
  * `submit_plan` tool with the required shape. Exported so the pipeline and the
  * tests agree on it verbatim. No filesystem path is involved: the plan signal
