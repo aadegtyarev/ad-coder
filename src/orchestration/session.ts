@@ -61,7 +61,7 @@ import type {
   WorkflowPhase,
   WorkflowState,
 } from "./types";
-import { OrchestrationError } from "./types";
+import { MAX_PAUSE_CAUSE_MESSAGE_CHARS, OrchestrationError } from "./types";
 import type { VerdictCapture } from "./verdict";
 import {
   buildSubmitVerdictTool,
@@ -78,6 +78,17 @@ const RESEARCH_MAX_DEPTH = 4;
 const RESEARCH_PROVENANCE_MAX_BYTES = 16 * 1024;
 const SAFE_RESEARCH_ID = /^[a-z0-9][a-z0-9._:-]{0,127}$/i;
 const LIKELY_SECRET = /(?:bearer\s+|api[_-]?key\s*[:=]|password\s*[:=]|(?:^|\W)sk-[a-z0-9_-]{8,})/i;
+const SAFE_EVIDENCE_REFERENCE_MAX_CHARS = 128;
+const SAFE_TRANSCRIPT_REFERENCE_MAX_CHARS = 256;
+
+function boundedSafeEvidenceReference(
+  reference: string,
+  maxChars = SAFE_EVIDENCE_REFERENCE_MAX_CHARS,
+): string {
+  if (reference.length <= maxChars) return reference;
+  const marker = "[...]/";
+  return `${marker}${reference.slice(-(maxChars - marker.length))}`;
+}
 const SENSITIVE_PATH = /(?:^|\/)(?:\.env(?:\.|$)|[^/]*\.pem$|[^/]*\.key$)/i;
 const REVIEW_CONTROL_PATH = /(?:^|\/)(?:prompts|docs\/contracts)(?:\/|$)/;
 
@@ -942,20 +953,28 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     // a rejection as missing_plan sent the operator looking for a planner that
     // never ran instead of at the field that was refused.
     if (capture.plan === undefined) {
+      // Keep the durable diagnostic's invariant fields first. Evidence is relative
+      // to targetDir so a long absolute target path cannot consume the cause bound.
       const evidencePath = path.join(config.targetDir, ".ad-coder", "ledger", `${runId}.jsonl`);
-      const safeShape = `attempts=${attemptsRun} submit_plan_called=${mandatoryToolCalled} json_candidate=${text.includes("{")} response_length=${text.length} evidence=${evidencePath} transcript=${transcriptPath ?? "unavailable"} attempt_run_ids=${attemptRunIds.join(",")}`;
-      if (lastRejection !== undefined) {
-        throw new OrchestrationError(
-          lastRejection.code,
-          runId,
-          `${lastRejection.message}; ${safeShape}`,
-        );
-      }
-      throw new OrchestrationError(
-        "missing_plan",
-        runId,
-        `planner did not submit required surface analysis; ${safeShape}`,
+      const relativeEvidencePath = boundedSafeEvidenceReference(
+        `./${path.relative(config.targetDir, evidencePath)}`,
       );
+      const relativeTranscriptPath = boundedSafeEvidenceReference(
+        transcriptPath === undefined
+          ? "unavailable"
+          : `./${path.relative(config.targetDir, transcriptPath)}`,
+        SAFE_TRANSCRIPT_REFERENCE_MAX_CHARS,
+      );
+      const safeShape = `attempts=${attemptsRun} submit_plan_called=${mandatoryToolCalled} json_candidate=${text.includes("{")} response_length=${text.length} evidence=${relativeEvidencePath} transcript=${relativeTranscriptPath} attempt_run_ids=${attemptRunIds.join(",")}`;
+      const prefix =
+        lastRejection?.message === undefined
+          ? "planner did not submit required surface analysis"
+          : lastRejection.message;
+      const durableMessage = `${prefix.slice(0, Math.max(0, MAX_PAUSE_CAUSE_MESSAGE_CHARS - safeShape.length - 2))}; ${safeShape}`;
+      if (lastRejection !== undefined) {
+        throw new OrchestrationError(lastRejection.code, runId, durableMessage);
+      }
+      throw new OrchestrationError("missing_plan", runId, durableMessage);
     }
     const unresolved = capture.plan.surfaceAnalysis.coverage.filter(
       ({ status }) => status === "research_required",

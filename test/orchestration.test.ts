@@ -2097,6 +2097,47 @@ test("a planner emitting only text is refused explicitly before code", async () 
   expect(checkpoint.workflowState.lastStageFailure.message).toBe(pause.cause?.message);
 });
 
+test("a long target path keeps every durable planner-failure field and usable evidence reference", async () => {
+  const fx = fixture();
+  let longTargetDir = fx.targetDir;
+  for (let index = 0; index < 1; index += 1) {
+    longTargetDir = path.join(longTargetDir, `target-${"x".repeat(100)}`);
+  }
+  fs.mkdirSync(longTargetDir, { recursive: true });
+  fx.faux.setResponses([
+    fauxAssistantMessage("Plan in prose, with no JSON object"),
+    fauxAssistantMessage("Still no JSON object"),
+  ]);
+
+  let caught: unknown;
+  try {
+    await runPipeline({
+      targetDir: longTargetDir,
+      models: fx.models,
+      task: "long target durable cause",
+      maxRounds: 1,
+      roles: {
+        planner: plannerRole(fx),
+        coder: fx.role("coder", "You code."),
+        reviewer: reviewerRole(fx),
+      },
+    });
+  } catch (error) {
+    caught = error;
+  }
+
+  expect(caught).toBeDefined();
+  const pause = (caught as { pause: { cause?: { message?: string } } }).pause;
+  const message = pause.cause?.message ?? "";
+  expect(message.length).toBeLessThanOrEqual(512);
+  expect(message).toMatch(
+    /attempts=2 submit_plan_called=false json_candidate=false response_length=\d+ evidence=\.\/\.ad-coder\/ledger\/[^ ]+ transcript=(?:\.\/\.ad-coder\/sessions\/|\[\.\.\.\]\/)[^ ]+ attempt_run_ids=[^,]+,[^,]+$/,
+  );
+  const evidence = message.match(/ evidence=([^ ]+)/)?.[1];
+  expect(evidence).toMatch(/^\.\/\.ad-coder\/ledger\/[^ ]+\.jsonl$/);
+  expect(path.isAbsolute(evidence!)).toBe(false);
+});
+
 test("a planner whole-JSON fallback is strictly validated before code", async () => {
   const fx = fixture();
   const planner = plannerRole(fx);
