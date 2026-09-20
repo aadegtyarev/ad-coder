@@ -136,14 +136,23 @@ const GIT_UNAVAILABLE =
 
 /**
  * Enumerate open claims: candidate refs under refs/heads and refs/remotes/origin,
- * minus the current branch (its remote-tracking ref is its own declaration, not
- * another branch's), minus main/origin/main (the base), minus every ref already
- * an ancestor of the base (merged or stale). Git is injected so tests need no
- * real branches and no network; unavailable git or an unreadable ref is a named
- * failure, never a silent pass.
+ * minus self -- a ref is self when its tip commit equals the commit at HEAD, or
+ * when it is the locally named current branch (a detached checkout names none)
+ * or that branch's refs/remotes/origin twin. Self must not be identified by a
+ * branch name alone: main's release path runs detached, and under a name-only
+ * rule a legitimate landing would be blocked by its own refs. Then main and
+ * origin/main (the base) are minus, and every ref already an ancestor of the
+ * base (merged or stale). Git is injected so tests need no real branches and no
+ * network; unavailable git or an unreadable ref is a named failure, never a
+ * silent pass.
  */
-export function readOpenClaims(git: GitRun, currentBranch: string | null): ClaimsResult {
-  const listing = git(["for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes/origin"]);
+export function readOpenClaims(git: GitRun): ClaimsResult {
+  const listing = git([
+    "for-each-ref",
+    "--format=%(refname) %(objectname)",
+    "refs/heads",
+    "refs/remotes/origin",
+  ]);
   if (listing === null) return { ok: false, message: GIT_UNAVAILABLE };
   if (listing.exitCode !== 0)
     return {
@@ -153,7 +162,14 @@ export function readOpenClaims(git: GitRun, currentBranch: string | null): Claim
   const refs = listing.stdout
     .split("\n")
     .map((line) => line.trim())
-    .filter((line) => line.length > 0);
+    .filter((line) => line.length > 0)
+    .map((line) => {
+      const sep = line.indexOf(" ");
+      return {
+        ref: sep < 0 ? line : line.slice(0, sep),
+        commit: sep < 0 ? null : line.slice(sep + 1),
+      };
+    });
   const baseRev = git(["rev-parse", "--verify", "refs/remotes/origin/main"]);
   if (baseRev === null) return { ok: false, message: GIT_UNAVAILABLE };
   if (baseRev.exitCode !== 0)
@@ -164,11 +180,19 @@ export function readOpenClaims(git: GitRun, currentBranch: string | null): Claim
         "claims. Run `git fetch origin main`, then re-run `check:version`.",
     };
   const base = baseRev.stdout.trim();
+  const headRev = git(["rev-parse", "HEAD"]);
+  if (headRev === null) return { ok: false, message: GIT_UNAVAILABLE };
+  const head = headRev.exitCode === 0 ? headRev.stdout.trim() : null;
+  const symref = git(["symbolic-ref", "-q", "--short", "HEAD"]);
+  if (symref === null) return { ok: false, message: GIT_UNAVAILABLE };
+  const branch =
+    symref.exitCode === 0 && symref.stdout.trim().length > 0 ? symref.stdout.trim() : null;
   const claims: OpenClaim[] = [];
-  for (const ref of refs) {
+  for (const { ref, commit } of refs) {
+    if (head !== null && commit === head) continue;
     if (
-      currentBranch !== null &&
-      (ref === `refs/heads/${currentBranch}` || ref === `refs/remotes/origin/${currentBranch}`)
+      branch !== null &&
+      (ref === `refs/heads/${branch}` || ref === `refs/remotes/origin/${branch}`)
     )
       continue;
     if (ref === "refs/heads/main" || ref === "refs/remotes/origin/main") continue;
@@ -347,7 +371,7 @@ async function main(): Promise<number> {
   }
   // Ladder owner (issue #383): the number must also be free of claims by other
   // open branches, derived from local refs; an unreadable state is named above.
-  const claims = readOpenClaims(runGit, currentBranch);
+  const claims = readOpenClaims(runGit);
   if (!claims.ok) {
     process.stderr.write(`check:version: ${claims.message}\n`);
     return 1;

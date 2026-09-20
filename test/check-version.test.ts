@@ -117,14 +117,35 @@ describe("decide", () => {
 
 // Ladder owner (issue #383): the git-derived half runs through an injected
 // runner -- no real branches, no network, no other worktrees are touched.
-type FakeRef = { ref: string; version: string | null; merged: boolean };
+type FakeRef = { ref: string; version: string | null; merged: boolean; commit?: string };
 
-function fakeGit(refs: readonly FakeRef[]): GitRun {
+// The injected checkout: HEAD's commit and, when attached, the branch HEAD names.
+type FakeHead = { commit: string | null; branch: string | null };
+const THIS_BRANCH = "feat/383-version-ladder-owner";
+const HEAD_SHA = "0f9d1e2a4b5c";
+const ATTACHED: FakeHead = { commit: HEAD_SHA, branch: THIS_BRANCH };
+const DETACHED: FakeHead = { commit: HEAD_SHA, branch: null };
+
+function fakeGit(refs: readonly FakeRef[], head: FakeHead = ATTACHED): GitRun {
   return (args: string[]) => {
     const [cmd] = args;
     if (cmd === "for-each-ref")
-      return { exitCode: 0, stdout: `${refs.map((r) => r.ref).join("\n")}\n`, stderr: "" };
-    if (cmd === "rev-parse") return { exitCode: 0, stdout: "b32584dbdc26\n", stderr: "" };
+      return {
+        exitCode: 0,
+        stdout: `${refs.map((r) => `${r.ref} ${r.commit ?? `sha-${r.ref}`}`).join("\n")}\n`,
+        stderr: "",
+      };
+    if (cmd === "rev-parse") {
+      if (args[1] === "HEAD")
+        return head.commit === null
+          ? { exitCode: 128, stdout: "", stderr: "fatal: ambiguous argument 'HEAD'" }
+          : { exitCode: 0, stdout: `${head.commit}\n`, stderr: "" };
+      return { exitCode: 0, stdout: "b32584dbdc26\n", stderr: "" };
+    }
+    if (cmd === "symbolic-ref")
+      return head.branch === null
+        ? { exitCode: 1, stdout: "", stderr: "" }
+        : { exitCode: 0, stdout: `${head.branch}\n`, stderr: "" };
     if (cmd === "merge-base") {
       const entry = refs.find((r) => r.ref === args[2]);
       return { exitCode: entry?.merged ? 0 : 1, stdout: "", stderr: "" };
@@ -170,11 +191,10 @@ const SELF: FakeRef = {
   merged: false,
 };
 const LADDER: FakeRef[] = [LANE_A, LANE_B, LANE_C, MERGED, SELF];
-const THIS_BRANCH = "feat/383-version-ladder-owner";
 
 describe("readOpenClaims (issue #383, git via injected seam)", () => {
   test("open claims are enumerated; current branch, main and merged refs are not claims", () => {
-    const result = readOpenClaims(fakeGit(LADDER), THIS_BRANCH);
+    const result = readOpenClaims(fakeGit(LADDER));
     expect(result.ok).toBe(true);
     if (result.ok)
       expect(result.claims.map((claim) => claim.ref)).toEqual([LANE_A.ref, LANE_B.ref, LANE_C.ref]);
@@ -185,18 +205,18 @@ describe("readOpenClaims (issue #383, git via injected seam)", () => {
       version: "0.135.0",
       merged: false,
     };
-    const result = readOpenClaims(fakeGit([remote, SELF]), THIS_BRANCH);
+    const result = readOpenClaims(fakeGit([remote, SELF]));
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.claims.map((claim) => claim.version)).toEqual(["0.135.0"]);
   });
   test("red: git unavailable is a named failure, not a silent pass", () => {
-    const result = readOpenClaims(() => null, THIS_BRANCH);
+    const result = readOpenClaims(() => null);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.message).toContain("git is unavailable");
   });
   test("red: an unreadable ref is a named failure naming the ref", () => {
     const broken: FakeRef = { ref: "refs/heads/broken-lane", version: null, merged: false };
-    const result = readOpenClaims(fakeGit([broken, SELF]), THIS_BRANCH);
+    const result = readOpenClaims(fakeGit([broken, SELF]));
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.message).toContain("refs/heads/broken-lane");
   });
@@ -206,9 +226,43 @@ describe("readOpenClaims (issue #383, git via injected seam)", () => {
       if (cmd === "rev-parse") return { exitCode: 128, stdout: "", stderr: "unknown revision" };
       return { exitCode: 0, stdout: "", stderr: "" };
     };
-    const result = readOpenClaims(git, THIS_BRANCH);
+    const result = readOpenClaims(git);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.message).toContain("git fetch origin main");
+  });
+});
+
+describe("readOpenClaims in a detached checkout (#383 review fix): self by commit, not name", () => {
+  test("green: detached HEAD at its own branch's tip -- neither the local ref nor its origin twin is a claim", () => {
+    const selfAtHead = { ...SELF, commit: HEAD_SHA };
+    const twinAtHead: FakeRef = {
+      ref: `refs/remotes/origin/${THIS_BRANCH}`,
+      version: SELF.version,
+      merged: false,
+      commit: HEAD_SHA,
+    };
+    const result = readOpenClaims(fakeGit([selfAtHead, twinAtHead], DETACHED));
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.claims).toEqual([]);
+  });
+  test("red: detached HEAD with a genuinely foreign open claim is still counted and refused", () => {
+    const result = readOpenClaims(fakeGit([LANE_A], DETACHED));
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.claims.map((claim) => claim.ref)).toEqual([LANE_A.ref]);
+      expect(decideClaimConflict({ candidate: "0.135.0", claims: result.claims }).ok).toBe(false);
+    }
+  });
+  test("green: the current branch's remote-tracking twin is not a foreign claim", () => {
+    const twin: FakeRef = {
+      ref: `refs/remotes/origin/${THIS_BRANCH}`,
+      version: "0.137.0",
+      merged: false,
+      commit: "remote-sha-different-from-head",
+    };
+    const result = readOpenClaims(fakeGit([twin], ATTACHED));
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.claims).toEqual([]);
   });
 });
 
@@ -241,7 +295,7 @@ describe("decideClaimConflict (issue #383)", () => {
 
 describe("the version ladder end to end (#383): both ways of being wrong, one seam", () => {
   function ladderGate(input: { version: string; baseVersion: string | null }) {
-    const claims = readOpenClaims(fakeGit(LADDER), THIS_BRANCH);
+    const claims = readOpenClaims(fakeGit(LADDER));
     if (!claims.ok) return { ok: false as const, message: claims.message };
     const conflict = decideClaimConflict({ candidate: input.version, claims: claims.claims });
     if (!conflict.ok) return { ok: false as const, message: conflict.message };
@@ -262,7 +316,7 @@ describe("the version ladder end to end (#383): both ways of being wrong, one se
   });
   test("green: a ref already merged into main does NOT block -- no permanent lock", () => {
     const landed: FakeRef = { ref: "refs/heads/landed-lane", version: "0.137.0", merged: true };
-    const claims = readOpenClaims(fakeGit([landed, SELF]), THIS_BRANCH);
+    const claims = readOpenClaims(fakeGit([landed, SELF]));
     expect(claims.ok).toBe(true);
     if (claims.ok)
       expect(decideClaimConflict({ candidate: "0.137.0", claims: claims.claims }).ok).toBe(true);
