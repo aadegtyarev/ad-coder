@@ -11,6 +11,31 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.132.0] - 2026-09-20
+
+### Added
+- **An OAuth provider is now expressible in `models.yaml`, so the codex route no
+  longer needs a JSON inventory (issue #503).** The registry has always carried
+  both credential shapes -- `CredentialSource` is `{ kind: 'env-var', envVar }`
+  or `{ kind: 'oauth' }` (`src/registry/types.ts:97`) and `registerProvider`
+  delegates an oauth provider to the shipped `openaiCodexProvider()`
+  (`src/registry/resolve.ts:172`) -- but `models.yaml` could only spell the
+  env-var one. Three refusals stood in the way of a codex route declared in the
+  operator's own config file: the projection demanded an env-var NAME
+  (`src/config/to-registry.ts`), the resolver refused
+  `openai-codex-responses` for an env-var provider, and `config migrate`
+  reported an oauth profile `not-expressible`
+  (`src/config/migrate.ts`). The fix is one reserved literal: `credential:
+  oauth` projects to `{ kind: 'oauth' }`, `toYamlProvider` emits it back, and
+  the migration refusal is gone, so `inventories.json` can be migrated to
+  `models.yaml` and thrown away. The literal is reserved -- an env-var actually
+  named `oauth` is not addressable, and the refusal for a missing credential now
+  names both accepted spellings. Note what a declared `cost` row does NOT do for
+  an oauth provider: `getModel` overrides only `contextWindow`, `maxTokens` and
+  `input` on the delegated catalog model (`src/registry/resolve.ts:145-152`), so
+  the catalog's price -- tiers included -- is what prices the run. Declare the
+  catalog's own numbers so the file agrees with the bill.
+
 ## [0.131.0] - 2026-09-20
 
 ### Fixed

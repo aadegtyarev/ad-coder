@@ -8,11 +8,12 @@ import type {
 } from "../registry/types";
 import { DEFAULT_CONTEXT_WINDOW } from "../registry/validate";
 import { ConfigError } from "./errors";
-import type {
-  ModelConfig as ConfigModelConfig,
-  ProviderConfig as ConfigProviderConfig,
-  ModelRung,
-  ModelsConfig,
+import {
+  type ModelConfig as ConfigModelConfig,
+  type ProviderConfig as ConfigProviderConfig,
+  type ModelRung,
+  type ModelsConfig,
+  OAUTH_CREDENTIAL,
 } from "./types";
 
 /** The three tiers a routing profile exposes, in canonical order. */
@@ -95,13 +96,23 @@ export function toRegistryProvider(
   id: string,
   provider: ConfigProviderConfig,
 ): RegistryProviderConfig {
-  // CREDENTIAL PROJECTION (three cases). `credential` is a NAME -- the
+  // CREDENTIAL PROJECTION (three cases). `credential` is normally a NAME -- the
   // env-var the resolver reads through its injected accessor -- never a value.
   // This boundary is where the string reference becomes the registry's
   // `{ kind: 'env-var', envVar }` shape, so `parseCredential` never sees an
   // undefined or a raw string.
+  //
+  // The literal `oauth` is the second, deliberate spelling (#503): codex is
+  // OAuth-only and its token lives in the credential store under the provider
+  // id, so no env-var names it. Without this case the YAML route could not
+  // declare a codex provider at all -- the registry has always supported
+  // `{ kind: 'oauth' }` (it is what the shipped `openaiCodexPreset()` carries),
+  // and an id the operator cannot name in `models.yaml` is an id they cannot
+  // route to from their own config file.
   let credential: CredentialSource;
-  if (provider.credential !== undefined) {
+  if (provider.credential === OAUTH_CREDENTIAL) {
+    credential = { kind: "oauth" };
+  } else if (provider.credential !== undefined) {
     credential = { kind: "env-var", envVar: provider.credential };
   } else {
     // Absent credential on an ENABLED provider (disabled providers are filtered
@@ -110,7 +121,7 @@ export function toRegistryProvider(
     throw new ConfigError(
       "invalid_config",
       id,
-      `provider "${id}" must declare a credential (an env-var NAME) to route through`,
+      `provider "${id}" must declare a credential (an env-var NAME, or the literal "${OAUTH_CREDENTIAL}") to route through`,
     );
   }
 

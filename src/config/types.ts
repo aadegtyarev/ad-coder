@@ -57,6 +57,12 @@ export interface ModelConfig {
 }
 
 /**
+ * The one reserved `credential` value that is not an env-var name: the OAuth
+ * source (#503). See `ProviderConfig.credential`.
+ */
+export const OAUTH_CREDENTIAL = "oauth";
+
+/**
  * One provider in `models.yaml`.
  *
  * `enabled: false` keeps a declared provider and its model list out of routing
@@ -78,6 +84,23 @@ export interface ProviderConfig {
    * validator's job, not this layer's.
    */
   baseUrl?: string;
+  /**
+   * How this provider authenticates, as one of two spellings.
+   *
+   * A NAME -- the env-var the resolver reads through its injected accessor --
+   * for every provider whose key is an env-var. Or the literal
+   * `OAUTH_CREDENTIAL` (`"oauth"`), which declares the OAuth source the
+   * registry has always carried for codex: the token is not an env-var at all,
+   * it lives in the credential store under the provider id, and the resolver
+   * delegates the whole provider to the shipped `openaiCodexProvider()`
+   * factory (codex is OAuth-only, so no env-var could stand in for it).
+   *
+   * The literal is reserved: an env-var actually NAMED `oauth` is not
+   * addressable from this file. No such variable exists among the providers
+   * this repo ships, and the alternative -- a nested `{ kind: … }` mapping --
+   * would widen a field every operator-authored file already spells as a
+   * string.
+   */
   credential?: string;
   concurrency?: number;
   headers?: Record<string, string>;

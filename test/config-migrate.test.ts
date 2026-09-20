@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { cellFactsEqual, migrateInventoriesToModels } from "../src/config/migrate";
+import { toRegistryAndProfile } from "../src/config/to-registry";
 import type { ModelInventoryConfig, ModelInventoryProfile } from "../src/inventory/types";
 import type { Complexity } from "../src/orchestration/types";
 import type { ProfileEntry, ProfileRole } from "../src/profiles/types";
@@ -261,31 +262,69 @@ test("extras reported dropped while identity stays at parity", () => {
   expect(report.parity.every((row) => row.equal)).toBe(true);
 });
 
-test("oauth provider: reported not expressible, never silently dropped", () => {
+test("oauth provider: migrated with the reserved literal, and the file reads back as oauth", () => {
+  // The modelId must exist in the delegated codex catalog: an oauth provider
+  // resolves through the shipped `openaiCodexProvider()` factory, so a made-up
+  // id would fail resolution rather than exercise the projection.
+  const codex = mdl("codex-terra", "gpt-5.6-terra", {
+    cost: { input: 2, output: 12, cacheRead: 0.2, cacheWrite: 2.5 },
+  });
   const config = inv(
     [
       {
         name: "p1",
         registry: {
           providers: [
-            prov("codex-provider", [mdl("sol", "test-sol")], { credential: { kind: "oauth" } }),
+            prov("openai-codex", [codex], {
+              api: "openai-codex-responses",
+              baseUrl: "https://chatgpt.com/backend-api",
+              credential: { kind: "oauth" },
+            }),
           ],
         },
-        profile: { entries: tiers("coder", "sol") },
+        profile: { entries: tiers("coder", "codex-terra") },
       },
     ],
     "p1",
   );
   const { models, report } = migrateInventoriesToModels(config);
 
-  expect(report.profiles[0]).toMatchObject({ name: "p1", status: "not-expressible" });
-  expect(report.notExpressible).toHaveLength(1);
-  expect(report.notExpressible[0]).toMatchObject({ profile: "p1", provider: "codex-provider" });
-  expect(report.notExpressible[0]!.reason).toContain("oauth");
-  expect(Object.keys(models.providers)).toEqual([]);
-  expect(Object.keys(models.profiles)).toEqual([]);
-  expect(models.defaultProfile).toBeUndefined();
-  expect(report.parity).toEqual([]);
+  expect(report.profiles[0]).toMatchObject({ name: "p1", status: "migrated" });
+  expect(report.notExpressible).toEqual([]);
+  expect(models.defaultProfile).toBe("p1");
+
+  const provider = models.providers["openai-codex"]!;
+  expect(provider.credential).toBe("oauth");
+  expect(provider.api).toBe("openai-codex-responses");
+  expect(provider.baseUrl).toBe("https://chatgpt.com/backend-api");
+  expect(Object.keys(provider.models)).toEqual(["gpt-5.6-terra"]);
+
+  // Every declared cell resolved, and the projected side resolves to the SAME
+  // provider and model id the inventory named. The facts themselves come from
+  // the delegated codex catalog on both sides, so the assertion is identity --
+  // the parity rows are the proof that the migrated file routes where the
+  // inventory routed (#503).
+  expect(report.parity).toHaveLength(3);
+  expect(report.parity.every((row) => row.equal)).toBe(true);
+  for (const row of report.parity) {
+    expect(row.projected).toMatchObject({
+      providerId: "openai-codex",
+      modelId: "gpt-5.6-terra",
+    });
+  }
+
+  // Round trip: the migrated row projects back to the oauth source, so a
+  // migrated file routes to the same provider the inventory declared (#503).
+  const projected = toRegistryAndProfile(models, "p1");
+  expect(projected.registry.providers[0]!.credential).toEqual({ kind: "oauth" });
+  expect(projected.profile.entries).toHaveLength(3);
+  // The rungs name the provider the inventory named, and the model id is the
+  // FILE's row key -- an alias would not resolve against the codex catalog.
+  expect(projected.profile.entries.map((entry) => entry.model)).toEqual([
+    "gpt-5.6-terra",
+    "gpt-5.6-terra",
+    "gpt-5.6-terra",
+  ]);
 });
 
 test("provider union: two profiles sharing one identical provider merge", () => {

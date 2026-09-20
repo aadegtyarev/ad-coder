@@ -153,24 +153,62 @@ function conflictingInventory(): ModelInventoryConfig {
   };
 }
 
-function oauthInventory(): ModelInventoryConfig {
-  const base = goodInventory().profiles[0]!;
+/**
+ * A codex-shaped inventory: an oauth credential and a modelId the delegated
+ * codex catalog really publishes, because an oauth provider resolves through
+ * the shipped `openaiCodexProvider()` factory and an invented id would fail
+ * resolution instead of exercising the projection.
+ */
+function codexInventory(): ModelInventoryConfig {
   return {
     profiles: [
       {
-        ...base,
+        name: "codex-pro100",
         registry: {
-          providers: [{ ...base.registry.providers[0]!, credential: { kind: "oauth" } }],
+          providers: [
+            {
+              id: "openai-codex",
+              api: "openai-codex-responses",
+              baseUrl: "https://chatgpt.com/backend-api",
+              credential: { kind: "oauth" },
+              models: [
+                {
+                  name: "codex-terra",
+                  modelId: "gpt-5.6-terra",
+                  contextWindow: 200000,
+                  maxTokens: 128000,
+                  cost: { input: 2, output: 12, cacheRead: 0.2, cacheWrite: 2.5 },
+                },
+              ],
+            },
+          ],
         },
+        profile: { entries: tiers("coder", "codex-terra") },
       },
     ],
-    default: "work",
+    default: "codex-pro100",
   };
 }
 
+test("config migrate writes an oauth provider as the reserved literal (#503)", () => {
+  const home = tempConfigHome();
+  writeInventory(home, codexInventory());
+  const output = path.join(home, "ad-coder", "models.yaml");
+
+  const result = runCli(["config", "migrate"], { XDG_CONFIG_HOME: home });
+
+  expect(result.code).toBe(0);
+  expect(fs.existsSync(output)).toBe(true);
+  const written = fs.readFileSync(output, "utf8");
+  expect(written).toContain("default: codex-pro100");
+  const config = loadModelsConfig(output);
+  expect(config.defaultProfile).toBe("codex-pro100");
+  expect(config.providers["openai-codex"]!.credential).toBe("oauth");
+  expect(config.profiles["codex-pro100"]!.routes.coder).toEqual(["openai-codex:gpt-5.6-terra"]);
+});
+
 for (const [name, inventory] of [
   ["a provider conflict", conflictingInventory()] as const,
-  ["an oauth provider", oauthInventory()] as const,
 ] as const) {
   test(`all-or-nothing: ${name} prints the report and writes NOTHING`, () => {
     const home = tempConfigHome();

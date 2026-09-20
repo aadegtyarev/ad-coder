@@ -10,6 +10,7 @@ import type { SettingsConfig } from "../src/config/types";
 import { parseModelsConfig } from "../src/config/validate";
 import { resolveProfile } from "../src/profiles/resolve";
 import { RegistryError } from "../src/registry/errors";
+import { resolveRegistry } from "../src/registry/resolve";
 import type { RegistryConfig } from "../src/registry/types";
 import { DEFAULT_CONTEXT_WINDOW, parseRegistryConfig } from "../src/registry/validate";
 import {
@@ -152,6 +153,98 @@ test("a credential is a NAME only -- the env-var reference is never resolved to 
   });
 });
 
+test("the reserved literal `oauth` projects to the oauth source, and the registry accepts it (#503)", () => {
+  const config = parseModelsConfig({
+    providers: {
+      "openai-codex": {
+        enabled: true,
+        api: "openai-codex-responses",
+        baseUrl: "https://chatgpt.com/backend-api",
+        credential: "oauth",
+        models: {
+          "gpt-5.6-terra": {
+            input: 2,
+            output: 12,
+            cacheRead: 0.2,
+            contextWindow: 200000,
+            maxTokens: 128000,
+          },
+        },
+      },
+    },
+    profiles: { "codex-pro100": { coder: "openai-codex:gpt-5.6-terra" } },
+  });
+  const { registry } = toRegistryAndProfile(config, "codex-pro100");
+  expect(registry.providers[0]?.credential).toEqual({ kind: "oauth" });
+  // The registry's own validator admits it -- the same shape the shipped
+  // `openaiCodexPreset()` carries.
+  expect(parseRegistryConfig(registry).providers[0]?.credential).toEqual({ kind: "oauth" });
+});
+
+test("the literal is EXACT: `oauth2` is an env-var name, not the oauth source (#503)", () => {
+  // The reserved word is a literal, not a prefix or a case-folded match. A
+  // near-miss must read as the env-var NAME it is, because the alternative --
+  // a fuzzy match -- would route an operator's `OAUTH_...`-shaped variable to
+  // a codex account they never named.
+  const config = parseModelsConfig({
+    providers: {
+      "test-provider": {
+        enabled: true,
+        api: "openai-completions",
+        baseUrl: "https://test.example.com/v1",
+        credential: "oauth2",
+        models: { "test-big": { input: 3, output: 15 } },
+      },
+    },
+    profiles: { p: { coder: "test-provider:test-big" } },
+  });
+  const { registry } = toRegistryAndProfile(config, "p");
+  expect(registry.providers[0]?.credential).toEqual({ kind: "env-var", envVar: "oauth2" });
+});
+
+test("a declared price row does not price a delegated catalog model, a declared window does (#503)", () => {
+  // The asymmetry the CHANGELOG states: `getModel` overrides contextWindow,
+  // maxTokens and input on the delegated codex model and leaves `cost` alone,
+  // so a codex row's prices are the catalog's while its window and ceiling are
+  // the operator's. Declaring a sentinel price and a distinctive window pins
+  // both halves -- a future change that started honouring the declared price
+  // (or stopped honouring the declared window) turns this red.
+  const config = parseModelsConfig({
+    providers: {
+      "openai-codex": {
+        enabled: true,
+        api: "openai-codex-responses",
+        baseUrl: "https://chatgpt.com/backend-api",
+        credential: "oauth",
+        models: {
+          "gpt-5.6-terra": {
+            input: 999,
+            output: 999,
+            contextWindow: 300000,
+            maxTokens: 4096,
+          },
+        },
+      },
+    },
+    profiles: { p: { coder: "openai-codex:gpt-5.6-terra" } },
+  });
+  const { registry } = toRegistryAndProfile(config, "p");
+  const model = resolveRegistry(parseRegistryConfig(registry)).getModel("gpt-5.6-terra");
+
+  expect(model.contextWindow).toBe(300000);
+  expect(model.maxTokens).toBe(4096);
+  // Every price, not just `input`: the sentinel is declared on both, and the
+  // two cache rates are declared NOWHERE -- a projection that honoured its own
+  // defaults would settle them at zero, so a positive value here is the
+  // catalog's and only the catalog's.
+  expect(model.cost.input).toBeGreaterThan(0);
+  expect(model.cost.input).not.toBe(999);
+  expect(model.cost.output).toBeGreaterThan(0);
+  expect(model.cost.output).not.toBe(999);
+  expect(model.cost.cacheRead).toBeGreaterThan(0);
+  expect(model.cost.cacheWrite).toBeGreaterThan(0);
+});
+
 test("(b2) an enabled provider with no credential is refused, naming the provider only", () => {
   const config = parseModelsConfig({
     providers: {
@@ -173,6 +266,9 @@ test("(b2) an enabled provider with no credential is refused, naming the provide
     expect(ce.code).toBe("invalid_config");
     expect(ce.detail).toBe("opencode-go");
     expect(ce.message).toContain('"opencode-go"');
+    // The refusal teaches both spellings (#503): a name, or the reserved
+    // literal -- otherwise a codex provider reads as an operator mistake.
+    expect(ce.message).toContain("oauth");
   }
 });
 

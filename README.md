@@ -97,7 +97,9 @@ Pass `--provider deepseek|openrouter|openai-codex` to override selection. Native
 OpenAI and Anthropic keys are not selected automatically by the CLI; library
 callers can use the compatible provider presets.
 
-Codex uses OAuth, not `OPENAI_API_KEY`. Sign in once:
+Codex uses OAuth, not `OPENAI_API_KEY`, so it is the one provider whose
+`models.yaml` row carries the reserved literal `credential: oauth` instead of an
+env-var name. Sign in once:
 
 ```sh
 ad-coder auth status
@@ -343,77 +345,133 @@ URLs, symlinks, world-writable files, and files owned by another user.
 
 ## Configuration
 
-For Codex OAuth, current defaults use `gpt-5.6-sol` with medium thinking for
-Coder and the same model with low thinking for the conversational Orchestrator.
-Explicit profile, spawn, and model overrides take precedence;
-`--orchestrator-thinking-level` changes the console setting.
+Routing is `~/.config/ad-coder/models.yaml` and behaviour is
+`~/.config/ad-coder/settings.yaml` (or under `$XDG_CONFIG_HOME/ad-coder/`). Both
+are ordinary YAML you edit by hand; `config show` prints what they resolved to
+and which layer decided each value. With no `models.yaml`, the built-in Codex
+defaults apply: `gpt-5.6-sol` at medium thinking for the Coder and at low
+thinking for the conversational Orchestrator. Explicit profile, spawn, and model
+overrides take precedence; `--orchestrator-thinking-level` changes the console
+setting.
 
-The shared role/pipeline options include provider/model tier overrides,
-`--registry-config`, `--profile-config`, per-role model overrides,
-context-budget percentages, `--vision-model`, `--summarizer-model`, `--compaction-mode`, and
-`--project-store-config`. Registry/profile JSON is explicitly selected trusted
-data; the CLI never discovers configuration from `target-dir`.
+`models.yaml` has three top-level keys: `providers`, `profiles`, and an optional
+`default` naming the profile a run uses when none is selected.
 
-Custom registry models declare `"input": ["text", "image"]` when they accept
-images; omission intentionally means text-only.
+```yaml
+providers:
+  openrouter:
+    enabled: true
+    api: openai-completions
+    baseUrl: https://openrouter.ai/api/v1
+    credential: OPENROUTER_API_KEY
+    models:
+      "deepseek/deepseek-v4.1-flash":
+        input: 0.15
+        output: 0.6
+        cacheRead: 0.003
+        contextWindow: 200000
+        maxTokens: 32768
+  openai-codex:
+    enabled: true
+    api: openai-codex-responses
+    baseUrl: https://chatgpt.com/backend-api
+    credential: oauth
+    models:
+      "gpt-5.6-terra":
+        input: 2
+        output: 12
+        cacheRead: 0.2
+        cacheWrite: 2.5
+        contextWindow: 200000
+        maxTokens: 128000
 
-A provider whose API mandates a non-auth request header — a routing or tenancy
-marker — declares it once on the provider; every model of that provider sends
-it:
+default: fast
+profiles:
+  fast:
+    orchestrator:
+      - openrouter:deepseek/deepseek-v4.1-flash
+    planner:
+      - openrouter:deepseek/deepseek-v4.1-flash
+    researcher:
+      - openrouter:deepseek/deepseek-v4.1-flash
+    summarizer:
+      - openrouter:deepseek/deepseek-v4.1-flash
+    auditor:
+      - openrouter:deepseek/deepseek-v4.1-flash
+    security:
+      - openrouter:deepseek/deepseek-v4.1-flash
+    coder:
+      - openrouter:deepseek/deepseek-v4.1-flash
+    coder@complex:
+      - model: openai-codex:gpt-5.6-terra
+        thinkingLevel: low
+    reviewer:
+      - openai-codex:gpt-5.6-terra
+```
 
-```json
-{
-  "id": "example",
-  "baseUrl": "https://example.com/v1",
-  "credential": { "kind": "env-var", "envVar": "EXAMPLE_API_KEY" },
-  "headers": { "x-example-session": "adcoder-{{session}}" },
-  "models": [{ "name": "fast", "modelId": "example-fast", "maxTokens": 16384,
-               "api": "anthropic-messages", "baseUrl": "https://example.com",
-               "cost": { "input": 0.15, "output": 0.5, "cacheRead": 0.03, "cacheWrite": 0 } }]
-}
+A provider block declares `enabled`, the `api` protocol, a `baseUrl`, the
+credential REFERENCE, and one row per model keyed by the provider's own model id
+-- that key is the name a route spells after the colon. `config migrate`
+converts a stored `inventories.json` into this file; the stored inventory is no
+longer a routing source, and ad-coder refuses loudly when it finds one without a
+`models.yaml` beside it.
+
+`credential` is a REFERENCE, never a secret: a bare word names the env-var the
+resolver reads, and the reserved literal `oauth` selects the OAuth route whose
+token lives in the credential store. Codex is OAuth-only -- there is no env-var
+to name -- so `credential: oauth` is the only spelling that reaches it. An
+enabled provider that declares no credential is refused by name.
+
+A row key is the role (`coder`) or the tier override (`coder@complex`), and its
+value is a list of rungs. Only the FIRST rung is served today -- writing a
+second one is a declaration of intent that the runtime does not walk yet
+(docs/contracts/config.md), not a fallback you can rely on. A rung is
+`provider:model`, or a mapping when it also carries `thinkingLevel` (`off`,
+`minimal`, `low`, `medium`, `high`, `xhigh`, `max`). A `role@complexity` row
+replaces the bare row for that tier and may not exist without it. A profile a
+run selects must route every role that run needs -- the eight are `orchestrator`,
+`planner`, `researcher`, `coder`, `reviewer`, `auditor`, `security`, and
+`summarizer` -- and a run refuses by name the `(role, complexity)` pair it could
+not resolve.
+
+A provider whose API mandates a non-auth request header -- a routing or tenancy
+marker -- declares it once on the provider, with `{{session}}` for an opaque
+per-run identifier:
+
+```yaml
+  opencode-go:
+    headers:
+      x-opencode-session: "{{session}}"
 ```
 
 `headers` is **not a credential channel**: values are literal config text sent
 verbatim, so names that carry or displace authentication (`authorization`,
 `x-api-key`, `cookie`, ...) and names the HTTP client owns (`user-agent`,
-`content-type`, ...) are rejected. An API key belongs in `credential`, whose
-value never appears in a config file. A model may declare its own `headers`,
-merged over the provider's on a case-insensitive name match.
-
-`{{session}}` expands to one opaque random identifier per resolved registry —
-the same value for every model of a run, a new value for the next run — for
-APIs that require a per-conversation routing marker a static file cannot know.
-It carries no credential or project data. An unknown placeholder is rejected
+`content-type`, ...) are rejected. An API key belongs in `credential`.
+`{{session}}` is stable for every model of a run and new for the next; it
+carries no credential or project data, and an unknown placeholder is rejected
 rather than transmitted literally.
 
 A model may override `baseUrl` when one account fronts two request APIs under
 different path prefixes, since each adapter appends its own suffix to whatever
 base URL it is given. Both the provider and model forms are https-only.
 
-A provider may instead name a shipped model catalog, taking ids, prices,
-context windows, token ceilings, base URLs and supported thinking levels from
-the pinned pi-ai data rather than restating them:
+The shared role/pipeline options include provider/model tier overrides,
+`--registry-config`, `--profile-config`, per-role model overrides,
+context-budget percentages, `--vision-model`, `--summarizer-model`,
+`--compaction-mode`, and `--project-store-config`. Registry/profile JSON is
+explicitly selected trusted data; the CLI never discovers configuration from
+`target-dir`.
 
-```json
-{
-  "id": "opencode-go",
-  "api": "openai-completions",
-  "catalog": "opencode-go",
-  "credential": { "kind": "env-var", "envVar": "OPENCODE_API_KEY" },
-  "models": [{ "modelId": "glm-5.3-flash", "name": "flash" }]
-}
-```
-
-opencode-go additionally requires an `x-opencode-session` header on every
-request, which no provider or catalog supplies today — declare it by hand as
-`"headers": {"x-opencode-session": "{{session}}"}` until
-[#120](https://github.com/aadegtyarev/ad-coder/issues/120) lands, or the account
-answers HTTP 400 `MissingSessionID`.
-
-Anything you declare still wins, an id the catalog does not publish is rejected
-rather than resolved with invented economics, and an account-scoped id such as
-an OpenRouter `@preset/...` is admitted by marking it `"catalog": false` and
-supplying its `cost` and `maxTokens` by hand. See
+The registry JSON form behind `--registry-config` adds what the YAML store
+deliberately leaves out: a provider may name a shipped model `catalog` and take
+ids, prices, context windows, token ceilings, base URLs and supported thinking
+levels from the pinned pi-ai data rather than restating them, and a model may
+declare `"input": ["text", "image"]` when it accepts images. Anything you
+declare still wins, an id the catalog does not publish is rejected rather than
+resolved with invented economics, and an account-scoped id such as an OpenRouter
+`@preset/...` is admitted by marking it `"catalog": false` and supplying its
+`cost` and `maxTokens` by hand. See
 [provider catalogs](docs/provider-catalogs.md).
 
 To switch a complete account/provider model inventory atomically, put named
@@ -422,27 +480,16 @@ registry and routing-profile pairs in one trusted JSON file, then select one:
 ```sh
 ad-coder config show --inventory-config ./inventories.json \
   --inventory-profile codex-secondary --json
-ad-coder drive "Implement the change" --inventory-config ./inventories.json \
-  --inventory-profile codex-secondary --target-dir ./my-project --auto
 ```
-
-The normal editable store is `~/.config/ad-coder/models.yaml` for routing and
-`~/.config/ad-coder/settings.yaml` for behaviour (or under
-`$XDG_CONFIG_HOME/ad-coder/`). A stored `~/.config/ad-coder/inventories.json`
-is no longer a routing source: with `models.yaml` absent and a stored
-`inventories.json` present, ad-coder refuses loudly and names
-`ad-coder config migrate`, the bridge that converts an existing stored
-inventory into `models.yaml`. The `--inventory-config` form selects another
-file for one run; explicit provider and model flags likewise act only as
-per-run overrides.
 
 An inventory entry has `{ "name", "registry", "profile" }`; the top-level
 object has `profiles` and an optional `default`. The pair is validated together,
 and inventory options cannot be mixed with separate `--provider`,
-`--registry-config`, or `--profile-config` sources. `config show` exposes only
-the selected name and ordinary secret-free effective configuration.
-Model-selection overrides are likewise rejected while an inventory is active;
-budget, context, and execution-limit overrides remain available.
+`--registry-config`, or `--profile-config` sources, which likewise act only as
+per-run overrides. `config show` exposes only the selected name and ordinary
+secret-free effective configuration. Model-selection overrides are rejected
+while an inventory is active; budget, context, and execution-limit overrides
+remain available.
 Built-in plugin groups default to `explore,web,vision`; select a subset with
 `--plugins`, or pass `--plugins none`. Programmatic hosts may replace them with
 their own `pluginTools`.
