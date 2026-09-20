@@ -13,6 +13,7 @@ import {
   highestOpenClaim,
   isMainContext,
   ladderLedger,
+  main,
   type OpenClaim,
   readBaseVersion,
   readOpenClaims,
@@ -448,5 +449,78 @@ describe("readBaseVersion (git via injected seam)", () => {
     expect(result).not.toBeNull();
     if (typeof result === "object" && result !== null)
       expect(result.error).toContain("git is unavailable");
+  });
+});
+
+// Round-6 review fix (#383): the pass above is asserted through the executable
+// gate itself. A formatter-only test keeps passing after the print that exposes
+// the ladder to the operator is removed -- the outcome the issue asks for would
+// be gone with the suite still green -- so `main` runs here with an injected git
+// runner, an empty env and captured writers, and the ladder is read off the
+// stdout the operator would see. The empty env is not cosmetic: with the ambient
+// CI env the gate would read the real PR title and the assertion would depend on
+// whoever runs the suite.
+describe("the gate's own stdout (issue #383, executable path)", () => {
+  const BASE_SHA = "0123456789abcdef0123456789abcdef01234567";
+  // Only has to sit strictly below the tree's own version and below no claim's
+  // number in a way that matters: the ladder is compared against the candidate
+  // the gate reads from package.json, not against this row.
+  const BASE = "0.134.0";
+
+  async function runGate(input: { base: string | null; refs: readonly FakeRef[] }) {
+    const out: string[] = [];
+    const err: string[] = [];
+    const git: GitRun = (args) => {
+      const [cmd] = args;
+      if (cmd === "rev-parse" && args[1] === "--verify")
+        return input.base === null
+          ? { exitCode: 128, stdout: "", stderr: "fatal: unknown revision origin/main" }
+          : { exitCode: 0, stdout: `${BASE_SHA}\n`, stderr: "" };
+      // Only the base read is answered here; every other `show` is a claim's own
+      // package.json and must come from the fixture, or each claim would report
+      // the base version instead of its own.
+      if (cmd === "show" && args[1] === `${BASE_SHA}:package.json`)
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({ name: "ad-coder", version: input.base ?? BASE }),
+          stderr: "",
+        };
+      return fakeGit(input.refs)(args);
+    };
+    const code = await main({
+      git,
+      env: {},
+      out: (line) => out.push(line),
+      err: (line) => err.push(line),
+    });
+    return { code, out: out.join(""), err: err.join("") };
+  }
+
+  test("green: the passing gate prints the ladder it derived, base and claim by claim", async () => {
+    const result = await runGate({ base: BASE, refs: LADDER });
+    expect(result.code).toBe(0);
+    expect(result.err).toBe("");
+    expect(result.out).toContain(`check:version: ladder: base origin/main declares ${BASE};`);
+    for (const claim of [LANE_A, LANE_B, LANE_C]) {
+      expect(result.out).toContain(`${claim.ref} declares ${claim.version}`);
+    }
+    // A merged ref is not an open claim, and self is not a foreign one: neither
+    // belongs in a ladder the operator reads as "what could collide with me".
+    expect(result.out).not.toContain(MERGED.ref);
+    expect(result.out).not.toContain(SELF.ref);
+  });
+
+  test("green: with no open claims the ledger says `none` in words, not an empty list", async () => {
+    const result = await runGate({ base: BASE, refs: [] });
+    expect(result.code).toBe(0);
+    expect(result.out).toContain("open claims evaluated: none");
+  });
+
+  test("red: an unresolved base refuses on stderr with the fetch command and exit 1", async () => {
+    const result = await runGate({ base: null, refs: LADDER });
+    expect(result.code).toBe(1);
+    expect(result.err).toContain("origin/main could not be resolved");
+    expect(result.err).toContain("git fetch origin main");
+    expect(result.out).not.toContain("check:version: ladder:");
   });
 });

@@ -39,7 +39,16 @@ enforces that dated release headings go in non-increasing date order
   the base it compared against and every open claim it evaluated, each with the
   version that ref declares, or an explicit `none` when there were no others --
   because a pass that states only its conclusion leaves the operator to re-derive
-  the ladder with git by hand, which is the state the issue set out to end.
+  the ladder with git by hand, which is the state the issue set out to end. A
+  third round then found that the printed ladder was covered only through the
+  formatter: the test asserted what `ladderLedger` returns, never what the gate
+  writes, so it would have kept passing with the print removed and the
+  operator-visible outcome gone. `main` now takes its process boundary as an
+  injected seam (git runner, environment, stdout and stderr writers), and the
+  suite runs the executable path itself -- the passing gate's stdout must name
+  the base and every claim it evaluated, the empty case must say `none`, and an
+  unresolved base must refuse on stderr with the fetch command and exit 1.
+  Removing the print fails two of those tests.
 
 ## [0.141.0] - 2026-09-20
 

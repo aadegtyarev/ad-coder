@@ -360,21 +360,42 @@ export function readBaseVersion(git: GitRun = runGit): string | { error: string 
   return typeof json.version === "string" ? json.version : null;
 }
 
-async function main(): Promise<number> {
-  const branch = runGit(["branch", "--show-current"]);
+/**
+ * The gate's process boundary, injected for tests (issue #383 round-6 review).
+ * It exists so a test can run the executable path itself -- `main` with an
+ * injected git runner, environment and writers -- because a formatter-only test
+ * keeps passing after the print that exposes the ladder to the operator is
+ * removed, which is the regression this gate is here to catch.
+ */
+export interface GateIo {
+  git: GitRun;
+  env: Record<string, string | undefined>;
+  out: (line: string) => void;
+  err: (line: string) => void;
+}
+
+const defaultGateIo: GateIo = {
+  git: runGit,
+  env: process.env,
+  out: (line) => process.stdout.write(line),
+  err: (line) => process.stderr.write(line),
+};
+
+export async function main(io: GateIo = defaultGateIo): Promise<number> {
+  const branch = io.git(["branch", "--show-current"]);
   if (branch === null) {
-    process.stderr.write(`check:version: ${GATE_GIT_UNAVAILABLE}\n`);
+    io.err(`check:version: ${GATE_GIT_UNAVAILABLE}\n`);
     return 1;
   }
   const currentBranch = branch.exitCode === 0 ? branch.stdout.trim() || null : null;
   if (
     isMainContext({
-      eventName: process.env.GITHUB_EVENT_NAME ?? null,
-      gitRef: process.env.GITHUB_REF ?? null,
+      eventName: io.env.GITHUB_EVENT_NAME ?? null,
+      gitRef: io.env.GITHUB_REF ?? null,
       currentBranch,
     })
   ) {
-    process.stdout.write(
+    io.out(
       "check:version: skipped on main -- the bump check is relative to base and meaningless there.\n",
     );
     return 0;
@@ -387,14 +408,14 @@ async function main(): Promise<number> {
   if (titleArg !== undefined) {
     title = titleArg;
     titleSource = "--title argument";
-  } else if (typeof process.env.PR_TITLE === "string" && process.env.PR_TITLE.length > 0) {
-    title = process.env.PR_TITLE;
+  } else if (typeof io.env.PR_TITLE === "string" && io.env.PR_TITLE.length > 0) {
+    title = io.env.PR_TITLE;
     titleSource = "PR_TITLE env";
   } else if (
-    process.env.GITHUB_EVENT_NAME === "pull_request" &&
-    process.env.GITHUB_EVENT_PATH !== undefined
+    io.env.GITHUB_EVENT_NAME === "pull_request" &&
+    io.env.GITHUB_EVENT_PATH !== undefined
   ) {
-    const event = JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH, "utf8"));
+    const event = JSON.parse(fs.readFileSync(io.env.GITHUB_EVENT_PATH, "utf8"));
     title = typeof event.pull_request?.title === "string" ? event.pull_request.title : null;
     titleSource = "GITHUB_EVENT_PATH pull_request.title";
   } else {
@@ -403,7 +424,7 @@ async function main(): Promise<number> {
   }
   const hasTitle = typeof title === "string" && title.length > 0;
 
-  const baseResult = readBaseVersion();
+  const baseResult = readBaseVersion(io.git);
   const baseVersion = typeof baseResult === "string" ? baseResult : null;
   const version = readTreeVersion();
 
@@ -417,32 +438,32 @@ async function main(): Promise<number> {
   }
 
   if (!decision.ok) {
-    process.stderr.write(`check:version: ${decision.message}\n`);
+    io.err(`check:version: ${decision.message}\n`);
     return 1;
   }
   // Ladder owner (issue #383): the number must also be free of claims by other
   // open branches, derived from local refs; an unreadable state is named above.
-  const claims = readOpenClaims(runGit, process.env);
+  const claims = readOpenClaims(io.git, io.env);
   if (!claims.ok) {
-    process.stderr.write(`check:version: ${claims.message}\n`);
+    io.err(`check:version: ${claims.message}\n`);
     return 1;
   }
   // Round-2 review fix (#383): a detached checkout without a CI branch name
   // cannot know self, so every ref is a potential foreign claim; that state is
   // named here rather than passed silently, and a refusal below still stands.
-  if (claims.note !== undefined) process.stderr.write(`check:version: ${claims.note}\n`);
+  if (claims.note !== undefined) io.err(`check:version: ${claims.note}\n`);
   const claimDecision = decideClaimConflict({
     candidate: decision.version,
     claims: claims.claims,
   });
   if (!claimDecision.ok) {
-    process.stderr.write(`check:version: ${claimDecision.message}\n`);
+    io.err(`check:version: ${claimDecision.message}\n`);
     return 1;
   }
   const titleNote = hasTitle
     ? `title version matches`
     : "no PR title available -- title check skipped";
-  process.stdout.write(
+  io.out(
     `check:version: ${decision.version} is strictly above base ${decision.baseVersion} ` +
       `and unclaimed by other open branches; ${titleSource ? `${titleNote} (${titleSource})` : titleNote}.\n`,
   );
@@ -453,15 +474,13 @@ async function main(): Promise<number> {
   // the ladder would be meaningless without the base it compared against, and a
   // gate that cannot state its ladder must refuse rather than print a pass.
   if (baseVersion === null) {
-    process.stderr.write(
+    io.err(
       "check:version: the base version was not resolved, so the version ladder cannot be " +
         "reported. Run `git fetch origin main`, then re-run `check:version`.\n",
     );
     return 1;
   }
-  process.stdout.write(
-    `check:version: ladder: ${ladderLedger({ baseVersion, claims: claims.claims })}.\n`,
-  );
+  io.out(`check:version: ladder: ${ladderLedger({ baseVersion, claims: claims.claims })}.\n`);
   return 0;
 }
 
