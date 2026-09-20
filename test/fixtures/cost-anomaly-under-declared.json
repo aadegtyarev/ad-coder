@@ -1,0 +1,17 @@
+{
+  "version": 2,
+  "scopes": {
+    "openrouter/deepseek/deepseek-v4-pro": {
+      "provider": "openrouter",
+      "model": "deepseek/deepseek-v4-pro",
+      "observed": [1.0, 3.353],
+      "pending": []
+    },
+    "openrouter/z-ai/glm-5.3-flash": {
+      "provider": "openrouter",
+      "model": "z-ai/glm-5.3-flash",
+      "observed": [1.65],
+      "pending": []
+    }
+  }
+}

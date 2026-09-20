@@ -1,0 +1,23 @@
+{
+  "version": 2,
+  "scopes": {
+    "openrouter/deepseek/deepseek-v4-pro": {
+      "provider": "openrouter",
+      "model": "deepseek/deepseek-v4-pro",
+      "observed": [1.0],
+      "pending": []
+    },
+    "openrouter/z-ai/glm-5.3-flash": {
+      "provider": "openrouter",
+      "model": "z-ai/glm-5.3-flash",
+      "observed": [1.0],
+      "pending": []
+    },
+    "openrouter/minimax/minimax-m3": {
+      "provider": "openrouter",
+      "model": "minimax/minimax-m3",
+      "observed": [0.81],
+      "pending": []
+    }
+  }
+}
