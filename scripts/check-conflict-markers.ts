@@ -20,10 +20,13 @@
 import { spawnSync } from "node:child_process";
 
 // The pattern the ticket asked for, kept verbatim: any line that OPENS with a
-// conflict marker. Deliberately not narrowed to `^=======+$`: that would mute
-// an 8-equals run inside a real conflict region. The one legitimate shape the
-// pattern could over-match -- a Markdown setext underline -- is measured to
-// not occur in this tree (the measurement is recorded on EXCEPTIONS below).
+// conflict marker. Deliberately not narrowed to `^=======+$`: the narrower
+// form still matches an 8-equals run, but an exact-line anchor would miss a
+// separator line with trailing content -- `=======` followed by a leftover
+// note or whitespace -- which is still a marker inside a real conflict
+// region. The one legitimate shape the pattern could over-match -- a Markdown
+// setext underline -- is measured to not occur in this tree (the measurement
+// is recorded on EXCEPTIONS below).
 const MARKER_PATTERN = "^(<<<<<<<|=======|>>>>>>>)";
 
 // Paths the gate never reports, path-exact and root-relative. Deliberately
@@ -35,9 +38,13 @@ const MARKER_PATTERN = "^(<<<<<<<|=======|>>>>>>>)";
 // must be added HERE, BY NAME, never by weakening MARKER_PATTERN above.
 const EXCEPTIONS: readonly string[] = [];
 
-// Bounded output, the positive ceiling the quality contract requires for gate
-// output: every hit is counted, only the first MAX_PRINTED_HITS are printed,
-// and the summary states the total so nothing is hidden by the cap.
+// Bounded output. The quality contract mandates "positive safety ceilings"
+// for gate output, whose content "enters model or report contexts"
+// (docs/contracts/quality.md, 2026-09-12; in-run capture applies its own
+// `maxOutputChars` ceiling, src/gates/runner.ts). This cap bounds what the
+// script itself emits: every hit is counted, only the first MAX_PRINTED_HITS
+// are printed, and the summary states the total so nothing is hidden by the
+// cap.
 const MAX_PRINTED_HITS = 50;
 
 interface MarkerHit {

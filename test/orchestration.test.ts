@@ -23,7 +23,6 @@ import {
   buildSubmitFollowUpTool,
   SUBMIT_FOLLOW_UP_TOOL_NAME,
 } from "../src/orchestration/follow-up";
-import { validateFollowUpCandidate } from "../src/project-operations/follow-ups";
 import { runPipeline } from "../src/orchestration/pipeline";
 import {
   buildSubmitPlanTool,
@@ -59,6 +58,7 @@ import {
 import { buildDefaultProfile } from "../src/profiles/default-profile";
 import type { Profile } from "../src/profiles/types";
 import { ProjectOperationsError } from "../src/project-operations/errors";
+import { validateFollowUpCandidate } from "../src/project-operations/follow-ups";
 import { type RunCheckpoint, RunCoordinator } from "../src/project-operations/run-coordinator";
 import { ProjectStore } from "../src/project-store/project-store";
 import { MODEL_INVENTORY_RESEARCH_BRIEF, RoleBriefError } from "../src/prompts/role-briefs";
