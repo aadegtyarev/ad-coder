@@ -593,6 +593,65 @@ test("every escape family is stripped whole, not just CSI (#365)", async () => {
   expect(sanitizeTitle(`red${ESC}[31m alert`).value).toBe("red alert");
 });
 
+test("an escape sequence that never terminates loses its payload (#365)", async () => {
+  // Round 4 measured the INCOMPLETE forms, one step past the round-3 grammar: an
+  // introducer whose sequence never terminates matched no strict alternative, so
+  // the single-byte catch-all removed the introducer ALONE and the payload stayed
+  // as ordinary text -- `token 0;foo=supersecret`, `token foo=supersecret`,
+  // `token 31=supersecret`, `token ?=supersecret`. In each one the assignment is
+  // real but its operator sits a word away from the keyword every screen looks
+  // for, so nothing fires and the secret persists, on BOTH paths.
+  const C1 = String.fromCharCode;
+  for (const draft of [
+    `token${ESC}]0;foo=supersecret`, // OSC never terminated
+    `token${ESC}Pfoo=supersecret`, // DCS never terminated
+    `token${ESC}Xfoo=supersecret`, // SOS never terminated
+    `token${ESC}[31=supersecret`, // CSI that never reaches a final byte
+    `token${ESC}[?=supersecret`, // private CSI, likewise
+    `token${C1(0x9d)}0;foo=supersecret`, // and the 8-bit forms of each
+    `token${C1(0x90)}foo=supersecret`,
+    `token${C1(0x9b)}31=supersecret`,
+  ]) {
+    expect(createManualSessionName(draft)).toBe(SESSION_FALLBACK_NAME);
+    expect(sanitizeTitle(draft).value).toBe(SESSION_FALLBACK_NAME);
+  }
+  // The operator is where the consumption STOPS rather than a byte it swallows --
+  // it is the one byte the screen has to see. With no operator in the payload
+  // there is nothing to stop at, so the consumption runs to the end of the draft:
+  // that is what a terminal displays, because an unterminated string never ends
+  // and nothing after it is text.
+  expect(createManualSessionName(`token${ESC}]0;foo barsupersecret`)).toBe("token");
+  expect(sanitizeTitle(`token${ESC}]0;foo barsupersecret`).value).toBe("token");
+  // What makes stopping at the operator safe is that the leftover ALWAYS begins
+  // with it while the text before the introducer is untouched, so a keyword that
+  // preceded the sequence stays adjacent to its operator. Both orders were
+  // measured, not argued: an operator that appears LATE in the payload stops the
+  // consumption late and still leaves `keyword =…`, and a keyword INSIDE the
+  // payload is caught by the raw screen, which sees the draft before any strip.
+  expect(createManualSessionName(`token${ESC}]0;x=1 y=supersecret`)).toBe(SESSION_FALLBACK_NAME);
+  expect(createManualSessionName(`${ESC}]token=supersecret`)).toBe(SESSION_FALLBACK_NAME);
+  expect(createManualSessionName(`pre${ESC}]token=supersecret`)).toBe(SESSION_FALLBACK_NAME);
+  expect(sanitizeTitle(`${ESC}]token=supersecret`).value).toBe(SESSION_FALLBACK_NAME);
+  // The durable path, not just the function.
+  const { manager, stateDir } = makeManager();
+  await manager.ensureSession("incomplete-escape", "telegram:bridge");
+  const record = await manager.renameSession("incomplete-escape", `token${ESC}]0;foo=supersecret`);
+  expect(record.name).toBe(SESSION_FALLBACK_NAME);
+  const durable = fs.readFileSync(path.join(stateDir, "bindings.json"), "utf8");
+  expect(durable).not.toContain("supersecret");
+  expect(durable).not.toContain("secret"); // the mangled tail is a secret too
+  expect(durable).not.toContain("0;foo");
+  // A sequence that DOES terminate is still removed whole -- `=` in its payload
+  // or not -- because the strict alternatives run first, and the removal leaves
+  // the text around it intact rather than a gap.
+  expect(createManualSessionName(`red${ESC}]0;title=x${String.fromCharCode(0x07)} alert`)).toBe(
+    "red alert",
+  );
+  expect(createManualSessionName(`token${ESC}]0;x=y${String.fromCharCode(0x07)}=supersecret`)).toBe(
+    SESSION_FALLBACK_NAME,
+  );
+});
+
 test("the persisted form is screened before it is stored (#365)", () => {
   // The contract's own sentence is about the value that gets STORED
   // ("secret-screened ... A candidate that sanitizes to empty falls back to

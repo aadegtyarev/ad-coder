@@ -60,16 +60,43 @@ const CSI_BODY = "[0-9;:?<>]*[ -/]*[@-~]";
 // excluded here rather than left to the class strip. `ESC :` and `ESC =` are
 // unassigned in ECMA-48, so nothing real is lost.
 const FE_BODY = "[0-9;<>?@-~]";
+// An introducer whose sequence does NOT match the strict bodies above consumes
+// up to the next assignment operator -- or to the end of the input when there is
+// none. Round 4 filed this as a blocker, with four repros: an UNTERMINATED
+// sequence (no BEL/ST/CSI final byte at all, `ESC ] 0;foo=supersecret`,
+// `ESC P foo=supersecret`) never matched a strict alternative, so the single-byte
+// catch-all removed the introducer ALONE and left the payload as ordinary text --
+// and the payload carries the `=` of the assignment it was hiding, one word away
+// from the keyword the screen looks for. Consuming the payload is what a terminal
+// does with it: an unterminated string never ends, so nothing after it is
+// displayed text. `=` is where the consumption STOPS rather than a byte it
+// swallows, because it is the one byte the secret screen has to see: everything
+// before it is sequence payload (removed), everything from it on is text (shown).
+// That keeps the invariant the screen needs -- the leftover ALWAYS starts with
+// the operator, and the text before the introducer is untouched, so `keyword =`
+// stays adjacent exactly as it is in an ordinary draft (`token<ESC>]0;foo=secret`
+// becomes `token =secret` and falls back). A payload with no operator at all has
+// nothing to stop at: it is consumed to the end of the input, which is the same
+// terminal behaviour and leaves no payload behind either way. The strict
+// alternatives run first, so a properly terminated sequence -- even one whose
+// payload contains `=` -- is still removed whole.
+const UNTERMINATED_BODY = "[^=]*";
 const ANSI_PATTERN = new RegExp(
   `${ESC}(?:` +
     `\\[${CSI_BODY}` + // CSI
     `|\\][^${BEL}]*(?:${BEL}|${ST})` + // OSC, to BEL or to ST
     `|[PX^_][^${ESC}]*${ST}` + // DCS, PM, APC, SOS, each to ST
+    `|\\[${UNTERMINATED_BODY}` + // unterminated CSI
+    `|\\]${UNTERMINATED_BODY}` + // unterminated OSC
+    `|[PX^_]${UNTERMINATED_BODY}` + // unterminated DCS, PM, APC, SOS
     `|${FE_BODY}` + // any other Fe/Fs/Fp: ESC plus one byte
     `)` +
     `|${C1_CSI}${CSI_BODY}` + // 8-bit CSI
+    `|${C1_CSI}${UNTERMINATED_BODY}` + // unterminated 8-bit CSI
     `|${C1_OSC}[^${BEL}${C1_ST}]*(?:${BEL}|${ST})` + // 8-bit OSC
-    `|[${C1_STRING_OPENERS}][^${ESC}${C1_ST}]*${ST}`, // 8-bit DCS/SOS/PM/APC
+    `|${C1_OSC}${UNTERMINATED_BODY}` + // unterminated 8-bit OSC
+    `|[${C1_STRING_OPENERS}][^${ESC}${C1_ST}]*${ST}` + // 8-bit DCS/SOS/PM/APC
+    `|[${C1_STRING_OPENERS}]${UNTERMINATED_BODY}`, // unterminated 8-bit strings
   "g",
 );
 // Literal control characters and escape sequences are refused in regex
