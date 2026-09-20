@@ -1415,7 +1415,10 @@ test("the request dump is off by default and writes what was sent when asked", (
  * provider surface is implemented directly over `createProvider`; each stream
  * ends immediately with the next scripted message.
  */
-function usageFixture(steps: Array<AssistantMessage | (() => AssistantMessage)>) {
+function usageFixture(
+  steps: Array<AssistantMessage | (() => AssistantMessage)>,
+  roleOptions: { activeToolNames?: string[] } = {},
+) {
   let consumed = 0;
   const model = {
     id: "usage-faux-1",
@@ -1430,9 +1433,36 @@ function usageFixture(steps: Array<AssistantMessage | (() => AssistantMessage)>)
     maxTokens: 16384,
   } as Model<Api>;
   const singleStream = () => {
-    const events = createAssistantMessageEventStream();
     const step = steps[consumed++] ?? fauxAssistantMessage("done");
-    events.end(typeof step === "function" ? step() : step);
+    const message = typeof step === "function" ? step() : step;
+    // Stream the scripted content the way pi-agent-core assembles messages:
+    // start, per-block deltas, then the settle. Without toolcall deltas the
+    // harness accumulates no arguments and the tool fails validation.
+    const events = createAssistantMessageEventStream();
+    const partial: AssistantMessage = { ...message, content: [], stopReason: "pending" };
+    events.push({ type: "start", partial: { ...partial } });
+    message.content.forEach((block, index) => {
+      if (block.type === "text") {
+        partial.content = [...partial.content, { type: "text", text: "" }];
+        events.push({ type: "text_start", contentIndex: index, partial: { ...partial } });
+        events.push({
+          type: "text_delta",
+          contentIndex: index,
+          delta: block.text,
+          partial: { ...partial },
+        });
+        events.push({
+          type: "text_end",
+          contentIndex: index,
+          content: block.text,
+          partial: { ...partial },
+        });
+        (partial.content[index] as { text: string }).text = block.text;
+      }
+    });
+    if (message.stopReason !== "aborted" && message.stopReason !== "error")
+      events.push({ type: "done", reason: message.stopReason as "stop", message });
+    events.end(message);
     return events;
   };
   const provider = createProvider({
@@ -1452,7 +1482,7 @@ function usageFixture(steps: Array<AssistantMessage | (() => AssistantMessage)>)
       provider: "usage-faux",
       modelId: model.id,
       systemPrompt: "You code.",
-      activeToolNames: ["bash", "read", "write", "edit"],
+      activeToolNames: roleOptions.activeToolNames ?? ["bash", "read", "write", "edit"],
       cacheRetention: "none",
       contextBudget: { maxTokens: 100_000, reserveTokens: 10_000, keepRecentTokens: 20_000 },
     },
@@ -1512,4 +1542,41 @@ test("#469: every other bounded-usage violation still kills the round", async ()
       runRole({ role, targetDir, models, model, prompt: "do it" }),
     ).rejects.toBeInstanceOf(RangeError);
   }
+});
+
+test("#469: usedTokens does not add reasoning on top of output", async () => {
+  // Pin the one-sentence accounting rule at src/runner/runner.ts (budget()
+  // usedTokens): `reasoning` is already inside `completion_tokens`, so the
+  // projection must be freshInput + cachedInput + output -- restoring
+  // `+ usage.reasoning` "for completeness" double counts reasoning forever.
+  const { models, model, role } = usageFixture(
+    [
+      () => {
+        // reasoning == output, so no clamp is involved; the projection is pure
+        // accounting. The tool call makes the runner publish an activity budget.
+        const withTool = messageWithUsage({ input: 5, output: 100, reasoning: 100 });
+        withTool.content = [fauxToolCall("note_taker", { note: "observed" })];
+        return withTool;
+      },
+    ],
+    { activeToolNames: ["note_taker"] },
+  );
+  const budgets: Array<{ usedTokens?: number } | undefined> = [];
+  await runRole({
+    role,
+    targetDir,
+    models,
+    model,
+    prompt: "use it",
+    tools: [recordingTool("note_taker", [])],
+    activityConsumer: (record) => {
+      if (record.type === "tool_activity" && record.lifecycle === "completed") {
+        budgets.push(record.budget);
+      }
+    },
+  });
+  // The projection is emitted after the response's usage arrived: input 5
+  // + output 100 = 105. With the removed `+ usage.reasoning` addend restored,
+  // this total would read 205 (reasoning counted twice).
+  expect(budgets.at(-1)?.usedTokens).toBe(105);
 });

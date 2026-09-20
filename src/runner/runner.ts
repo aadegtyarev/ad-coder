@@ -839,7 +839,9 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
       ...(stageLimitController !== undefined && {
         ...projectRemainingStageBudget(stageLimitController.snapshot()),
       }),
-      usedTokens: usage.freshInput + usage.cachedInput + usage.output + usage.reasoning,
+      // Issue #469 rule: `reasoning` (reasoning_tokens) is already inside
+      // `output` (completion_tokens), so it is not added again here.
+      usedTokens: usage.freshInput + usage.cachedInput + usage.output,
       usedCostUsd: usage.costUsd,
     }),
   });
