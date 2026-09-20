@@ -54,7 +54,14 @@ enforces that dated release headings go in non-increasing date order
   that reads as a provider failure. `summary` is restored with its requirement
   stated where the model reads it, beside `status`'s, and the instruction now
   names the fields required on the first call and the cost of dropping one,
-  because a JSON shape example alone reads as illustrative.
+  because a JSON shape example alone reads as illustrative. The guard is on the
+  CLASS and not on the instance: a test assembles a payload from each of the
+  three submission schemas' own `required` list and requires that no validator
+  refusal names a field that schema does not declare at all, so the same
+  deletion in `submit_plan` or `submit_follow_up` fails the suite as well. The
+  only structural guard that existed asserted that nested objects carry no
+  `required` -- true of every schema here, and blind to precisely this
+  deletion.
 
 ## [0.126.0] - 2026-09-20
 
