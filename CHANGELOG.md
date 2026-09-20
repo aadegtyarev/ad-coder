@@ -110,6 +110,43 @@ enforces that dated release headings go in non-increasing date order
   the catalog's price -- tiers included -- is what prices the run. Declare the
   catalog's own numbers so the file agrees with the bill.
 
+## [0.132.0] - 2026-09-20
+
+### Fixed
+- **The console stopped printing the same decision three times (issue #501).**
+  One console session measured twenty startup banners, one per role delegation
+  behind the session, each carrying the same selection and ladder: repeated
+  identical output read as milestones instead of noise, and the banner itself
+  named the plumbing instead of the decision -- a `provider destination` line
+  printed the host and the credential variable name per provider, and the main
+  banner pinned a `complexity` number the orchestrator reclassifies per brief.
+  The banner is now one line printed once per process, keyed on its content:
+  the selection, the provider(s) the routed models actually resolve to (distinct
+  provider names -- never hosts, never credential variables -- and only where
+  the selection does not already name them), and the role->model ladder the run
+  takes, with no default `complexity` at all; a genuinely different routing
+  prints once more, and the resolution data itself is untouched. The busy
+  console heartbeat drew a fresh bare `still running` line per interval, a line
+  storm that pushed real activity off screen; it now draws through the activity
+  renderer's single in-place slot and names what the turn is doing -- the
+  activity subject, the worker once a second role has worked, and the spend so
+  far -- while identical progress is never rewritten and JSON mode keeps its
+  complete event lines. A pipeline pause reached the terminal through two paths
+  (the pushed background notice and the result path that drove the run) and
+  printed twice, reading as a new decision where the operator already made one;
+  every renderer of a pause now asks one keyed memo before it writes, so the
+  first renderer of an occurrence wins and a new occurrence -- a different run,
+  phase, or code -- still prints. The pause line carries the recovery action in
+  words, says the phase even when the event carries no stage, and keeps "the run
+  is resumable, not failed"; the drive result path keeps the checkpoint path and
+  the actionable resume command on its one line. A payload that fails
+  validation degrades to `unknown` and invents no limit, while the lifecycle
+  stays fully visible. Tests pin the seams (each test resets the process-level
+  memos, so no test depends on run order) and the contract: one banner per
+  identical routing and one more per different routing, no plumbing in the
+  banner text, a busy line that names its subject instead of stacking, and a
+  pause that prints once per occurrence and never on re-delivery.
+
 ## [0.131.0] - 2026-09-20
 
 ### Fixed
