@@ -9,13 +9,13 @@ export type ConfigErrorCode =
   | "unknown_profile"
   /**
    * The resolve could not pick a route (issue #453). Every rung of the
-   * precedence ladder -- models.yaml, --inventory-config, --registry-config,
-   * --provider, and the env-preset provider keys -- was absent at resolve
-   * time. The `detail` is the names of the absent rungs and the env-var
-   * NAMES that could have resolved one, never a credential value and never
-   * provider prose. The console keeps its present env-preset/codex fallback;
-   * the detached worker entry is the only caller that asks the resolve to
-   * raise this code instead of substituting a route.
+   * precedence ladder -- models.yaml, --registry-config, --provider, and the
+   * env-preset provider keys -- was absent at resolve time. The `detail` is
+   * the names of the absent rungs and the env-var NAMES that could have
+   * resolved one, never a credential value and never provider prose. The
+   * console keeps its present env-preset/codex fallback; the detached worker
+   * entry is the only caller that asks the resolve to raise this code instead
+   * of substituting a route.
    */
   | "route_unresolved";
 

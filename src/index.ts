@@ -114,19 +114,6 @@ export type {
   QualityGate,
   QualityGateKind,
 } from "./gates/types";
-export { buildInstalledInventoryConfig, DEFAULT_INVENTORY_NAME } from "./inventory/default-config";
-export type { ModelInventoryErrorCode } from "./inventory/errors";
-export { ModelInventoryError } from "./inventory/errors";
-export { resolveModelInventory } from "./inventory/resolve";
-export { defaultInventoryPath } from "./inventory/store";
-export type {
-  ModelInventoryConfig,
-  ModelInventoryProfile,
-  ModelInventorySummary,
-  ResolvedModelInventory,
-  ResolveModelInventoryOptions,
-} from "./inventory/types";
-export { parseModelInventoryConfig } from "./inventory/validate";
 export type {
   LedgerFileStats,
   LedgerReport,

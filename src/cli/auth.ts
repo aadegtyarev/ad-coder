@@ -29,11 +29,10 @@ export interface AuthCommandOptions {
   providerId?: string;
   provider?: string;
   /**
-   * The declared-provider source for a non-built-in `--provider` id: models.yaml
-   * first, else inventories.json. Injectable so tests never read the real home
-   * config; both default to the XDG config home.
+   * The declared-provider source for a non-built-in `--provider` id: the
+   * operator's `models.yaml`. Injectable so tests never read the real home
+   * config; it defaults to the XDG config home.
    */
-  inventoryPath?: string;
   modelsConfigPath?: string;
   write?: (text: string) => void;
 }
@@ -101,11 +100,10 @@ export async function runAuthCommand(options: AuthCommandOptions): Promise<void>
   const providerId = options.providerId ?? provider;
   const source: DeclaredProviderSource = {
     ...(options.modelsConfigPath !== undefined && { modelsConfigPath: options.modelsConfigPath }),
-    ...(options.inventoryPath !== undefined && { inventoryPath: options.inventoryPath }),
   };
   // Built-in providers resolve from their shipped preset; any other id is a
-  // DECLARED env-var provider resolved from models.yaml-first / inventories.json
-  // (issue #101 item 2). A declared env-var provider's login type is api_key.
+  // DECLARED env-var provider resolved from models.yaml (issue #101 item 2).
+  // A declared env-var provider's login type is api_key.
   const isBuiltIn = provider === "openai-codex" || provider === "openrouter";
   const configured: RegistryConfig = isBuiltIn
     ? { providers: [provider === "openrouter" ? openrouterPreset() : openaiCodexPreset()] }

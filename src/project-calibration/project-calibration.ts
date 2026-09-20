@@ -4,7 +4,6 @@ import * as path from "node:path";
 import { parseProfile } from "../profiles/validate";
 import {
   calibrationSourceOf,
-  type ModelInventoryConfig,
   parseUserProfile,
   type UserProfile,
   UserProfileError,
@@ -31,73 +30,49 @@ export function projectCalibrationPath(targetDir: string) {
   return path.join(path.resolve(targetDir), ".ad-coder", FILE);
 }
 /**
- * Which routing source a snapshot is being built from (issue #506). A bare
- * string keeps the original meaning -- an inventory name -- so every existing
- * caller reads unchanged; the models arm names a `models.yaml` profile and
- * carries the (provider, model) pairs that profile reaches, which is what the
- * economics and capacity scoping below filters by. Those pairs are derived by
- * the config layer from the same walk the registry resolves with
- * (`modelsProfileSource`), never re-derived here.
+ * Which routing source a snapshot is being built from (issue #506): a
+ * `models.yaml` profile, carrying the (provider, model) pairs that profile
+ * reaches, which is what the economics and capacity scoping below filters by.
+ * Those pairs are derived by the config layer from the same walk the registry
+ * resolves with (`modelsProfileSource`), never re-derived here.
  */
-export type CalibrationSourceRef =
-  | { kind: "inventory"; name: string }
-  | { kind: "models-profile"; name: string; providers: Array<{ id: string; models: string[] }> };
-
-function refOf(source: CalibrationSourceRef | string): CalibrationSourceRef {
-  return typeof source === "string" ? { kind: "inventory", name: source } : source;
-}
+export type CalibrationSourceRef = {
+  kind: "models-profile";
+  name: string;
+  providers: Array<{ id: string; models: string[] }>;
+};
 
 export function createProjectCalibrationSnapshot(
   value: unknown,
-  source: CalibrationSourceRef | string,
+  source: CalibrationSourceRef,
   limits: ProjectCalibrationLimits = {},
 ): ProjectCalibrationSnapshot {
-  const ref = refOf(source);
+  const ref = source;
   const profile = parseUserProfile(value);
   const routing = profile.calibratedRouting.find((x) => {
     const named = calibrationSourceOf(x);
     return named?.kind === ref.kind && named.name === ref.name;
   });
   if (routing === undefined)
+    throw new UserProfileError("not_found", ref.name, "calibrated models profile not found");
+  // The source resolves the provider/model pairs it serves, and the field the
+  // snapshot will name, in one place: a models.yaml profile declares them in
+  // `models.yaml` and they arrive WITH the ref (derived by the config layer's
+  // own walk), never re-derived here.
+  const declaredProviders = ref.providers;
+  const sourceFields = { modelsProfile: ref.name };
+  // Membership: the calibration may only route to models its source serves, and
+  // the offending cell is NAMED, so a mistyped model is refused by name instead
+  // of shipping a snapshot whose route dies at resolution.
+  const outside = routing.profile.entries.find(
+    (entry) => !declaredProviders.some((provider) => provider.models.includes(entry.model)),
+  );
+  if (outside !== undefined)
     throw new UserProfileError(
-      "not_found",
-      ref.name,
-      ref.kind === "inventory"
-        ? "calibrated inventory not found"
-        : "calibrated models profile not found",
+      "invalid_profile",
+      outside.model,
+      `calibrated routing model "${outside.model}" is not served by models profile "${ref.name}"`,
     );
-  // Each arm resolves BOTH the provider/model pairs it serves and the source
-  // field the snapshot will name, in one place: an inventory declares both in
-  // this document, a models.yaml profile declares them in `models.yaml` and
-  // they arrive WITH the ref (derived by the config layer's own walk).
-  let declaredProviders: Array<{ id: string; models: string[] }>;
-  let sourceFields: { inventory: ModelInventoryConfig } | { modelsProfile: string };
-  if (ref.kind === "inventory") {
-    const inventory = profile.inventories.find((x) => x.name === ref.name);
-    if (inventory === undefined)
-      throw new UserProfileError("not_found", ref.name, "calibrated inventory not found");
-    declaredProviders = inventory.providers;
-    sourceFields = { inventory };
-  } else {
-    declaredProviders = ref.providers;
-    sourceFields = { modelsProfile: ref.name };
-  }
-  // Membership: the calibration may only route to models its source serves. For
-  // an inventory, `parseUserProfile` above already enforced it against this
-  // document. For a models profile the check happens here, and the offending
-  // cell is NAMED, so a mistyped model is refused by name instead of shipping a
-  // snapshot whose route dies at resolution.
-  if (ref.kind === "models-profile") {
-    const outside = routing.profile.entries.find(
-      (entry) => !declaredProviders.some((provider) => provider.models.includes(entry.model)),
-    );
-    if (outside !== undefined)
-      throw new UserProfileError(
-        "invalid_profile",
-        outside.model,
-        `calibrated routing model "${outside.model}" is not served by models profile "${ref.name}"`,
-      );
-  }
   const maxEconomics = limit(limits.maxEconomics, "maxEconomics", 256);
   const maxCapacity = limit(limits.maxCapacityRanges, "maxCapacityRanges", 64);
   const providers = new Set(declaredProviders.map((p) => p.id));
@@ -153,16 +128,21 @@ export function parseProjectCalibrationSnapshot(value: unknown): ProjectCalibrat
       "project calibration snapshot must be an object",
     );
   const x = value as Record<string, unknown>;
-  // EXACTLY ONE SOURCE KEY (#506). The accepted field set is the union of the
-  // two arms' shapes, compared exactly -- a snapshot carrying both source keys
-  // and a snapshot carrying neither are both refused, as is an unknown field. A
-  // snapshot written before the models arm existed carries `inventory` and
-  // still parses here, so a committed snapshot in an existing checkout never
-  // turns into a hard failure.
+  // ONE SOURCE KEY (#506). The accepted field set is compared exactly -- an
+  // unknown field is refused, and so is a snapshot carrying no source at all.
+  // A snapshot naming a JSON inventory is refused BY NAME rather than as an
+  // unknown field (issue #513): the routed inventory is gone from the code, so
+  // that arm names a source no run can select, and the operator reading the
+  // failure learns which source to name instead.
+  if (x.inventory !== undefined)
+    throw new UserProfileError(
+      "invalid_profile",
+      "inventory",
+      `this snapshot names the JSON inventory "${String((x.inventory as { name?: unknown })?.name)}" as its routing source, and a JSON inventory is no longer a source a run can select; name a models.yaml profile instead -- re-take the snapshot with \`ad-coder profile snapshot --models-profile <name>\` (issue #513)`,
+    );
   const shape = Object.keys(x).sort().join(",");
   if (
-    (shape !== "economics,inventory,observedOn,routing,subscriptionCapacityRanges,version" &&
-      shape !== "economics,modelsProfile,observedOn,routing,subscriptionCapacityRanges,version") ||
+    shape !== "economics,modelsProfile,observedOn,routing,subscriptionCapacityRanges,version" ||
     x.version !== 1
   )
     throw new UserProfileError(
@@ -178,29 +158,20 @@ export function parseProjectCalibrationSnapshot(value: unknown): ProjectCalibrat
     );
   // The envelope re-parse hands the stored facts to the user-profile parser,
   // which owns routing shape, source naming and membership. It declares the
-  // SAME arm the snapshot names, so the checks that apply are the ones that arm
-  // has: an inventory block, or a models.yaml profile name whose model list
-  // this module cannot see.
-  const namesModelsProfile = x.modelsProfile !== undefined;
+  // source the snapshot names -- a models.yaml profile, whose model list this
+  // module cannot see and whose membership check therefore runs where that file
+  // is loaded.
   const envelope = parseUserProfile({
     version: 1,
-    inventories: namesModelsProfile ? [] : [x.inventory],
+    inventories: [],
     calibratedRouting: [
-      namesModelsProfile
-        ? {
-            modelsProfile: x.modelsProfile,
-            profile: x.routing,
-            observedOn: x.observedOn,
-            source: "project-calibration",
-            confidence: "measured",
-          }
-        : {
-            inventory: (x.inventory as { name?: unknown })?.name,
-            profile: x.routing,
-            observedOn: x.observedOn,
-            source: "project-calibration",
-            confidence: "measured",
-          },
+      {
+        modelsProfile: x.modelsProfile,
+        profile: x.routing,
+        observedOn: x.observedOn,
+        source: "project-calibration",
+        confidence: "measured",
+      },
     ],
     economicRecords: x.economics.map((r, i) => {
       const e = r as Record<string, unknown>;
@@ -223,29 +194,16 @@ export function parseProjectCalibrationSnapshot(value: unknown): ProjectCalibrat
   const routing = parseProfile(x.routing);
   const observedOn = String(x.observedOn);
   const economics = (x.economics as ProjectCalibrationSnapshot["economics"]).map((e) => ({ ...e }));
-  if (namesModelsProfile) {
-    const modelsProfile = envelope.calibratedRouting[0]?.modelsProfile;
-    if (modelsProfile === undefined)
-      throw new UserProfileError(
-        "invalid_profile",
-        "modelsProfile",
-        "snapshot models profile is missing",
-      );
-    return {
-      version: 1,
-      modelsProfile,
-      routing,
-      observedOn,
-      economics,
-      subscriptionCapacityRanges: envelope.subscriptionCapacityRanges,
-    };
-  }
-  const inventory = envelope.inventories[0];
-  if (inventory === undefined)
-    throw new UserProfileError("invalid_profile", "inventory", "snapshot inventory is missing");
+  const modelsProfile = envelope.calibratedRouting[0]?.modelsProfile;
+  if (modelsProfile === undefined)
+    throw new UserProfileError(
+      "invalid_profile",
+      "modelsProfile",
+      "snapshot models profile is missing",
+    );
   return {
     version: 1,
-    inventory,
+    modelsProfile,
     routing,
     observedOn,
     economics,

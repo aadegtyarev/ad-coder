@@ -670,59 +670,6 @@ test("profile CLI appends a server-reported credit balance observation", () => {
   }
 });
 
-test("profile CLI writes a bounded project calibration snapshot", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-profile-snapshot-"));
-  try {
-    const profilePath = path.join(root, "profile.json");
-    const inputPath = path.join(root, "portable.json");
-    fs.writeFileSync(
-      inputPath,
-      JSON.stringify({
-        version: 1,
-        inventories: [{ name: "work", providers: [{ id: "codex", models: ["luna"] }] }],
-        calibratedRouting: [
-          {
-            inventory: "work",
-            profile: { entries: [{ role: "coder", complexity: "trivial", model: "luna" }] },
-            observedOn: "2026-09-13",
-            source: "benchmark",
-            confidence: "measured",
-          },
-        ],
-        economicRecords: [],
-        subscriptionCapacityRanges: [],
-      }),
-    );
-    expect(
-      runCli([
-        "profile",
-        "import-apply",
-        "--input",
-        inputPath,
-        "--mode",
-        "replace",
-        "--profile-path",
-        profilePath,
-      ]).code,
-    ).toBe(0);
-    const result = runCli([
-      "profile",
-      "snapshot",
-      "--profile-path",
-      profilePath,
-      "--target-dir",
-      root,
-      "--inventory",
-      "work",
-    ]);
-    expect(result.code).toBe(0);
-    expect(JSON.parse(result.stdout).file).toBe(path.join(root, ".ad-coder", "calibration.json"));
-    expect(fs.existsSync(path.join(root, ".ad-coder", "calibration.json"))).toBe(true);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
 test("profile CLI snapshots a models.yaml profile, and refuses an ambiguous source", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-profile-models-"));
   try {
@@ -793,6 +740,12 @@ test("profile CLI snapshots a models.yaml profile, and refuses an ambiguous sour
       modelsPath,
     ]);
     expect(snapshot.code).toBe(0);
+    // The command answers with the path it wrote, and the file is there: the
+    // inventory-named variant of this test (retired with the JSON route, issue
+    // #513) was the only place that asserted the reported path, so it moved here
+    // rather than leaving with its route.
+    expect(JSON.parse(snapshot.stdout).file).toBe(path.join(root, ".ad-coder", "calibration.json"));
+    expect(fs.existsSync(path.join(root, ".ad-coder", "calibration.json"))).toBe(true);
     const written = JSON.parse(
       fs.readFileSync(path.join(root, ".ad-coder", "calibration.json"), "utf8"),
     );
@@ -816,6 +769,15 @@ test("profile CLI snapshots a models.yaml profile, and refuses an ambiguous sour
       expect(result.code).toBe(code);
       expect(result.stderr.length).toBeGreaterThan(0);
     }
+    // The retired flag's refusal NAMES the replacement (issue #513), asserted
+    // apart from the loop above because the loop reads the exit code only. A
+    // usage error that names the flag it refuses and no route forward leaves
+    // the operator holding a command that stopped working -- and after this
+    // branch there is no other surface left that reads this text.
+    const retired = bad(["--inventory", "work", "--models-profile", "daily"]);
+    expect(retired.stderr).toContain("--inventory");
+    expect(retired.stderr).toContain("--models-profile");
+    expect(retired.stderr).toContain("models.yaml");
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -1007,6 +969,60 @@ test("each command renders its own help before validating required input", () =>
   expect(stdout).toContain("Role to run.");
   expect(stderr).toBe("");
   expect(runCli(["drive", "--help"]).stdout).toContain("--retry-research");
+  // `profile` is not in the table above -- it carries a positional -- so its
+  // help is read here for the routing pair this branch changed (issue #513).
+  // The replacement is advertised...
+  const profileHelp = runCli(["profile", "--help"]);
+  expect(profileHelp.code).toBe(0);
+  expect(profileHelp.stdout).toContain("--models-profile");
+  // ...and the retired flag is still DECLARED, saying so. Both halves matter:
+  // the option table is the parse table, so a flag deleted from it no longer
+  // reaches the typed refusal and comes back as a bare "unknown option" that
+  // names nothing instead (measured: dropping this entry made that same
+  // `--inventory` invocation answer `unknown option: --inventory`), while a
+  // flag left advertised as "Inventory to snapshot." sends the operator to an
+  // option that cannot work.
+  expect(profileHelp.stdout).toContain("Retired (issue #513)");
+  expect(profileHelp.stdout).not.toContain("--inventory-profile");
+}, 10_000);
+
+test("the retired config action and the JSON inventory options are refused, not merely gone", () => {
+  // Issue #513 deleted the `config migrate` action and the `--inventory-config`
+  // and `--inventory-profile` options. An absence is a contract only if
+  // RESTORING the surface fails a test, so every assertion below was measured
+  // against a tree with the surface put back (counts in the commit message).
+  // Exit codes alone would not carry it: an option restored to the table is
+  // parsed and then dies on its own missing file, which reads exactly like a
+  // refusal from the outside. The text is the sharper half -- "unknown option"
+  // is what the parse table says when it does not know a name.
+  const configHelp = runCli(["config", "--help"]);
+  expect(configHelp.code).toBe(0);
+  // One action, and the usage line offers exactly that one.
+  expect(configHelp.stdout).toContain("usage: ad-coder config <show>");
+  // It also says out loud that `migrate` left, rather than dropping the word:
+  // the operator who typed it finds out why instead of hunting a flag that no
+  // longer exists on any surface.
+  expect(configHelp.stdout).toContain("was removed with the JSON inventory route");
+  expect(configHelp.stdout).not.toContain("--inventory-config");
+
+  const migrated = runCli(["config", "migrate"]);
+  expect(migrated.code).toBe(2);
+  expect(migrated.stdout).toBe("");
+  expect(migrated.stderr).toContain("config requires exactly one action: show");
+
+  const retired: ReadonlyArray<readonly [string[], string]> = [
+    [
+      ["config", "show", "--inventory-config", path.join(CONFIG_HOME, "inventory.json")],
+      "--inventory-config",
+    ],
+    [["profile", "snapshot", "--inventory-profile", "work"], "--inventory-profile"],
+  ];
+  for (const [args, flag] of retired) {
+    const refused = runCli(args);
+    expect(refused.code).toBe(2);
+    expect(refused.stdout).toBe("");
+    expect(refused.stderr).toContain(`unknown option: ${flag}`);
+  }
 }, 10_000);
 
 test("drive research retry requires a durable run id", () => {
@@ -1208,58 +1224,6 @@ test("auth login rejects an empty OpenRouter API key without claiming success", 
 /** A declared env-var provider id shared across the auth declared-provider tests. */
 const DECLARED_PROVIDER_ID = "myprovider";
 
-/** A minimal inventory declaring ONE env-var provider, valid for `parseModelInventoryConfig`. */
-function declaredInventoryFile(dir: string): string {
-  const file = path.join(dir, "inventories.json");
-  const entries = (
-    [
-      "orchestrator",
-      "planner",
-      "researcher",
-      "coder",
-      "reviewer",
-      "auditor",
-      "security",
-      "summarizer",
-    ] as const
-  ).flatMap((role) =>
-    (["trivial", "medium", "complex"] as const).map((complexity) => ({
-      role,
-      complexity,
-      model: "my-model",
-    })),
-  );
-  const inventory = {
-    profiles: [
-      {
-        name: "declared",
-        registry: {
-          providers: [
-            {
-              id: DECLARED_PROVIDER_ID,
-              api: "openai-completions",
-              baseUrl: "https://myprovider.example.com/v1",
-              credential: { kind: "env-var", envVar: "MYPROVIDER_API_KEY" },
-              models: [
-                {
-                  name: "my-model",
-                  modelId: "my-model",
-                  maxTokens: 4096,
-                  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-                },
-              ],
-            },
-          ],
-        },
-        profile: { entries },
-      },
-    ],
-    default: "declared",
-  };
-  fs.writeFileSync(file, JSON.stringify(inventory));
-  return file;
-}
-
 /** A minimal models.yaml declaring the same env-var provider. */
 function declaredModelsYamlFile(dir: string): string {
   const file = path.join(dir, "models.yaml");
@@ -1390,46 +1354,6 @@ test("auth resolves a declared provider from models.yaml (models.yaml-first)", a
   }
 });
 
-test("auth --provider with a stored inventories.json present is the loud retire error", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-unknown-provider-cli-"));
-  const priorConfigHome = process.env.XDG_CONFIG_HOME;
-  process.env.XDG_CONFIG_HOME = root;
-  const targetDir = path.join(root, "project");
-  const credentialPath = path.join(root, "private", "credentials.json");
-  fs.mkdirSync(targetDir);
-  try {
-    // The CLI resolves default paths under `$XDG_CONFIG_HOME/ad-coder`, so the
-    // fixture must live there for the spawned binary to see it.
-    const configDir = path.join(root, "ad-coder");
-    fs.mkdirSync(configDir, { recursive: true });
-    declaredInventoryFile(configDir);
-    const result = runCli([
-      "auth",
-      "status",
-      "--provider",
-      "not-declared",
-      "--target-dir",
-      targetDir,
-      "--credential-path",
-      credentialPath,
-    ]);
-    // The stored JSON route is retired (2026-09-19): auth cannot manage a
-    // provider through it either. The failure is loud and names the migration
-    // command, never the operator's path. Unknown-id validation against the
-    // declared ids is covered by the models.yaml variant below.
-    expect(result.code).not.toBe(0);
-    expect(result.stderr).toContain("no longer a routing source");
-    expect(result.stderr).toContain("config migrate");
-    expect(result.stderr).not.toContain(configDir);
-    // ids only -- never a credential value or env-var name leaked.
-    expect(result.stderr).not.toContain("MYPROVIDER_API_KEY");
-  } finally {
-    if (priorConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
-    else process.env.XDG_CONFIG_HOME = priorConfigHome;
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
 test("auth --provider validates against models.yaml-declared ids too", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-unknown-yaml-provider-cli-"));
   const priorConfigHome = process.env.XDG_CONFIG_HOME;
@@ -1456,6 +1380,10 @@ test("auth --provider validates against models.yaml-declared ids too", () => {
     expect(result.stderr).toContain("openrouter");
     expect(result.stderr).toContain(DECLARED_PROVIDER_ID);
     expect(result.stderr).not.toContain("MYPROVIDER_API_KEY");
+    // The refusal names ids, never the operator's config directory: the
+    // retired-route variant of this test carried this assertion (issue #513)
+    // and the path-leak rule outlives the route it was written for.
+    expect(result.stderr).not.toContain(configDir);
   } finally {
     if (priorConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
     else process.env.XDG_CONFIG_HOME = priorConfigHome;

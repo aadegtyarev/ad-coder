@@ -22,7 +22,7 @@
  * silent pass, and does not by itself change the exit.
  *
  * SOURCES:
- * - declared rows: `--inventory <path>`, DEFAULT defaultModelsPath() -- the
+ * - declared rows: `--models-config <path>`, DEFAULT defaultModelsPath() -- the
  *   operator's models.yaml layer (per-1M, `input`/`output` required,
  *   `cacheRead`/`cacheWrite` optional). NEVER read or written implicitly
  *   beyond the flag's own target.
@@ -235,12 +235,12 @@ export function buildChargeRecord(snapshot: CostAnomalyStateSnapshot): ChargeRec
 }
 
 type ParsedArgs =
-  | { kind: "ok"; inventory?: string; charges?: string; tolerance: number; offline: boolean }
+  | { kind: "ok"; modelsConfig?: string; charges?: string; tolerance: number; offline: boolean }
   | { kind: "bad"; error: string };
 
 /** Parse the command's flags; unknown or malformed flags are a usage refusal. */
 export function parseArgs(argv: readonly string[]): ParsedArgs {
-  let inventory: string | undefined;
+  let modelsConfig: string | undefined;
   let charges: string | undefined;
   let tolerance = DEFAULT_TOLERANCE;
   let offline = false;
@@ -251,8 +251,8 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
       continue;
     }
     const value = argv[index + 1];
-    if (flag === "--inventory" && typeof value === "string") {
-      inventory = value;
+    if (flag === "--models-config" && typeof value === "string") {
+      modelsConfig = value;
       index += 1;
       continue;
     }
@@ -270,20 +270,31 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
       index += 1;
       continue;
     }
+    // The one flag this command RETIRED says so, the way the CLI's refusals do
+    // (issue #513): the generic usage line below names the supported flags, but
+    // an operator still passing `--inventory` deserves to read which flag is
+    // gone and what replaced it, not to diff two usage strings.
+    if (flag === "--inventory") {
+      return {
+        kind: "bad",
+        error:
+          "check-prices no longer takes --inventory: a JSON inventory is not a routing source; name the models.yaml file with --models-config <path> (issue #513)",
+      };
+    }
     return {
       kind: "bad",
       error:
-        "usage: scripts/check-prices.ts [--inventory <path>] [--charges <path>] [--tolerance <ratio>] [--offline]",
+        "usage: scripts/check-prices.ts [--models-config <path>] [--charges <path>] [--tolerance <ratio>] [--offline]",
     };
   }
   const parsed: {
     kind: "ok";
-    inventory?: string;
+    modelsConfig?: string;
     charges?: string;
     tolerance: number;
     offline: boolean;
   } = { kind: "ok", tolerance, offline };
-  if (inventory !== undefined) parsed.inventory = inventory;
+  if (modelsConfig !== undefined) parsed.modelsConfig = modelsConfig;
   if (charges !== undefined) parsed.charges = charges;
   return parsed;
 }
@@ -300,10 +311,10 @@ export async function run(argv: readonly string[], deps: CommandDeps = {}): Prom
 
   let config: ReturnType<typeof loadModelsConfig>;
   try {
-    config = loadModelsConfig(args.inventory ?? defaultModelsPath());
+    config = loadModelsConfig(args.modelsConfig ?? defaultModelsPath());
   } catch (error) {
     write(
-      `inventory could not be used: ${error instanceof Error ? error.message : String(error)}\n`,
+      `models config could not be used: ${error instanceof Error ? error.message : String(error)}\n`,
     );
     return 1;
   }

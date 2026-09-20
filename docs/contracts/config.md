@@ -521,3 +521,39 @@ was shown, under the same overriding rules the banner already answers to.
   the truncated projection's byte count; the threshold that escalation
   compares against is `pipelineContext.maxFocusedDiffBytes` (64 KiB, zero
   disables).
+
+- 2026-09-20 (issue #513): **`models.yaml` is the ONLY routing source, and the
+  routed JSON inventory is gone from the code rather than merely unselected.**
+  The YAML route (2026-09-14, issue #280) had already made an inventory
+  unselectable, which left every JSON path alive as a second format kept
+  running by nothing but its own parser: `src/inventory/{types,validate,resolve,
+  store,errors,default-config}.ts`, `src/config/migrate.ts`, the
+  `--inventory-config` and `--inventory-profile` options, the `config migrate`
+  action (a `config` command now takes the `show` action alone), and the
+  `inventory` arm of `ProjectCalibrationSnapshot`. A file left on disk is read
+  by nothing and is not an error -- there is no second stored routing source to
+  point the operator at and no migration command to name. What is REFUSED is
+  naming an inventory as a source: `ad-coder profile snapshot --inventory <name>`
+  fails naming the flag and the replacement, and a committed snapshot whose
+  fields name an inventory fails with the command that re-takes it
+  (`profile snapshot --models-profile <name>`), never as an anonymous shape
+  error. The source kind stays part of a calibration's identity -- the arm a
+  snapshot names is what the run must have resolved -- but there is now exactly
+  one kind a run can resolve, so `snapshotSource` answers with a models profile
+  and nothing else.
+- 2026-09-20 (issue #513, on the same change): **a project may carry a routing
+  override, and THIS repository deliberately does not.** A committed
+  `.ad-coder/calibration.json` whose named source matches the source a run
+  resolved replaces that source's routing for the project (the store's
+  gitignore is `*\n!calibration.json` on purpose). This repository's own
+  snapshot was deleted rather than migrated: it named a JSON inventory, its
+  routing ladder was a 2026-09-13 copy of model ids that no longer exist
+  (`codex-luna`/`codex-terra`/`codex-sol`, now `gpt-5.6-*`), and re-taking it
+  against `codex-pro100` would have pinned a copy of the operator's own
+  `models.yaml` ladder inside the repository -- the one place where a later
+  `models.yaml` edit could not take effect. One truth: routing lives in
+  `models.yaml` for every checkout at once. The mechanism survives for a project
+  that genuinely needs to pin a routing; nothing in the runtime reads the
+  snapshot's `economics` or `subscriptionCapacityRanges` (the only reader is
+  `resolveConfig`, which takes the `routing` field and the source name), so a
+  project that carries none loses nothing else.

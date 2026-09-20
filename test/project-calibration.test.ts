@@ -11,14 +11,21 @@ import {
 } from "../src";
 import { parseProjectCalibrationSnapshot, snapshotSource } from "../src/project-calibration";
 
-const REPO_ROOT = path.resolve(import.meta.dir, "..");
+/** The models.yaml profile a snapshot under test is calibrated against, with
+ * the (provider, model) pairs that profile serves -- the config layer derives
+ * these from its own walk over models.yaml and hands them to the snapshot. */
+const workSource = {
+  kind: "models-profile" as const,
+  name: "work",
+  providers: [{ id: "codex", models: ["luna", "terra"] }],
+};
 
 const profile = {
   version: 1 as const,
-  inventories: [{ name: "work", providers: [{ id: "codex", models: ["luna", "terra"] }] }],
+  inventories: [],
   calibratedRouting: [
     {
-      inventory: "work",
+      modelsProfile: "work",
       profile: {
         entries: [{ role: "coder" as const, complexity: "trivial" as const, model: "luna" }],
       },
@@ -57,7 +64,7 @@ const profile = {
 test("project snapshot keeps only current anonymous calibration and round-trips", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-calibration-"));
   try {
-    const snapshot = createProjectCalibrationSnapshot(profile, "work");
+    const snapshot = createProjectCalibrationSnapshot(profile, workSource);
     expect(snapshot.economics).toEqual([
       expect.objectContaining({ value: 1, observedOn: "2026-09-13" }),
     ]);
@@ -73,15 +80,17 @@ test("project snapshot keeps only current anonymous calibration and round-trips"
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
-test("project snapshot limits and missing calibrated inventories fail loudly", () => {
-  expect(() => createProjectCalibrationSnapshot(profile, "missing")).toThrow(UserProfileError);
+test("project snapshot limits and a missing calibrated source fail loudly", () => {
   expect(() =>
-    createProjectCalibrationSnapshot(profile, "work", { maxEconomics: 0 }),
+    createProjectCalibrationSnapshot(profile, { ...workSource, name: "missing" }),
+  ).toThrow(UserProfileError);
+  expect(() =>
+    createProjectCalibrationSnapshot(profile, workSource, { maxEconomics: 0 }),
   ).not.toThrow();
   expect(() =>
-    createProjectCalibrationSnapshot(profile, "work", { maxEconomics: 1 }),
+    createProjectCalibrationSnapshot(profile, workSource, { maxEconomics: 1 }),
   ).not.toThrow();
-  expect(() => createProjectCalibrationSnapshot(profile, "work", { maxEconomics: -1 })).toThrow(
+  expect(() => createProjectCalibrationSnapshot(profile, workSource, { maxEconomics: -1 })).toThrow(
     UserProfileError,
   );
 });
@@ -167,8 +176,9 @@ test("a snapshot calibrated against a models.yaml profile names it, in its own n
         source,
       ),
     ).toThrow(/gpt-5.6-sol/);
-    // A profile the document does not calibrate is not found, and the arm is
-    // part of the lookup: the same name as an INVENTORY is a different source.
+    // A profile the document does not calibrate is not found: the name is part
+    // of the lookup, and a name the document never calibrated has no routing to
+    // build a snapshot from.
     expect(() =>
       createProjectCalibrationSnapshot(modelsProfile, {
         kind: "models-profile",
@@ -176,11 +186,6 @@ test("a snapshot calibrated against a models.yaml profile names it, in its own n
         providers: [],
       }),
     ).toThrow(UserProfileError);
-    expect(() => createProjectCalibrationSnapshot(modelsProfile, "codex-pro100")).toThrow(
-      UserProfileError,
-    );
-    // A bare string still means the inventory arm, unchanged.
-    expect(createProjectCalibrationSnapshot(profile, "work").inventory?.name).toBe("work");
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -192,7 +197,7 @@ test("project snapshot refuses symlinked directories and destinations", () => {
   try {
     fs.symlinkSync(outside, path.join(root, ".ad-coder"));
     expect(() =>
-      writeProjectCalibrationSnapshot(root, createProjectCalibrationSnapshot(profile, "work")),
+      writeProjectCalibrationSnapshot(root, createProjectCalibrationSnapshot(profile, workSource)),
     ).toThrow(UserProfileError);
     expect(fs.existsSync(path.join(outside, "calibration.json"))).toBe(false);
     fs.unlinkSync(path.join(root, ".ad-coder"));
@@ -202,7 +207,7 @@ test("project snapshot refuses symlinked directories and destinations", () => {
       path.join(root, ".ad-coder", "calibration.json"),
     );
     expect(() =>
-      writeProjectCalibrationSnapshot(root, createProjectCalibrationSnapshot(profile, "work")),
+      writeProjectCalibrationSnapshot(root, createProjectCalibrationSnapshot(profile, workSource)),
     ).toThrow(UserProfileError);
     expect(fs.existsSync(path.join(outside, "target.json"))).toBe(false);
   } finally {
@@ -220,7 +225,7 @@ test("project snapshot refuses a symlinked target directory", () => {
     expect(() =>
       writeProjectCalibrationSnapshot(
         linkedTarget,
-        createProjectCalibrationSnapshot(profile, "work"),
+        createProjectCalibrationSnapshot(profile, workSource),
       ),
     ).toThrow(UserProfileError);
     expect(fs.existsSync(path.join(outside, ".ad-coder", "calibration.json"))).toBe(false);
@@ -230,17 +235,72 @@ test("project snapshot refuses a symlinked target directory", () => {
   }
 });
 
-test("this repository's own committed calibration snapshot parses", () => {
-  // `.ad-coder/calibration.json` is tracked on purpose -- the store's gitignore
-  // is `*\n!calibration.json` -- so a project ships the routing it measured. That
-  // makes it data this repository carries, and a stale one breaks every command
-  // that loads a user profile: renaming the `recorder` role to `summarizer`
-  // cleaned the code and left this file naming a role the validator rejects, so
-  // `config show` would not start in a fresh clone. Nothing else reads it during
-  // tests, which is why nothing noticed.
-  const snapshot = path.join(REPO_ROOT, ".ad-coder", "calibration.json");
-  if (!fs.existsSync(snapshot)) return;
-  expect(() =>
-    parseProjectCalibrationSnapshot(JSON.parse(fs.readFileSync(snapshot, "utf8"))),
-  ).not.toThrow();
+test("a committed models-profile snapshot parses from the fixture this test writes", () => {
+  // The repository's own `.ad-coder/calibration.json` is gone (issue #513 took
+  // the routed JSON inventory with it, and the committed snapshot named that
+  // arm). What it existed to catch survives: a snapshot is data a repository
+  // carries, and a shape the parser rejects breaks every command that loads a
+  // user profile. So the fixture below is written out the way a committed one
+  // would be -- the exact field set, as JSON -- and parsed from there.
+  const fixture = JSON.stringify({
+    version: 1,
+    modelsProfile: "work",
+    routing: {
+      entries: [{ role: "coder", complexity: "trivial", model: "luna" }],
+    },
+    observedOn: "2026-09-13",
+    economics: [
+      {
+        provider: "codex",
+        model: "luna",
+        kind: "price",
+        value: 1,
+        unit: "credits",
+        observedOn: "2026-09-13",
+        source: "provider-measurement",
+        confidence: "measured",
+      },
+    ],
+    subscriptionCapacityRanges: [],
+  });
+  const parsed = parseProjectCalibrationSnapshot(JSON.parse(fixture));
+  expect(parsed.modelsProfile).toBe("work");
+  expect(snapshotSource(parsed)).toEqual({ kind: "models-profile", name: "work" });
+});
+
+test("a snapshot naming a JSON inventory is refused by name, with the command that re-takes it", () => {
+  // This repository's own committed snapshot carried this arm (issue #513), so
+  // it is the exact file a checkout upgrading across the retirement still has
+  // on disk. The refusal has to name the source it FOUND and the command that
+  // replaces it: the anonymous shape error it would otherwise fall into
+  // ("must be one of ...", naming fields) tells the operator which keys are
+  // legal and nothing about how to get back to a working snapshot.
+  const legacy = {
+    version: 1,
+    inventory: { name: "work", providers: [{ id: "codex", models: ["luna"] }] },
+    routing: { entries: [{ role: "coder", complexity: "trivial", model: "luna" }] },
+    observedOn: "2026-09-13",
+  };
+  let thrown: unknown;
+  try {
+    parseProjectCalibrationSnapshot(legacy);
+  } catch (error) {
+    thrown = error;
+  }
+  expect(thrown).toBeInstanceOf(UserProfileError);
+  const refusal = thrown as UserProfileError;
+  expect(refusal.code).toBe("invalid_profile");
+  expect(refusal.detail).toBe("inventory");
+  // The source it found, by name...
+  expect(refusal.message).toContain('"work"');
+  // ...the namespace that replaces it...
+  expect(refusal.message).toContain("models.yaml");
+  // ...and the command that re-takes the snapshot, which is the whole point:
+  // an operator who is told only that the arm is gone has no way back.
+  expect(refusal.message).toContain("--models-profile");
+  // The shape error this arm exists to preempt, asserted as its absence: the
+  // legacy file is missing `modelsProfile`, so without the check above it would
+  // fail the exact-field-set comparison instead and never mention any of this.
+  expect(refusal.message).not.toContain("fields are invalid");
+  expect(refusal.detail).not.toBe("snapshot");
 });
