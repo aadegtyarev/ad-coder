@@ -2,9 +2,9 @@ import { describe, expect, test } from "bun:test";
 import {
   auditDeclaredPrices,
   DEFAULT_TOLERANCE,
-  livePerMillion,
   type LiveCatalogue,
   type LivePrice,
+  livePerMillion,
   PER_MILLION,
 } from "../src/registry/price-audit";
 
@@ -17,7 +17,9 @@ import {
 const live = (prompt: number, completion: number, inputCacheRead?: number): LivePrice => ({
   prompt: (prompt / PER_MILLION).toString(),
   completion: (completion / PER_MILLION).toString(),
-  ...(inputCacheRead !== undefined ? { input_cache_read: (inputCacheRead / PER_MILLION).toString() } : {}),
+  ...(inputCacheRead !== undefined
+    ? { input_cache_read: (inputCacheRead / PER_MILLION).toString() }
+    : {}),
 });
 
 describe("auditDeclaredPrices", () => {
@@ -114,4 +116,21 @@ describe("auditDeclaredPrices", () => {
       reference: 0.3,
     });
   });
+});
+
+/* --- Command-level tests: scripts/check-prices.ts, fully injected, NO network --- */
+
+import { run as runScript } from "../scripts/check-prices";
+
+test("(iv) a source that does not answer reports source-unavailable and exits 2", async () => {
+  const lines: string[] = [];
+  const inventory = new URL("./fixtures/check-prices-injected.yaml", import.meta.url).pathname;
+  const code = await runScript(["--inventory", inventory], {
+    fetchImpl: async () => {
+      throw new Error("upstream refused");
+    },
+    write: (text: string) => lines.push(text),
+  });
+  expect(code).toBe(2);
+  expect(lines.join("")).toMatch(/source unavailable: the source did not answer/);
 });

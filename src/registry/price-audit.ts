@@ -218,7 +218,13 @@ function compareUnit(
       });
       continue;
     }
-    result.compared.push({ route: route.route, model: route.modelId, unit, declared: declaredValue, reference });
+    result.compared.push({
+      route: route.route,
+      model: route.modelId,
+      unit,
+      declared: declaredValue,
+      reference,
+    });
   }
   // cacheWrite has no live reference unit at all: named not-comparable, never dropped.
   result.notComparable.push({
@@ -254,9 +260,13 @@ function auditSelfConsistency(
     for (const unit of AUDIT_UNITS) {
       const values = routes
         .map((route) => ({ route, value: route.prices[unit] }))
-        .filter((entry): entry is { route: DeclaredRoute; value: number } =>
-          entry.value !== undefined && typeof entry.value === "number" &&
-          Number.isFinite(entry.value) && entry.value >= 0);
+        .filter(
+          (entry): entry is { route: DeclaredRoute; value: number } =>
+            entry.value !== undefined &&
+            typeof entry.value === "number" &&
+            Number.isFinite(entry.value) &&
+            entry.value >= 0,
+        );
       if (values.length < 2) {
         // Any hostile or missing value among grouped routes is already a named
         // finding from the live pass (or the declared absence was optional);

@@ -84,6 +84,22 @@ agreed to pay.
   not implement its own threshold, and must not be able to start a blocked run
   by bypassing the core.
 
+## Declared price audit
+
+
+`bun run check:prices` audits the operator's declared prices against a live
+catalogue (`--inventory <path>`, defaulting to the standard `models.yaml`
+location): each declared per-1M row is compared, by an explicit ×1 000 000
+normalization, with the source's per-token price, and divergences beyond
+`--tolerance` (a named default of 0.05) are reported as findings naming the
+route and the relative factor. A second, offline judgement catches the same
+model declared under two routes at different prices, grouping by the model id's
+last path segment and reporting the grouping verbatim. It names exits: 0 is a
+clean audit, 1 is divergence or a hostile (missing, non-numeric, NaN, negative)
+row found, 2 is that the source did not answer; `--offline` states that the
+live half was skipped by request. The command only makes a wrong row visible;
+fixing it is the operator's act, never an automatic rewrite.
+
 ## Sources
 
 The operator's 2026-09-14 rule: warn on a sharp jump in per-request model cost,

@@ -33,6 +33,7 @@
     "check:version": "bun run scripts/check-version.ts",
     "check:docs": "bun run scripts/check-docs.ts",
     "check:conflict-markers": "bun run scripts/check-conflict-markers.ts",
+    "check:prices": "bun run scripts/check-prices.ts",
     "stamp:check": "bun run src/cli.ts stamp check",
     "calibration:score": "bun run scripts/calibration-score.ts",
     "calibration:check-reviewer": "bun run evals/scorers/reviewer-hidden-regression.ts",
