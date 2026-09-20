@@ -2,6 +2,7 @@ import { expect, mock, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import type { ResolvePipelineConfigOptions } from "../src/cli/resolve-config";
 import { DEFAULT_BACKGROUND_RUN_LIMITS } from "../src/orchestration/background-runs";
 
 // The launcher points the detached worker at process.argv[1], which in this
@@ -57,9 +58,15 @@ const buildFlags = (pairs: ReadonlyArray<[string, string]>): Record<string, stri
 async function workerWords(
   flagPairs: ReadonlyArray<[string, string]>,
   ownerId = OWNER,
+  configOptions?: Omit<ResolvePipelineConfigOptions, "task">,
 ): Promise<string[]> {
   spawned.length = 0;
-  const launcher = backgroundHostLauncherFor(BOUNDARY_TARGET, ownerId, buildFlags(flagPairs));
+  const launcher = backgroundHostLauncherFor(
+    BOUNDARY_TARGET,
+    ownerId,
+    buildFlags(flagPairs),
+    configOptions,
+  );
   await launcher({
     runId: RUN_ID,
     task: "boundary task",
@@ -136,3 +143,45 @@ test("the profile off reaches the worker command without a flag", async () => {
   expect(words).not.toContain("--skills");
   expect(words).not.toContain("--no-skills");
 });
+
+// ---------------------------------------------------------------------------
+// (#453) the operator's typed routing/credential selection crosses the
+// boundary into the detached worker verbatim -- and only when typed. An
+// absent flag stays absent so the worker's own default-file resolution
+// stays its own.
+
+const ROUTING_CREDENTIAL_FLAGS = [
+  "--models-config",
+  "--settings-config",
+  "--inventory-profile",
+  "--inventory-config",
+  "--registry-config",
+  "--profile-config",
+  "--credential-path",
+  "--provider",
+] as const;
+
+for (const flag of ROUTING_CREDENTIAL_FLAGS) {
+  // These values are launch WORDS to carry, not a config the launcher must
+  // resolve: this table proves the boundary's verbatim translation, so the
+  // launcher is handed a minimal injected config and reads no file. Going
+  // through the console's own resolution instead needs a REAL document per
+  // JSON flag -- `readJsonConfig` exits when the path cannot be read -- and a
+  // `--provider` that names a shipped provider, both of which are different
+  // subjects with their own tests. Paths stay under the temp root the
+  // neighbouring tests already derive theirs from.
+  const TRANSLATION_ONLY: Omit<ResolvePipelineConfigOptions, "task"> = {
+    targetDir: BOUNDARY_TARGET,
+  };
+
+  test(`(#453) the typed ${flag} reaches the worker command verbatim`, async () => {
+    const value = path.join(BOUNDARY_TARGET, `${flag.slice(2)}.example`);
+    const words = await workerWords([[flag, value]], OWNER, TRANSLATION_ONLY);
+    expect(words).toEqual(expect.arrayContaining([flag, value]));
+  });
+
+  test(`(#453) an absent ${flag} is not invented by the launcher`, async () => {
+    const words = await workerWords([], OWNER, TRANSLATION_ONLY);
+    expect(words).not.toContain(flag);
+  });
+}

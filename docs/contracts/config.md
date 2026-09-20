@@ -256,6 +256,24 @@ Rules the operator declared for ad-coder. A violation is always blocking.
   repeated launch words by one word that is not a capability switch; it does
   not rewrite that rule -- the persistent-setting layer still re-reads on its
   own.
+- 2026-09-20: **The detached worker inherits the console's explicit
+  routing/credential selection verbatim, and a pinned route that resolves
+  nowhere is a typed refusal on that path (issue #453).** The worker command
+  now repeats every routing/credential launch word the operator typed -- the
+  stored routing (`models.yaml`) and behaviour (`settings.yaml`) config paths,
+  the model-inventory profile and config, the registry and profile documents,
+  the credential path, and the provider pin -- so the worker resolves the same
+  routing and credential selection the console resolved instead of re-reading
+  the default files under its own home directory. Only flags actually typed
+  travel: an absent flag stays absent and the worker keeps its own default
+  resolution, exactly as the 2026-09-17 and 2026-09-19 boundary entries
+  require. A route that resolves nowhere is a typed refusal on the worker
+  path, never a substituted provider: an explicit provider pin skips the
+  route guard, and a pin whose credential is absent is then refused by the
+  registry with a typed error naming the credential VARIABLE (a name, never a
+  value). The console path keeps the env-preset fallback it had, so this is a
+  boundary rule about what crosses the process, not a change to the
+  interactive default.
 
 ## Sources
 
@@ -292,6 +310,12 @@ so a background pipeline authenticates on the same private credential file
 the console was launched with -- a path crosses, never a credential value;
 absent, the worker keeps its own default-file resolution, and nothing is
 persisted into the profile or the run record.
+The 2026-09-20 entry (issue #453) closes that class over the operator's typed
+routing/credential selection -- the stored config paths, the inventory
+profile and config, the registry and profile documents, the credential path
+and the provider pin -- so the whole selection crosses the boundary verbatim
+or stays absent, and a pinned route that resolves nowhere is a typed refusal
+there rather than a silently substituted provider.
 The 2026-09-17 delegation-facts rule (issue #232) makes the resolver's role-to-
 model grouping -- the data the startup banner prints -- a structured field of
 the resolved config (`delegatedRoute`: source, complexity, reachable groups,
