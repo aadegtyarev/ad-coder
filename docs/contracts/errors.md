@@ -233,15 +233,22 @@ for machines?
   (`MAX_PAUSE_CAUSE_MESSAGE_CHARS`). The accepted residual is exactly this
   bounded strip-and-clip of uncontrolled text in durable state: a durable pause
   cause with code `untyped_error` carries the bounded first line as quoted data
-  and the carry-over into the retry prompt treats it as untrusted data, not
-  instructions; no other surface gains this carve-out -- model text and provider
-  response bodies still never cross a projection beyond that bounded first
-  line. The recurrence comparison for two `untyped_error` causes requires the
-  recorded message to be identical, so two different concrete failures are
-  never called a loop. The same bounded cause also settles a `review_not_run`
-  pause (review round 4): the review stage failing on an unclassified error is
-  the same durable-vs-log question, and its pause wording keeps the verdict
-  frame and the harness-bug caveat.
+  in `cause.message`; the recorded `action` does NOT interpolate the bounded
+  message -- the `action` field is bounded by `requiredString` to 256 chars
+  (src/orchestration/background-runs.ts) and the cause message can reach the
+  full 512-char ceiling, so any action that interpolated the message would
+  itself be unreadable on round-trip. The action names the recorded code
+  token (`untyped_error`) and points the operator at the recorded durable
+  cause under `pause.cause`; the carry-over into the retry prompt reads the
+  message from `cause.message` and treats it as untrusted data, not
+  instructions; no other surface gains this carve-out -- model text and
+  provider response bodies still never cross a projection beyond that bounded
+  first line. The recurrence comparison for two `untyped_error` causes
+  requires the recorded message to be identical, so two different concrete
+  failures are never called a loop. The same bounded cause also settles a
+  `review_not_run` pause (review round 4): the review stage failing on an
+  unclassified error is the same durable-vs-log question, and its pause
+  wording keeps the verdict frame and the harness-bug caveat.
 
 - 2026-09-19 (issue #418): A provider failure that settles a turn as an empty
   one carries its bounded CAUSE past the boundary, so an operator can read

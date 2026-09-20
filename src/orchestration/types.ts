@@ -674,11 +674,14 @@ export interface PipelinePauseCause {
 /**
  * The durable pause a coordinator stops on, carried to a background boundary.
  * `phase`/`code`/`action` are the checkpoint's own pause record -- fixed
- * phrases built in code, never model or provider content, with ONE recorded
- * exception (issue #403): for an untyped stage failure the `action`
- * interpolates the recorded bounded, redacted cause tokens (`untyped_error`
- * and the bounded constructor + first-line message) -- quoted as untrusted
- * data, never instructions. `limitReason` and
+ * phrases built in code, never model or provider content. `action` is kept
+ * within the 256-char ceiling `requiredString`
+ * (src/orchestration/background-runs.ts) enforces on every persisted
+ * record field, so the action cannot interpolate the bounded cause message
+ * itself (which has its own 512-char ceiling). For an untyped stage failure
+ * (issue #403) the `action` therefore names only the recorded code token
+ * (`untyped_error`) and points the operator at the recorded durable cause;
+ * the bounded, redacted message stays in `cause.message`. `limitReason` and
  * `limit` are present exactly when the coordinator recorded limit evidence.
  * `cause` is present exactly when the failing error was a typed harness-side
  * error OR an untyped one (with the fixed `untyped_error` code token, issue

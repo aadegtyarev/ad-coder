@@ -51,7 +51,7 @@ import {
   WorkflowStageLimitError,
 } from "../src";
 import { CostAnomalyBlockedError } from "../src/economics/cost-anomaly";
-import { OrchestrationError } from "../src/orchestration/types";
+import { MAX_PAUSE_CAUSE_MESSAGE_CHARS, OrchestrationError } from "../src/orchestration/types";
 import { SUBMIT_VERDICT_TOOL_NAME } from "../src/orchestration/verdict";
 import { defineRole } from "../src/role";
 import {
@@ -872,9 +872,15 @@ test("an untyped stage failure names itself with a bounded redacted cause (issue
   expect(pause?.cause?.code).toBe("untyped_error");
   expect(pause?.cause?.message).toBe("Error: plain harness throw");
   expect(pause?.cause?.recurrence).toBe(0);
-  expect(pause?.action).toContain("plain harness throw");
+  // The action names the recorded code token and points the operator at the
+  // recorded durable cause; the bounded message itself stays in
+  // `cause.message`, not in `action` (the action is bounded to 256 chars by
+  // `requiredString`, and the message can reach its 512-char ceiling).
+  expect(pause?.action).toContain("untyped_error");
+  expect(pause?.action).toContain("recorded durable cause");
   expect(pause?.action).toContain("harness bug");
   expect(pause?.action).toContain("retry the stage explicitly");
+  expect(pause?.action).not.toContain("plain harness throw");
   // The old wording sent the operator to inspect a PROVIDER, but a plain
   // throwing error is exactly the harness-side suspect.
   expect(pause?.action).not.toContain("provider failure");
@@ -921,7 +927,10 @@ test("the untyped cause strips control characters and ANSI escapes (issue #403 m
   const printable = (value: string) =>
     [...value].every((character) => character >= "\x20" && character <= "\x7e");
   expect(printable(checkpoint.pause?.cause?.message ?? "")).toBe(true);
-  // The action interpolates the cause message; it must be equally inert.
+  // The action never carries the cause message (the message stays in
+  // `cause.message`, where the printable-ASCII discipline already holds);
+  // the action must still be printable-ASCII anyway -- the bounded text it
+  // composes is all harness-authored.
   expect(printable(checkpoint.pause?.action ?? "")).toBe(true);
 });
 
@@ -1090,11 +1099,15 @@ test("a review-phase untyped failure settles the review_not_run pause with its b
     message: "Error: reviewer harness threw",
     recurrence: 0,
   });
-  // The action keeps the verdict frame and names the recorded cause plus the
-  // harness-bug caveat -- the same discipline as the generic stage_failed path.
+  // The action keeps the verdict frame and points the operator at the
+  // recorded durable cause plus the harness-bug caveat -- the same
+  // discipline as the generic stage_failed path; the bounded message itself
+  // stays in `cause.message` so the action stays within the 256-char
+  // `requiredString` ceiling.
   expect(pause?.action).toContain("did not run to a verdict");
-  expect(pause?.action).toContain("reviewer harness threw");
+  expect(pause?.action).toContain("recorded durable cause");
   expect(pause?.action).toContain("harness bug");
+  expect(pause?.action).not.toContain("reviewer harness threw");
   // The cause is recorded on the checking exactly like the generic path: the
   // retrying reviewer reads it from the checkpoint's workflowState.
   expect(checkpoint.workflowState.lastStageFailure).toEqual({
@@ -1140,6 +1153,93 @@ test("a repeated identical review-phase untyped failure shows the recurrence loo
     code: "untyped_error",
     recurrence: 1,
   });
+});
+
+test("an untyped stage failure with a 512-char cause message keeps its action within the 256-char requiredString ceiling (issue #403 round-trip)", async () => {
+  // The untyped-failure action composed in src/project-operations/run-coordinator.ts
+  // was previously interpolating `cause.message` (bounded at 512 by
+  // `MAX_PAUSE_CAUSE_MESSAGE_CHARS` in src/orchestration/types.ts) into static
+  // text already over 200 chars -- so the persisted `action` was always
+  // longer than 256 chars for a fully-loaded cause. `requiredString`
+  // (src/orchestration/background-runs.ts) rejects any persisted record field
+  // string over 256 chars, so the background run record and the coordinator
+  // checkpoint became unreadable, and `background status` exited 1 with
+  // {"error":{"code":"not_found","detail":"background_run"}}. This pins the
+  // contract: action.length <= 256 in BOTH variants (first-occurrence and
+  // recurrence) of BOTH pause codes (stage_failed and review_not_run) for a
+  // message at the 512-char ceiling, while the message itself still reaches
+  // the record through `cause.message`.
+  const fullCauseMessage = "x".repeat(MAX_PAUSE_CAUSE_MESSAGE_CHARS);
+  // The composed `cause.message` is `<constructor>: <first-line>` clipped to
+  // `MAX_PAUSE_CAUSE_MESSAGE_CHARS` total, so the persisted message for an
+  // Error-sourced cause at the message ceiling is `Error: ` + a
+  // (MAX - 6)-char line.
+  const persistedMessage = `Error: ${"x".repeat(MAX_PAUSE_CAUSE_MESSAGE_CHARS - "Error: ".length)}`;
+
+  // First-occurrence stage_failed.
+  const stageStore = new ProjectStore(root());
+  const stageSession: WorkflowSession = {
+    ...coordinatorSession(stageStore, []),
+    async step() {
+      throw new WorkflowStageFailureError(new Error(fullCauseMessage), "failed-code", {
+        ...failureMetrics,
+      });
+    },
+  };
+  const stageCoordinator = new RunCoordinator(stageSession, stageStore, {
+    runId: "untyped-long-message-stage",
+  });
+  const first = await stageCoordinator.run();
+  expect(first.checkpoint.pause?.code).toBe("stage_failed");
+  expect(first.checkpoint.pause?.cause?.code).toBe("untyped_error");
+  expect(first.checkpoint.pause?.cause?.message).toBe(persistedMessage);
+  expect(first.checkpoint.pause?.cause?.recurrence).toBe(0);
+  expect(first.checkpoint.pause?.action?.length ?? Number.MAX_SAFE_INTEGER).toBeLessThanOrEqual(
+    256,
+  );
+  // Recurrence stage_failed: same cause, same code -> count climbs.
+  stageCoordinator.resumeStage({ source: "operator", action: "retry" });
+  const second = await stageCoordinator.run();
+  expect(second.checkpoint.pause?.code).toBe("stage_failed");
+  expect(second.checkpoint.pause?.cause?.code).toBe("untyped_error");
+  expect(second.checkpoint.pause?.cause?.recurrence).toBe(1);
+  expect(second.checkpoint.pause?.cause?.message).toBe(persistedMessage);
+  expect(second.checkpoint.pause?.action?.length ?? Number.MAX_SAFE_INTEGER).toBeLessThanOrEqual(
+    256,
+  );
+
+  // First-occurrence review_not_run.
+  const reviewStore = new ProjectStore(root());
+  const reviewSession: WorkflowSession = {
+    ...coordinatorSession(reviewStore, []),
+    initialState: () => ({ ...coordinatorState(), phase: "review" }),
+    async step() {
+      throw new WorkflowStageFailureError(new Error(fullCauseMessage), "failed-review", {
+        ...failureMetrics,
+      });
+    },
+  };
+  const reviewCoordinator = new RunCoordinator(reviewSession, reviewStore, {
+    runId: "untyped-long-message-review",
+  });
+  const reviewFirst = await reviewCoordinator.run();
+  expect(reviewFirst.checkpoint.pause?.code).toBe("review_not_run");
+  expect(reviewFirst.checkpoint.pause?.cause?.code).toBe("untyped_error");
+  expect(reviewFirst.checkpoint.pause?.cause?.recurrence).toBe(0);
+  expect(reviewFirst.checkpoint.pause?.cause?.message).toBe(persistedMessage);
+  expect(
+    reviewFirst.checkpoint.pause?.action?.length ?? Number.MAX_SAFE_INTEGER,
+  ).toBeLessThanOrEqual(256);
+  // Recurrence review_not_run.
+  reviewCoordinator.resumeStage({ source: "operator", action: "retry" });
+  const reviewRecurrence = await reviewCoordinator.run();
+  expect(reviewRecurrence.checkpoint.pause?.code).toBe("review_not_run");
+  expect(reviewRecurrence.checkpoint.pause?.cause?.code).toBe("untyped_error");
+  expect(reviewRecurrence.checkpoint.pause?.cause?.recurrence).toBe(1);
+  expect(reviewRecurrence.checkpoint.pause?.cause?.message).toBe(persistedMessage);
+  expect(
+    reviewRecurrence.checkpoint.pause?.action?.length ?? Number.MAX_SAFE_INTEGER,
+  ).toBeLessThanOrEqual(256);
 });
 
 test("RunCoordinator durably pauses a cooperatively interrupted workflow and resumes it", async () => {

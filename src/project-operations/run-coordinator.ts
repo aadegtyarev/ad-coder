@@ -161,13 +161,17 @@ function stageFailurePause(
         ...untypedCause,
         recurrence: untypedRecurrenceOf(priorFailure, phase, untypedCause),
       };
+      // Same 256-char `action` ceiling as the generic stage_failed path (see
+      // the untyped branch below): the action names the recorded code and
+      // points the operator at the recorded durable cause under
+      // `pause.cause`; the message itself stays in `cause.message`.
       return {
         phase,
         code: "review_not_run",
         action:
           cause.recurrence > 0
-            ? `the review stage did not run to a verdict with an untyped error (${cause.code}); bounded cause: ${cause.message}; the same cause has been recorded ${cause.recurrence + 1} consecutive times -- resolve the recorded cause (this may be a harness bug rather than a provider outage), then resume the review explicitly`
-            : `the review stage did not run to a verdict with an untyped error (${cause.code}); bounded cause: ${cause.message}; resolve the recorded cause (this may be a harness bug rather than a provider outage), then resume the review explicitly`,
+            ? `the review stage did not run to a verdict with an untyped error (${cause.code}); the same cause has been recorded ${cause.recurrence + 1} consecutive times -- see cause (this may be a harness bug rather than a provider outage), then resume the review explicitly`
+            : `the review stage did not run to a verdict with an untyped error (${cause.code}); see the recorded durable cause (this may be a harness bug rather than a provider outage), then resume the review explicitly`,
         cause,
       };
     }
@@ -200,6 +204,16 @@ function stageFailurePause(
     // the recorded MESSAGE to match too -- every untyped error shares the one
     // code token, so code-only comparison would call two different failures a
     // loop (see untypedRecurrenceOf).
+    //
+    // The `action` MUST stay within the 256-char ceiling that `requiredString`
+    // (src/orchestration/background-runs.ts) enforces on every persisted
+    // record field, including action. The cause message is clipped to 512
+    // chars on the write side, so any action that interpolated the message
+    // was already longer than 256 for a 512-char cause -- the background run
+    // record and the coordinator checkpoint became unreadable. The action
+    // names the recorded code and points the operator at the recorded
+    // durable cause under `pause.cause`; the message itself stays in
+    // `cause.message`, where its own 512-char ceiling already decodes fine.
     const untypedCause = untypedPauseCause(sourceError);
     const cause = {
       ...untypedCause,
@@ -210,8 +224,8 @@ function stageFailurePause(
       code: "stage_failed",
       action:
         cause.recurrence > 0
-          ? `the stage failed with an untyped error (${cause.code}); bounded cause: ${cause.message}; the same cause has been recorded ${cause.recurrence + 1} consecutive times -- resolve the recorded cause (this may be a harness bug rather than a provider outage), then retry the stage explicitly`
-          : `the stage failed with an untyped error (${cause.code}); bounded cause: ${cause.message}; resolve the recorded cause (this may be a harness bug rather than a provider outage), then retry the stage explicitly`,
+          ? `the stage failed with an untyped error (${cause.code}); the same cause has been recorded ${cause.recurrence + 1} consecutive times -- see the recorded cause (this may be a harness bug rather than a provider outage), then retry the stage explicitly`
+          : `the stage failed with an untyped error (${cause.code}); see the recorded durable cause (this may be a harness bug rather than a provider outage), then retry the stage explicitly`,
       cause,
     };
   }
