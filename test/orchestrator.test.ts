@@ -1595,7 +1595,7 @@ test("resume_pipeline clears a plan_not_submitted pause and re-runs the plan sta
   await expect(core.runPipeline("implement X")).rejects.toMatchObject({
     code: "pipeline_paused",
     detail: runId,
-    pause: { phase: "plan", code: "plan_not_submitted" },
+    pause: { phase: "plan", code: "plan_not_json" },
   });
   const callsBeforeResume = fx.faux.state.callCount;
   expect(callsBeforeResume).toBe(2);

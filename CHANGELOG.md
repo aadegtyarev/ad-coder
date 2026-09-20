@@ -11,6 +11,24 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.140.0] - 2026-09-20
+
+### Fixed
+
+- **A planner that answers in prose is no longer reported as silence (issue
+  #516).** The plan stage's mandatory handoff is `submit_plan`; when a planner
+  did the work but answered with a Markdown plan and no JSON object, the parser
+  saw no candidate and the stage reported `missing_plan` -- the same diagnosis
+  as a planner that never answered, with advice to inspect the planner's
+  registration. A response that carries text but no JSON object is now refused
+  explicitly with its own code, `missing_plan` is kept for an empty response
+  only, the pause and the recorded stage failure name which of the two
+  happened, the pause carries a safe shape of the last response (attempts, was
+  the mandatory tool called, was there a JSON candidate, response length, and
+  the path to the role run's evidence -- numbers and safe tokens only, never
+  response content), and the retry instruction fits this refusal. The accepted
+  plan form is unchanged: prose is refused, not parsed.
+
 ## [0.138.0] - 2026-09-20
 
 ### Fixed

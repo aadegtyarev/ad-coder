@@ -1545,6 +1545,7 @@ test("RunCoordinator's explicit-act pause table and resumeStage guard agree on b
     "interrupted",
     "review_not_run",
     "plan_not_submitted",
+    "plan_not_json",
   ];
   expect([...(PAUSES_CLEARED_BY_AN_EXPLICIT_ACT as readonly string[])].sort()).toEqual(
     expectedTable.slice().sort(),

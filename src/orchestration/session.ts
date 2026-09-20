@@ -562,7 +562,12 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     tools?: Tool[],
     durable = true,
     resume?: ActiveWorkflowStage,
-  ): Promise<{ text: string; followUps: FollowUp[]; metrics: PipelineStageMetrics }> => {
+  ): Promise<{
+    text: string;
+    followUps: FollowUp[];
+    metrics: PipelineStageMetrics;
+    sessionPath?: string;
+  }> => {
     const { model } = selection;
     // A fresh session per run: each role has its own systemPrompt, so sharing a
     // session would leak one role's history and prompt into another.
@@ -679,6 +684,9 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       return {
         text: await extractFinalText(readable, BACKGROUND_CONTEXT),
         followUps: [],
+        ...(durable
+          ? { sessionPath: (readable.metadata as unknown as { path: string }).path }
+          : {}),
         metrics: {
           stage: step,
           ...(closeout !== undefined && {
@@ -720,7 +728,12 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     tools: Tool[] = [],
     durable = true,
     resume?: ActiveWorkflowStage,
-  ): Promise<{ text: string; followUps: FollowUp[]; metrics: PipelineStageMetrics }> => {
+  ): Promise<{
+    text: string;
+    followUps: FollowUp[];
+    metrics: PipelineStageMetrics;
+    sessionPath?: string;
+  }> => {
     const enabled =
       spec.role.activeToolNames === undefined ||
       spec.role.activeToolNames.includes(SUBMIT_FOLLOW_UP_TOOL_NAME);
@@ -741,7 +754,12 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       durable,
       resume,
     );
-    return { text: turn.text, followUps: capture.followUps, metrics: turn.metrics };
+    return {
+      text: turn.text,
+      followUps: capture.followUps,
+      metrics: turn.metrics,
+      ...(turn.sessionPath === undefined ? {} : { sessionPath: turn.sessionPath }),
+    };
   };
 
   const stageAttempt = (
@@ -833,6 +851,10 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     let capture: PlanCapture = {};
     let text = "";
     let lastRejection: OrchestrationError | undefined;
+    const attemptRunIds: string[] = [];
+    let attemptsRun = 0;
+    let mandatoryToolCalled = false;
+    let transcriptPath: string | undefined;
     let retryInstruction =
       "Your preceding response did not call submit_plan. Call submit_plan now with the complete required object, then stop.";
     let followUps: FollowUp[] = [];
@@ -861,6 +883,8 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
               resume: false,
             };
       runId = attempt.stage.runId;
+      attemptRunIds.push(runId);
+      attemptsRun += 1;
       capture = {};
       const submitPlanTool = buildSubmitPlanTool(capture, runId, config.surfaceAnalysisLimits);
       const turn = await runWorkflowTurn(
@@ -879,6 +903,8 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       );
       text = turn.text;
       followUps = turn.followUps;
+      mandatoryToolCalled ||= capture.called === true;
+      transcriptPath = turn.sessionPath;
       accumulatedState = {
         ...accumulatedState,
         ...settledStage(accumulatedState, attempt.stage, attempt.resume, turn.metrics),
@@ -903,7 +929,10 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
         lastRejection = capture.error;
         // The next turn is told WHICH failure to correct. The message is fixed
         // structure plus the validator's own wording -- never planner text.
-        retryInstruction = `Your preceding submit_plan submission was rejected: ${capture.error.message}. Call submit_plan now with the complete corrected object, then stop.`;
+        retryInstruction =
+          capture.error.code === "plan_not_json"
+            ? "Your preceding response carried no JSON object. Call submit_plan now with the complete required object, then stop."
+            : `Your preceding submit_plan submission was rejected: ${capture.error.message}. Call submit_plan now with the complete corrected object, then stop.`;
       }
     }
     // A captured plan sets the governance and routing signals. Exhausting the
@@ -913,11 +942,19 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     // a rejection as missing_plan sent the operator looking for a planner that
     // never ran instead of at the field that was refused.
     if (capture.plan === undefined) {
-      if (lastRejection !== undefined) throw lastRejection;
+      const evidencePath = path.join(config.targetDir, ".ad-coder", "ledger", `${runId}.jsonl`);
+      const safeShape = `attempts=${attemptsRun} submit_plan_called=${mandatoryToolCalled} json_candidate=${text.includes("{")} response_length=${text.length} evidence=${evidencePath} transcript=${transcriptPath ?? "unavailable"} attempt_run_ids=${attemptRunIds.join(",")}`;
+      if (lastRejection !== undefined) {
+        throw new OrchestrationError(
+          lastRejection.code,
+          runId,
+          `${lastRejection.message}; ${safeShape}`,
+        );
+      }
       throw new OrchestrationError(
         "missing_plan",
         runId,
-        "planner did not submit required surface analysis",
+        `planner did not submit required surface analysis; ${safeShape}`,
       );
     }
     const unresolved = capture.plan.surfaceAnalysis.coverage.filter(

@@ -398,8 +398,9 @@ test("drive --resume-run clears a plan_not_submitted pause and proceeds past the
       coordinator: pausedCoordinator,
     }),
   ).rejects.toMatchObject({ code: "pipeline_paused" });
-  expect(pausedCoordinator.checkpoint.pause?.code).toBe("plan_not_submitted");
+  expect(pausedCoordinator.checkpoint.pause?.code).toBe("plan_not_json");
   expect(pausedCoordinator.checkpoint.pause?.phase).toBe("plan");
+  expect(pausedCoordinator.checkpoint.pause?.action).toContain("plan_not_json");
   const callsBeforeResume = fx.faux.state.callCount;
   expect(callsBeforeResume).toBe(2);
 

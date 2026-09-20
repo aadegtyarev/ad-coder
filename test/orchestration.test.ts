@@ -2055,33 +2055,46 @@ test("absent or empty planner affectedFiles degrade cleanly: no section, byte-id
   }
 });
 
-test("a planner emitting only text fails closed before code", async () => {
+test("a planner emitting only text is refused explicitly before code", async () => {
   const fx = fixture();
   const planner = plannerRole(fx);
   const coder = fx.role("coder", "You code.");
   const reviewer = reviewerRole(fx);
-  const verdict: Verdict = { status: "approved", issues: [], summary: "ok" };
   fx.faux.setResponses([
-    fauxAssistantMessage("plan: do X, no tool call"),
-    fauxAssistantMessage("coded"),
-    ...reviewerTurn(verdict),
+    fauxAssistantMessage("Plan: do X, no JSON object"),
+    fauxAssistantMessage("Plan: still no JSON object"),
   ]);
 
-  // The run fails closed before any coder dispatch -- that has always been the
-  // point of this test. What it surfaces changed with issue #315: the coordinator
-  // now records a resumable `plan_not_submitted` pause, because a planner that
-  // produced no submission can be attempted again once its model or ceiling is
-  // adjusted, and because an unrecorded failure left the run hanging silently.
-  // The pause carries the original `missing_plan` in its action text.
-  await expect(
-    runPipeline({
+  let caught: unknown;
+  try {
+    await runPipeline({
       targetDir: fx.targetDir,
       models: fx.models,
       task: "implement Q",
       maxRounds: 3,
       roles: { planner, coder, reviewer },
-    }),
-  ).rejects.toMatchObject({ pause: { phase: "plan", code: "plan_not_submitted" } });
+    });
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught).toMatchObject({ pause: { phase: "plan", code: "plan_not_json" } });
+  const pause = (caught as { pause: { cause?: { message?: string }; action: string } }).pause;
+  expect(pause.action).toContain("answered in prose without a JSON object");
+  expect(pause.action).not.toContain("inspect the planner's registration and configuration");
+  expect(pause.cause?.message).toMatch(
+    /^planner response carried no JSON object; attempts=2 submit_plan_called=false json_candidate=false response_length=\d+ evidence=.*\/\.ad-coder\/ledger\/[^/]+\.jsonl transcript=.*\/\.ad-coder\/sessions\/.*\/[^/]+\.jsonl attempt_run_ids=[^,]+,[^,]+$/,
+  );
+  const checkpointPath = fs
+    .readdirSync(path.join(fx.targetDir, ".ad-coder", "runs"))
+    .map((name) => path.join(fx.targetDir, ".ad-coder", "runs", name))
+    .find((candidate) => {
+      const value = JSON.parse(fs.readFileSync(candidate, "utf8")).value;
+      return value.workflowState?.lastStageFailure?.code === "plan_not_json";
+    });
+  expect(checkpointPath).toBeDefined();
+  const checkpoint = JSON.parse(fs.readFileSync(checkpointPath!, "utf8")).value;
+  expect(checkpoint.workflowState.lastStageFailure.code).toBe("plan_not_json");
+  expect(checkpoint.workflowState.lastStageFailure.message).toBe(pause.cause?.message);
 });
 
 test("a planner whole-JSON fallback is strictly validated before code", async () => {
@@ -2132,7 +2145,7 @@ test("planner gets one bounded corrective retry for a missing structured handoff
   expect(result.stageMetrics.filter(({ stage }) => stage === "plan")).toHaveLength(2);
 });
 
-test("a default-open planner emitting only text fails closed before code", async () => {
+test("a default-open planner emitting only text is refused before code", async () => {
   const fx = fixture();
   fx.faux.setResponses([fauxAssistantMessage("plan only")]);
   await expect(
@@ -2147,7 +2160,7 @@ test("a default-open planner emitting only text fails closed before code", async
         reviewer: reviewerRole(fx),
       },
     }),
-  ).rejects.toMatchObject({ pause: { phase: "plan", code: "plan_not_submitted" } });
+  ).rejects.toMatchObject({ pause: { phase: "plan", code: "plan_not_json" } });
 });
 
 test("parsePlan rejects invented contract IDs and covered entries without evidence", () => {
@@ -2843,10 +2856,19 @@ test("parsePlanText recovers fenced and prefixed plans and names a truncated one
   );
   expect(withFiles?.affectedFiles).toEqual(["src/a.ts", "src/b.ts"]);
 
-  // Silence -- no plan-shaped content at all -- stays `undefined` so the caller
-  // can still retry it as a missing handoff.
-  expect(parsePlanText("I could not analyse this repository.", "run-id")).toBeUndefined();
+  // Empty output stays `undefined` so the caller can classify genuine silence.
   expect(parsePlanText("", "run-id")).toBeUndefined();
+  let proseError: unknown;
+  try {
+    parsePlanText("I could not analyse this repository.", "run-id");
+  } catch (error) {
+    proseError = error;
+  }
+  expect(proseError).toBeInstanceOf(OrchestrationError);
+  expect((proseError as OrchestrationError).code).toBe("plan_not_json");
+  expect((proseError as OrchestrationError).message).toBe(
+    "planner response carried no JSON object",
+  );
 
   // A cut-off object IS a submission, and reporting it as silence hid the real
   // cause (an output ceiling) behind "planner did not submit".
@@ -3073,7 +3095,7 @@ test("a planner emitting only text is told no call was made, not that one was re
       return typeof step === "function" ? step(...args) : step;
     };
   fx.faux.setResponses([
-    record(fauxAssistantMessage("no tool call here")),
+    record(fauxAssistantMessage("")),
     ...plannerTurn({ complexity: "medium", securitySurface: "none", summary: "ok" }).map(record),
     fauxAssistantMessage("coded"),
     ...reviewerTurn({ status: "approved", issues: [], summary: "ok" }),
@@ -3090,6 +3112,34 @@ test("a planner emitting only text is told no call was made, not that one was re
     },
   });
   expect(plannerPrompts.at(-1) ?? "").toContain("did not call submit_plan");
+
+  const proseFx = fixture();
+  const prosePrompts: string[] = [];
+  const proseRecord =
+    (step: FauxResponseStep): FauxResponseFactory =>
+    (...args) => {
+      prosePrompts.push(lastUserText(args[0]));
+      return typeof step === "function" ? step(...args) : step;
+    };
+  proseFx.faux.setResponses([
+    proseRecord(fauxAssistantMessage("a Markdown plan, but no JSON object")),
+    proseRecord(fauxAssistantMessage("still prose, no JSON object")),
+  ]);
+  await expect(
+    runPipeline({
+      targetDir: proseFx.targetDir,
+      models: proseFx.models,
+      task: "prose retry wording",
+      maxRounds: 1,
+      roles: {
+        planner: plannerRole(proseFx),
+        coder: proseFx.role("coder", "You code."),
+        reviewer: reviewerRole(proseFx),
+      },
+    }),
+  ).rejects.toMatchObject({ pause: { code: "plan_not_json" } });
+  expect(prosePrompts.at(-1) ?? "").toContain("carried no JSON object");
+  expect(prosePrompts.at(-1) ?? "").not.toContain("did not call submit_plan");
 });
 
 test("every node of the submit_plan schema declares a type, so a validating provider accepts it", () => {

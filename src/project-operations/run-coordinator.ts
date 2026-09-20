@@ -527,6 +527,7 @@ export const PAUSES_CLEARED_BY_AN_EXPLICIT_ACT = [
   "interrupted",
   "review_not_run",
   "plan_not_submitted",
+  "plan_not_json",
 ] as const;
 
 export function clearsOnExplicitAct(code: string | undefined): boolean {
@@ -643,7 +644,8 @@ export class RunCoordinator {
         pauseCode !== "review_not_run" &&
         // A plan that never arrived is resumable for the same reason a review
         // that never ran is (issue #315): the stage can be attempted again.
-        pauseCode !== "plan_not_submitted")
+        pauseCode !== "plan_not_submitted" &&
+        pauseCode !== "plan_not_json")
     )
       throw new ProjectOperationsError("unauthorized_resolution", checkpoint.runId);
     if (pauseCode !== "stage_limit") {
@@ -924,7 +926,7 @@ export class RunCoordinator {
         // refused. Pausing on that would send the operator looking for a planner
         // that never ran instead of at the field to correct -- the same
         // confusion the session's own comment warns about.
-        error.code === "missing_plan" &&
+        (error.code === "missing_plan" || error.code === "plan_not_json") &&
         checkpoint.workflowState.phase === "plan"
       ) {
         // Same reasoning as the review pause above, for the stage that comes
@@ -948,8 +950,11 @@ export class RunCoordinator {
               : recordStageFailure(checkpoint.workflowState, "plan", cause),
           pause: {
             phase: "plan",
-            code: "plan_not_submitted",
-            action: `the planner did not submit a plan (${error.code}); inspect the planner's registration and configuration, then resume the plan explicitly`,
+            code: error.code === "plan_not_json" ? "plan_not_json" : "plan_not_submitted",
+            action:
+              error.code === "plan_not_json"
+                ? "the planner answered in prose without a JSON object (plan_not_json); call submit_plan with the complete required object, then resume the plan explicitly"
+                : `the planner did not submit a plan (${error.code}); inspect the planner's registration and configuration, then resume the plan explicitly`,
             ...(cause === undefined ? {} : { cause }),
           },
         });
