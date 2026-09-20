@@ -48,6 +48,9 @@ const TRACKED_FILES = new Set([
   "README.md",
   "biome.json",
   "bun.lock",
+  // Bun test-runner config (test preload, issue #419): developer-only,
+  // intentionally excluded from package files (not in "files"/PACKED_FILES).
+  "bunfig.toml",
   "package.json",
   "tsconfig.json",
   // Every-PR delivery/review stamping opt-in switch; deliberately committed at the

@@ -11,6 +11,68 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.115.0] - 2026-09-20
+
+### Fixed
+
+- **`bun test` no longer leaves its scratch in the system tmpdir (issue #419).**
+  One full run added 295 `ad-coder-*` directories to tmpfs (2026-09-19, before
+  fix: 6366 → 6661) and the count only ever grew. Confining every per-test
+  `mkdtempSync(path.join(os.tmpdir(), ...))` -- 177 call sites across the suite
+  -- to one run root and deleting that root is not by itself enough, and why is
+  measured rather than assumed: the roots that survived were re-created by two
+  tests in `test/cli.test.ts` that launched a REAL detached `background worker`
+  through the CLI and never ended it. The worker outlived its run -- measured
+  still alive 98 s after it, `--target-dir
+  /tmp/ad-coder-test-…/ad-coder-background-cli-…` -- held its own target inside
+  the run root, and re-created the root, and every parent, with its own record
+  writes. Those two tests now cancel the run, wait for the process to actually
+  disappear from the process table (SIGTERM, then SIGKILL as the bound) and
+  remove their own target only after that: a worker that outlives its test is a
+  red test, not something a later sweep is trusted to undo. That wait no longer
+  samples the process table synchronously: one `ps -eo pid,args` measured 63 ms
+  on an idle box and 245 ms bound to two loaded cores, and the old fixed phases
+  could issue ~320 of them, so in CI run 35481736583 the blocked event loop of
+  the shared `bun test` process outlived a neighbouring 5 s test budget
+  (`test/trivial-edit.test.ts` timed out at 6832.12 ms), the sampler is now an
+  awaited `Bun.spawn` whose escalation is decided by its own samples against a
+  single 30 s ceiling, and the product question behind the surviving worker -- a
+  cancelled run's worker outliving an external stop -- is tracked in #459 and is
+  not fixed here.
+
+  The bulk of the scratch is still handled centrally. A new test preload
+  (`test/preload.ts`, wired through the new root `bunfig.toml`) creates one
+  `ad-coder-test-` run root before any test and points `TMPDIR` at it, so the
+  existing 177 call sites land inside the root unchanged; an `afterAll`
+  registered from the preload removes that root in a bounded series of five
+  `rmSync` attempts 50 ms apart -- re-deleting a root a late writer re-creates
+  inside that quarter second -- and writes one stderr line only if the root
+  survives the whole series (an `exit` hook does not fire under `bun test`; the
+  `afterAll` route, and that `bun test` waits for an async hook, were verified
+  experimentally). Deletion is therefore an attempted, reported act by the run
+  that owns the root, not an assumption, and the preload's cleanup is proven end
+  to end by `test/tmp-hygiene-preload.test.ts`: it raises a real `bun test` in a
+  sandbox and asserts that per-test scratch lands inside the run root while the
+  child is live and that no `ad-coder-test-` root at all is left once it exits.
+  The teardown's stderr line is no longer the run's last word: the preload
+  snapshots the system tmpdir before the run root exists and fails `bun test`
+  when a single new `ad-coder-test-*` entry is left after it, releasing a
+  concurrent run's root only on the same proof of a live owner that keeps the
+  sweep off it -- and reporting a name as a leak, not excusing it, wherever
+  that proof cannot be taken.
+
+  The sweep is the SECOND line, for a run killed outright (SIGKILL) rather than
+  a leak on the ordinary path. Before the run root is populated the preload
+  sweeps only directories with the strict prefix `ad-coder-test-` from the
+  system tmpdir past a named threshold: one minute when the ownership marker is
+  provably absent (Linux, where a live run's root carries its marker within
+  microseconds of `mkdtempSync`), four hours when it is not or is unreadable,
+  and immediately when the marker proves the owner dead -- so an orphan of a
+  killed run is gone on the next `bun test` with no operator action. Every other
+  `ad-coder-*` prefix (product runs, smoke and boundary scratch) and everything
+  foreign is untouched, and any entry it cannot remove (sticky-bit EPERM, ENOENT
+  races) is skipped with a one-line stderr note instead of failing the run.
+
 ## [0.114.0] - 2026-09-20
 
 ### Added
