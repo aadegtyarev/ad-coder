@@ -11,36 +11,7 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
-## [0.140.0] - 2026-09-20
-
-### Fixed
-
-- **A planner that answers in prose is no longer reported as silence (issue
-  #516).** The plan stage's mandatory handoff is `submit_plan`; when a planner
-  did the work but answered with a Markdown plan and no JSON object, the parser
-  saw no candidate and the stage reported `missing_plan` -- the same diagnosis
-  as a planner that never answered, with advice to inspect the planner's
-  registration. A response that carries text but no JSON object is now refused
-  explicitly with its own code, `missing_plan` is kept for an empty response
-  only, the pause and the recorded stage failure name which of the two
-  happened, the pause carries a safe shape of the last response (attempts, was
-  the mandatory tool called, was there a JSON candidate, response length, and
-  the path to the role run's evidence -- numbers and safe tokens only, never
-  response content), and the retry instruction fits this refusal. The accepted
-  plan form is unchanged: prose is refused, not parsed.
-
-## [0.138.0] - 2026-09-20
-
-### Fixed
-**A paused foreground run is now readable by the tools that describe it (issue #515).** `run_pipeline` reports the coordinator's `runId` when it pauses, but `pipeline_status` and `pipeline_result` resolved identifiers through the background registry only, so they answered `not_found (background_run)` for a run sitting on disk at
-`.ad-coder/runs/coordinator-<runId>.json` -- the orchestrator reported that the pipeline never started, and the operator had to know which path to consult. Both tools now fall back to the coordinator record and answer in the shape the background path already uses: status names the run as a foreground one with its phase, round, pause and spend, and says which actions apply; result reports a foreground pause as an outcome, and says in words when a foreground run has no outcome yet. `pipeline_events` and `cancel_pipeline` refuse a foreground identifier explicitly, because a foreground run has no event log and no separate process, instead of pretending it does not exist. Only a safe projection is returned -- phase, round, pause, metrics and the foreground marker, never the plan, the task digest or any task content.
-
-## [0.136.0] - 2026-09-20
-
-### Fixed
-- **A paused stage whose recorded ceiling happens to equal the session default is resumable again (issue #511).** `resume_pipeline` refused every raise with `invalid_config (unchanged input stage limit)` -- observed live on run 67b85284, whose review stage paused at the 2400000 default and rejected raises to 2500000 and 2600000 alike. The durable resume guard reads the ceiling for the role whose stage paused, but `createWorkflowSession` never put `roleStageLimits` on the object it returns, so the guard always fell through to the session-wide ceiling, where a pause recorded at that same default compares equal to every raise and refuses it however large. The raise itself did reach execution, so only the check was blind. The factory now returns the per-role ceilings beside the session-wide ones, copied so the session does not share the config's object.
-
-## [0.135.0] - 2026-09-20
+## [0.141.0] - 2026-09-20
 
 ### Fixed
 - **A stage that ran into its own budget boundary paused as a generic provider
@@ -74,6 +45,35 @@ enforces that dated release headings go in non-increasing date order
   the composed message is byte-identical, so two closeouts that spent different
   amounts read as different failures. This change gives each boundary its own
   typed code and its own action wording on top of that path.
+
+## [0.140.0] - 2026-09-20
+
+### Fixed
+
+- **A planner that answers in prose is no longer reported as silence (issue
+  #516).** The plan stage's mandatory handoff is `submit_plan`; when a planner
+  did the work but answered with a Markdown plan and no JSON object, the parser
+  saw no candidate and the stage reported `missing_plan` -- the same diagnosis
+  as a planner that never answered, with advice to inspect the planner's
+  registration. A response that carries text but no JSON object is now refused
+  explicitly with its own code, `missing_plan` is kept for an empty response
+  only, the pause and the recorded stage failure name which of the two
+  happened, the pause carries a safe shape of the last response (attempts, was
+  the mandatory tool called, was there a JSON candidate, response length, and
+  the path to the role run's evidence -- numbers and safe tokens only, never
+  response content), and the retry instruction fits this refusal. The accepted
+  plan form is unchanged: prose is refused, not parsed.
+
+## [0.138.0] - 2026-09-20
+
+### Fixed
+**A paused foreground run is now readable by the tools that describe it (issue #515).** `run_pipeline` reports the coordinator's `runId` when it pauses, but `pipeline_status` and `pipeline_result` resolved identifiers through the background registry only, so they answered `not_found (background_run)` for a run sitting on disk at
+`.ad-coder/runs/coordinator-<runId>.json` -- the orchestrator reported that the pipeline never started, and the operator had to know which path to consult. Both tools now fall back to the coordinator record and answer in the shape the background path already uses: status names the run as a foreground one with its phase, round, pause and spend, and says which actions apply; result reports a foreground pause as an outcome, and says in words when a foreground run has no outcome yet. `pipeline_events` and `cancel_pipeline` refuse a foreground identifier explicitly, because a foreground run has no event log and no separate process, instead of pretending it does not exist. Only a safe projection is returned -- phase, round, pause, metrics and the foreground marker, never the plan, the task digest or any task content.
+
+## [0.136.0] - 2026-09-20
+
+### Fixed
+- **A paused stage whose recorded ceiling happens to equal the session default is resumable again (issue #511).** `resume_pipeline` refused every raise with `invalid_config (unchanged input stage limit)` -- observed live on run 67b85284, whose review stage paused at the 2400000 default and rejected raises to 2500000 and 2600000 alike. The durable resume guard reads the ceiling for the role whose stage paused, but `createWorkflowSession` never put `roleStageLimits` on the object it returns, so the guard always fell through to the session-wide ceiling, where a pause recorded at that same default compares equal to every raise and refuses it however large. The raise itself did reach execution, so only the check was blind. The factory now returns the per-role ceilings beside the session-wide ones, copied so the session does not share the config's object.
 
 ## [0.134.0] - 2026-09-20
 
