@@ -412,7 +412,11 @@ test("the standalone review retry keeps the first attempt's review and charges b
     run: async (runId, task) => {
       runIds.push(runId);
       tasks.push(task);
-      if (runIds.length === 1) return { text: "the review itself", cost: 0.02 };
+      // Leading and trailing whitespace on purpose: the wiring carries the
+      // attempt's text itself, and a `.trim()` at the call site leaves every
+      // assertion that only asks "is the review in there" green (measured in
+      // review round 5). The exact bytes are asserted below.
+      if (runIds.length === 1) return { text: "\n  the review itself  \n", cost: 0.02 };
       submitted = true;
       return { text: "submitted", cost: 0.005 };
     },
@@ -422,7 +426,7 @@ test("the standalone review retry keeps the first attempt's review and charges b
     submitted: () => submitted,
     newRunId: () => "second",
   });
-  expect(result.text).toBe("the review itself\n\nsubmitted");
+  expect(result.text).toBe("\n  the review itself  \n\n\nsubmitted");
   expect(result.cost).toBeCloseTo(0.025, 10);
   // A fresh run id per attempt: a turn is keyed by run id in the session store,
   // so re-asking under the first is rejected as an existing session.
@@ -435,6 +439,10 @@ test("the standalone review retry keeps the first attempt's review and charges b
   expect(tasks[1]).toContain("the review itself");
   expect(tasks[1]).not.toContain("did not call submit_verdict");
   expect(tasks[1]).not.toContain("Your preceding");
+  // The WIRING's bytes, not just "the review is in there": `carried` is the
+  // first attempt's text passed straight through, so a `.trim()` at the call
+  // site satisfies every assertion above and fails only this one.
+  expect(tasks[1]).toContain(`Your review so far, verbatim:\n\n\n  the review itself  \n\n`);
 });
 
 test("a retry after a silent first attempt is asked to review, not to submit", async () => {

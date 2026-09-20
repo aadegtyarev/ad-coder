@@ -1654,7 +1654,11 @@ test("the review retry is handed the prose the first attempt wrote (#525)", asyn
   // review "your review" names something that session cannot see, and the
   // reviewer resolves the false premise by inventing a review -- the stamp then
   // reads a verdict submitted over nothing. The review has to travel with it.
-  const prose = "blocker: the guard exits 1, not 3 -- measured with bun test";
+  // Leading and trailing whitespace on purpose: the WIRING carries the prose
+  // it was handed, and `carried.trim()` at the call site (`session.ts`) leaves
+  // every assertion that only asks "is the prose in there" green (measured in
+  // review round 5). The exact bytes are asserted below.
+  const prose = "\n  blocker: the guard exits 1, not 3 -- measured with bun test  \n";
   let retryPrompt = "";
   fx.faux.setResponses([
     fauxAssistantMessage("coded"),
@@ -1684,6 +1688,10 @@ test("the review retry is handed the prose the first attempt wrote (#525)", asyn
   expect(retryPrompt).toContain(prose);
   expect(retryPrompt).toContain("Your review so far, verbatim:");
   expect(retryPrompt).toContain(REVIEW_SUBMISSION_RETRY);
+  // The wiring's own bytes, not just "the prose is in there": `carried` is the
+  // attempt's text passed straight through, so trimming at the call site is
+  // invisible to the assertions above and caught only here.
+  expect(retryPrompt).toContain(`Your review so far, verbatim:\n\n${prose}\n\n`);
 });
 
 test("a review retry with nothing to carry asks for the review, not the submission (#525)", async () => {

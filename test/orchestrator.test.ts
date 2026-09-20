@@ -3029,7 +3029,12 @@ async function startTrivialGateSession(options: {
             runId: config.runId ?? "reviewer-run",
             step: "turn:1",
             status: "completed" as const,
-            assistantText: silent ? "" : noSubmit ? `draft review ${attempt}` : "reviewed",
+            // The prose-only attempts carry whitespace on purpose: the cover
+            // wiring passes the attempt's text through unchanged, and a
+            // `.trim()` at its call site (`orchestrator.ts`) leaves every
+            // assertion that only asks "is the draft in there" green (measured
+            // in review round 5). The cover-retry test asserts the exact bytes.
+            assistantText: silent ? "" : noSubmit ? `  draft review ${attempt}  \n` : "reviewed",
             toolCalls: [],
             droppedRecords: 0,
           };
@@ -3162,8 +3167,12 @@ test("the cover retry is handed the attempt that ended in prose (issue #525)", a
   // The retry session is fresh, so nothing may name a response it never made.
   expect(retryTask).not.toContain("Your preceding");
   // The carried review, verbatim, and not only its presence: the retry must be
-  // able to read what the first attempt concluded.
+  // able to read what the first attempt concluded. The exact bytes are what
+  // makes it verbatim -- the fixture's draft carries an indent and a trailing
+  // newline, so a `.trim()` at this wiring's call site fails here and nowhere
+  // else in the file.
   expect(retryTask).toContain("draft review 1");
+  expect(retryTask).toContain("Your review so far, verbatim:\n\n  draft review 1  \n\n");
   // The retry is a fresh run id (a turn is keyed by run id).
   expect(reviewerTurns[1]?.runId).not.toBe(reviewerTurns[0]?.runId);
   expect(resultText).toContain("trivial-edit cover: approved by reviewer");
