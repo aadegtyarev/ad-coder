@@ -11,6 +11,32 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.127.0] - 2026-09-20
+
+### Fixed
+- **A rebase-resolved tree can no longer carry conflict markers through every
+  gate (issue #474).** A rebase was resolved in `CHANGELOG.md` and the
+  resolution left `<<<<<<<` / `=======` / `>>>>>>>` in the file; the tree was
+  committed in that state and every gate stayed green -- the marker text
+  satisfies `check:release`'s heading and version checks, `check:docs` has no
+  marker rule, the test suite never reads those bytes, and `stamp:check`
+  digests exactly the bytes that were committed. A mechanical slip a grep
+  catches in milliseconds was caught only by a paid, non-deterministic review
+  round. `scripts/check-conflict-markers.ts` is that grep, declared as
+  `check:conflict-markers` and wired as a step in `ci.yml` and `release.yml`
+  beside the other checks, and into the in-run `DEFAULT_PROJECT_GATES`, so the
+  tree that would have failed the round fails before the round is paid for.
+  The projection is the INDEX (`git grep --cached -n -I -z`, one process,
+  NUL-safe, binary files skipped): that is the tree about to be committed and
+  the one a rebase resolution leaves behind. The output names at most fifty
+  hits with the total stated, and a record the gate cannot parse fails it
+  rather than being silently dropped. The path-exact exception list is empty,
+  and the emptiness is a measurement rather than a hope -- zero files with
+  markers and zero legitimate `^=======+$` lines on both the base commit and
+  the then-current `origin/main` -- with the rule that a future legitimate case
+  is added there by name instead of the pattern being narrowed: narrowing to
+  `^=======+$` would mute an eight-equals run inside a real conflict region.
+
 ## [0.126.0] - 2026-09-20
 
 ### Fixed
