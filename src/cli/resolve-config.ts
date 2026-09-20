@@ -37,7 +37,7 @@ import { ProfileError } from "../profiles/errors";
 import { resolveProfile } from "../profiles/resolve";
 import type { Profile, ProfileRole, ResolvedSelection } from "../profiles/types";
 import { PROFILE_ROLES, parseProfile } from "../profiles/validate";
-import { readProjectCalibrationSnapshot } from "../project-calibration";
+import { readProjectCalibrationSnapshot, snapshotSource } from "../project-calibration";
 import type { ProjectStoreConfig } from "../project-store/types";
 import { buildExploreProjectTool, EXPLORE_PROJECT_TOOL_NAME } from "../project-tools/explore";
 import { buildReadProjectTool, READ_PROJECT_TOOL_NAME } from "../project-tools/read";
@@ -68,6 +68,7 @@ import type { Tool } from "../runner/tool";
 import { pluginNamesFromToolNames } from "../skills/resolver";
 import { LOAD_SKILL_TOOL_NAME, roleSkillKit } from "../skills/role-kit";
 import { resolveStampRequirement } from "../stamp/record-review-stamp";
+import type { CalibrationSource } from "../user-profile";
 import { buildImageInspectionTool, buildWebTools } from "../web/tools";
 import { BUILT_IN_PIPELINE_WORKFLOW_NAME } from "../workflows/builtin-pipeline";
 
@@ -917,16 +918,36 @@ function resolveConfig(
     );
   }
   const defaultProfile = buildDefaultProfile({ strong, mid, cheap });
+  // A committed project snapshot applies when it names the SAME source the run
+  // resolved, in the SAME namespace (#506): a JSON inventory matches an
+  // inventory, a `models.yaml` profile matches a models profile. Two sources
+  // that merely share a name are different sources, and a snapshot calibrated
+  // against one must never drive the other. With the YAML route the snapshot
+  // used to be skipped entirely -- the target directory's own calibration
+  // could never apply once routing moved to `models.yaml`.
+  const selectedSource: CalibrationSource | undefined =
+    inventory !== undefined
+      ? { kind: "inventory", name: inventory.name }
+      : yamlSelection !== undefined
+        ? { kind: "models-profile", name: yamlSelection.name }
+        : undefined;
+  // Read only when a source is selected: a snapshot can apply to nothing else,
+  // and a target directory's malformed snapshot must not fail a run that could
+  // never have used it. A route that CAN use it still fails loudly, as before.
   const projectCalibration =
     options.useProjectCalibration === false ||
-    inventory === undefined ||
-    options.profile !== undefined
+    options.profile !== undefined ||
+    selectedSource === undefined
       ? undefined
       : readProjectCalibrationSnapshot(options.targetDir);
+  const snapshotRef =
+    projectCalibration === undefined ? undefined : snapshotSource(projectCalibration);
   const projectProfile =
     projectCalibration !== undefined &&
-    inventory !== undefined &&
-    projectCalibration.inventory.name === inventory.name
+    snapshotRef !== undefined &&
+    selectedSource !== undefined &&
+    snapshotRef.kind === selectedSource.kind &&
+    snapshotRef.name === selectedSource.name
       ? projectCalibration.routing
       : undefined;
   const useCodexOAuthDefaults =

@@ -17,6 +17,7 @@ export {
 } from "./store";
 export type {
   CalibratedRouting,
+  CalibrationSource,
   EconomicConfidence,
   EconomicRecord,
   EconomicRecordKind,
@@ -27,3 +28,4 @@ export type {
   UserProfileImportPreview,
   UserProfileStoreOptions,
 } from "./types";
+export { calibrationSourceOf } from "./types";

@@ -157,6 +157,7 @@ ad-coder profile export > profile.json
 ad-coder profile import-preview --input profile.json --mode merge
 ad-coder profile import-apply --input profile.json --mode merge
 ad-coder profile snapshot --inventory work --target-dir ./my-project
+ad-coder profile snapshot --models-profile daily --target-dir ./my-project
 ```
 
 For subscription-credit calibration, append an account-free server balance
@@ -167,9 +168,19 @@ observation with `profile record --input <record.json>`. Use
 the value is `0.02`. Two balance observations linked by `previousId` measure
 credits consumed without exporting account identity or raw provider responses.
 
-The snapshot contains only the selected inventory, calibrated routing, current
-economics, and capacity ranges. A matching named inventory automatically uses
-its project routing; API callers can set `useProjectCalibration: false`.
+A calibrated routing entry names exactly one source: `inventory` for a portable
+inventory declared in the same document, or `modelsProfile` for a profile in
+`models.yaml` — the same file the run is routed from, never a copy of it. Which
+one it is decides which routing the calibration belongs to, so an inventory and
+a profile that share a name never stand in for each other. `models.yaml` is read
+where the snapshot is built (`--models-profile` with `--models-config`, default
+the standard models path), which refuses a cell the named profile cannot serve.
+
+The snapshot contains only the selected source, calibrated routing, current
+economics, and capacity ranges, and it names that source in its own namespace.
+A matching source automatically uses its project routing — on the `models.yaml`
+route as well as the inventory route; API callers can set
+`useProjectCalibration: false`.
 
 Validate and smoke-test the calibration corpus with
 `bun run calibration:corpus -- smoke`.

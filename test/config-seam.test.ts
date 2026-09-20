@@ -5,10 +5,12 @@ import * as path from "node:path";
 import { resolvePipelineConfig } from "../src/cli/resolve-config";
 import { ConfigError } from "../src/config/errors";
 import { loadModelsConfigSeam, loadSettingsConfigSeam } from "../src/config/seam";
-import { toRegistryAndProfile } from "../src/config/to-registry";
+import { modelsProfileSource, toRegistryAndProfile } from "../src/config/to-registry";
 import type { SettingsConfig } from "../src/config/types";
 import { parseModelsConfig } from "../src/config/validate";
+import { buildDefaultProfile } from "../src/profiles/default-profile";
 import { resolveProfile } from "../src/profiles/resolve";
+import { writeProjectCalibrationSnapshot } from "../src/project-calibration";
 import { RegistryError } from "../src/registry/errors";
 import { resolveRegistry } from "../src/registry/resolve";
 import type { RegistryConfig } from "../src/registry/types";
@@ -19,6 +21,7 @@ import {
   resolveStampRequirement,
   STAMPS_MARKER_FILE,
 } from "../src/stamp/record-review-stamp";
+import { UserProfileError } from "../src/user-profile";
 
 /** An absolute-path caveat guard: every test confines reads to a temp dir. */
 function scratch(): string {
@@ -1321,6 +1324,177 @@ test("(#477) a bare rung beside a level-bearing one keeps projecting as before",
     expect(Object.keys(coder)).toEqual(["role", "complexity", "model"]);
     expect(coder.thinkingLevel).toBeUndefined();
     expect(coder.model).toBe("glm-5.3-flash");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// (#506) a calibration source is a models.yaml profile, not only a JSON inventory
+
+/** `modelsYaml()` with a second model, so a calibrated cell can differ from the
+ * profile's own route. */
+function modelsYamlTwoModels(): string {
+  return modelsYaml().replace(
+    "      glm-5.3-flash: {input: 0.15, output: 0.5}\n",
+    "      glm-5.3-flash: {input: 0.15, output: 0.5}\n      glm-5.3-pro: {input: 0.5, output: 2}\n",
+  );
+}
+
+test("(#506) a models.yaml profile's reachable pairs are what a snapshot scopes by", () => {
+  const config = parseModelsConfig({
+    providers: {
+      "opencode-go": {
+        enabled: true,
+        api: "openai-completions",
+        baseUrl: "https://opencode.example.com",
+        credential: "OPENCODE_API_KEY",
+        models: {
+          "glm-5.3-flash": { input: 0.15, output: 0.5 },
+          "glm-5.3-pro": { input: 0.5, output: 2 },
+        },
+      },
+      // Reached only as a SECOND rung of the summarizer row: still part of the
+      // source, because "reachable" is the meaning `reachableProviders` already
+      // carries -- every rung, served or not -- and calibration must not invent
+      // a second definition of it.
+      "other-provider": {
+        enabled: true,
+        api: "openai-completions",
+        baseUrl: "https://other.example.com",
+        credential: "OTHER_API_KEY",
+        models: { "other-model": { input: 1, output: 3 } },
+      },
+    },
+    profiles: {
+      daily: {
+        coder: "opencode-go:glm-5.3-flash",
+        reviewer: "opencode-go:glm-5.3-pro",
+        summarizer: ["opencode-go:glm-5.3-flash", "other-provider:other-model"],
+      },
+    },
+    default: "daily",
+  });
+  const source = modelsProfileSource(config, "daily");
+  expect(source.name).toBe("daily");
+  // First-reached order, one entry per provider, each provider's models deduped.
+  expect(source.providers).toEqual([
+    { id: "opencode-go", models: ["glm-5.3-flash", "glm-5.3-pro"] },
+    { id: "other-provider", models: ["other-model"] },
+  ]);
+  // An unknown profile is the same typed refusal the registry projection makes.
+  expect(() => modelsProfileSource(config, "missing")).toThrow(ConfigError);
+});
+
+test("(#506) a project snapshot named after a models profile drives that profile", () => {
+  const dir = scratch();
+  try {
+    const modelsPath = writeModels(dir, modelsYamlTwoModels());
+    // The default profile sends the planner (strong) to glm-5.3-pro; the
+    // models.yaml profile routes EVERY role to glm-5.3-flash. So a planner
+    // cell served by glm-5.3-pro can only have come from the snapshot.
+    const calibrated = buildDefaultProfile({
+      strong: "glm-5.3-pro",
+      mid: "glm-5.3-flash",
+      cheap: "glm-5.3-flash",
+    });
+    const base = {
+      task: "x",
+      targetDir: dir,
+      modelsConfigPath: modelsPath,
+      settingsConfigPath: path.join(dir, "settings.yaml"),
+      env: fakeEnv({ OPENCODE_API_KEY: "k" }),
+      warn: silent,
+    };
+    expect(resolvePipelineConfig(base).roles.planner?.model.name).toBe("glm-5.3-flash");
+
+    writeProjectCalibrationSnapshot(dir, {
+      version: 1,
+      modelsProfile: "daily",
+      routing: calibrated,
+      observedOn: "2026-09-20",
+      economics: [],
+      subscriptionCapacityRanges: [],
+    });
+    // The target directory's own committed calibration now applies on the YAML
+    // route -- it used to be skipped entirely, so a project could never ship
+    // the routing it measured once routing moved to models.yaml.
+    expect(resolvePipelineConfig(base).roles.planner?.model.name).toBe("glm-5.3-pro");
+    expect(
+      resolvePipelineConfig({ ...base, useProjectCalibration: false }).roles.planner?.model.name,
+    ).toBe("glm-5.3-flash");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("(#506) an unreadable snapshot cannot fail a run with nothing to apply it to", () => {
+  const dir = scratch();
+  try {
+    fs.mkdirSync(path.join(dir, ".ad-coder"), { recursive: true });
+    fs.writeFileSync(path.join(dir, ".ad-coder", "calibration.json"), "{not-json");
+    // The preset route selects neither a JSON inventory nor a models.yaml
+    // profile, so no snapshot could ever apply to it: reading the file anyway
+    // would let a stray one fail a run that never consults it.
+    expect(
+      resolvePipelineConfig({
+        task: "x",
+        targetDir: dir,
+        registryConfig: defaultRegistry(),
+        env: fakeEnv({ LOCAL_KEY: "k" }),
+        warn: silent,
+      }).roles.coder,
+    ).toBeDefined();
+    // The same bytes on a route that CAN apply a snapshot still fail loudly.
+    expect(() =>
+      resolvePipelineConfig({
+        task: "x",
+        targetDir: dir,
+        modelsConfigPath: writeModels(dir, modelsYamlTwoModels()),
+        settingsConfigPath: path.join(dir, "settings.yaml"),
+        env: fakeEnv({ OPENCODE_API_KEY: "k" }),
+        warn: silent,
+      }),
+    ).toThrow(UserProfileError);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("(#506) a snapshot in the inventory namespace never drives a models-profile selection", () => {
+  const dir = scratch();
+  try {
+    const modelsPath = writeModels(dir, modelsYamlTwoModels());
+    const calibrated = buildDefaultProfile({
+      strong: "glm-5.3-pro",
+      mid: "glm-5.3-flash",
+      cheap: "glm-5.3-flash",
+    });
+    // Same NAME, other namespace: an inventory-arm snapshot called "daily"
+    // must not be mistaken for the models.yaml profile of the same name. The
+    // two resolve against different model sets, and a snapshot says which one
+    // it was calibrated against.
+    writeProjectCalibrationSnapshot(dir, {
+      version: 1,
+      inventory: {
+        name: "daily",
+        providers: [{ id: "opencode-go", models: ["glm-5.3-flash", "glm-5.3-pro"] }],
+      },
+      routing: calibrated,
+      observedOn: "2026-09-20",
+      economics: [],
+      subscriptionCapacityRanges: [],
+    });
+    expect(
+      resolvePipelineConfig({
+        task: "x",
+        targetDir: dir,
+        modelsConfigPath: modelsPath,
+        settingsConfigPath: path.join(dir, "settings.yaml"),
+        env: fakeEnv({ OPENCODE_API_KEY: "k" }),
+        warn: silent,
+      }).roles.planner?.model.name,
+    ).toBe("glm-5.3-flash");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

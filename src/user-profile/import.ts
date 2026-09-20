@@ -1,6 +1,7 @@
 import { UserProfileError } from "./errors";
 import { parseUserProfile } from "./schema";
 import type { ImportMode, UserProfile, UserProfileImportPreview } from "./types";
+import { calibrationSourceOf } from "./types";
 
 function same(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
@@ -24,7 +25,14 @@ export function previewUserProfileImport(
   const unchanged: string[] = [];
   const conflicts: string[] = [];
   const localInventories = new Map(local.inventories.map((entry) => [entry.name, entry]));
-  const localRouting = new Map(local.calibratedRouting.map((entry) => [entry.inventory, entry]));
+  // A calibrated routing entry is identified by its SOURCE, not by a bare name:
+  // an inventory and a models.yaml profile may share a name and are different
+  // sources (issue #506).
+  const routingKey = (entry: UserProfile["calibratedRouting"][number]) => {
+    const source = calibrationSourceOf(entry);
+    return source === undefined ? "unresolved" : `${source.kind}\u0000${source.name}`;
+  };
+  const localRouting = new Map(local.calibratedRouting.map((entry) => [routingKey(entry), entry]));
   const localRecords = new Map(local.economicRecords.map((entry) => [entry.id, entry]));
   const capacityKey = (entry: UserProfile["subscriptionCapacityRanges"][number]) =>
     `${entry.provider}\u0000${entry.unit}`;
@@ -51,11 +59,13 @@ export function previewUserProfileImport(
   }
 
   for (const routing of incoming.calibratedRouting) {
-    const current = localRouting.get(routing.inventory);
+    const current = localRouting.get(routingKey(routing));
     if (mode === "replace") continue;
-    if (current === undefined) creates.push(`calibratedRouting:${routing.inventory}`);
-    else if (same(current, routing)) unchanged.push(`calibratedRouting:${routing.inventory}`);
-    else conflicts.push(`calibratedRouting:${routing.inventory}`);
+    const source = calibrationSourceOf(routing);
+    const label = source === undefined ? "unresolved" : `${source.kind}:${source.name}`;
+    if (current === undefined) creates.push(`calibratedRouting:${label}`);
+    else if (same(current, routing)) unchanged.push(`calibratedRouting:${label}`);
+    else conflicts.push(`calibratedRouting:${label}`);
   }
 
   for (const range of incoming.subscriptionCapacityRanges) {
@@ -89,7 +99,7 @@ export function previewUserProfileImport(
       ? incoming.calibratedRouting
       : [
           ...local.calibratedRouting,
-          ...incoming.calibratedRouting.filter((entry) => !localRouting.has(entry.inventory)),
+          ...incoming.calibratedRouting.filter((entry) => !localRouting.has(routingKey(entry))),
         ];
   const subscriptionCapacityRanges =
     mode === "replace"

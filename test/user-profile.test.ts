@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { UserProfile } from "ad-coder";
+import type { SubscriptionCapacityRange, UserProfile } from "ad-coder";
 import {
   exportUserProfile,
   FileUserProfileStore,
@@ -242,6 +242,62 @@ test("validates calibrated routing and safe subscription-capacity ranges", () =>
   }
 });
 
+test("a calibration names exactly one source: an inventory or a models.yaml profile", () => {
+  const cell = {
+    profile: {
+      entries: [{ role: "coder" as const, complexity: "medium" as const, model: "gpt-5.6-luna" }],
+    },
+    observedOn: "2026-09-20",
+    source: "benchmark",
+    confidence: "measured" as const,
+  };
+  const parse = (routing: unknown, over: Partial<UserProfile> = {}) =>
+    parseUserProfileJson(JSON.stringify({ ...profile(), ...over, calibratedRouting: [routing] }));
+  // The models.yaml arm: the source's model list lives in `models.yaml`, which
+  // a portable profile deliberately does not copy, so the cell is accepted here
+  // and checked where that file is loaded.
+  const modelsArm = parse({ ...cell, modelsProfile: "codex-pro100" }, { inventories: [] });
+  expect(modelsArm.calibratedRouting).toEqual([{ ...cell, modelsProfile: "codex-pro100" }]);
+  // The kind is part of the identity, so the two namespaces cannot silently
+  // collapse: naming BOTH is refused, and naming NEITHER is refused.
+  expect(() => parse({ ...cell, inventory: "primary", modelsProfile: "primary" })).toThrow(
+    UserProfileError,
+  );
+  expect(() => parse(cell)).toThrow(UserProfileError);
+  expect(() => parse({ ...cell, modelsProfile: "" })).toThrow(UserProfileError);
+  // An unknown field is refused on either arm, as before.
+  expect(() => parse({ ...cell, modelsProfile: "codex-pro100", extra: 1 })).toThrow(
+    UserProfileError,
+  );
+  // The inventory arm keeps its two checks: the reference must resolve, and the
+  // routing may only name that inventory's models.
+  expect(() => parse({ ...cell, inventory: "missing" }, { inventories: [] })).toThrow(
+    UserProfileError,
+  );
+  expect(() => parse({ ...cell, inventory: "primary" })).toThrow(UserProfileError);
+  // A capacity range's provider is checked against the source that can check
+  // it: strictly against a declared inventory, and deferred to `models.yaml`
+  // only when a models-profile source is declared (issue #506).
+  const range: SubscriptionCapacityRange = {
+    provider: "openai-codex",
+    unit: "requests/hour",
+    lowerBound: 10,
+    upperBound: 20,
+    observedOn: "2026-09-20",
+    source: "https://example.test/limits",
+    confidence: "provider_reported",
+  };
+  expect(() =>
+    parseUserProfileJson(JSON.stringify({ ...profile(), subscriptionCapacityRanges: [range] })),
+  ).toThrow(UserProfileError);
+  expect(
+    parse(
+      { ...cell, modelsProfile: "codex-pro100" },
+      { inventories: [], subscriptionCapacityRanges: [range] },
+    ).subscriptionCapacityRanges,
+  ).toEqual([range]);
+});
+
 test("rejects credential-bearing source URLs before export", () => {
   const sources = [
     "https://user:password@example.test/source",
@@ -310,7 +366,10 @@ test("previews repeatedly without writes and applies merge or replace", async ()
   expect(first.conflicts).toEqual([]);
   expect(first.creates).toEqual([
     "inventory:secondary",
-    "calibratedRouting:secondary",
+    // The source KIND is part of the identity (#506): a JSON inventory and a
+    // models.yaml profile may share a name and are still different sources, so
+    // a preview can never report one as the other.
+    "calibratedRouting:inventory:secondary",
     "subscriptionCapacityRange:anthropic:requests/hour",
     "economicRecord:price-2",
   ]);

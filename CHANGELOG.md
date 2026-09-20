@@ -11,6 +11,42 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.133.0] - 2026-09-20
+
+### Added
+- **A calibration may name a `models.yaml` profile, not only a JSON inventory
+  (issue #506).** `calibratedRouting` in the user profile was bound to a
+  declared JSON inventory by the schema, so the moment routing moved to
+  `models.yaml` two things became unreachable at once: a routing could not be
+  calibrated against the profile the operator actually runs, and a project's
+  committed snapshot stopped applying -- `resolve-config` compared it against an
+  inventory and skipped the read entirely on the YAML route. A
+  `calibratedRouting` entry now names exactly one source: `inventory` (a
+  portable inventory declared in the same document, unchanged) or
+  `modelsProfile` (a profile in `models.yaml`). The kind is part of the
+  identity, so an inventory and a profile that share a name stay different
+  sources in every consumer -- the import preview
+  (`calibratedRouting:inventory:<name>`), the uniqueness rule, and the
+  resolver's match. `models.yaml` is not copied into the profile: the model
+  list of a models-profile source is derived from the file by the same walk the
+  registry resolves with (`modelsProfileSource`, which also now exposes the
+  reachable `provider:model` PAIRS that `reachableProviders` only summarised),
+  and it is checked where the file is loaded -- `profile snapshot
+  --models-profile <name>` refuses a cell the selected profile cannot serve, by
+  name. The committed snapshot names its source in that source's own namespace
+  (`modelsProfile: "<name>"`, never a synthesised inventory block), and a
+  snapshot written before this change still parses, so a committed
+  `.ad-coder/calibration.json` in an existing checkout does not turn into a hard
+  failure. The resolver now reads a target directory's snapshot on the
+  `models.yaml` route too and applies it when the source matches by kind and
+  name, where the read used to be skipped whenever no JSON inventory was
+  selected -- and it reads one only when a source is selected at all, so a
+  malformed snapshot in a target directory cannot fail a run that could never
+  have applied it. The provider scope of a `subscriptionCapacityRanges` entry is
+  checked against a declared inventory exactly as before whenever every source
+  is an inventory; with a models-profile source declared it is deferred to the
+  snapshot build, which keeps only the ranges the profile reaches.
+
 ## [0.132.0] - 2026-09-20
 
 ### Added

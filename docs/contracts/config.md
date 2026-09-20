@@ -99,6 +99,38 @@ Rules the operator declared for ad-coder. A violation is always blocking.
   not what an oauth run is priced at: the ledger prices codex off the pi
   catalogue (terra 2/12, luna 0.2/1.2, sol 5/30 per M), which on a flat
   subscription is an estimate, not a charge.
+- 2026-09-20: **A calibration names a routing SOURCE, and one of them is a
+  `models.yaml` profile (issue #506).** A `calibratedRouting` entry carries
+  exactly one of `inventory` (a portable inventory declared in the same
+  document -- the original spelling, unchanged and still what a profile written
+  before this entry holds) and `modelsProfile` (a profile name in the
+  operator's `models.yaml`). Naming both is refused, naming neither is refused,
+  and the KIND is part of the source's identity rather than an inference from a
+  bare name: an inventory and a models profile that share a name are different
+  sources in the uniqueness rule, in the import preview's labels
+  (`calibratedRouting:inventory:<name>`), and in the resolver's match, so a
+  snapshot calibrated against one can never drive the other. `models.yaml` is
+  never copied into the portable profile: the model list of a models-profile
+  source is derived from that file by the same walk the registry resolves with
+  (`modelsProfileSource`, exposed beside `reachableProviders`, which is the
+  provider-only projection of the same pair list). Consequences that follow from
+  where each check can be made: membership of a calibration's cells is checked
+  against the inventory in the stored document, and for a models profile at
+  `profile snapshot --models-profile <name>`, which refuses a cell the profile
+  cannot serve BY NAME (previously such a cell survived to fail at resolution);
+  the provider scope of a `subscriptionCapacityRanges` entry is checked against
+  a declared inventory exactly as before whenever every source is an inventory,
+  and is otherwise deferred to that same snapshot build, which keeps only the
+  ranges the selected profile reaches. A committed project snapshot names its
+  source in that source's own namespace -- `{"inventory": {...}}` or
+  `{"modelsProfile": "name"}`, never a synthesised inventory block for a
+  profile -- and a snapshot written before this entry still parses, because the
+  accepted field set is the union of the two arms and the inventory shape is
+  one of them. The resolver now reads a target directory's snapshot on the
+  `models.yaml` route too and applies it when the source matches by kind and
+  name; before this entry the read was skipped whenever no JSON inventory was
+  selected, so a project's committed calibration could never apply once routing
+  moved to `models.yaml`.
 - 2026-09-19: **The operator-facing routing config is `models.yaml` and the
   behaviour config is `settings.yaml` (issue #280).** `models.yaml` declares
   `providers` (each with an optional provider-level `baseUrl`, an `enabled`
