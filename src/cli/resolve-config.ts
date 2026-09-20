@@ -1,6 +1,7 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Api, CacheRetention, CredentialStore, Model } from "@earendil-works/pi-ai";
 import { assertCredentialPathOutsideProject, FileCredentialStore } from "../auth/credential-store";
+import { ConfigError } from "../config/errors";
 import { loadModelsConfigSeam, loadSettingsConfigSeam } from "../config/seam";
 import { toRegistryAndProfile } from "../config/to-registry";
 import type { ProviderAdmissionSettings } from "../config/types";
@@ -390,6 +391,17 @@ export interface ResolvePipelineConfigOptions {
   selectedWorkflows?: readonly string[] | undefined;
   /** Where that selection came from, so enabled-by-default is never silent. */
   workflowsSource?: "cli" | "built-in-default" | undefined;
+  /**
+   * Refuse an unresolvable route instead of substituting the env-preset/codex
+   * fallback (issue #453). When `true`, the precedence ladder
+   * (models.yaml -> inventory -> registryConfig -> env-preset) MUST resolve to
+   * a route the resolve can name; an absent rung at every level throws a typed
+   * `route_unresolved` error naming the selection sources that were considered
+   * and the rung that could not be reached -- never a credential value, never
+   * provider prose. Scoped to the spawned/detached worker entry: a console
+   * launched with no stored selection keeps its present built-in fallback.
+   */
+  requireResolvableRoute?: boolean;
   /** Trusted replacement source for the versioned model-inventory Researcher brief. */
   researchBrief?: RoleBriefSource;
 }
@@ -759,6 +771,43 @@ function resolveConfig(
     yamlSelection === undefined && inventory === undefined && options.registryConfig === undefined
       ? selectProvider(env, options.provider, warn)
       : undefined;
+  // NO STORED SELECTION (issue #453). When the resolve cannot find a route
+  // -- no models.yaml, no inventory, no registry config, no explicit provider,
+  // and no env-preset key present -- the existing selectProvider flow would
+  // fall through to the codex OAuth default. The detached worker entry opts
+  // out of that substitution: a worker re-running the same resolve with a
+  // different credential store or a different env can land on a route the
+  // operator never picked, and that is exactly the divergence this rule
+  // refuses. Names and numbers only -- never a credential value, never
+  // provider prose. The console with no stored selection keeps its present
+  // built-in fallback.
+  if (
+    options.requireResolvableRoute === true &&
+    yamlSelection === undefined &&
+    inventory === undefined &&
+    options.registryConfig === undefined &&
+    options.provider === undefined &&
+    PROVIDER_BY_ENV.every(({ envVar }) => {
+      const value = env(envVar);
+      return value === undefined || value === "";
+    })
+  ) {
+    // Detail is a names-only list of the absent rungs and the env-var NAMES
+    // that could have selected a provider -- never a credential value,
+    // never a provider URL, never raw provider prose. Names only.
+    const absentRungs = [
+      "models.yaml",
+      "--inventory-config",
+      "--registry-config",
+      "--provider",
+    ].join(", ");
+    const envVars = PROVIDER_BY_ENV.map(({ envVar }) => envVar).join(", ");
+    throw new ConfigError(
+      "route_unresolved",
+      `absent:${absentRungs}; env-present:none; env-options:${envVars}`,
+      `no routing selection resolved (${absentRungs} all absent and no env-preset provider key present); pass --models-config, --inventory-config, --registry-config, --provider, or set one of ${envVars}`,
+    );
+  }
   const presetSelection = provider === undefined ? undefined : PROVIDER_PRESETS[provider];
   let authoredRegistry: RegistryConfig;
   if (yamlSelection !== undefined) authoredRegistry = yamlSelection.registry;

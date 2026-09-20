@@ -2032,11 +2032,43 @@ function createBackgroundHostLauncher(
  * re-resolves everything else from its own environment; repeating these words
  * verbatim is what keeps `--workflows false` and `--plugins none` from
  * resolving back to enabled-by-default inside the detached process.
+ *
+ * The same mechanism carries the operator's explicit routing/credential
+ * selection to the worker (issue #453): without this a detached worker
+ * re-reads the default credential store and a stored-config seam from its
+ * own home directory, so the routing/credential it picked is not the one
+ * the operator typed on the console. Only flags the operator actually typed
+ * travel; an absent flag stays absent and the worker keeps its own default.
  */
 function inheritedCapabilityFlags(flags: Record<string, string | undefined>): readonly string[] {
   const inherited: string[] = [];
   if (flags["--workflows"] !== undefined) inherited.push("--workflows", flags["--workflows"]);
   if (flags["--plugins"] !== undefined) inherited.push("--plugins", flags["--plugins"]);
+  // Routing/credential selection -- typed verbatim (issue #453).
+  if (flags["--models-config"] !== undefined) {
+    inherited.push("--models-config", flags["--models-config"] as string);
+  }
+  if (flags["--settings-config"] !== undefined) {
+    inherited.push("--settings-config", flags["--settings-config"] as string);
+  }
+  if (flags["--inventory-profile"] !== undefined) {
+    inherited.push("--inventory-profile", flags["--inventory-profile"] as string);
+  }
+  if (flags["--inventory-config"] !== undefined) {
+    inherited.push("--inventory-config", flags["--inventory-config"] as string);
+  }
+  if (flags["--registry-config"] !== undefined) {
+    inherited.push("--registry-config", flags["--registry-config"] as string);
+  }
+  if (flags["--profile-config"] !== undefined) {
+    inherited.push("--profile-config", flags["--profile-config"] as string);
+  }
+  if (flags["--credential-path"] !== undefined) {
+    inherited.push("--credential-path", flags["--credential-path"] as string);
+  }
+  if (flags["--provider"] !== undefined) {
+    inherited.push("--provider", flags["--provider"] as string);
+  }
   return inherited;
 }
 
@@ -2091,7 +2123,17 @@ export function backgroundHostLauncherFor(
     action === "start" ? backgroundHostLauncherFor(targetArg, ownerId, flags) : undefined;
   const manager = new BackgroundRunManager(
     async (task, runId, control) => {
-      const config = resolvePipelineConfig({ task, ...buildConfigOptions(targetArg, flags) });
+      // The detached worker is the only entry that opts into refusing an
+      // unresolvable route (issue #453): the worker's environment may not be
+      // the console's, so a route the operator never picked must not be
+      // substituted behind the typed launch parameters the worker already
+      // inherited verbatim. The console and the `background start` front keep
+      // their present env-preset/codex fallback.
+      const config = resolvePipelineConfig({
+        task,
+        ...buildConfigOptions(targetArg, flags),
+        requireResolvableRoute: true,
+      });
       config.coordinator = { ...config.coordinator, runId };
       const result = await runPipeline(config);
       const perStep = result.stageMetrics.map((metric, index) => {

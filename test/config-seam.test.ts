@@ -930,3 +930,154 @@ test("(#280) a non-positive maxTokens is refused, naming the field path", () => 
     expect(ce.message).toContain("opencode-go.models.glm-5.3-flash.maxTokens");
   }
 });
+
+// ---------------------------------------------------------------------------
+// (#453) requireResolvableRoute: the resolver throws a typed `route_unresolved`
+// instead of substituting the env-preset/codex fallback when the option is
+// set and nothing resolves. The console and every other caller (the option
+// absent) keep their present behaviour.
+
+/** No env-var provider key, no models.yaml, no inventory, no registry config. */
+function emptyResolveEnv(): (name: string) => string | undefined {
+  return () => undefined;
+}
+
+test("(#453) requireResolvableRoute: nothing resolvable throws the typed error", () => {
+  const dir = scratch();
+  try {
+    let thrown: unknown;
+    try {
+      resolvePipelineConfig({
+        task: "x",
+        targetDir: dir,
+        env: emptyResolveEnv(),
+        warn: silent,
+        requireResolvableRoute: true,
+      });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(ConfigError);
+    const ce = thrown as ConfigError;
+    expect(ce.code).toBe("route_unresolved");
+    // Names only -- absent rungs and env-var NAMES, never a value, never a URL.
+    expect(ce.detail).toContain("models.yaml");
+    expect(ce.detail).toContain("--inventory-config");
+    expect(ce.detail).toContain("--registry-config");
+    expect(ce.detail).toContain("--provider");
+    expect(ce.detail).toContain("DEEPSEEK_API_KEY");
+    expect(ce.detail).toContain("OPENROUTER_API_KEY");
+    expect(ce.message).toContain("--models-config");
+    // No credential value, no provider URL, no raw response.
+    expect(ce.detail).not.toMatch(/sk-|https?:\/\//);
+    expect(ce.message).not.toMatch(/sk-|https?:\/\//);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("(#453) requireResolvableRoute: absent keeps the env-preset/codex fallback", () => {
+  const dir = scratch();
+  try {
+    // No `requireResolvableRoute`: the console keeps its present behaviour --
+    // the env-preset/codex fallback substitutes a route and no error is thrown.
+    const config = resolvePipelineConfig({
+      task: "x",
+      targetDir: dir,
+      env: emptyResolveEnv(),
+      warn: silent,
+    });
+    expect(config.delegatedRoute?.source).toBe('provider "openai-codex"');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("(#453) requireResolvableRoute: false (explicit) also keeps the fallback", () => {
+  const dir = scratch();
+  try {
+    const config = resolvePipelineConfig({
+      task: "x",
+      targetDir: dir,
+      env: emptyResolveEnv(),
+      warn: silent,
+      requireResolvableRoute: false,
+    });
+    expect(config.delegatedRoute?.source).toBe('provider "openai-codex"');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("(#453) requireResolvableRoute: a stored models.yaml selection still resolves", () => {
+  const dir = scratch();
+  try {
+    const modelsPath = writeModels(dir, modelsYaml());
+    const config = resolvePipelineConfig({
+      task: "x",
+      targetDir: dir,
+      modelsConfigPath: modelsPath,
+      settingsConfigPath: path.join(dir, "settings.yaml"),
+      env: fakeEnv({ OPENCODE_API_KEY: "k" }),
+      warn: silent,
+      requireResolvableRoute: true,
+    });
+    expect(config.delegatedRoute?.source).toBe('models.yaml "daily"');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("(#453) requireResolvableRoute: an explicit --provider with no credential is refused", () => {
+  const dir = scratch();
+  try {
+    // The explicit pin skips the route guard -- and that guard is what would
+    // have thrown `route_unresolved`. Resolution therefore proceeds to the
+    // registry, which refuses the provider it was pinned to, because its
+    // credential is absent from the injected env. That refusal is the correct
+    // outcome: the operator's typed selection is honoured, not substituted.
+    let thrown: unknown;
+    try {
+      resolvePipelineConfig({
+        task: "x",
+        targetDir: dir,
+        env: emptyResolveEnv(),
+        warn: silent,
+        requireResolvableRoute: true,
+        provider: "deepseek",
+      });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(RegistryError);
+    const re = thrown as RegistryError;
+    expect(re.code).toBe("missing_credential");
+    // Names only -- the credential VARIABLE, never a value, never a URL.
+    expect(re.detail).toBe("DEEPSEEK_API_KEY");
+    expect(re.message).toContain("DEEPSEEK_API_KEY");
+    expect(re.message).toContain('"deepseek"');
+    // Never the env-preset/codex fallback: the pinned provider is not swapped
+    // for a route that would have "resolved" without a credential.
+    expect(re.message).not.toContain("openai-codex");
+    expect(re.message).not.toMatch(/sk-|https?:\/\//);
+    expect(re.detail).not.toMatch(/sk-|https?:\/\//);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("(#453) requireResolvableRoute: an env-preset provider key still resolves", () => {
+  const dir = scratch();
+  try {
+    const config = resolvePipelineConfig({
+      task: "x",
+      targetDir: dir,
+      env: fakeEnv({ OPENROUTER_API_KEY: "k" }),
+      warn: silent,
+      requireResolvableRoute: true,
+    });
+    expect(config.delegatedRoute?.source).toBe('provider "openrouter"');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

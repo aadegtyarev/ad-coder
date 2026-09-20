@@ -11,6 +11,29 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.113.0] - 2026-09-20
+
+### Fixed
+- **Background boundary: a detached worker inherits the console's explicit
+  routing/credential selection verbatim, and a pinned route that resolves
+  nowhere is a typed refusal on that path (issue #453).**
+  `inheritedCapabilityFlags` repeated the capability switches, the stored
+  `models.yaml`/`settings.yaml` paths, the inventory profile and config, the
+  registry and profile documents and the credential path -- but not the
+  provider pin, so a `--provider` typed on the console was dropped at the
+  boundary and the worker re-read the default credential store under its own
+  home directory, resolving a routing the operator had not chosen. `--provider`
+  now travels by the same `!== undefined` guard as its neighbours: typed
+  verbatim when present, absent when not, and the boundary test asserts both
+  halves over the flag table. A route that resolves nowhere stays a refusal
+  rather than a substitution: an explicit pin skips the route guard, so a pin
+  whose credential is absent is refused by the registry with a typed error
+  naming the credential VARIABLE only (never a value), and the test that
+  asserted the old "still resolves" outcome now asserts that refusal -- the
+  substituted env-preset route is exactly what must not appear. Files:
+  `src/cli.ts`, `test/cli-background-boundary.test.ts`,
+  `test/config-seam.test.ts`.
+
 ## [0.112.0] - 2026-09-20
 
 ### Fixed

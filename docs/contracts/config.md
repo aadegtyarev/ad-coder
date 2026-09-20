@@ -45,15 +45,20 @@ Rules the operator declared for ad-coder. A violation is always blocking.
   automatic decomposition itself.
 - 2026-09-13: A model inventory is operator-authored and may contain one or
   multiple providers. Routing must select only models in that inventory.
-- 2026-09-16: Coder and the roles that check its output -- Reviewer and Auditor
-  -- must come from different model families at the same complexity. An author is
-  blind exactly where they erred, and a checker from the same family shares the
-  blindness, so a same-family pairing buys a review that cannot see the defect.
-  Route them together only when the inventory offers no second family; then use
-  different variants recommended for those roles, and record that the constraint
-  was unsatisfiable rather than leaving it looking like a choice. Stated as
-  "may" until 2026-09-16, which is why a seeded matrix put one model on Coder,
-  Reviewer and Auditor at once without anything objecting.
+- 2026-09-16 (corrected 2026-09-20): Coder and Reviewer must come from
+  different model families at the same complexity. An author is blind exactly
+  where they erred, and a checker from the same family shares the blindness, so
+  a same-family pairing buys a review that cannot see the defect. The rule
+  covers the Reviewer only, because the reviewer checks the coder's work; the
+  Auditor does NOT check it -- the auditor looks at the project as a whole and
+  its job is different -- so a same-family coder/auditor pairing is permitted
+  (operator clarification, 2026-09-20). Route Coder and Reviewer together only
+  when the inventory offers no second family; then use different variants
+  recommended for those roles, and record that the constraint was unsatisfiable
+  rather than leaving it looking like a choice. Stated as "may" until
+  2026-09-16, which is why a seeded matrix put one model on Coder, Reviewer and
+  Auditor at once without anything objecting; the shared Coder/Reviewer model is
+  the pairing this rule names, and the Auditor sharing it was never in scope.
 - 2026-09-14: `~/.config/ad-coder/inventories.json` is the single editable
   runtime source for named registry/routing profiles. First CLI use seeds the
   built-in OpenAI profile when the file is absent; upgrades never overwrite an
@@ -251,6 +256,24 @@ Rules the operator declared for ad-coder. A violation is always blocking.
   repeated launch words by one word that is not a capability switch; it does
   not rewrite that rule -- the persistent-setting layer still re-reads on its
   own.
+- 2026-09-20: **The detached worker inherits the console's explicit
+  routing/credential selection verbatim, and a pinned route that resolves
+  nowhere is a typed refusal on that path (issue #453).** The worker command
+  now repeats every routing/credential launch word the operator typed -- the
+  stored routing (`models.yaml`) and behaviour (`settings.yaml`) config paths,
+  the model-inventory profile and config, the registry and profile documents,
+  the credential path, and the provider pin -- so the worker resolves the same
+  routing and credential selection the console resolved instead of re-reading
+  the default files under its own home directory. Only flags actually typed
+  travel: an absent flag stays absent and the worker keeps its own default
+  resolution, exactly as the 2026-09-17 and 2026-09-19 boundary entries
+  require. A route that resolves nowhere is a typed refusal on the worker
+  path, never a substituted provider: an explicit provider pin skips the
+  route guard, and a pin whose credential is absent is then refused by the
+  registry with a typed error naming the credential VARIABLE (a name, never a
+  value). The console path keeps the env-preset fallback it had, so this is a
+  boundary rule about what crosses the process, not a change to the
+  interactive default.
 
 ## Sources
 
@@ -287,6 +310,12 @@ so a background pipeline authenticates on the same private credential file
 the console was launched with -- a path crosses, never a credential value;
 absent, the worker keeps its own default-file resolution, and nothing is
 persisted into the profile or the run record.
+The 2026-09-20 entry (issue #453) closes that class over the operator's typed
+routing/credential selection -- the stored config paths, the inventory
+profile and config, the registry and profile documents, the credential path
+and the provider pin -- so the whole selection crosses the boundary verbatim
+or stays absent, and a pinned route that resolves nowhere is a typed refusal
+there rather than a silently substituted provider.
 The 2026-09-17 delegation-facts rule (issue #232) makes the resolver's role-to-
 model grouping -- the data the startup banner prints -- a structured field of
 the resolved config (`delegatedRoute`: source, complexity, reachable groups,
