@@ -1579,7 +1579,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       ];
     } else if (verdict.status === "decomposition_required") {
       // The escalation record built here is consumed downstream by the decision
-      // branch at src/orchestration/control-plane.ts:936, which reads
+      // branch at src/orchestration/control-plane.ts:940, which reads
       // execution.result.outcome (and now this escalation) to route the record.
       escalation = { required: true, reason: "role_requested", blockingVerdicts };
       transitions = [{ kind: "stop", isDefault: true, toPhase: "done", toRound: round }];

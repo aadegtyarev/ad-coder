@@ -97,6 +97,13 @@ cannot.
   A raise names one role and one reason: raising every ceiling because one was
   hit discards the evidence the pause produced.
 
+- 2026-09-19 (issue #387): The system's own wake obligation completes this: a
+  state notice (`paused`, `failed`, `operator_attention`, `timed_out`,
+  `completed`, `stage_changed`) is a durable wake record that starts an
+  orchestrator turn so the system raises and records the correction itself,
+  without the operator or a watching coordinator; activity notices stay
+  rendering-only.
+
 - 2026-09-20 (issue #451): The "one bounded raise, then decompose" rule is
   round-level (`docs/CHECKPOINT.md:200`), while `stage-limit-calibration.md`
   governs stage-time ceilings. A second blocking verdict on a slice is an
@@ -110,13 +117,6 @@ cannot.
   for ceiling grows stays as the 2026-09-17 entry wrote it. Future work, not in
   this entry: the orchestrator cutting a slice into children, raising the rung,
   and merging small adjacent follow-ups into one slice.
-
-- 2026-09-19 (issue #387): The system's own wake obligation completes this: a
-  state notice (`paused`, `failed`, `operator_attention`, `timed_out`,
-  `completed`, `stage_changed`) is a durable wake record that starts an
-  orchestrator turn so the system raises and records the correction itself,
-  without the operator or a watching coordinator; activity notices stay
-  rendering-only.
 
 ## What the system learns without being told
 
