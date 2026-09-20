@@ -159,3 +159,15 @@ Rules for ad-coder's command-line front. A violation is always blocking.
   written by hand). Argument errors -- unknown flag, unknown action, extra
   positional -- stay on the `fail()` path: derived help on the human front,
   `usage` code on the machine front, unchanged.
+- 2026-09-20 (issue #452): a dispatch (typed line or `/task`) submitted while
+  a turn is active keeps its place and runs once the active step settles;
+  a refusal never silently drops a dispatched payload. When the payload
+  cannot be delivered — the retry cap is exhausted or the session closes — it
+  is reported as a typed failure that says the task was NOT accepted and names
+  the source (the task path for `/task`, otherwise that the queued line was
+  not accepted), so a fifo dispatcher can retry it. A dispatch waits for the
+  active step only up to the console's settle budget; past it the failure is
+  the typed not-accepted outcome that names the source, so the dispatcher
+  retries it — and shutdown stays finite (ui-responsiveness.md). This restores
+  the promise from issue #397 that a dispatched line's queue position is
+  exactly where it was typed.

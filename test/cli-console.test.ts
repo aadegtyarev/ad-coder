@@ -5,7 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { PassThrough, Readable, Writable } from "node:stream";
 import { createModels, fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
-import { runConsole } from "../src/cli/console";
+import { DEFAULT_CONSOLE_MAX_RETRY_ATTEMPTS, runConsole } from "../src/cli/console";
 import { DEFAULT_STAGE_LIMITS } from "../src/cli/resolve-config";
 import { resolveResumeRun, resumeOrchestratorConfig, resumeSeedNote } from "../src/cli/resume";
 import { loadTaskFile } from "../src/cli/task-file";
@@ -102,6 +102,7 @@ function fakeSession(
     result?: (input: string, turn: number) => ConversationTurnResult;
     stepError?: Error;
     closeError?: Error;
+    settleDelay?: Promise<void>;
   } = {},
 ): ConversationSession & { inputs: string[]; closes: number } {
   return {
@@ -128,6 +129,7 @@ function fakeSession(
       this.closes++;
       if (options.closeError !== undefined) throw options.closeError;
     },
+    whenSettled: () => options.settleDelay ?? Promise.resolve(),
   };
 }
 
@@ -843,6 +845,7 @@ test("an untyped turn failure names a bounded class token and nothing else", asy
         throw thrown;
       },
       async close() {},
+      whenSettled: () => Promise.resolve(),
     };
     const error = new Capture();
     const result = await runConsole({
@@ -890,11 +893,13 @@ test("a refused turn renders the authored cause from the fixed map, not a forged
     {
       // The forged message must not travel: the branch reads only the
       // discriminator and renders the fixed map text keyed by it.
+      // Since issue #452 the step_active refusal enters the retry loop;
+      // with no settle the retries exhaust and render the exhausted outcome.
       thrown: Object.assign(new ForgedMessageRefusal("step_active"), {
         message: "credential=super-secret",
       }),
-      message: CONVERSATION_REFUSAL_TEXT.step_active,
-      action: "retry the prompt once the current turn settles",
+      message: "the queued line was not accepted",
+      action: "the conversation did not settle in time; retry the prompt",
       retryable: true,
     },
   ];
@@ -929,9 +934,11 @@ test("a step_active refusal keeps the console open so the promised retry is reac
     error,
     mode: "json",
   });
-  // The read-back turn 2 fails the same way under faux, so the front survives
-  // to dispatch it rather than closing the stream on a failure that clears.
-  expect(session.inputs).toEqual(["first"]);
+  // Since issue #452 the console retries transient refusals instead of
+  // returning immediately. The fake session's step always throws, so the
+  // retry loop exhausts its attempts — but the console survives to eof
+  // rather than closing on a failure that clears.
+  expect(session.inputs).toEqual(Array(11).fill("first"));
   expect(error.text()).toContain('"code":"turn_refused"');
   expect(result).toEqual({ reason: "eof", completedTurns: 0 });
 });
@@ -961,6 +968,102 @@ test("a closed refusal stops the console with turn_failed and one record (issue 
   });
 });
 
+test("a /task dispatch refused with step_active retries after settle and delivers the payload (issue #452)", async () => {
+  // Deterministic reproduction: first step call refuses with step_active,
+  // whenSettled resolves, second attempt succeeds. The payload must reach
+  // the model — it is not dropped — and no line tells the caller to retype.
+  const taskFile = path.join(os.tmpdir(), `ad-coder-452-${Date.now()}.txt`);
+  const taskContent = "fix the frobulator in src/frob.ts";
+  fs.writeFileSync(taskFile, taskContent, "utf8");
+  try {
+    let callCount = 0;
+    const seen: string[] = [];
+    const session: ConversationSession = {
+      runId: "452",
+      ledgerPath: undefined,
+      async step(input) {
+        callCount++;
+        seen.push(input);
+        if (callCount === 1) throw new ConversationRefusedError("step_active");
+        return {
+          runId: "452",
+          step: `turn:${callCount}`,
+          status: "ok",
+          assistantText: "done",
+          toolCalls: [],
+          droppedRecords: 0,
+        };
+      },
+      async close() {},
+      whenSettled: () => Promise.resolve(),
+    };
+    const output = new Capture();
+    const error = new Capture();
+    const result = await runConsole({
+      session,
+      input: ttyFrom(`/task ${taskFile}\n`),
+      output,
+      error,
+      mode: "json",
+    });
+    // The payload reached the model on the second call.
+    expect(callCount).toBe(2);
+    // The successful attempt received the file's normalized content.
+    expect(seen[1]).toBe(taskContent);
+    // One completed turn, not zero and not more.
+    expect(result).toEqual({ reason: "eof", completedTurns: 1 });
+    // No "retry the prompt once the current turn settles" in output.
+    expect(error.text()).not.toContain("retry the prompt once the current turn settles");
+    expect(error.text()).not.toContain("was not accepted");
+  } finally {
+    try {
+      fs.unlinkSync(taskFile);
+    } catch {
+      /* best-effort */
+    }
+  }
+});
+
+test("a /task dispatch that never settles exhausts retries and names the task path (issue #452)", async () => {
+  // The refusal persists past every retry attempt. The typed failure must say
+  // the task was not accepted and name the preserved task path.
+  const taskFile = path.join(os.tmpdir(), `ad-coder-452b-${Date.now()}.txt`);
+  const taskContent = "rewrite the quux module";
+  fs.writeFileSync(taskFile, taskContent, "utf8");
+  try {
+    const session = fakeSession({
+      stepError: new ConversationRefusedError("step_active"),
+    });
+    const output = new Capture();
+    const error = new Capture();
+    const result = await runConsole({
+      session,
+      input: ttyFrom(`/task ${taskFile}\n`),
+      output,
+      error,
+      mode: "json",
+    });
+    // The exhausted message names the task source.
+    expect(error.text()).toContain(`task from ${taskFile} was not accepted`);
+    expect(error.text()).toContain(
+      "the conversation did not settle in time; the task was not delivered",
+    );
+    expect(error.text()).not.toContain("retry the prompt once the current turn settles");
+    expect(result).toEqual({ reason: "eof", completedTurns: 0 });
+    // The retry count is finite and bounded by the documented cap: > 1
+    // (first attempt plus at least one retry) and <= cap + 1 (the first
+    // attempt that also throws).
+    expect(session.inputs.length).toBeGreaterThan(1);
+    expect(session.inputs.length).toBeLessThanOrEqual(DEFAULT_CONSOLE_MAX_RETRY_ATTEMPTS + 1);
+  } finally {
+    try {
+      fs.unlinkSync(taskFile);
+    } catch {
+      /* best-effort */
+    }
+  }
+});
+
 test("a refusal with a throwing field read falls back to the untyped line, never input_failed (issue #422)", async () => {
   // A Proxy that answers the tag check and throws on the discriminator read
   // must NOT replace the turn's failure with `input_failed`: the guard-try
@@ -977,6 +1080,7 @@ test("a refusal with a throwing field read falls back to the untyped line, never
       });
     },
     async close() {},
+    whenSettled: () => Promise.resolve(),
   };
   const error = new Capture();
   const result = await runConsole({

@@ -232,6 +232,7 @@ test("startOrchestrator preserves the resolved seed thinking level", async () =>
           droppedRecords: 0,
         }),
         close: async () => {},
+        whenSettled: () => Promise.resolve(),
       };
     },
   });
@@ -311,6 +312,7 @@ test("disabled pipeline does not resolve its role prompts or construct its core 
           droppedRecords: 0,
         }),
         close: async () => {},
+        whenSettled: () => Promise.resolve(),
       };
     },
   });
@@ -1075,6 +1077,7 @@ function fakeConversation(runId: string) {
       droppedRecords: 0,
     }),
     close: async () => {},
+    whenSettled: () => Promise.resolve(),
   };
 }
 

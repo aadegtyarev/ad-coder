@@ -498,6 +498,7 @@ test("(h) a wake landing during a front turn is drained after it, never racing c
         }
       },
       close: async () => {},
+      whenSettled: () => Promise.resolve(),
     }),
   });
   const sessionWithRuns = session as typeof session & {
