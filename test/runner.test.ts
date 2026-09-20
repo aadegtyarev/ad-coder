@@ -6,9 +6,11 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
-import type { Api, Model, Models } from "@earendil-works/pi-ai";
+import type { Api, AssistantMessage, Model, Models } from "@earendil-works/pi-ai";
 import {
+  createAssistantMessageEventStream,
   createModels,
+  createProvider,
   fauxAssistantMessage,
   fauxProvider,
   fauxThinking,
@@ -1404,4 +1406,192 @@ test("the request dump is off by default and writes what was sent when asked", (
   // Private: a dump holds task text and project content.
   expect(fs.statSync(file).mode & 0o777).toBe(0o600);
   fs.rmSync(target, { recursive: true, force: true });
+});
+
+/**
+ * Like harnessFixture, but responses arrive with EXACT provider usage
+ * (input/cacheRead/output/reasoning/cost) instead of the faux provider's
+ * re-estimated totals, which would erase anything a test writes. The pi-ai
+ * provider surface is implemented directly over `createProvider`; each stream
+ * ends immediately with the next scripted message.
+ */
+function usageFixture(
+  steps: Array<AssistantMessage | (() => AssistantMessage)>,
+  roleOptions: { activeToolNames?: string[] } = {},
+) {
+  let consumed = 0;
+  const model = {
+    id: "usage-faux-1",
+    name: "Usage Faux 1",
+    api: "usage-faux",
+    provider: "usage-faux",
+    baseUrl: "http://localhost:0",
+    reasoning: true,
+    input: ["text"] as ("text" | "image")[],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: CONTEXT_WINDOW,
+    maxTokens: 16384,
+  } as Model<Api>;
+  const singleStream = () => {
+    const step = steps[consumed++] ?? fauxAssistantMessage("done");
+    const message = typeof step === "function" ? step() : step;
+    // Stream the scripted content the way pi-agent-core assembles messages:
+    // start, per-block deltas, then the settle. Without toolcall deltas the
+    // harness accumulates no arguments and the tool fails validation.
+    const events = createAssistantMessageEventStream();
+    const partial: AssistantMessage = { ...message, content: [], stopReason: "pending" };
+    events.push({ type: "start", partial: { ...partial } });
+    message.content.forEach((block, index) => {
+      if (block.type === "text") {
+        partial.content = [...partial.content, { type: "text", text: "" }];
+        events.push({ type: "text_start", contentIndex: index, partial: { ...partial } });
+        events.push({
+          type: "text_delta",
+          contentIndex: index,
+          delta: block.text,
+          partial: { ...partial },
+        });
+        events.push({
+          type: "text_end",
+          contentIndex: index,
+          content: block.text,
+          partial: { ...partial },
+        });
+        (partial.content[index] as { text: string }).text = block.text;
+      }
+    });
+    if (message.stopReason !== "aborted" && message.stopReason !== "error")
+      events.push({ type: "done", reason: message.stopReason as "stop", message });
+    events.end(message);
+    return events;
+  };
+  const provider = createProvider({
+    id: "usage-faux",
+    auth: { apiKey: { name: "UsageFaux", resolve: async () => ({ auth: {} }) } },
+    models: [model],
+    api: {
+      stream: singleStream,
+      streamSimple: singleStream,
+    },
+  });
+  const models = createModels();
+  models.setProvider(provider);
+  const role = defineRole(
+    {
+      name: "coder",
+      provider: "usage-faux",
+      modelId: model.id,
+      systemPrompt: "You code.",
+      activeToolNames: roleOptions.activeToolNames ?? ["bash", "read", "write", "edit"],
+      cacheRetention: "none",
+      contextBudget: { maxTokens: 100_000, reserveTokens: 10_000, keepRecentTokens: 20_000 },
+    },
+    model,
+  );
+  return { models, model, role };
+}
+
+/** An exact-usage assistant message: the runner hook's numeric seams. */
+function messageWithUsage(usage: {
+  input?: number;
+  cacheRead?: number;
+  output: number;
+  reasoning?: number;
+  costTotal?: number;
+}): AssistantMessage {
+  const message = fauxAssistantMessage("done");
+  const total = (usage.input ?? 0) + (usage.cacheRead ?? 0) + usage.output + (usage.reasoning ?? 0);
+  message.usage = {
+    input: usage.input ?? 0,
+    output: usage.output,
+    cacheRead: usage.cacheRead ?? 0,
+    cacheWrite: 0,
+    ...(usage.reasoning !== undefined && { reasoning: usage.reasoning }),
+    totalTokens: total,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: usage.costTotal ?? 0 },
+  };
+  return message;
+}
+
+test("#469: a reasoning>output anomaly is clamped down, not fatal, and the paid round finishes", async () => {
+  // The anomalous pair is the provider's own accounting: `output` is
+  // `completion_tokens` and already contains `reasoning_tokens`, so reasoning
+  // 250 vs output 100 cannot both be true. Before #469 this threw inside the
+  // after_response hook and re-threw after the verdict, discarding the round.
+  const { models, model, role } = usageFixture([
+    messageWithUsage({ input: 10, output: 100, reasoning: 250 }),
+  ]);
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-469-"));
+  const result = await runRole({ role, targetDir: tmp, models, model, prompt: "do it" });
+  expect(result.result.status).toBe("completed");
+  // Accumulation stays on the clamped numbers: reasoning no longer exceeds
+  // output, and the excess is absorbed, not propagated.
+  expect(result.observations.output).toBe(100);
+  expect(result.observations.reasoning).toBe(100);
+  // The clamp is traceable in the observations that persist with the run
+  // record: one clamped response, largest excess 250 - 100 = 150.
+  expect(result.observations.clampedReasoning).toEqual({ responses: 1, maxExcess: 150 });
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+test("#469: every other bounded-usage violation still kills the round", async () => {
+  // The clamp owns ONLY the reasoning>output anomaly; hostile numbers stay
+  // fatal. NaN reasoning trips boundedUsageInteger and still poisons the run.
+  for (const hostileReasoning of [Number.NaN, -1, 1.5, 2_000_000_000_000]) {
+    const { models, model, role } = usageFixture([
+      messageWithUsage({ input: 10, output: 100, reasoning: hostileReasoning }),
+    ]);
+    await expect(
+      runRole({ role, targetDir, models, model, prompt: "do it" }),
+    ).rejects.toBeInstanceOf(RangeError);
+  }
+});
+
+test("#469: usedTokens does not add reasoning on top of output", async () => {
+  // Pin the one-sentence accounting rule at src/runner/runner.ts (budget()
+  // usedTokens): `reasoning` is already inside `completion_tokens`, so the
+  // projection must be freshInput + cachedInput + output -- restoring
+  // `+ usage.reasoning` "for completeness" double counts reasoning forever.
+  const { models, model, role } = usageFixture(
+    [
+      () => {
+        // reasoning == output, so no clamp is involved; the projection is pure
+        // accounting. The tool call makes the runner publish an activity budget.
+        const withTool = messageWithUsage({ input: 5, output: 100, reasoning: 100 });
+        withTool.content = [fauxToolCall("note_taker", { note: "observed" })];
+        return withTool;
+      },
+    ],
+    { activeToolNames: ["note_taker"] },
+  );
+  const budgets: Array<{ usedTokens?: number } | undefined> = [];
+  await runRole({
+    role,
+    targetDir,
+    models,
+    model,
+    prompt: "use it",
+    tools: [recordingTool("note_taker", [])],
+    activityConsumer: (record) => {
+      if (record.type === "tool_activity" && record.lifecycle === "completed") {
+        budgets.push(record.budget);
+      }
+    },
+  });
+  // The projection is emitted after the response's usage arrived: input 5
+  // + output 100 = 105. With the removed `+ usage.reasoning` addend restored,
+  // this total would read 205 (reasoning counted twice).
+  expect(budgets.at(-1)?.usedTokens).toBe(105);
+});
+
+test("#469: a run with no anomaly carries no clamp field", async () => {
+  // Absence is the signal: an ordinary pair (reasoning inside output) leaves
+  // observations byte-identical to pre-#469 shape -- no clampedReasoning key.
+  const { models, model, role } = usageFixture([
+    messageWithUsage({ input: 10, output: 100, reasoning: 50 }),
+  ]);
+  const result = await runRole({ role, targetDir, models, model, prompt: "do it" });
+  expect(result.result.status).toBe("completed");
+  expect(result.observations.reasoning).toBe(50);
+  expect("clampedReasoning" in result.observations).toBe(false);
 });
