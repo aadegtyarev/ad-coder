@@ -502,6 +502,12 @@ test("no separator hides a secret from the manual screen (#365)", async () => {
   // `token [31m=supersecret` -- no assignment for the screen to see -- and the
   // secret reached bindings.json. A markdown character the manual path KEEPS
   // hid the same assignment the generated path catches.
+  //
+  // Round 6, measured honestly: these drafts no longer fail when the flattened
+  // projection ALONE is removed, because the glued projection catches every one
+  // of them too. This test therefore pins the OUTCOME for both screens together
+  // rather than the flattened screen on its own; that screen stays as defence in
+  // depth, and its removal is not measured safe.
   for (const draft of [
     `token${ESC}[31m=supersecret`,
     "token*=supersecret",
@@ -593,7 +599,7 @@ test("every escape family is stripped whole, not just CSI (#365)", async () => {
   expect(sanitizeTitle(`red${ESC}[31m alert`).value).toBe("red alert");
 });
 
-test("an escape sequence that never terminates loses its payload (#365)", async () => {
+test("an escape sequence that never terminates is refused, not guessed at (#365)", async () => {
   // Round 4 measured the INCOMPLETE forms, one step past the round-3 grammar: an
   // introducer whose sequence never terminates matched no strict alternative, so
   // the single-byte catch-all removed the introducer ALONE and the payload stayed
@@ -601,6 +607,16 @@ test("an escape sequence that never terminates loses its payload (#365)", async 
   // `token 31=supersecret`, `token ?=supersecret`. In each one the assignment is
   // real but its operator sits a word away from the keyword every screen looks
   // for, so nothing fires and the secret persists, on BOTH paths.
+  //
+  // Round 5 closed the patch that tried to consume such a payload up to its `=`.
+  // The reviewer's repro put a SECOND introducer inside that payload --
+  // `pre<ESC>]foo sec<ESC>]ret=supersecret` -- and the consumption's stopping
+  // point became a place to hide: it ended at the inner `=` with `sec` on the far
+  // side, leaving `pre =supersecret` on both paths. There is no correct place to
+  // stop, because an unterminated sequence has no end: whatever follows it is
+  // text an attacker chose. So the introducer bytes are no longer swallowed as
+  // one-byte escapes; they SURVIVE the strip, and a surviving introducer means
+  // the draft is REFUSED -- the neutral fallback -- rather than guessed at.
   const C1 = String.fromCharCode;
   for (const draft of [
     `token${ESC}]0;foo=supersecret`, // OSC never terminated
@@ -611,26 +627,24 @@ test("an escape sequence that never terminates loses its payload (#365)", async 
     `token${C1(0x9d)}0;foo=supersecret`, // and the 8-bit forms of each
     `token${C1(0x90)}foo=supersecret`,
     `token${C1(0x9b)}31=supersecret`,
+    // A payload with no operator is refused too, and that is the point of the
+    // rule rather than an exception to it: where such a sequence ends is not a
+    // decision this code may make, so there is no payload to keep and none to
+    // drop -- the draft simply does not become a name.
+    `token${ESC}]0;foo barsupersecret`,
+    // The reviewer's nested repro, and the C1 spelling of it.
+    `pre${ESC}]foo sec${ESC}]ret=supersecret`,
+    `pre${C1(0x9d)}foo sec${C1(0x9d)}ret=supersecret`,
+    // A keyword inside the payload, with and without text before it.
+    `token${ESC}]0;x=1 y=supersecret`,
+    `${ESC}]token=supersecret`,
+    `pre${ESC}]token=supersecret`,
   ]) {
     expect(createManualSessionName(draft)).toBe(SESSION_FALLBACK_NAME);
     expect(sanitizeTitle(draft).value).toBe(SESSION_FALLBACK_NAME);
   }
-  // The operator is where the consumption STOPS rather than a byte it swallows --
-  // it is the one byte the screen has to see. With no operator in the payload
-  // there is nothing to stop at, so the consumption runs to the end of the draft:
-  // that is what a terminal displays, because an unterminated string never ends
-  // and nothing after it is text.
-  expect(createManualSessionName(`token${ESC}]0;foo barsupersecret`)).toBe("token");
-  expect(sanitizeTitle(`token${ESC}]0;foo barsupersecret`).value).toBe("token");
-  // What makes stopping at the operator safe is that the leftover ALWAYS begins
-  // with it while the text before the introducer is untouched, so a keyword that
-  // preceded the sequence stays adjacent to its operator. Both orders were
-  // measured, not argued: an operator that appears LATE in the payload stops the
-  // consumption late and still leaves `keyword =…`, and a keyword INSIDE the
-  // payload is caught by the raw screen, which sees the draft before any strip.
-  expect(createManualSessionName(`token${ESC}]0;x=1 y=supersecret`)).toBe(SESSION_FALLBACK_NAME);
-  expect(createManualSessionName(`${ESC}]token=supersecret`)).toBe(SESSION_FALLBACK_NAME);
-  expect(createManualSessionName(`pre${ESC}]token=supersecret`)).toBe(SESSION_FALLBACK_NAME);
+  // Nothing that FOLLOWS the refusal may be published either: the neutral
+  // fallback is reached before any payload can be shown.
   expect(sanitizeTitle(`${ESC}]token=supersecret`).value).toBe(SESSION_FALLBACK_NAME);
   // The durable path, not just the function.
   const { manager, stateDir } = makeManager();
@@ -650,6 +664,49 @@ test("an escape sequence that never terminates loses its payload (#365)", async 
   expect(createManualSessionName(`token${ESC}]0;x=y${String.fromCharCode(0x07)}=supersecret`)).toBe(
     SESSION_FALLBACK_NAME,
   );
+});
+
+test("no stripped surface may split a keyword in two (#365)", async () => {
+  // Round 5 measured the SECOND way to hide an assignment -- not a sequence that
+  // survives, but one that is removed exactly as designed. The strip REPLACES a
+  // sequence with a space, and one space inside a keyword splits it: `sec` and
+  // `ret` are then two words, no pattern in the shared screen knows the keyword
+  // `secret`, and the secret persists on BOTH paths. Every family this grammar
+  // can remove is a place to hide that space -- OSC, DCS, strict CSI, their
+  // eight-bit forms, a zero-width character, a plain control character. The
+  // GLUED projection is what catches them: the same strip with nothing injected,
+  // where a deleted byte leaves the keyword whole. It is screened and never
+  // persisted.
+  const C1 = String.fromCharCode;
+  const ST_ESC = `${ESC}\\`;
+  const BEL = String.fromCharCode(0x07);
+  for (const draft of [
+    `sec${ESC}]0;x${BEL}ret=supersecret`, // split by a TERMINATED OSC
+    `sec${C1(0x9d)}0;x${BEL}ret=supersecret`, // and its 8-bit form
+    `sec${ESC}P0;x${ST_ESC}ret=supersecret`, // by a terminated DCS
+    `sec${C1(0x90)}0;x${C1(0x9c)}ret=supersecret`,
+    `sec${ESC}[31mret=supersecret`, // by a strict CSI
+    `sec${C1(0x9b)}31mret=supersecret`,
+    `sec${String.fromCharCode(0x01)}ret=supersecret`, // by a control character
+    `sec${String.fromCharCode(0x200b)}ret=supersecret`, // by a zero-width space
+    `sec*ret=supersecret`, // by a markdown character the manual path KEEPS
+  ]) {
+    expect(createManualSessionName(draft)).toBe(SESSION_FALLBACK_NAME);
+    expect(sanitizeTitle(draft).value).toBe(SESSION_FALLBACK_NAME);
+  }
+  // The durable path: the glued form is a projection, so nothing of it may reach
+  // the store either -- neither the keyword nor the mangled tail.
+  const { manager, stateDir } = makeManager();
+  await manager.ensureSession("split-keyword", "telegram:bridge");
+  const record = await manager.renameSession("split-keyword", `sec${ESC}]0;x${BEL}ret=supersecret`);
+  expect(record.name).toBe(SESSION_FALLBACK_NAME);
+  const durable = fs.readFileSync(path.join(stateDir, "bindings.json"), "utf8");
+  expect(durable).not.toContain("supersecret");
+  expect(durable).not.toContain("ret=");
+  // A draft with nothing hidden in it is unaffected, split surfaces or not: the
+  // glued projection only ever speaks about a secret that is really there.
+  expect(createManualSessionName(`red${ESC}[31m alert`)).toBe("red alert");
+  expect(createManualSessionName("Fix *urgent* thing")).toBe("Fix *urgent* thing");
 });
 
 test("the persisted form is screened before it is stored (#365)", () => {

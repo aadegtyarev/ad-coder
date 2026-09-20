@@ -52,53 +52,49 @@ const ST = `(?:${ESC}\\\\|${C1_ST})`;
 // then keeps its `=` as ordinary text: a false positive at worst, never a
 // hidden secret.
 const CSI_BODY = "[0-9;:?<>]*[ -/]*[@-~]";
-// The single-byte catch-all covers every Fe/Fs/Fp escape EXCEPT the two bytes
-// that are this screen's assignment operators: a catch-all that eats `ESC =`
-// turns `token<ESC>=hunter2000` into `token hunter2000`, destroying the
-// assignment and keeping the secret. Round 4 measured exactly that leak on both
-// paths -- a regression the catch-all itself introduced, which is why it is
-// excluded here rather than left to the class strip. `ESC :` and `ESC =` are
-// unassigned in ECMA-48, so nothing real is lost.
-const FE_BODY = "[0-9;<>?@-~]";
-// An introducer whose sequence does NOT match the strict bodies above consumes
-// up to the next assignment operator -- or to the end of the input when there is
-// none. Round 4 filed this as a blocker, with four repros: an UNTERMINATED
-// sequence (no BEL/ST/CSI final byte at all, `ESC ] 0;foo=supersecret`,
-// `ESC P foo=supersecret`) never matched a strict alternative, so the single-byte
-// catch-all removed the introducer ALONE and left the payload as ordinary text --
-// and the payload carries the `=` of the assignment it was hiding, one word away
-// from the keyword the screen looks for. Consuming the payload is what a terminal
-// does with it: an unterminated string never ends, so nothing after it is
-// displayed text. `=` is where the consumption STOPS rather than a byte it
-// swallows, because it is the one byte the secret screen has to see: everything
-// before it is sequence payload (removed), everything from it on is text (shown).
-// That keeps the invariant the screen needs -- the leftover ALWAYS starts with
-// the operator, and the text before the introducer is untouched, so `keyword =`
-// stays adjacent exactly as it is in an ordinary draft (`token<ESC>]0;foo=secret`
-// becomes `token =secret` and falls back). A payload with no operator at all has
-// nothing to stop at: it is consumed to the end of the input, which is the same
-// terminal behaviour and leaves no payload behind either way. The strict
-// alternatives run first, so a properly terminated sequence -- even one whose
-// payload contains `=` -- is still removed whole.
-const UNTERMINATED_BODY = "[^=]*";
+// The single-byte catch-all covers every Fe/Fs/Fp escape EXCEPT two groups of
+// bytes, and both exclusions are load-bearing:
+//  - the two assignment operators this screen looks for. A catch-all that eats
+//    `ESC =` turns `token<ESC>=hunter2000` into `token hunter2000`, destroying
+//    the assignment and keeping the secret -- measured on both paths in round 4,
+//    a regression the catch-all itself introduced. Both are unassigned escapes
+//    in ECMA-48, so nothing real is lost.
+//  - the bytes that OPEN a longer sequence: `[` CSI, `]` OSC, `P` DCS, `X` SOS,
+//    `^` PM, `_` APC, and `\`, which is a string terminator rather than an
+//    escape. Swallowing one of those as a two-byte escape is how an unterminated
+//    sequence lost its introducer while its payload stayed as text -- the round-4
+//    finding, and the reason the dangling check below could not see it. Excluded,
+//    the introducer SURVIVES the pass and the draft is refused instead.
+const FE_BODY = "[0-9;<>?@A-OQ-WYZa-z`{|}~]";
+// Every alternative below is a sequence whose END the standard defines: CSI up to
+// its final byte, OSC to BEL or ST, DCS/PM/APC/SOS to ST, and one byte for the
+// rest of the Fe/Fs/Fp escapes. NOTHING ELSE may be matched here, and round 5 is
+// why: an earlier version consumed the bytes of an unterminated sequence up to
+// the assignment operator, and the reviewer put a second introducer inside that
+// payload -- `pre<ESC>]foo sec<ESC>]ret=supersecret` -- which re-split the keyword
+// and left `pre =supersecret` on both paths. There is no correct place to stop:
+// an unterminated sequence has no end, so whatever follows it is text an attacker
+// chose. The rule is therefore strip-what-can-be-delimited, refuse the rest
+// (DANGLING_ESCAPE_PATTERN), never guess.
 const ANSI_PATTERN = new RegExp(
   `${ESC}(?:` +
     `\\[${CSI_BODY}` + // CSI
     `|\\][^${BEL}]*(?:${BEL}|${ST})` + // OSC, to BEL or to ST
     `|[PX^_][^${ESC}]*${ST}` + // DCS, PM, APC, SOS, each to ST
-    `|\\[${UNTERMINATED_BODY}` + // unterminated CSI
-    `|\\]${UNTERMINATED_BODY}` + // unterminated OSC
-    `|[PX^_]${UNTERMINATED_BODY}` + // unterminated DCS, PM, APC, SOS
     `|${FE_BODY}` + // any other Fe/Fs/Fp: ESC plus one byte
     `)` +
     `|${C1_CSI}${CSI_BODY}` + // 8-bit CSI
-    `|${C1_CSI}${UNTERMINATED_BODY}` + // unterminated 8-bit CSI
     `|${C1_OSC}[^${BEL}${C1_ST}]*(?:${BEL}|${ST})` + // 8-bit OSC
-    `|${C1_OSC}${UNTERMINATED_BODY}` + // unterminated 8-bit OSC
-    `|[${C1_STRING_OPENERS}][^${ESC}${C1_ST}]*${ST}` + // 8-bit DCS/SOS/PM/APC
-    `|[${C1_STRING_OPENERS}]${UNTERMINATED_BODY}`, // unterminated 8-bit strings
+    `|[${C1_STRING_OPENERS}][^${ESC}${C1_ST}]*${ST}`, // 8-bit DCS/SOS/PM/APC
   "g",
 );
+// An introducer byte that SURVIVES the pass above opened a sequence this code
+// cannot delimit: an unterminated OSC/DCS/CSI, an `ESC =` or `ESC :` (the two
+// operator bytes, deliberately not in FE_BODY), a C1 introducer with no ST. The
+// candidate is REFUSED rather than guessed at -- the strip is not allowed to
+// decide where such a sequence ends, because the payload of that decision is
+// exactly where the secrets of rounds 2 through 5 hid.
+const DANGLING_ESCAPE_PATTERN = new RegExp(`[${ESC}${C1_CSI}${C1_OSC}${C1_STRING_OPENERS}]`);
 // Literal control characters and escape sequences are refused in regex
 // literals by the lint, so these are written as Unicode property escapes:
 // Cf (zero-width/directional) plus Zl/Zp separators cover the invisible
@@ -119,6 +115,26 @@ const SECRET_SCREEN_PATTERNS: readonly RegExp[] = [
   /\b\d{4}\s?\d{4}\s?\d{4}\s?\d{4}\b/, // a card number is never a session title
   /\bBEGIN (?:RSA )?PRIVATE KEY\b/,
 ];
+
+/**
+ * The GLUED projection: the draft with every surface the strip removes DELETED
+ * rather than replaced by a space. The strip replaces, because a display wants
+ * `red<ESC>[31m alert` to read `red alert` and not `redalert` -- but that same
+ * replacement is a way to hide an assignment: ONE stripped byte inside a keyword
+ * splits it into two words, and `sec<ESC>]x<BEL>ret=supersecret` is then an
+ * assignment no pattern can see, because `sec ret` is not the keyword. Round 5
+ * measured eleven such drafts, including both the reviewer's nested repro and
+ * every family this strip already knew how to remove; the glued form catches all
+ * of them, because it is the draft with nothing injected. Screened, never
+ * persisted.
+ */
+function glue(raw: string): string {
+  return raw
+    .replace(ANSI_PATTERN, "")
+    .replace(ZERO_WIDTH_PATTERN, "")
+    .replace(CONTROL_PATTERN, "")
+    .replace(MARKDOWN_PATTERN, "");
+}
 
 export interface SanitizedTitle {
   value: string;
@@ -153,8 +169,15 @@ export function sanitizeTitle(
   // hide a secret from its own pattern.
   if (SECRET_SCREEN_PATTERNS.some((pattern) => pattern.test(raw)))
     return { value: SESSION_FALLBACK_NAME, nameSource: "generated", fellBack: true };
-  const stripped = raw
-    .replace(ANSI_PATTERN, " ")
+  const withoutSequences = raw.replace(ANSI_PATTERN, " ");
+  // Refuse a draft whose escape sequences cannot be delimited (round 5), and
+  // screen the GLUED projection, where no stripped byte can split a keyword
+  // (round 5).
+  if (DANGLING_ESCAPE_PATTERN.test(withoutSequences))
+    return { value: SESSION_FALLBACK_NAME, nameSource: "generated", fellBack: true };
+  if (SECRET_SCREEN_PATTERNS.some((pattern) => pattern.test(glue(raw))))
+    return { value: SESSION_FALLBACK_NAME, nameSource: "generated", fellBack: true };
+  const stripped = withoutSequences
     .replace(ZERO_WIDTH_PATTERN, "")
     .replace(MARKDOWN_PATTERN, " ")
     .replace(CONTROL_PATTERN, " ")
@@ -208,16 +231,20 @@ export function createManualSessionName(raw: string): string {
   // found the same shape one level down, in the escape grammar itself: the
   // pattern only spelled CSI, OSC and DCS/PM/APC, so `ESC 7`, `ESC c`, `ESC X`
   // and `ESC [ ?25l` were not sequences to it at all and survived as text.
-  const value = raw
-    .replace(ANSI_PATTERN, " ")
+  const withoutSequences = raw.replace(ANSI_PATTERN, " ");
+  // A sequence this code cannot delimit is not stripped, it is REFUSED: where an
+  // unterminated sequence ends is not a decision the strip may make (round 5).
+  if (DANGLING_ESCAPE_PATTERN.test(withoutSequences)) return SESSION_FALLBACK_NAME;
+  // And the GLUED projection, because the space this strip inserts in place of a
+  // sequence is itself a place to hide: one stripped byte inside the keyword
+  // makes `sec ret=supersecret` out of `secret=supersecret` (round 5).
+  if (SECRET_SCREEN_PATTERNS.some((pattern) => pattern.test(glue(raw)))) return SESSION_FALLBACK_NAME;
+  const value = withoutSequences
     .replace(/[^\p{L}\p{N}\p{Zs}\p{P}\p{S}]/gu, " ")
     .replace(/\s{2,}/g, " ")
     .trim();
   if (value.length === 0)
     throw new RangeError("a manual name must contain at least one visible character");
-  // Screen the form this path will PERSIST. What this screen catches on its own
-  // is the separator the FLATTENED form destroys: `sk-abcdefg_h1234` is one
-  // token to this screen and two to the next.
   // Screen the form this path will PERSIST — the contract's own screen on the
   // value that is about to be stored. It is the WEAKEST of the three, and that
   // is MEASURED, not assumed: a brute force over 7392 injected drafts (every

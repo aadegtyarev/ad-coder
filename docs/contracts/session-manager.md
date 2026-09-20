@@ -90,6 +90,16 @@ already been checked against.
   They are NEVER used as identifiers, slugs, or path components. A candidate
   that sanitizes to empty falls back to `New session`. A manual name is never
   replaced by a generated one.
+- The strip removes only sequences whose END the standard defines (CSI up to its
+  final byte, OSC to BEL or ST, DCS/PM/APC/SOS to ST, one byte for the other
+  Fe/Fs/Fp escapes, and the 8-bit C1 spellings). A candidate that still carries
+  an introducer byte afterwards is REFUSED rather than guessed at — where an
+  unterminated sequence ends is not a decision the strip may make — and lands on
+  the same neutral fallback as the empty case.
+- What is removed may not hide anything from the screens: each of them also sees
+  the draft with the removed surfaces DELETED rather than replaced by a space, so
+  that a character taken out of a keyword cannot split it into two words and hide
+  an assignment. That projection is screened and never persisted.
 
 ## Unix-socket trust boundary (implemented by the transport slice)
 
