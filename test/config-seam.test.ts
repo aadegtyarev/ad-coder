@@ -233,8 +233,16 @@ test("a declared price row does not price a delegated catalog model, a declared 
 
   expect(model.contextWindow).toBe(300000);
   expect(model.maxTokens).toBe(4096);
-  expect(model.cost.input).not.toBe(999);
+  // Every price, not just `input`: the sentinel is declared on both, and the
+  // two cache rates are declared NOWHERE -- a projection that honoured its own
+  // defaults would settle them at zero, so a positive value here is the
+  // catalog's and only the catalog's.
   expect(model.cost.input).toBeGreaterThan(0);
+  expect(model.cost.input).not.toBe(999);
+  expect(model.cost.output).toBeGreaterThan(0);
+  expect(model.cost.output).not.toBe(999);
+  expect(model.cost.cacheRead).toBeGreaterThan(0);
+  expect(model.cost.cacheWrite).toBeGreaterThan(0);
 });
 
 test("(b2) an enabled provider with no credential is refused, naming the provider only", () => {
