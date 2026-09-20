@@ -1,4 +1,4 @@
-// Version gate (issue #424): every PR must raise package.json version STRICTLY
+// Version gate (issues #424 and #383): every PR must raise package.json version STRICTLY
 // above the base branch (`origin/main`), and a PR title that names a version in
 // parentheses `(0.99.0)` must name exactly the tree's version. This backs the
 // compatibility contract (docs/contracts/compatibility.md, 2026-09-12): every
@@ -109,6 +109,151 @@ export function decide(input: {
   return { ok: true, version, baseVersion: input.baseVersion, titleVersion: null };
 }
 
+//
+// The version ladder has an owner (issue #383): the number a branch will land
+// must be derivable at any moment from what main carries and what other open
+// branches declare, so nobody has to remember the ladder and two open branches
+// cannot land the same version without the gate refusing. Claims come from
+// LOCAL git refs only -- no network, no other worktrees -- so the gate runs
+// unchanged from any lane's own checkout. A ref already an ancestor of the
+// base is not an open claim (ancestry, not dates: merged or stale work never
+// locks the ladder), and an unreadable git state is named, never a silent pass.
+export type GitRun = (
+  args: string[],
+) => { exitCode: number; stdout: string; stderr: string } | null;
+
+/** One open branch's declared version, read from its tree's package.json. */
+export interface OpenClaim {
+  ref: string;
+  version: string;
+}
+
+export type ClaimsResult = { ok: true; claims: OpenClaim[] } | { ok: false; message: string };
+
+const GIT_UNAVAILABLE =
+  "git is unavailable, so open-branch version claims cannot be read and the claim gate cannot " +
+  "pass silently. Run `check:version` where git is on PATH.";
+
+/**
+ * Enumerate open claims: candidate refs under refs/heads and refs/remotes/origin,
+ * minus the current branch (its remote-tracking ref is its own declaration, not
+ * another branch's), minus main/origin/main (the base), minus every ref already
+ * an ancestor of the base (merged or stale). Git is injected so tests need no
+ * real branches and no network; unavailable git or an unreadable ref is a named
+ * failure, never a silent pass.
+ */
+export function readOpenClaims(git: GitRun, currentBranch: string | null): ClaimsResult {
+  const listing = git(["for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes/origin"]);
+  if (listing === null) return { ok: false, message: GIT_UNAVAILABLE };
+  if (listing.exitCode !== 0)
+    return {
+      ok: false,
+      message: `git for-each-ref failed, so open claims cannot be enumerated: ${listing.stderr.trim()}`,
+    };
+  const refs = listing.stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  const baseRev = git(["rev-parse", "--verify", "refs/remotes/origin/main"]);
+  if (baseRev === null) return { ok: false, message: GIT_UNAVAILABLE };
+  if (baseRev.exitCode !== 0)
+    return {
+      ok: false,
+      message:
+        "refs/remotes/origin/main could not be resolved, so merged refs cannot be told from open " +
+        "claims. Run `git fetch origin main`, then re-run `check:version`.",
+    };
+  const base = baseRev.stdout.trim();
+  const claims: OpenClaim[] = [];
+  for (const ref of refs) {
+    if (
+      currentBranch !== null &&
+      (ref === `refs/heads/${currentBranch}` || ref === `refs/remotes/origin/${currentBranch}`)
+    )
+      continue;
+    if (ref === "refs/heads/main" || ref === "refs/remotes/origin/main") continue;
+    const ancestry = git(["merge-base", "--is-ancestor", ref, base]);
+    if (ancestry === null) return { ok: false, message: GIT_UNAVAILABLE };
+    if (ancestry.exitCode === 0) continue;
+    if (ancestry.exitCode > 1)
+      return {
+        ok: false,
+        message: `git merge-base --is-ancestor failed for ${ref}, so its claim is unknown: ${ancestry.stderr.trim()}`,
+      };
+    const show = git(["show", `${ref}:package.json`]);
+    if (show === null) return { ok: false, message: GIT_UNAVAILABLE };
+    if (show.exitCode !== 0)
+      return {
+        ok: false,
+        message: `package.json on ${ref} could not be read, so its claim is unknown: ${show.stderr.trim()}`,
+      };
+    let version: unknown;
+    try {
+      version = (JSON.parse(show.stdout) as { version?: unknown }).version;
+    } catch {
+      return {
+        ok: false,
+        message: `package.json on ${ref} is not valid JSON, so its claim is unknown; fix or land the branch.`,
+      };
+    }
+    if (typeof version !== "string" || version.length === 0)
+      return {
+        ok: false,
+        message: `package.json on ${ref} has no string version field, so its claim is unknown; fix or land the branch.`,
+      };
+    claims.push({ ref, version });
+  }
+  return { ok: true, claims };
+}
+
+/** Highest open claim by SemVer order; null when no claim parses. */
+export function highestOpenClaim(claims: readonly OpenClaim[]): string | null {
+  let best: string | null = null;
+  for (const claim of claims) {
+    if (parseSemver(claim.version) === null) continue;
+    if (best === null || compareSemver(claim.version, best) > 0) best = claim.version;
+  }
+  return best;
+}
+
+/** Pure decision: is the candidate already claimed by another open branch? */
+export function decideClaimConflict(input: {
+  candidate: string;
+  claims: readonly OpenClaim[];
+}): Decision {
+  const claiming = input.claims.filter((claim) => claim.version === input.candidate);
+  if (claiming.length === 0) return { ok: true, version: input.candidate };
+  const refs = claiming.map((claim) => claim.ref).join(", ");
+  const highest = highestOpenClaim(input.claims);
+  const fix =
+    highest !== null
+      ? `above the highest open claim (${highest})`
+      : "above every version other open branches declare";
+  return {
+    ok: false,
+    message:
+      `package.json version ${input.candidate} is already claimed by another open branch: ${refs}. ` +
+      "The ladder is derived, not remembered: main carries the base and every open branch declares " +
+      "its number, so two branches cannot land the same one. " +
+      `Raise this branch's version in package.json ${fix}, or land the claiming branch first, ` +
+      "then re-run `check:version`.",
+  };
+}
+
+/** Production seam: run a git command; null only when git itself is unusable. */
+function runGit(args: string[]): ReturnType<GitRun> {
+  try {
+    const result = Bun.spawnSync(["git", ...args], { stdout: "pipe", stderr: "pipe" });
+    return {
+      exitCode: result.exitCode,
+      stdout: result.stdout.toString(),
+      stderr: result.stderr.toString(),
+    };
+  } catch {
+    return null;
+  }
+}
+
 function readTreeVersion(): string | null {
   const root = path.resolve(import.meta.dir, "..");
   const manifest = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")) as {
@@ -146,11 +291,12 @@ async function main(): Promise<number> {
     stdout: "pipe",
     stderr: "pipe",
   });
+  const currentBranch = branch.exitCode === 0 ? branch.stdout.toString().trim() : null;
   if (
     isMainContext({
       eventName: process.env.GITHUB_EVENT_NAME ?? null,
       gitRef: process.env.GITHUB_REF ?? null,
-      currentBranch: branch.exitCode === 0 ? branch.stdout.toString().trim() : null,
+      currentBranch,
     })
   ) {
     process.stdout.write(
@@ -199,12 +345,27 @@ async function main(): Promise<number> {
     process.stderr.write(`check:version: ${decision.message}\n`);
     return 1;
   }
+  // Ladder owner (issue #383): the number must also be free of claims by other
+  // open branches, derived from local refs; an unreadable state is named above.
+  const claims = readOpenClaims(runGit, currentBranch);
+  if (!claims.ok) {
+    process.stderr.write(`check:version: ${claims.message}\n`);
+    return 1;
+  }
+  const claimDecision = decideClaimConflict({
+    candidate: decision.version,
+    claims: claims.claims,
+  });
+  if (!claimDecision.ok) {
+    process.stderr.write(`check:version: ${claimDecision.message}\n`);
+    return 1;
+  }
   const titleNote = hasTitle
     ? `title version matches`
     : "no PR title available -- title check skipped";
   process.stdout.write(
-    `check:version: ${decision.version} is strictly above base ${decision.baseVersion}; ` +
-      `${titleSource ? `${titleNote} (${titleSource})` : titleNote}.\n`,
+    `check:version: ${decision.version} is strictly above base ${decision.baseVersion} ` +
+      `and unclaimed by other open branches; ${titleSource ? `${titleNote} (${titleSource})` : titleNote}.\n`,
   );
   return 0;
 }

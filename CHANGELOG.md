@@ -11,6 +11,24 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.137.0] - 2026-09-20
+
+### Added
+- **The version gate refuses a package.json version already claimed by another
+  open branch (issue #383).** The version ladder now has an owner: the number a
+  branch will land is derived at any moment from what main carries and what the
+  other open branches declare, so nobody has to remember it. From local git refs
+  only (no network, no other worktrees), `check:version` lists `refs/heads` and
+  `refs/remotes/origin`, skips the current branch, `main`/`origin/main`, and any
+  ref already an ancestor of the base -- ancestry, not dates: a merged or stale
+  ref is not an open claim -- and reads each remaining ref's `package.json`
+  version. A candidate equal to an open claim is refused, naming the version and
+  the claiming ref and prescribing the fix: raise this branch's version above
+  the highest open claim, or let the other branch land first. Git unavailable or
+  a ref unreadable is a named failure, never a silent pass. Both ways of being
+  wrong are refused mechanically now: a version at or below main, and a version
+  two open branches both declare.
+
 ## [0.141.0] - 2026-09-20
 
 ### Fixed
@@ -91,6 +109,7 @@ enforces that dated release headings go in non-increasing date order
 
 ### Fixed
 - **A paused stage whose recorded ceiling happens to equal the session default is resumable again (issue #511).** `resume_pipeline` refused every raise with `invalid_config (unchanged input stage limit)` -- observed live on run 67b85284, whose review stage paused at the 2400000 default and rejected raises to 2500000 and 2600000 alike. The durable resume guard reads the ceiling for the role whose stage paused, but `createWorkflowSession` never put `roleStageLimits` on the object it returns, so the guard always fell through to the session-wide ceiling, where a pause recorded at that same default compares equal to every raise and refuses it however large. The raise itself did reach execution, so only the check was blind. The factory now returns the per-role ceilings beside the session-wide ones, copied so the session does not share the config's object.
+
 
 ## [0.134.0] - 2026-09-20
 
