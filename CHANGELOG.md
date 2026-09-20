@@ -40,6 +40,31 @@ enforces that dated release headings go in non-increasing date order
 ### Fixed
 - **A paused stage whose recorded ceiling happens to equal the session default is resumable again (issue #511).** `resume_pipeline` refused every raise with `invalid_config (unchanged input stage limit)` -- observed live on run 67b85284, whose review stage paused at the 2400000 default and rejected raises to 2500000 and 2600000 alike. The durable resume guard reads the ceiling for the role whose stage paused, but `createWorkflowSession` never put `roleStageLimits` on the object it returns, so the guard always fell through to the session-wide ceiling, where a pause recorded at that same default compares equal to every raise and refuses it however large. The raise itself did reach execution, so only the check was blind. The factory now returns the per-role ceilings beside the session-wide ones, copied so the session does not share the config's object.
 
+## [0.115.0] - 2026-09-20
+
+### Fixed
+- **A stage that ran into its own budget boundary paused as a generic provider
+  failure with no recorded cause; the two harness-side budget boundaries now
+  name themselves and their remedy (issue #458).** `pauseCauseFrom` recognised
+  seven typed harness errors and nothing else, so `StageCloseoutError` -- raised
+  by `admitToolTurn` the moment a stage inside its closeout reserve calls a
+  non-submission tool -- and `ContextCompactionLostError` fell through to the
+  generic branch: the pause said "inspect the provider failure and retry the
+  stage explicitly" and recorded no `cause` at all. An operator was sent looking
+  at a provider that had done nothing, and because the cause was dropped,
+  `recordStageFailure` wrote nothing and `recurrenceOf` could only return 0, so
+  the counter that tells a loop from a raiseable ceiling could not count the
+  repetitive case. Observed in run `bc2c97fb-cd6d-4078-90cf-afcb2694a72d`: four
+  byte-identical `{phase: code, code: stage_failed}` pauses with no cause over
+  roughly 60 minutes, while the plan stage's pause in the same run carried
+  `cause: {code: empty_turn, recurrence: 0}` for a class that was listed. Both
+  classes are now their own typed cause (`stage_closeout`,
+  `context_compaction_lost`) with the next step each admits -- raise or disable
+  the exhausted ceiling and resume, or reopen the session from its durable state
+  when its context can no longer be compacted -- while the pause `code` stays
+  `stage_failed`, so the pause remains clearable by the same explicit operator
+  act and every other source keeps the generic wording verbatim.
+
 ## [0.134.0] - 2026-09-20
 
 ### Added

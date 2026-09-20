@@ -1,5 +1,6 @@
 import * as crypto from "node:crypto";
 import * as path from "node:path";
+import { ContextCompactionLostError } from "../context/compactor";
 import { CostAnomalyBlockedError } from "../economics/cost-anomaly";
 import { redactCredentialLike } from "../orchestration/control-plane";
 import type { WorkflowSession } from "../orchestration/session";
@@ -13,6 +14,7 @@ import {
 import {
   ROLE_BY_PHASE,
   STAGE_LIMIT_KEY,
+  StageCloseoutError,
   StageLimitError,
   type StageLimitReason,
 } from "../orchestration/stage-limits";
@@ -118,7 +120,8 @@ export interface RunCheckpoint {
  *   diagnosable part and stays in the action),
  * - every typed HARNESS-SIDE error -- the runner's own, an empty turn, a cost
  *   block, unavailable tools, a suspended deferral, a project-operations
- *   rejection such as `invalid_follow_up`, an orchestration precondition -- is
+ *   rejection such as `invalid_follow_up`, an orchestration precondition, a
+ *   stage closeout boundary, a lost context compaction (issue #458) -- is
  *   named AS HARNESS WORK with a bounded `cause`, so the durable record can
  *   say what actually failed and the retrying stage can converge on it,
  * - anything UNTYPED still names itself in durable state (issue #403): a
@@ -232,11 +235,7 @@ function stageFailurePause(
   return {
     phase,
     code: "stage_failed",
-    action:
-      typedCause.recurrence > 0
-        ? `the stage failed inside the harness (${typedCause.code}); the same cause has now been recorded ` +
-          `${typedCause.recurrence + 1} consecutive times -- resolve it, then retry the stage explicitly`
-        : `the stage failed inside the harness (${typedCause.code}); resolve the recorded cause, then retry the stage explicitly`,
+    action: harnessFailureAction(sourceError, typedCause),
     cause: typedCause,
   };
 }
@@ -417,6 +416,43 @@ function recordStageFailure(
 }
 
 /**
+ * The action a typed harness-side failure earns. WHY A BUDGET BOUNDARY CANNOT
+ * USE THE GENERIC INSTRUCTION (issue #458): "resolve the recorded cause, then
+ * retry the stage explicitly" is advice for a fault the retry itself can
+ * clear. A stage closeout boundary is the opposite -- the stage reached the
+ * reserve its own ceiling grants the deliverable, so the ceiling an operator
+ * RAISES is the remedy -- and a context whose compaction is spent cannot be
+ * retried at all: the same prompt against the same session fails the same
+ * way, and only reopening the session from its durable state gives the stage
+ * a context that can fit. The two boundary errors word their own remedy; the
+ * recurrence tail stays the loop signature every other cause already carries
+ * (issue #363); every other typed source keeps the generic wording verbatim.
+ */
+function harnessFailureAction(sourceError: unknown, cause: PipelinePauseCause): string {
+  const recurrenceSuffix =
+    cause.recurrence > 0
+      ? `; the same cause has now been recorded ${cause.recurrence + 1} consecutive times`
+      : "";
+  if (sourceError instanceof StageCloseoutError)
+    return (
+      `the stage entered its ${sourceError.reason} closeout reserve (${sourceError.detail}); ` +
+      `raise or disable the ${sourceError.reason} stage ceiling for this role, then resume explicitly` +
+      recurrenceSuffix
+    );
+  if (sourceError instanceof ContextCompactionLostError)
+    return (
+      "the stage's context can no longer be compacted; reopen the session from its durable state " +
+      "(choosing a different summarizer model when the summarizer itself failed) -- " +
+      "retrying the same prompt cannot succeed" +
+      recurrenceSuffix
+    );
+  return cause.recurrence > 0
+    ? `the stage failed inside the harness (${cause.code}); the same cause has now been recorded ` +
+        `${cause.recurrence + 1} consecutive times -- resolve it, then retry the stage explicitly`
+    : `the stage failed inside the harness (${cause.code}); resolve the recorded cause, then retry the stage explicitly`;
+}
+
+/**
  * The bounded cause a typed HARNESS-SIDE error earns, or undefined for any
  * source this discipline will not classify on its own (a provider rejection,
  * whose status already sits in the action; an untyped error, whose bounded
@@ -425,6 +461,13 @@ function recordStageFailure(
  * (same stage + same code as the previously recorded cause).
  */
 function pauseCauseFrom(sourceError: unknown, recurrence: number): PipelinePauseCause | undefined {
+  // StageCloseoutError and ContextCompactionLostError are harness-side BUDGET
+  // boundaries, not provider faults (issue #458): the first is the reserve a
+  // stage's own ceiling grants its deliverable, the second a context the
+  // harness's own summarization can no longer fit. Both are built in code from
+  // fixed phrases plus safe tokens, so their `code`/`message` satisfy the
+  // numbers-and-codes-only discipline above, and the cause travels exactly as
+  // `empty_turn` already does.
   const typed =
     sourceError instanceof RunnerError ||
     sourceError instanceof EmptyTurnError ||
@@ -432,7 +475,9 @@ function pauseCauseFrom(sourceError: unknown, recurrence: number): PipelinePause
     sourceError instanceof ConfiguredToolsUnavailableError ||
     sourceError instanceof SuspendedRunError ||
     sourceError instanceof ProjectOperationsError ||
-    sourceError instanceof OrchestrationError;
+    sourceError instanceof OrchestrationError ||
+    sourceError instanceof StageCloseoutError ||
+    sourceError instanceof ContextCompactionLostError;
   if (!typed) return undefined;
   return {
     code: sourceError.code.slice(0, MAX_PAUSE_CAUSE_CODE_CHARS),
