@@ -19,12 +19,13 @@ import type {
   ResolvedRegistry,
 } from "../registry/types";
 import { toRegistryAndProfile } from "./to-registry";
-import type {
-  ModelConfig as ConfigModelConfig,
-  ModelLadder,
-  ModelRung,
-  ModelsConfig,
-  ProviderConfig,
+import {
+  type ModelConfig as ConfigModelConfig,
+  type ModelLadder,
+  type ModelRung,
+  type ModelsConfig,
+  OAUTH_CREDENTIAL,
+  type ProviderConfig,
 } from "./types";
 
 /**
@@ -292,10 +293,15 @@ function toRung(pair: RungPair): ModelRung {
 }
 
 /**
- * Migrate one profile: resolve it first (requirement 1), refuse oauth
- * providers, rebuild rows from effective values, report every field with no
- * YAML expression, then merge its providers into the cross-profile union.
- * Returns undefined when the profile is not expressible here.
+ * Migrate one profile: resolve it first (requirement 1), rebuild rows from
+ * effective values, report every field with no YAML expression, then merge its
+ * providers into the cross-profile union. Returns undefined when the profile is
+ * not expressible here.
+ *
+ * An oauth provider is expressible since #503 -- `credential: oauth` is the
+ * reserved spelling and `toYamlProvider` writes it -- so the old blanket
+ * refusal (a codex profile could only ever be reported, never migrated) is
+ * gone. What remains unexpressible is reported field by field below.
  */
 function migrateProfile(
   declared: ResolvedModelInventoryProfile,
@@ -308,17 +314,6 @@ function migrateProfile(
   const name = declared.name;
   const isDefault = inventory.default === name;
   const reasons: string[] = [];
-
-  for (const provider of declared.registry.providers) {
-    if (provider.credential.kind !== "oauth") continue;
-    const reason = `provider "${provider.id}" uses an oauth credential; models.yaml can only express an env-var credential NAME`;
-    report.notExpressible.push({ profile: name, provider: provider.id, reason });
-    reasons.push(reason);
-  }
-  if (reasons.length > 0) {
-    report.profiles.push({ name, status: "not-expressible", isDefault, reasons });
-    return undefined;
-  }
 
   let oldResolved: ResolvedModelInventory;
   try {
@@ -552,15 +547,16 @@ function sameModelFacts(a: ResolvedModelConfig, b: ResolvedModelConfig): boolean
   );
 }
 
-/** One effective provider as a models.yaml provider row. OAuth never reaches here. */
+/**
+ * One effective provider as a models.yaml provider row. An oauth credential is
+ * written with the reserved literal (#503) rather than as a variable name: the
+ * registry's `{ kind: 'oauth' }` and the file's `oauth` are the two spellings
+ * of the same source, and the round trip is exact -- reading the file back
+ * projects `oauth` to `{ kind: 'oauth' }` again.
+ */
 function toYamlProvider(provider: ResolvedProviderConfig): ProviderConfig {
   const credential =
-    provider.credential.kind === "env-var" ? provider.credential.envVar : undefined;
-  if (credential === undefined) {
-    // Unreachable through migrateProfile (oauth profiles are excluded first);
-    // a disabled row keeps the projection safe if that invariant ever changes.
-    return { enabled: false, api: provider.api, models: {} };
-  }
+    provider.credential.kind === "env-var" ? provider.credential.envVar : OAUTH_CREDENTIAL;
   return {
     enabled: true,
     api: provider.api,

@@ -152,6 +152,34 @@ test("a credential is a NAME only -- the env-var reference is never resolved to 
   });
 });
 
+test("the reserved literal `oauth` projects to the oauth source, and the registry accepts it (#503)", () => {
+  const config = parseModelsConfig({
+    providers: {
+      "openai-codex": {
+        enabled: true,
+        api: "openai-codex-responses",
+        baseUrl: "https://chatgpt.com/backend-api",
+        credential: "oauth",
+        models: {
+          "gpt-5.6-terra": {
+            input: 2,
+            output: 12,
+            cacheRead: 0.2,
+            contextWindow: 200000,
+            maxTokens: 128000,
+          },
+        },
+      },
+    },
+    profiles: { "codex-pro100": { coder: "openai-codex:gpt-5.6-terra" } },
+  });
+  const { registry } = toRegistryAndProfile(config, "codex-pro100");
+  expect(registry.providers[0]?.credential).toEqual({ kind: "oauth" });
+  // The registry's own validator admits it -- the same shape the shipped
+  // `openaiCodexPreset()` carries.
+  expect(parseRegistryConfig(registry).providers[0]?.credential).toEqual({ kind: "oauth" });
+});
+
 test("(b2) an enabled provider with no credential is refused, naming the provider only", () => {
   const config = parseModelsConfig({
     providers: {

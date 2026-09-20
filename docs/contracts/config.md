@@ -82,10 +82,28 @@ Rules the operator declared for ad-coder. A violation is always blocking.
   override naming a model the selected inventory does not register is a typed
   `unknown_model` error naming BOTH the inventory/profile name and the override
   model.
+- 2026-09-20: **A provider's `credential` is a NAME or the reserved literal
+  `oauth` (issue #503).** Codex is OAuth-only: its token is not an env-var at
+  all but lives in the credential store under the provider id, and the resolver
+  delegates the provider to the shipped `openaiCodexProvider()` factory. Until
+  this entry the file could not spell that source, so an id the operator can
+  authenticate but not declare -- codex -- was unroutable from `models.yaml`
+  (and `config migrate` refused the whole profile rather than write it). Now
+  `credential: oauth` projects to the registry's `{ kind: "oauth" }`, the same
+  source the shipped `openaiCodexPreset()` declares, and the migration writes
+  the literal back. The literal is reserved: an env-var actually named `oauth`
+  is not addressable from this file. Everything else about the row is
+  unchanged -- `api`, `baseUrl` and the model rows are still required and still
+  validate, and the resolver ignores `baseUrl`/`api` for an oauth provider
+  exactly as it ignores the preset's. A model's declared `cost` is likewise
+  not what an oauth run is priced at: the ledger prices codex off the pi
+  catalogue (terra 2/12, luna 0.2/1.2, sol 5/30 per M), which on a flat
+  subscription is an estimate, not a charge.
 - 2026-09-19: **The operator-facing routing config is `models.yaml` and the
   behaviour config is `settings.yaml` (issue #280).** `models.yaml` declares
   `providers` (each with an optional provider-level `baseUrl`, an `enabled`
-  switch, a `credential` env-var NAME, and `models`), `profiles`
+  switch, a `credential` env-var NAME -- or the `oauth` literal above, and
+  `models`), `profiles`
   (`role: provider:model`, with a `role@complexity` row REPLACING that tier
   only, and a list-valued row as an IN-ORDER fallback ladder), and an optional
   `default:` profile. A model row carries required `input`/`output` prices and
@@ -105,10 +123,11 @@ Rules the operator declared for ad-coder. A violation is always blocking.
   present-but-unusable `models.yaml` (for example no `default` and no selected
   profile) is a typed error, NEVER a silent fall back to JSON. Provider-qualified
   names need no alias table; a credential is declared per provider as an
-  env-var NAME and translated at the projection boundary to the registry
-  `{ kind: "env-var", envVar }` shape (stored-credential support and `ad-coder
-  auth` coverage for declared env-var providers followed in the #101 entry
-  above). An enabled provider MUST declare a
+  env-var NAME (or the reserved `oauth` literal, 2026-09-20 entry above) and
+  translated at the projection boundary to the registry's
+  `{ kind: "env-var", envVar }` / `{ kind: "oauth" }` shape (stored-credential
+  support and `ad-coder auth` coverage for declared env-var providers followed
+  in the #101 entry above). An enabled provider MUST declare a
   credential and a resolvable endpoint (a provider-level or model-level
   `baseUrl`); `baseUrl` and `concurrency` both follow provider-declares/
   model-narrows. Only a ladder's FIRST rung is served today (the runtime walk
