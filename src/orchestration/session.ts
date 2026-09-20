@@ -61,7 +61,7 @@ import type {
   WorkflowPhase,
   WorkflowState,
 } from "./types";
-import { OrchestrationError } from "./types";
+import { MAX_PAUSE_CAUSE_MESSAGE_CHARS, OrchestrationError } from "./types";
 import type { VerdictCapture } from "./verdict";
 import {
   buildSubmitVerdictTool,
@@ -78,6 +78,38 @@ const RESEARCH_MAX_DEPTH = 4;
 const RESEARCH_PROVENANCE_MAX_BYTES = 16 * 1024;
 const SAFE_RESEARCH_ID = /^[a-z0-9][a-z0-9._:-]{0,127}$/i;
 const LIKELY_SECRET = /(?:bearer\s+|api[_-]?key\s*[:=]|password\s*[:=]|(?:^|\W)sk-[a-z0-9_-]{8,})/i;
+const SAFE_EVIDENCE_REFERENCE_MAX_CHARS = 128;
+const SAFE_TRANSCRIPT_REFERENCE_MAX_CHARS = 96;
+// Keep the shape below the cause ceiling so the human prefix always has room.
+const SAFE_RESPONSE_SHAPE_MAX_CHARS = MAX_PAUSE_CAUSE_MESSAGE_CHARS - 32;
+const SAFE_ATTEMPT_RUN_IDS_MAX_CHARS = 112;
+
+function boundedSafeEvidenceReference(
+  reference: string,
+  maxChars = SAFE_EVIDENCE_REFERENCE_MAX_CHARS,
+): string {
+  if (reference.length <= maxChars) return reference;
+  const marker = "[...]/";
+  return `${marker}${reference.slice(-(maxChars - marker.length))}`;
+}
+
+function boundedAttemptRunIds(
+  ids: readonly string[],
+  maxChars = SAFE_ATTEMPT_RUN_IDS_MAX_CHARS,
+): string {
+  const complete = ids.join(",");
+  if (complete.length <= maxChars) return complete;
+  const kept: string[] = [];
+  for (const id of ids) {
+    const omitted = ids.length - kept.length - 1;
+    const marker = `,... +${omitted} more`;
+    const candidate = [...kept, id].join(",") + marker;
+    if (candidate.length > maxChars) break;
+    kept.push(id);
+  }
+  const marker = `,... +${ids.length - kept.length} more`;
+  return `${kept.join(",")}${marker}`.slice(0, maxChars);
+}
 const SENSITIVE_PATH = /(?:^|\/)(?:\.env(?:\.|$)|[^/]*\.pem$|[^/]*\.key$)/i;
 const REVIEW_CONTROL_PATH = /(?:^|\/)(?:prompts|docs\/contracts)(?:\/|$)/;
 
@@ -562,7 +594,12 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     tools?: Tool[],
     durable = true,
     resume?: ActiveWorkflowStage,
-  ): Promise<{ text: string; followUps: FollowUp[]; metrics: PipelineStageMetrics }> => {
+  ): Promise<{
+    text: string;
+    followUps: FollowUp[];
+    metrics: PipelineStageMetrics;
+    sessionPath?: string;
+  }> => {
     const { model } = selection;
     // A fresh session per run: each role has its own systemPrompt, so sharing a
     // session would leak one role's history and prompt into another.
@@ -679,6 +716,9 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       return {
         text: await extractFinalText(readable, BACKGROUND_CONTEXT),
         followUps: [],
+        ...(durable
+          ? { sessionPath: (readable.metadata as unknown as { path: string }).path }
+          : {}),
         metrics: {
           stage: step,
           ...(closeout !== undefined && {
@@ -720,7 +760,12 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     tools: Tool[] = [],
     durable = true,
     resume?: ActiveWorkflowStage,
-  ): Promise<{ text: string; followUps: FollowUp[]; metrics: PipelineStageMetrics }> => {
+  ): Promise<{
+    text: string;
+    followUps: FollowUp[];
+    metrics: PipelineStageMetrics;
+    sessionPath?: string;
+  }> => {
     const enabled =
       spec.role.activeToolNames === undefined ||
       spec.role.activeToolNames.includes(SUBMIT_FOLLOW_UP_TOOL_NAME);
@@ -741,7 +786,12 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       durable,
       resume,
     );
-    return { text: turn.text, followUps: capture.followUps, metrics: turn.metrics };
+    return {
+      text: turn.text,
+      followUps: capture.followUps,
+      metrics: turn.metrics,
+      ...(turn.sessionPath === undefined ? {} : { sessionPath: turn.sessionPath }),
+    };
   };
 
   const stageAttempt = (
@@ -833,6 +883,10 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     let capture: PlanCapture = {};
     let text = "";
     let lastRejection: OrchestrationError | undefined;
+    const attemptRunIds: string[] = [];
+    let attemptsRun = 0;
+    let mandatoryToolCalled = false;
+    let transcriptPath: string | undefined;
     let retryInstruction =
       "Your preceding response did not call submit_plan. Call submit_plan now with the complete required object, then stop.";
     let followUps: FollowUp[] = [];
@@ -861,6 +915,8 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
               resume: false,
             };
       runId = attempt.stage.runId;
+      attemptRunIds.push(runId);
+      attemptsRun += 1;
       capture = {};
       const submitPlanTool = buildSubmitPlanTool(capture, runId, config.surfaceAnalysisLimits);
       const turn = await runWorkflowTurn(
@@ -879,6 +935,8 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       );
       text = turn.text;
       followUps = turn.followUps;
+      mandatoryToolCalled ||= capture.called === true;
+      transcriptPath = turn.sessionPath;
       accumulatedState = {
         ...accumulatedState,
         ...settledStage(accumulatedState, attempt.stage, attempt.resume, turn.metrics),
@@ -903,7 +961,10 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
         lastRejection = capture.error;
         // The next turn is told WHICH failure to correct. The message is fixed
         // structure plus the validator's own wording -- never planner text.
-        retryInstruction = `Your preceding submit_plan submission was rejected: ${capture.error.message}. Call submit_plan now with the complete corrected object, then stop.`;
+        retryInstruction =
+          capture.error.code === "plan_not_json"
+            ? "Your preceding response carried no JSON object. Call submit_plan now with the complete required object, then stop."
+            : `Your preceding submit_plan submission was rejected: ${capture.error.message}. Call submit_plan now with the complete corrected object, then stop.`;
       }
     }
     // A captured plan sets the governance and routing signals. Exhausting the
@@ -913,12 +974,35 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     // a rejection as missing_plan sent the operator looking for a planner that
     // never ran instead of at the field that was refused.
     if (capture.plan === undefined) {
-      if (lastRejection !== undefined) throw lastRejection;
-      throw new OrchestrationError(
-        "missing_plan",
-        runId,
-        "planner did not submit required surface analysis",
+      // Keep the durable diagnostic's invariant fields first. Evidence is relative
+      // to targetDir so a long absolute target path cannot consume the cause bound.
+      const evidencePath = path.join(config.targetDir, ".ad-coder", "ledger", `${runId}.jsonl`);
+      const relativeEvidencePath = boundedSafeEvidenceReference(
+        `./${path.relative(config.targetDir, evidencePath)}`,
       );
+      const relativeTranscriptPath = boundedSafeEvidenceReference(
+        transcriptPath === undefined
+          ? "unavailable"
+          : `./${path.relative(config.targetDir, transcriptPath)}`,
+        SAFE_TRANSCRIPT_REFERENCE_MAX_CHARS,
+      );
+      const safeShape = `attempts=${attemptsRun} submit_plan_called=${mandatoryToolCalled} json_candidate=${text.includes("{")} response_length=${text.length} evidence=${relativeEvidencePath} transcript=${relativeTranscriptPath} attempt_run_ids=${boundedAttemptRunIds(attemptRunIds)}`;
+      // The field budgets above make this true by construction. Keep a visible
+      // defensive backstop so a future field cannot silently reintroduce a
+      // cause-overflow that cuts off the invariant fields.
+      const boundedShape =
+        safeShape.length <= SAFE_RESPONSE_SHAPE_MAX_CHARS
+          ? safeShape
+          : `${safeShape.slice(0, SAFE_RESPONSE_SHAPE_MAX_CHARS - "...[shape-clipped]".length)}...[shape-clipped]`;
+      const prefix =
+        lastRejection?.message === undefined
+          ? "planner did not submit required surface analysis"
+          : lastRejection.message;
+      const durableMessage = `${prefix.slice(0, Math.max(1, MAX_PAUSE_CAUSE_MESSAGE_CHARS - boundedShape.length - 2))}; ${boundedShape}`;
+      if (lastRejection !== undefined) {
+        throw new OrchestrationError(lastRejection.code, runId, durableMessage);
+      }
+      throw new OrchestrationError("missing_plan", runId, durableMessage);
     }
     const unresolved = capture.plan.surfaceAnalysis.coverage.filter(
       ({ status }) => status === "research_required",

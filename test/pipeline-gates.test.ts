@@ -412,10 +412,35 @@ test("a plan that was never submitted is a red pause, not silence", async () => 
   const pause = coordinator.checkpoint.pause;
   expect(pause).toBeDefined();
   expect(pause?.phase).toBe("plan");
-  expect(pause?.code).toBe("plan_not_submitted");
-  expect(pause?.action).toContain("missing_plan");
+  expect(pause?.code).toBe("plan_not_json");
+  expect(pause?.action).toContain("plan_not_json");
   // Recoverable like the review pause: the stage can be attempted again.
   expect(() => coordinator.resumeStage({ source: "operator", action: "retry" })).not.toThrow();
+});
+
+test("an empty planner response remains plan_not_submitted, distinct from prose", async () => {
+  const fx = fixture();
+  const planner = fx.role("planner", "You plan.", ["read", SUBMIT_PLAN_TOOL_NAME]);
+  const coder = fx.role("coder", "You code.");
+  const reviewer = reviewerRole(fx);
+  fx.faux.setResponses([fauxAssistantMessage(""), fauxAssistantMessage("")]);
+  const session = createWorkflowSession({
+    targetDir: fx.targetDir,
+    models: fx.models,
+    task: "implement empty",
+    maxRounds: 1,
+    roles: { planner, coder, reviewer },
+  });
+  const coordinator = new RunCoordinator(session, session.projectStore, { runId: "plan-empty" });
+
+  await coordinator.run();
+
+  const pause = coordinator.checkpoint.pause;
+  expect(pause?.phase).toBe("plan");
+  expect(pause?.code).toBe("plan_not_submitted");
+  expect(pause?.cause?.code).toBe("missing_plan");
+  expect(pause?.action).toContain("missing_plan");
+  expect(pause?.action).not.toContain("plan_not_json");
 });
 
 test("ci.yml declares the pre-merge stamp gate exactly once, as the last step (issue #295)", () => {

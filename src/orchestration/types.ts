@@ -610,8 +610,9 @@ export type PipelineOutcome = "approved" | "decomposition_required";
  * - `missing_verdict` / `malformed_verdict`: the reviewer's `submit_verdict`
  *   tool submission was absent (no call) or failed strict validation -- a hard
  *   failure, never a silent pass.
- * - `missing_plan` / `malformed_plan`: the planner omitted the mandatory
- *   governance artifact or its submission failed strict validation.
+ * - `missing_plan` / `plan_not_json` / `malformed_plan`: the planner omitted
+ *   the mandatory governance artifact, answered without a JSON object, or its
+ *   submission failed strict validation.
  * - `invalid_max_rounds` / `empty_task`: a caller precondition failed before any
  *   role ran.
  */
@@ -742,6 +743,7 @@ export class PipelinePauseError extends Error {
 
 export type OrchestrationErrorCode =
   | "missing_plan"
+  | "plan_not_json"
   | "requirements_unresolved"
   | "missing_verdict"
   | "malformed_verdict"

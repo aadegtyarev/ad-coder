@@ -245,6 +245,7 @@ function parseSurfaceAnalysis(
 export interface PlanCapture {
   plan?: Plan;
   error?: OrchestrationError;
+  called?: boolean;
 }
 
 /**
@@ -415,22 +416,18 @@ function planTextCandidates(value: string): string[] {
 
 /**
  * Recover a plan from a planner turn that answered in TEXT instead of calling
- * `submit_plan`, and distinguish the three outcomes the caller must tell apart.
+ * `submit_plan`, and distinguish the four outcomes the caller must tell apart.
  *
  * - a `Plan`: one candidate parsed AND validated.
- * - `undefined`: the response contained nothing plan-shaped (no `{` anywhere).
- *   Only this is "the planner submitted nothing".
- * - throws `malformed_plan`: a plan-shaped candidate WAS present and every one
- *   of them failed. Truncated JSON lands here, not in `undefined`. So does an
- *   AMBIGUOUS response carrying two different valid plans -- see below.
+ * - `undefined`: the response is empty/whitespace-only (genuine silence).
+ * - throws `plan_not_json`: non-empty response with no JSON object candidate.
+ * - throws `malformed_plan`: a candidate was present and every one failed. This
+ *   includes truncated JSON and an AMBIGUOUS response with two valid plans.
  *
- * WHY THE THREE-WAY SPLIT. This used to be a bare-object gate returning
- * `undefined` for anything else, which put a fenced plan, a prose-prefixed plan
- * and a truncated plan in the same bucket as silence. The caller consumed the
- * attempt without recording a failure and finally reported `missing_plan`
- * ("planner did not submit required surface analysis") for a planner that had
- * submitted a complete analysis -- a diagnosis that sent the operator looking in
- * the wrong place. Observed on three consecutive real runs.
+ * WHY THE FOUR-WAY SPLIT. A prose plan is work the planner attempted but not
+ * the accepted handoff form; treating it as silence sent the operator looking
+ * at registration instead of the response format. The accepted plan form stays
+ * strict: prose is refused, not parsed.
  *
  * The thrown message is a FIXED structural string (or one `parsePlan` itself
  * emits); the planner's own text is never interpolated into it, so no model
@@ -451,6 +448,12 @@ export function parsePlanText(
         "malformed_plan",
         detail,
         "planner JSON handoff is truncated: the submitted object never closes",
+      );
+    if (value.length > 0)
+      throw new OrchestrationError(
+        "plan_not_json",
+        detail,
+        "planner response carried no JSON object",
       );
     return undefined;
   }
@@ -646,6 +649,7 @@ export function buildSubmitPlanTool(
       }),
     }),
     async execute(_toolCallId, params) {
+      capture.called = true;
       try {
         // Last-wins: a planner that calls the tool twice overwrites the prior
         // capture, so the pipeline reads the final submission. `delete` (not
