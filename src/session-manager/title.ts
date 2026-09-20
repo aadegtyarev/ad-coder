@@ -1,10 +1,12 @@
 /**
  * Bounded untrusted title generation (docs/ROADMAP.md 2026-09-14;
- * docs/contracts/session-manager.md): ONE shared sanitizer every generated
- * name passes — length limit, ANSI and zero-width stripping, markdown
+ * docs/contracts/session-manager.md): ONE shared sanitizer for every name that
+ * reaches a session — length limit, ANSI and zero-width stripping, markdown
  * flattening, whitespace collapse, and a secret screen — before anything
- * persists. A screen failure leaves the neutral fallback. A MANUAL name is
- * never replaced by any of this.
+ * persists. A screen failure leaves the neutral fallback, on BOTH paths: the
+ * contract screens "titles ... and manual names" alike. What the manual path
+ * keeps that a generated one cannot touch is its SOURCE: a manual name is
+ * never replaced by a later generated title.
  */
 
 import { SESSION_FALLBACK_NAME, type SessionNameSource } from "./types";
@@ -92,10 +94,27 @@ export function sanitizeTitle(
 }
 
 /**
- * A manual name is bounded and control-stripped but NEVER secret-screened
- * away: the operator typed it, and renaming it would destroy intent.
+ * A manual name is bounded, control-stripped — and secret-screened, exactly as
+ * the contract requires of it: "Titles are UNTRUSTED model output and manual
+ * names are remote user input: both are length-capped in code points, stripped
+ * of ANSI escape sequences and control characters, secret-screened ... A
+ * candidate that sanitizes to empty falls back to `New session`." A name that
+ * trips the screen therefore leaves that SAME neutral fallback rather than
+ * persisting a pasted secret into a display name every front renders; a name
+ * that strips to nothing is still the typed refusal it always was. What no
+ * later step may do is replace a manual name with a GENERATED one — the source
+ * stays `manual` (`SessionManager.setTitleFromGeneration`).
  */
 export function createManualSessionName(raw: string): string {
+  // Screen BEFORE the transforms, on the raw draft, for the shared screen's own
+  // reason: a separator the transforms move or delete would otherwise hide a
+  // secret from its pattern. (Measured: on this path the POST-strip screen
+  // dominates -- removing THIS line leaves the suite green, 48 pass / 0 fail,
+  // because the manual strip maps every character its patterns care about
+  // either to itself or to an ordinary separator. It is kept because both
+  // paths must screen in the same order, and a widening of the strip set is
+  // exactly what would make the two forms diverge.)
+  if (SECRET_SCREEN_PATTERNS.some((pattern) => pattern.test(raw))) return SESSION_FALLBACK_NAME;
   // A manual name is parsed, not generated: this pattern strips control
   // characters BEFORE the whitespace collapse, so no invisible byte survives.
   const value = raw
@@ -105,5 +124,8 @@ export function createManualSessionName(raw: string): string {
     .trim();
   if (value.length === 0)
     throw new RangeError("a manual name must contain at least one visible character");
+  // Screen AGAIN after the transforms: a secret split by a zero-width or
+  // control character is caught once the separator is gone.
+  if (SECRET_SCREEN_PATTERNS.some((pattern) => pattern.test(value))) return SESSION_FALLBACK_NAME;
   return clamp(value, MANUAL_NAME_MAX_LENGTH);
 }

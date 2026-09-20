@@ -21,10 +21,13 @@ enforces that dated release headings go in non-increasing date order
   outside target projects, safe project creation (argv-array `git init`,
   exclusive create, configured creation volume), read-only standalone lease
   detection with propose-only handoff, and bounded untrusted session titles
-  generated through provider admission (`title` priority class). The
+  generated through provider admission (`title` priority class), with manual
+  names screened the same way. The
   Unix-socket transport is an owner-private boundary: `0700` directory and
   umask-independent `0600` socket, verified after bind; a peer-uid check
-  refuses every foreign-uid peer; driver identity is server-derived from the
+  against the kernel's own per-connection attribution (`SO_PEERCRED` on Linux,
+  `getpeereid` on Darwin) refuses every foreign-uid peer; driver identity is
+  server-derived from the
   verified peer, never a client-supplied field; bind is atomic and
   `EADDRINUSE` is fatal -- there is no unlink-and-rebind path. Its contract is
   `docs/contracts/session-manager.md`. A thin `ad-coder session-manager

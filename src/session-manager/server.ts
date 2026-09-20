@@ -20,6 +20,7 @@ import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { SessionManager } from "./manager";
+import { readPeerCredentials } from "./peer-credentials";
 import { type DriverKind, SessionManagerError, sessionManagerErrorMessage } from "./types";
 
 /** The largest single accepted request frame (bytes). Oversized frames drop. */
@@ -30,19 +31,19 @@ const LISTEN_BACKLOG = 16;
 export const DEFAULT_SOCKET_NAME = "manager.sock";
 
 /**
- * How the server reads the presenting peer's trusted uid. Node and Bun expose
- * no portable JS-level SO_PEERCRED/getpeereid surface, so a runtime wrapper
- * attaches the attribution per connection (Linux `getsockopt(SO_PEERCRED)`,
- * Darwin `getpeereid`). Fail-closed: a reader that cannot establish
+ * How the server reads the presenting peer's trusted uid. The default reader
+ * asks the KERNEL for the accepted connection's peer credentials
+ * (`./peer-credentials`: Linux `getsockopt(SO_PEERCRED)`, Darwin
+ * `getpeereid`), so the uid is attributed to the process on the other end and
+ * not to anything the client sends. The seam exists for tests and for a
+ * platform whose lookup is absent. Fail-closed: a reader that cannot establish
  * credentials returns undefined and the connection is refused.
  */
 export type PeerCredentialsReader = (socket: net.Socket) => { uid?: number } | undefined;
 
-/** Default reader: the runtime wrapper's per-connection `peerUid` attribution. */
-export const defaultPeerCredentialsReader: PeerCredentialsReader = (socket) => {
-  const attributed = socket as unknown as { peerUid?: unknown };
-  return typeof attributed.peerUid === "number" ? { uid: attributed.peerUid } : undefined;
-};
+/** Default reader: the real per-connection kernel lookup. */
+export const defaultPeerCredentialsReader: PeerCredentialsReader = (socket) =>
+  readPeerCredentials(socket);
 
 export interface SessionManagerServerOptions {
   /** Absolute directory the socket lives in; created `0700` when absent. */
@@ -401,8 +402,24 @@ export class SessionManagerServer {
     const ownerUid = process.getuid?.();
     // Fail-closed: unavailable credentials, an unavailable OWNER uid, or a
     // foreign uid all refuse; the containing 0600 socket is the intrusion
-    // detection itself. uid equality is the grant, not privilege.
-    if (ownerUid === undefined || typeof uid !== "number" || uid !== ownerUid)
+    // detection itself. uid equality is the grant, not privilege. Each refusal
+    // names its OWN cause, so a missing lookup reads as a missing lookup rather
+    // than as an intruder.
+    if (typeof uid !== "number")
+      throw new SessionManagerError(
+        "not_authorized",
+        false,
+        "the connecting peer's credentials could not be established",
+        "connect from this host, where the accepted socket carries the peer's uid",
+      );
+    if (ownerUid === undefined)
+      throw new SessionManagerError(
+        "not_authorized",
+        false,
+        "this server cannot establish its own uid, so no peer can be authorized",
+        "run the session-manager server as a user with a uid on this host",
+      );
+    if (uid !== ownerUid)
       throw new SessionManagerError(
         "not_authorized",
         false,

@@ -37,6 +37,7 @@ import {
 } from "../src/session-manager/project-keys";
 import {
   DEFAULT_SOCKET_NAME,
+  defaultPeerCredentialsReader,
   deriveDriverKey,
   dispatchRequest,
   MAX_FRAME_BYTES,
@@ -56,6 +57,7 @@ import {
   type SessionManagerErrorCode,
 } from "../src/session-manager/types";
 
+const REPO_ROOT = path.resolve(import.meta.dir, "..");
 const scratch = (): string => fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-smtest-"));
 const uidOr0 = (): number => process.getuid?.() ?? 0;
 
@@ -457,6 +459,40 @@ test("the length cap counts code points, so a surrogate pair is never cut (#365)
   expect(manual.isWellFormed()).toBe(true);
 });
 
+test("a manual name is secret-screened and leaves the neutral fallback (#365)", async () => {
+  // docs/contracts/session-manager.md screens BOTH name paths ("Titles are
+  // UNTRUSTED model output and manual names are remote user input: both ...
+  // secret-screened ... A candidate that sanitizes to empty falls back to
+  // `New session`"). Measured before the fix: the manual path skipped the
+  // screen, so `renameSession` persisted a pasted secret into a display name
+  // every front renders.
+  for (const draft of [
+    "token=sk-abcdefghijk",
+    "sk-abcdefgh1234 ls",
+    "4111 1111 1111 1111",
+    "api​key=secretvalue", // split by a zero-width: caught after the strip
+    "xoxb-1234567890abc",
+  ])
+    expect(createManualSessionName(draft)).toBe(SESSION_FALLBACK_NAME);
+  // The typed refusal still owns the empty case -- a screened name is NOT one.
+  expect(() => createManualSessionName("\u0000\u0008")).toThrow(RangeError);
+  // An ordinary manual name is untouched, and the fallback is still a MANUAL
+  // name: no later generated title may replace it.
+  const { manager, stateDir } = makeManager();
+  await manager.ensureSession("manual-screen", "telegram:bridge");
+  const renamed = await manager.renameSession("manual-screen", "Operator's pick");
+  expect(renamed.name).toBe("Operator's pick");
+  expect(renamed.nameSource).toBe("manual");
+  const screened = await manager.renameSession("manual-screen", "token=sk-abcdefghijk");
+  expect(screened.name).toBe(SESSION_FALLBACK_NAME);
+  expect(screened.nameSource).toBe("manual");
+  // The secret reaches no durable byte: neither the projection nor the store.
+  expect(JSON.stringify(screened)).not.toContain("sk-abcdefghijk");
+  expect(fs.readFileSync(path.join(stateDir, "bindings.json"), "utf8")).not.toContain(
+    "sk-abcdefghijk",
+  );
+});
+
 test("the secret screen covers raw and flattened forms plus the full Cc category", () => {
   // `_` is a markdown separator: both the raw `api_key=` and the flattened
   // `api key=` forms must fall back.
@@ -583,6 +619,108 @@ test("a foreign-uid peer and an unavailable-credentials peer are refused", async
     } finally {
       server.close();
     }
+  }
+});
+
+test("the DEFAULT reader authorizes a same-uid client via the kernel's lookup (#365)", async () => {
+  // The production path: no injected reader (the CLI front constructs exactly
+  // this way). Measured before the fix -- the default reader read a
+  // `peerUid` attribution no runtime provides, so EVERY real same-uid client
+  // was refused `not_authorized` and the advertised socket service was
+  // unreachable. The uid below is the one the KERNEL reported for this
+  // process on the accepted connection.
+  const uid = process.getuid?.();
+  if (uid === undefined) return; // no uid to attribute on this platform
+  const { manager, stateDir } = makeManager();
+  const socketDir = path.join(stateDir, "socket");
+  const server = new SessionManagerServer({ socketDir, manager });
+  const socketPath = await server.listen();
+  try {
+    const opened = await rpc(socketPath, { method: "open", projectKey: "default-reader" });
+    expect(opened.ok).toBe(true);
+    const listed = await rpc(socketPath, { method: "list" });
+    expect(listed.ok).toBe(true);
+    const rows = listed.result as { projectKey: string; selectedByThisDriver: boolean }[];
+    expect(rows.map((row) => row.projectKey)).toEqual(["default-reader"]);
+    expect(rows[0]?.selectedByThisDriver).toBe(true);
+    // The durable trace names the uid the kernel attributed, under the front
+    // kind the server declared -- never anything the client sent.
+    const bindings = JSON.parse(fs.readFileSync(path.join(stateDir, "bindings.json"), "utf8")) as {
+      drivers: Record<string, { projectKey: string }>;
+    };
+    expect(Object.keys(bindings.drivers)).toEqual([deriveDriverKey("console", uid)]);
+    expect(bindings.drivers[deriveDriverKey("console", uid)]?.projectKey).toBe("default-reader");
+  } finally {
+    server.close();
+  }
+});
+
+test("the default reader fails closed, and the refusal names its cause (#365)", async () => {
+  // No descriptor was ever handed to this object, so there is no syscall to
+  // make: the reader reports "no credentials" rather than inventing a uid.
+  expect(defaultPeerCredentialsReader({} as net.Socket)).toBeUndefined();
+  // The refusal distinguishes a missing credential from an intruder: an
+  // unavailable lookup must not read as "you are not the owner".
+  const { server, socketPath } = await withServer(noCredentialsReader);
+  try {
+    const response = await rpc(socketPath, { method: "list" });
+    expect(response.ok).toBe(false);
+    expect(response.error?.code).toBe("not_authorized");
+    expect(response.error?.message).toContain("credentials could not be established");
+  } finally {
+    server.close();
+  }
+});
+
+test("the CLI front itself serves a same-uid client (#365)", async () => {
+  // The load-bearing end-to-end control for the fix above: the front the
+  // operator runs (`ad-coder session-manager serve`) builds the server with NO
+  // injected reader, so before the fix this connection was refused. It is also
+  // the only test that drives the front's own option wiring.
+  if (process.getuid?.() === undefined) return;
+  const rootDir = scratch();
+  const stateDir = path.join(scratch(), "state");
+  const socketDir = path.join(scratch(), "socket");
+  const configHome = scratch();
+  const child = Bun.spawn(
+    [
+      "bun",
+      "run",
+      path.join(REPO_ROOT, "src/cli.ts"),
+      "session-manager",
+      "serve",
+      "--allowed-roots",
+      rootDir,
+      "--state-dir",
+      stateDir,
+      "--socket-dir",
+      socketDir,
+      "--json",
+    ],
+    {
+      cwd: REPO_ROOT,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...process.env, XDG_CONFIG_HOME: configHome },
+    },
+  );
+  try {
+    const socketPath = path.join(socketDir, DEFAULT_SOCKET_NAME);
+    const deadline = Date.now() + 20_000;
+    while (!fs.existsSync(socketPath)) {
+      if (Date.now() > deadline) throw new Error("the serve front never bound its socket");
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    const response = await rpc(socketPath, { method: "list" });
+    expect(response.ok).toBe(true);
+    expect(response.result).toEqual([]);
+    const opened = await rpc(socketPath, { method: "open", projectKey: "cli-front" });
+    expect(opened.ok).toBe(true);
+  } finally {
+    child.kill("SIGTERM");
+    await child.exited;
+    await child.stdout.cancel();
+    await child.stderr.cancel();
   }
 });
 

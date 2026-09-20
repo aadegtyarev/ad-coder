@@ -345,7 +345,11 @@ export class SessionManager {
 
   // -- names and titles ----------------------------------------------------
 
-  /** A manual display name: bounded, control-stripped, never replaced later. */
+  /**
+   * A manual display name: bounded, control-stripped, secret-screened (a
+   * screened draft leaves the neutral fallback), and never replaced by a later
+   * generated title.
+   */
   async renameSession(projectKey: string, rawName: string): Promise<SessionProjection> {
     const key = validateProjectKey(projectKey);
     const record = this.requireRecord(key);
