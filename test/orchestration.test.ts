@@ -2237,6 +2237,42 @@ test("parsePlan rejects invented contract IDs and covered entries without eviden
   base.surfaceAnalysis.coverage[0]!.contractIds = ["cli:thin-front"];
   base.surfaceAnalysis.coverage[0]!.evidence = [];
   expect(() => parsePlan(base, "run-id")).toThrow(OrchestrationError);
+
+  base.surfaceAnalysis.coverage[0]!.status = "research_required";
+  base.surfaceAnalysis.coverage[0]!.contractIds = [];
+  base.surfaceAnalysis.coverage[0]!.evidence = ["gap"];
+  expect(() => parsePlan(base, "run-id")).toThrow(
+    'coverage[0].contractIds must be non-empty when status is "research_required"; resubmit with canonical contract IDs',
+  );
+});
+
+test("research_required accepts canonical contract IDs and evidence at plan submission", () => {
+  const plan = parsePlan(
+    {
+      complexity: "medium",
+      securitySurface: "none",
+      summary: "plan",
+      surfaceAnalysis: {
+        projectType: "CLI",
+        surfaces: [{ id: "cli", name: "CLI", rationale: "changed" }],
+        coverage: [
+          {
+            surfaceId: "cli",
+            status: "research_required",
+            contractIds: ["cli:thin-front"],
+            evidence: ["gap"],
+            rationale: "needs canonical contract research",
+          },
+        ],
+      },
+    },
+    "run-id",
+  );
+  expect(plan.surfaceAnalysis.coverage[0]).toMatchObject({
+    status: "research_required",
+    contractIds: ["cli:thin-front"],
+    evidence: ["gap"],
+  });
 });
 
 test("planner instruction exposes canonical IDs accepted by validation", () => {
@@ -2350,7 +2386,7 @@ test("workflow validates production surface limits before provider dispatch", ()
   ).toThrow("surfaceAnalysisLimits.maxDepth");
 });
 
-test("research-required surface cannot reach a coder turn", async () => {
+test("empty research_required contractIds are rejected before research or coding", async () => {
   const fx = fixture();
   fx.faux.setResponses([
     ...plannerTurn({
@@ -2373,8 +2409,9 @@ test("research-required surface cannot reach a coder turn", async () => {
       },
     }),
   ]);
-  await expect(
-    runPipeline({
+  let caught: unknown;
+  try {
+    await runPipeline({
       targetDir: fx.targetDir,
       models: fx.models,
       task: "implement",
@@ -2384,8 +2421,49 @@ test("research-required surface cannot reach a coder turn", async () => {
         coder: fx.role("coder", "code"),
         reviewer: reviewerRole(fx),
       },
+    });
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught).toMatchObject({ code: "malformed_plan" });
+  expect((caught as OrchestrationError).message).toMatch(
+    /^coverage\[0\]\.contractIds must be non-empty when status is "research_required"; resubmit with canonical contract IDs/,
+  );
+});
+
+test("accepted research_required coverage becomes unresolved when canonical evidence is absent", async () => {
+  const fx = fixture();
+  fx.faux.setResponses([
+    ...plannerTurn({
+      complexity: "medium",
+      securitySurface: "low",
+      summary: "plan",
+      contractRequirements: [],
+      surfaceAnalysis: {
+        projectType: "CLI",
+        surfaces: [{ id: "cli", name: "CLI", rationale: "new command" }],
+        coverage: [
+          {
+            surfaceId: "cli",
+            status: "research_required",
+            contractIds: ["cli:thin-front"],
+            evidence: ["no CLI UX contract"],
+            rationale: "standards unknown",
+          },
+        ],
+      },
     }),
-  ).rejects.toMatchObject({ code: "pipeline_paused" });
+    fauxAssistantMessage(JSON.stringify({ summary: "resolved", resolvedSurfaceIds: ["cli"] })),
+  ]);
+  const coordinator = new RunCoordinator(researchSession(fx), new ProjectStore(fx.targetDir), {
+    runId: "accepted-then-unresolvable",
+  });
+  await coordinator.step();
+  await coordinator.prepareStep();
+  expect(coordinator.checkpoint.pause).toMatchObject({
+    phase: "research",
+    code: "research_rejected",
+  });
 });
 
 test("research is checkpointed before dispatch and persists only normalized provenance", async () => {
@@ -2759,7 +2837,7 @@ test("mandatory request and initial checkpoint ceilings cannot be disabled", asy
     coverage: Array.from({ length: 257 }, (_, index) => ({
       surfaceId: `surface-${index}`,
       status: "research_required" as const,
-      contractIds: [],
+      contractIds: ["config:configurable"],
       evidence: ["gap"],
       rationale: "needs evidence",
     })),

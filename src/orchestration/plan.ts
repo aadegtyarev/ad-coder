@@ -198,6 +198,10 @@ function parseSurfaceAnalysis(
     const evidence = entry.evidence as string[];
     if (status === "covered" && (contractIds.length === 0 || evidence.length === 0))
       return bad(`coverage[${index}] is "covered" and requires contractIds and evidence`);
+    if (status === "research_required" && contractIds.length === 0)
+      return bad(
+        `coverage[${index}].contractIds must be non-empty when status is "research_required"; resubmit with canonical contract IDs`,
+      );
     const unknown = contractIds.filter((id) => !(id in CONTRACT_INDEX));
     // The refused VALUES are deliberately not echoed: this sentence reaches a
     // durable failure surface. `OrchestrationError.message` is re-wrapped by
@@ -631,7 +635,7 @@ export function buildSubmitPlanTool(
               contractIds: Type.Optional(
                 Type.Array(Type.String(), {
                   description:
-                    "canonical contract ids this entry covers; required non-empty when status is covered, and required empty when it is not_applicable",
+                    "canonical contract ids this entry covers; required non-empty when status is covered or research_required, and required empty when it is not_applicable",
                 }),
               ),
               evidence: Type.Optional(
@@ -701,7 +705,7 @@ export function formatPlannerInstruction(): string {
     'For status "covered", contractIds and evidence must both be non-empty. Use only canonical contract IDs.',
     `Canonical contract IDs accepted by this pipeline: ${canonicalIds}.`,
     'For status "not_applicable", contractIds must be empty and evidence must explain why no contract applies.',
-    'For status "research_required", evidence must name the missing contract knowledge; do not claim "covered" with empty arrays.',
+    'For status "research_required", contractIds must be non-empty canonical IDs and evidence must name the missing contract knowledge; do not claim "covered" with empty arrays.',
     COMPLEXITY_RUBRIC,
     'Choose "none" when the task touches no attack surface, "low" for incidental exposure, "elevated" when it touches auth, secrets, user input, crypto, or an external boundary.',
   ].join("\n");

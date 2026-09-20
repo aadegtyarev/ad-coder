@@ -11,6 +11,11 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.145.0] - 2026-09-20
+
+### Fixed
+- **Research coverage validation rejects unresolvable plans (#411).** Empty contract IDs now receive actionable remediation guidance.
+
 ## [0.144.0] - 2026-09-20
 
 ### Fixed
@@ -989,6 +994,9 @@ enforces that dated release headings go in non-increasing date order
   and none becomes unresolvable because of a foreign one. The preflight set
   carries provider ids only; no env variable is read for an out-of-set
   provider. The JSON inventory route keeps its per-profile scoped registries.
+
+### Fixed
+- Reject `research_required` plan coverage with empty `contractIds` at submission, with actionable validation guidance.
 
 ## [0.95.0] - 2026-09-19
 
