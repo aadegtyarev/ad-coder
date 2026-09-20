@@ -599,6 +599,60 @@ test("every escape family is stripped whole, not just CSI (#365)", async () => {
   expect(sanitizeTitle(`red${ESC}[31m alert`).value).toBe("red alert");
 });
 
+test("an escape with intermediate bytes is stripped, not refused (#365)", async () => {
+  // Round 6 filed this as a blocker, and it named the direction correctly: the
+  // fail-closed rule refused a sequence that IS fully delimited. An escape that
+  // is none of the longer forms is ESC, any number of INTERMEDIATE bytes
+  // (0x20-0x2F) and ONE final byte -- so `ESC # 8` (DECALN) and `ESC ( B` (a
+  // charset designation) have a defined end, and the contract asks for them to be
+  // STRIPPED, not for the whole draft to fall back. `\` is a final byte here too:
+  // the 7-bit string terminator is a delimited two-byte escape on its own, and
+  // leaving it out refused `red<ESC>\alert` for the same non-reason.
+  for (const draft of [
+    `red${ESC}#8 alert`, // DECALN
+    `red${ESC}(B alert`, // designate G0 as ASCII
+    `red${ESC})0 alert`, // designate G1
+    `red${ESC}%G alert`, // select UTF-8
+    `red${ESC} F alert`, // S7C1T, an intermediate that is a space
+    `red${ESC}-A alert`, // keypad mode
+    `red${ESC}*B alert`,
+    `red${ESC}/V alert`,
+    `red${ESC}\\alert`, // a lone string terminator
+  ]) {
+    expect(createManualSessionName(draft)).toBe("red alert");
+    expect(sanitizeTitle(draft).value).toBe("red alert");
+  }
+  // The durable path, not just the function.
+  const { manager, stateDir } = makeManager();
+  await manager.ensureSession("intermediate-escape", "telegram:bridge");
+  const record = await manager.renameSession("intermediate-escape", `red${ESC}#8 alert`);
+  expect(record.name).toBe("red alert");
+  expect(fs.readFileSync(path.join(stateDir, "bindings.json"), "utf8")).toContain("red alert");
+  // What the wider escape did NOT loosen: a sequence this code cannot delimit is
+  // still refused, and an intermediate run is not a place to hide one either --
+  // there is no final byte, so nothing is delimited and nothing is guessed.
+  for (const draft of [
+    `token${ESC}#=supersecret`, // an intermediate, then the operator
+    `token${ESC}`, // a lone introducer
+    `token${ESC}]0;foo=supersecret`, // unterminated OSC, unchanged
+  ]) {
+    expect(createManualSessionName(draft)).toBe(SESSION_FALLBACK_NAME);
+    expect(sanitizeTitle(draft).value).toBe(SESSION_FALLBACK_NAME);
+  }
+  // And the class's second shape, now hidden by an INTERMEDIATE escape: its
+  // removal inserts the space that splits the keyword, and the glued projection
+  // is what catches it.
+  for (const draft of [
+    `sec${ESC}#8ret=supersecret`,
+    `sec${ESC}(Bret=supersecret`,
+    `sec${ESC} Fret=supersecret`,
+    `sec${ESC}\\ret=supersecret`,
+  ]) {
+    expect(createManualSessionName(draft)).toBe(SESSION_FALLBACK_NAME);
+    expect(sanitizeTitle(draft).value).toBe(SESSION_FALLBACK_NAME);
+  }
+});
+
 test("an escape sequence that never terminates is refused, not guessed at (#365)", async () => {
   // Round 4 measured the INCOMPLETE forms, one step past the round-3 grammar: an
   // introducer whose sequence never terminates matched no strict alternative, so

@@ -90,9 +90,10 @@ already been checked against.
   They are NEVER used as identifiers, slugs, or path components. A candidate
   that sanitizes to empty falls back to `New session`. A manual name is never
   replaced by a generated one.
-- The strip removes only sequences whose END the standard defines (CSI up to its
-  final byte, OSC to BEL or ST, DCS/PM/APC/SOS to ST, one byte for the other
-  Fe/Fs/Fp escapes, and the 8-bit C1 spellings). A candidate that still carries
+- The strip removes only sequences whose END the standard defines: CSI up to its
+  final byte, OSC to BEL or ST, DCS/PM/APC/SOS to ST, the 8-bit C1 spellings,
+  and every other escape up to its final byte, intermediate bytes included — a
+  delimited sequence is stripped, never refused. A candidate that still carries
   an introducer byte afterwards is REFUSED rather than guessed at — where an
   unterminated sequence ends is not a decision the strip may make — and lands on
   the same neutral fallback as the empty case.

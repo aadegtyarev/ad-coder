@@ -19,8 +19,9 @@ export const MANUAL_NAME_MAX_LENGTH = 64;
 // joined from numeric constants instead — ONE shared definition, no state.
 //
 // Seven alternatives, LONGEST FIRST within each introducer, because the last
-// one of a pair is a catch-all: an Fe/Fs/Fp escape is ESC plus exactly ONE byte
-// in 0x30–0x7E (ECMA-48), and that byte is also what opens the longer forms —
+// one of a pair is a catch-all: an escape that is not one of the longer forms is
+// ESC, any number of intermediate bytes, and ONE final byte in 0x30–0x7E
+// (ECMA-48), and that final byte is also what opens the longer forms —
 // so a terminated sequence must be consumed whole rather than split into its
 // opener plus text, and an UNTERMINATED one must still lose its ESC. Round 3
 // measured what the old two-alternative form left behind, on BOTH name paths:
@@ -60,15 +61,25 @@ const CSI_BODY = "[0-9;:?<>]*[ -/]*[@-~]";
 //    a regression the catch-all itself introduced. Both are unassigned escapes
 //    in ECMA-48, so nothing real is lost.
 //  - the bytes that OPEN a longer sequence: `[` CSI, `]` OSC, `P` DCS, `X` SOS,
-//    `^` PM, `_` APC, and `\`, which is a string terminator rather than an
-//    escape. Swallowing one of those as a two-byte escape is how an unterminated
-//    sequence lost its introducer while its payload stayed as text -- the round-4
-//    finding, and the reason the dangling check below could not see it. Excluded,
-//    the introducer SURVIVES the pass and the draft is refused instead.
-const FE_BODY = "[0-9;<>?@A-OQ-WYZa-z`{|}~]";
+//    `^` PM and `_` APC. Swallowing one of those as a two-byte escape is how an
+//    unterminated sequence lost its introducer while its payload stayed as text
+//    -- the round-4 finding, and the reason the dangling check below could not
+//    see it. Excluded, the introducer SURVIVES the pass and the draft is refused
+//    instead.
+// The body itself is the standard one: any number of INTERMEDIATE bytes
+// (0x20-0x2F) followed by one final byte. Round 6 filed the missing intermediate
+// run as a blocker, and it was right: `red<ESC>#8 alert` -- DECALN, a fully
+// delimited sequence, nothing unterminated about it -- was REFUSED instead of
+// stripped, on both paths, and the contract asks for ANSI sequences to be
+// stripped. `\` (0x5C) is a final byte here too: it is the 7-bit string
+// terminator, a delimited two-byte escape on its own, and leaving it out refused
+// `red<ESC>\alert` for the same non-reason. An unterminated opener still cannot
+// be swallowed -- the openers are in no position of this class, before or after
+// the intermediate run.
+const FE_BODY = "[ -/]*[0-9;<>?@A-OQ-WYZa-z`{|}~\\\\]";
 // Every alternative below is a sequence whose END the standard defines: CSI up to
-// its final byte, OSC to BEL or ST, DCS/PM/APC/SOS to ST, and one byte for the
-// rest of the Fe/Fs/Fp escapes. NOTHING ELSE may be matched here, and round 5 is
+// its final byte, OSC to BEL or ST, DCS/PM/APC/SOS to ST, and intermediates plus
+// a final byte for the rest. NOTHING ELSE may be matched here, and round 5 is
 // why: an earlier version consumed the bytes of an unterminated sequence up to
 // the assignment operator, and the reviewer put a second introducer inside that
 // payload -- `pre<ESC>]foo sec<ESC>]ret=supersecret` -- which re-split the keyword
