@@ -15,9 +15,10 @@ enforces that dated release headings go in non-increasing date order
 
 ### Fixed
 - **Runs can be stopped by their run ID without matching or killing another
-  lane (issue #479).** The stop command verifies the recorded process identity,
-  target directory, process start time, and witness tokens before signalling;
-  stopped runs also report that they were stopped.
+  lane (issue #479).** Missing records now refuse with exit 3 and a structured
+  `run_not_found` detail naming the checked candidates; exit 1 is reserved for
+  a positively identified pid that is already dead. Verified stops continue to
+  check process identity, target directory, start time, and witness tokens.
 
 ## [0.151.0] - 2026-09-21
 

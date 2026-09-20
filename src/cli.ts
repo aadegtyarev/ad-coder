@@ -4112,10 +4112,10 @@ const COMMANDS: readonly CommandDefinition[] = [
     notes: [
       "Exit codes:",
       "  0  a signal was delivered to the verified pid (escalated when --kill was set)",
-      "  1  nothing to stop: no record names this run id, or the run is already gone; nothing was signalled",
+      "  1  the positively identified recorded pid is already dead; nothing was signalled",
       "  2  usage error (unknown action, missing run id, missing --target-dir, invalid flag value)",
-      "  3  refusal: the record's identity does not positively tie its pid to this run and target -- no",
-      "     recorded pid, unreadable identity, wrong target directory, wrong run, or a start time that",
+      "  3  refusal: no record establishes this run id, or the record's identity does not positively tie its pid",
+      "     to this run and target -- no recorded pid, unreadable identity, wrong target directory, wrong run, or a start time that",
       "     suggests pid reuse; every check is printed and NOTHING is signalled",
     ],
     run: ({ positionals, flags, booleans }) => {

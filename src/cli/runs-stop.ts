@@ -41,10 +41,10 @@
  *
  * EXIT CODES (rendered in the command's own help, from the registry):
  *   0  a signal was delivered to the verified pid (escalated when --kill)
- *   1  nothing to stop -- no record names the id, or the run is already gone
+ *   1  the positively identified recorded pid is already dead
  *   2  usage error (handled by the front: unknown action, missing id, ...)
- *   3  refusal -- the record's identity does not positively tie its pid to
- *      this run and target; what was checked is printed, nothing signalled
+ *   3  refusal -- no record establishes the id, or the record's identity does
+ *      not positively tie its pid to this run and target; nothing signalled
  *
  * Usage errors stay with the front (src/cli.ts's registry closure calls
  * `fail`), so this module's own failures are exactly the checked outcomes:
@@ -182,16 +182,30 @@ export async function runsStopCommand(params: RunsStopParams): Promise<void> {
   }
   if (record === undefined) {
     const runsDir = path.join(targetDir, ".ad-coder", "runs");
+    const checkedNames = [
+      path.join(runsDir, `standalone-${runId}.json`),
+      path.join(runsDir, "background", `${runId}.json`),
+    ];
     const text = `no run record named ${runId} under ${runsDir}; nothing was signalled`;
-    if (json)
-      writeJsonError(
-        "run_not_found",
-        runId,
-        text,
-        "check the run id and the --target-dir spelling (the record lives under <target>/.ad-coder/runs/)",
+    const detail = `checked directories/names: ${checkedNames.join(", ")}`;
+    if (json) {
+      process.stderr.write(
+        `${JSON.stringify({
+          error: {
+            code: "run_not_found",
+            detail,
+            text,
+            retryable: false,
+            nextAction:
+              "check the run id and the --target-dir spelling (the record lives under <target>/.ad-coder/runs/)",
+            checked: { targetDir, runsDir, names: checkedNames },
+          },
+        })}\n`,
       );
-    else process.stderr.write(`ad-coder: ${text}\n`);
-    process.exit(1);
+    } else {
+      process.stderr.write(`ad-coder: ${text}\n${detail}\n`);
+    }
+    process.exit(3);
   }
 
   const kind = record.kind === "standalone" ? "standalone role run" : "background run";

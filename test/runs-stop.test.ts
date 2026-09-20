@@ -331,11 +331,29 @@ test("a verified stop delivers SIGTERM to exactly the recorded pid", async () =>
   expect(fs.existsSync(witnessPath(target, runId))).toBe(true);
 });
 
-test("no record for the id is exit 1 and leaves the project untouched", () => {
+test("no record for the id is exit 3 and leaves the project untouched", () => {
   const target = makeTarget("unknown-id");
-  const result = runStop([`nosuchrunid`, "--target-dir", target]);
-  expect(result.exitCode).toBe(1);
-  expect(result.stderr).toContain("no run record named");
-  // A stop against a mistyped id must not create a store in the target.
+  const result = runStop([`nosuchrunid`, "--target-dir", target, "--json"]);
+  expect(result.exitCode).toBe(3);
+  expect(result.stdout).toBe("");
+  const refusal = JSON.parse(result.stderr) as {
+    error: {
+      code: string;
+      detail: string;
+      checked: { targetDir: string; runsDir: string; names: string[] };
+    };
+  };
+  expect(refusal.error.code).toBe("run_not_found");
+  expect(refusal.error.detail).toContain("checked directories/names");
+  expect(refusal.error.checked).toEqual({
+    targetDir: target,
+    runsDir: path.join(target, ".ad-coder", "runs"),
+    names: [
+      path.join(target, ".ad-coder", "runs", "standalone-nosuchrunid.json"),
+      path.join(target, ".ad-coder", "runs", "background", "nosuchrunid.json"),
+    ],
+  });
+  // A stop against a mistyped id must not create a store in the target or
+  // write a stop witness: no process was identified, so nothing was signalled.
   expect(fs.existsSync(path.join(target, ".ad-coder"))).toBe(false);
 });

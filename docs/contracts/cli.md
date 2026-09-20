@@ -185,9 +185,11 @@ Rules for ad-coder's command-line front. A violation is always blocking.
   2000, requires `--kill`), `--group` (signal the run's process group;
   refused unless the record proves the run leads that group, so a lane's
   shared group is never signalled). Exit codes: 0 a signal was delivered to
-  the verified pid (escalated when `--kill`); 1 nothing to stop -- no record
-  names the id, or the run is already gone; 2 usage error; 3 refusal, with
-  nothing signalled. The refusal is an INVARIANT, not a heuristic: NOTHING
+  the verified pid (escalated when `--kill`); 1 the positively identified
+  recorded pid is already dead; 2 usage error; 3 refusal, with nothing
+  signalled. A missing record is an unestablished identity, so it is exit 3
+  and reports the checked directories and candidate names in the structured
+  `run_not_found` refusal. The refusal is an INVARIANT, not a heuristic: NOTHING
   is signalled unless the pid is positively tied to that run and that target
   -- the record must be readable (a corrupt record is a refusal, never a
   crash and never a licence to signal anything), must carry a pid, that pid
