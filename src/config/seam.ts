@@ -32,6 +32,7 @@ import type { ModelsConfig, SettingsConfig } from "./types";
 export const DEFAULT_SETTINGS: SettingsConfig = {
   review: { requireStamp: "auto", costSignature: false },
   providerAdmission: {},
+  sessionManager: { allowedRoots: [] },
 };
 
 /** True when the path names a present entry (file, symlink, or directory). */

@@ -11,6 +11,28 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.149.0] - 2026-09-20
+
+### Added
+- **The headless SessionManager (issue #365, layer 2 slice of #108).** One
+  programmatic core (`src/session-manager/*`) per the 2026-09-14 ROADMAP
+  decision: one shared durable Orchestrator conversation per project, safe
+  project keys under configured allow roots, secret-free bindings stored
+  outside target projects, safe project creation (argv-array `git init`,
+  exclusive create, configured creation volume), read-only standalone lease
+  detection with propose-only handoff, and bounded untrusted session titles
+  generated through provider admission (`title` priority class), with manual
+  names screened the same way. The
+  Unix-socket transport is an owner-private boundary: `0700` directory and
+  umask-independent `0600` socket, verified after bind; a peer-uid check
+  against the kernel's own per-connection attribution (`SO_PEERCRED` on Linux,
+  `getpeereid` on Darwin) refuses every foreign-uid peer; driver identity is
+  server-derived from the
+  verified peer, never a client-supplied field; bind is atomic and
+  `EADDRINUSE` is fatal -- there is no unlink-and-rebind path. Its contract is
+  `docs/contracts/session-manager.md`. A thin `ad-coder session-manager
+  serve|list` front renders it in the single command registry; the capability
+  is exported from the library API (`src/index.ts`).
 ## [0.148.0] - 2026-09-20
 
 ### Removed

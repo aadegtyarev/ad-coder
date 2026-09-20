@@ -900,7 +900,11 @@ workflows — one substrate, swappable drivers.
   Project keys are immediate child directories of configured allowed roots;
   absolute paths, traversal, and escaping symlinks are rejected. It may create a
   new, non-existing safe-slug project beneath an allowed root, initialize Git,
-  and create only the minimal ignored runtime scaffold.
+  and create only the minimal ignored runtime scaffold. Shipped 0.146.0
+  (issue #365, layer 2): the headless core and the owner-private Unix-socket
+  transport, under `docs/contracts/session-manager.md`; the console-discovery
+  and Telegram driver layers remain future slices over the same programmatic
+  API.
 
   `ad-coder console` launched from a project directory first discovers the
   private Manager socket and resolves that directory's project binding. If the

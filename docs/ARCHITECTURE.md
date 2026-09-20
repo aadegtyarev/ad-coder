@@ -126,15 +126,20 @@ The control plane stores queued intents and workflow checkpoints in
 require an explicit `resume` after a process stops; provider limits, manual
 decisions, decomposition, and publication are durable states and events.
 
+### Session manager
+
+The SessionManager owns one shared durable Orchestrator conversation per
+project; fronts reach it only through the owner-private Unix socket and its
+peer-uid check (`docs/contracts/session-manager.md`).
+
 ### Background runs
 
-The session API exposes start, resume, status, events, result, and
-cancellation. CLI start persists an owner-scoped request and launches a detached
-worker; the live owner watches atomic updates and refreshes status without
-reconstruction.
+The session API exposes start, resume, status, events, result, cancel. CLI
+start persists an owner-scoped request and launches a detached worker; the
+live owner watches atomic updates and refreshes status.
 
-Subscriptions provide bounded, asynchronous, content-free tail hints. Pages
-expose cursor position, pending work, and dropped events; polling recovers
+Subscriptions provide bounded, content-free tail hints; pages
+expose cursor position, pending work, and dropped events. Polling recovers
 retained history or watcher failure. Limits bound queues, pages, and
 retention; leases distinguish live workers from abandoned ones.
 
@@ -148,12 +153,12 @@ scope is not authentication; execution is not a sandbox.
 ### Target project
 
 `targetDir` selects the project and `.ad-coder/` runtime state location.
-Tools begin there, but unrestricted shell access can leave it and reach the
-network; use an external sandbox for untrusted projects or tasks.
+Tools begin there, but shell access can leave it and reach the network;
+sandbox untrusted projects externally.
 
 Project prompt overrides under `.ad-coder/prompts/` are trusted operator input
-and replace built-in prompts byte-for-byte; files such as `AGENTS.md` are not
-automatically inserted into role prompts.
+and replace built-in prompts byte-for-byte; `AGENTS.md` is not auto-inserted
+into role prompts.
 
 ### Credentials
 
@@ -162,8 +167,8 @@ accessor, never the target's configuration. Credential paths are
 canonicalized, kept outside the target and Git metadata, privately permissioned,
 and updated atomically without following symlinks.
 Bun's startup dotenv load destroys environment provenance, so the CLI disables
-the environment credential accessor when cwd is inside `targetDir`; OAuth and
-the external private store remain usable.
+the environment accessor inside `targetDir`; OAuth and the external
+private store remain usable.
 
 A named `models.yaml` profile composes the registry and role-routing profile that
 document declares, copying neither; only the models it reaches resolve
@@ -176,23 +181,22 @@ without URLs or credential metadata. The JSON inventory is gone (issue #513).
 Ledgers contain identifiers and numeric usage, not prompts, responses, tool
 arguments, or headers. Tool-activity projections enter no ledger or checkpoint;
 every externally sourced event string and complete record is bounded before
-retention or delivery. Workflow checkpoints persist validated state, bounded
+retention. Workflow checkpoints persist validated state, bounded
 normalized research provenance, and safe per-stage provider/model labels,
 duration, token categories, provider-reported cost, and context strategy.
-Conversation transcripts may contain user and assistant content: treat them as
-sensitive local runtime data, ignored by Git.
+Conversation transcripts may contain user and assistant content: sensitive
+local runtime data, ignored by Git.
 
 ## Configuration model
 
 Provider data resolves to named models; profiles map each role and complexity to
-one; per-run overrides win over profile entries. The Planner uses the
-configured default complexity before producing a rating; later roles use
-the submitted rating.
+one; per-run overrides win. The Planner uses the configured default complexity
+before producing a rating; later roles use the submitted rating.
 
 Configuration follows `docs/contracts/config.md`: reasonable alternatives are
 configurable, defaults favor efficiency, numeric limits default to zero
 unless a safety ceiling says otherwise. Switchable capabilities ship enabled;
-settings and flags turn them off, and `config show` reports every resolved value
+settings and flags turn them off; `config show` reports every resolved value
 and source without credentials.
 
 The Planner instruction derives allowed canonical IDs from validation's

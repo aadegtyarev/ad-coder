@@ -2314,3 +2314,41 @@ test("renderConfigShowRow renders set-valued rows and fails loudly on one it can
   expect(stderr).not.toContain("VALUE-LEAK-MARKER");
   expect(stderr).not.toContain("[object Object]");
 });
+
+test("the session-manager front lists sessions as JSON and refuses a bad invocation (#365)", () => {
+  // The layer-2 front is claimed as THIN and reachable through the single
+  // command registry (CHANGELOG, docs/contracts/session-manager.md "Front
+  // capability parity"), and nothing else in the suite spawns it: every other
+  // session-manager test imports the library modules directly, so the front
+  // could be dropped from the registry -- or start writing state on a refused
+  // invocation -- with the suite green.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-sm-front-"));
+  const stateDir = path.join(root, "state");
+  try {
+    const list = runCli([
+      "session-manager",
+      "list",
+      "--state-dir",
+      stateDir,
+      "--allowed-roots",
+      root,
+    ]);
+    expect(list.code).toBe(0);
+    expect(JSON.parse(list.stdout)).toEqual([]);
+    expect(list.stderr).toBe("");
+    // A usage refusal is the CLI's `usage` front (exit 2), and it happens
+    // BEFORE anything is started or written: no action at all, two actions, and
+    // a root that is not absolute.
+    for (const args of [
+      ["session-manager"],
+      ["session-manager", "serve", "list", "--state-dir", stateDir],
+      ["session-manager", "list", "--state-dir", stateDir, "--allowed-roots", "relative/dir"],
+    ]) {
+      const refused = runCli(args);
+      expect(refused.code).toBe(2);
+      expect(refused.stderr.length).toBeGreaterThan(0);
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}, 20_000);
