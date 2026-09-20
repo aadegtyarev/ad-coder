@@ -664,7 +664,12 @@ function renderBackgroundNotice(notice: BackgroundRunNotice, mode: ConsoleOutput
   }
   const lines = events.flatMap(({ lifecycle, stage, pause }) => {
     if (lifecycle === "paused" && pause !== undefined) {
-      const limit = pause.limitReason !== undefined ? `, limit ${pause.limitReason}` : "";
+      const limit =
+        pause.limitReason !== undefined
+          ? `, limit ${pause.limitReason}${pause.limit === undefined ? "" : ` (${pause.limit})`}`
+          : pause.limit === undefined
+            ? ""
+            : `, limit (${pause.limit})`;
       // The pause line says the phase even when the event carries no stage: the
       // phase is the pause's own identifier, and "what paused" is the first
       // question the operator asks (issue #501).

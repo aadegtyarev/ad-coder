@@ -210,7 +210,7 @@ test("a stage-limit pause is reported as recovery guidance, not a pending decisi
     "stage_limit: increase or disable the model_turns stage limit, then resume explicitly",
   );
   expect(errorCapture.text()).toContain("pipeline paused (");
-  expect(errorCapture.text()).toContain("): stage_limit, limit model_turns -- ");
+  expect(errorCapture.text()).toContain("): stage_limit, limit model_turns (1) -- ");
   expect(errorCapture.text()).toContain(
     "increase or disable the model_turns stage limit, then resume explicitly",
   );

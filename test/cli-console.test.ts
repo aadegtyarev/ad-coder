@@ -1412,7 +1412,7 @@ test("a pause notice carries the recovery action once per occurrence", async () 
   // the recovery action in words, and the resumable-not-failed frame (issue #501).
   const first = await renderPauseNotice("pause-run", "stage_limit");
   expect(first).toContain(
-    "background pipeline pause-run paused (plan): stage_limit, limit duration",
+    "background pipeline pause-run paused (plan): stage_limit, limit duration (180000)",
   );
   expect(first).toContain("increase or disable the duration stage limit, then resume explicitly");
   expect(first).toContain("the run is resumable, not failed");

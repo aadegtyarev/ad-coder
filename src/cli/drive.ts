@@ -250,7 +250,13 @@ export async function driveWorkflow(params: DriveWorkflowParams): Promise<Pipeli
           )
         ) {
           const limit =
-            pauseRecord.limitReason !== undefined ? `, limit ${pauseRecord.limitReason}` : "";
+            pauseRecord.limitReason !== undefined
+              ? `, limit ${pauseRecord.limitReason}${
+                  pauseRecord.limit === undefined ? "" : ` (${pauseRecord.limit})`
+                }`
+              : pauseRecord.limit === undefined
+                ? ""
+                : `, limit (${pauseRecord.limit})`;
           error.write(
             `ad-coder: pipeline paused (${pauseRecord.phase}): ${pauseRecord.code}${limit} -- ` +
               `${pauseRecord.action} -- the run is resumable, not failed; ` +
