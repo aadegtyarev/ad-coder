@@ -29,6 +29,18 @@ enforces that dated release headings go in non-increasing date order
   wrong are refused mechanically now: a version at or below main, and a version
   two open branches both declare.
 
+  Two review rounds then hardened the gate's own edges. The direct git reads it
+  makes itself -- the base version from `origin/main` and the current branch --
+  ran outside the failure boundary the claim reads already used, so a machine
+  without git terminated with Bun's unhandled `Executable not found in $PATH`
+  instead of the gate's named refusal; both now run through that boundary, and
+  an unavailable git is a named, actionable refusal on the `check:version:`
+  channel with exit 1. And the PASSING gate now prints the ladder it derived --
+  the base it compared against and every open claim it evaluated, each with the
+  version that ref declares, or an explicit `none` when there were no others --
+  because a pass that states only its conclusion leaves the operator to re-derive
+  the ladder with git by hand, which is the state the issue set out to end.
+
 ## [0.141.0] - 2026-09-20
 
 ### Fixed

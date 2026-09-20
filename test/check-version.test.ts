@@ -12,6 +12,7 @@ import {
   type GitRun,
   highestOpenClaim,
   isMainContext,
+  ladderLedger,
   type OpenClaim,
   readBaseVersion,
   readOpenClaims,
@@ -375,6 +376,27 @@ describe("the version ladder end to end (#383): both ways of being wrong, one se
     expect(claims.ok).toBe(true);
     if (claims.ok)
       expect(decideClaimConflict({ candidate: "0.137.0", claims: claims.claims }).ok).toBe(true);
+  });
+  test("green: the passing gate prints the ladder it derived, claim by claim (#383 round-5 review)", () => {
+    // The pass used to state the conclusion only -- "unclaimed by other open
+    // branches" -- which is not the same as the ladder: an operator could not
+    // tell which refs were evaluated, or what each declares, without re-running
+    // git by hand. Legibility of the ladder IS the outcome the issue asks for,
+    // so the ledger is asserted through the same seam the gate composes it from.
+    const claims = readOpenClaims(fakeGit(LADDER));
+    expect(claims.ok).toBe(true);
+    if (!claims.ok) return;
+    const ledger = ladderLedger({ baseVersion: "0.134.0", claims: claims.claims });
+    expect(claims.claims.length).toBeGreaterThan(0);
+    expect(ledger).toContain("base origin/main declares 0.134.0");
+    for (const claim of claims.claims) {
+      expect(ledger).toContain(`${claim.ref} declares ${claim.version}`);
+    }
+    // An empty ledger says `none` in words, rather than printing an empty list
+    // that reads like a missing line.
+    expect(ladderLedger({ baseVersion: "0.134.0", claims: [] })).toContain(
+      "open claims evaluated: none",
+    );
   });
 });
 

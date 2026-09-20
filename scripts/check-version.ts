@@ -252,6 +252,24 @@ export function readOpenClaims(
   return { ok: true, claims };
 }
 
+/**
+ * The ladder the PASSING gate derived, in the gate's own output shape (issue
+ * #383, review round 5): the base it compared against and every foreign open
+ * claim it evaluated, each with the version that ref declares, and an explicit
+ * `none` when there were no others. The outcome the issue asks for is that the
+ * number a branch will land is answerable from the tree alone -- and answering
+ * it from the gate's own output, rather than by re-running git by hand, is what
+ * makes that property usable. Deterministic: `readOpenClaims` walks refs in
+ * `for-each-ref` order, which is refname order.
+ */
+export function ladderLedger(input: { baseVersion: string; claims: readonly OpenClaim[] }): string {
+  const claimed =
+    input.claims.length === 0
+      ? "none"
+      : input.claims.map((claim) => `${claim.ref} declares ${claim.version}`).join(", ");
+  return `base origin/main declares ${input.baseVersion}; open claims evaluated: ${claimed}`;
+}
+
 /** Highest open claim by SemVer order; null when no claim parses. */
 export function highestOpenClaim(claims: readonly OpenClaim[]): string | null {
   let best: string | null = null;
@@ -427,6 +445,22 @@ async function main(): Promise<number> {
   process.stdout.write(
     `check:version: ${decision.version} is strictly above base ${decision.baseVersion} ` +
       `and unclaimed by other open branches; ${titleSource ? `${titleNote} (${titleSource})` : titleNote}.\n`,
+  );
+  // Round-5 review fix (#383): the pass prints the ladder it derived, so the
+  // number this branch will land is readable from the gate's own output instead
+  // of being re-derived with git by hand. `decide` refuses an unresolved base,
+  // so this guard cannot fire for the version gate itself -- it exists because
+  // the ladder would be meaningless without the base it compared against, and a
+  // gate that cannot state its ladder must refuse rather than print a pass.
+  if (baseVersion === null) {
+    process.stderr.write(
+      "check:version: the base version was not resolved, so the version ladder cannot be " +
+        "reported. Run `git fetch origin main`, then re-run `check:version`.\n",
+    );
+    return 1;
+  }
+  process.stdout.write(
+    `check:version: ladder: ${ladderLedger({ baseVersion, claims: claims.claims })}.\n`,
   );
   return 0;
 }
