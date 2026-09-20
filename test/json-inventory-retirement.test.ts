@@ -73,8 +73,23 @@ test("this repository commits no routing override of its own (#513)", () => {
  * each pattern here is an advertising sentence this change deleted from one of
  * them: measured on the pre-change tree, 1-2 hits each, spread across all
  * three files; 0 on this tree.
+ *
+ * The check is for ADVERTISING, not for mention, and round 4 showed the first
+ * version did not hold that line: it matched bare substrings anywhere in the
+ * file, so the sentence "The operator-authored inventory was retired;
+ * models.yaml is now the sole routing source." appended to README.md -- a
+ * correct statement of THIS change -- failed the pin (3 pass / 1 fail) with no
+ * route restored. Two things changed. The match is per LINE, so a pattern
+ * cannot be satisfied by two unrelated halves of a paragraph; and a line that
+ * says the surface is gone is an obituary, which is not an advertisement. The
+ * escape is deliberately narrow: a present-tense claim that routing comes from
+ * an inventory carries no such word and is still rejected (control C1), while
+ * an obituary that quotes the dead invocation is admitted (control C2).
  */
 const LIVE_DOCS = ["README.md", "docs/ARCHITECTURE.md", "docs/ROADMAP.md"] as const;
+
+/** Words that mark a mention as an obituary: the document says the route is GONE. */
+const RETIREMENT_MARKERS = /\b(?:retired|removed|gone|no longer|previously|used to|dropped)\b/i;
 
 const RETIRED_CLAIMS: ReadonlyArray<readonly [string, RegExp]> = [
   ["the deleted migration action", /\bconfig migrate\b/],
@@ -91,9 +106,12 @@ const RETIRED_CLAIMS: ReadonlyArray<readonly [string, RegExp]> = [
 test("no live document advertises the retired JSON routing route (#513)", () => {
   const offenders: string[] = [];
   for (const file of LIVE_DOCS) {
-    const text = fs.readFileSync(path.join(REPO_ROOT, file), "utf8");
-    for (const [claim, pattern] of RETIRED_CLAIMS)
-      if (pattern.test(text)) offenders.push(`${file}: ${claim}`);
+    const lines = fs.readFileSync(path.join(REPO_ROOT, file), "utf8").split("\n");
+    lines.forEach((line, index) => {
+      if (RETIREMENT_MARKERS.test(line)) return;
+      for (const [claim, pattern] of RETIRED_CLAIMS)
+        if (pattern.test(line)) offenders.push(`${file}:${index + 1}: ${claim}`);
+    });
   }
   expect(offenders).toEqual([]);
 });
