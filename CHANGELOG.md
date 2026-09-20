@@ -11,6 +11,35 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.112.0] - 2026-09-20
+
+### Fixed
+- **A diff projection that hits its ceiling is a bounded measurement, not a
+  failure; only a failed measurement is `projection_failure` (issue #449).**
+  When untracked content exceeded the aggregate projection ceiling (32 KiB),
+  `appendSafeUntrackedDiffProjection` threw `diff_metric_failed`, the catch in
+  `safeChangedFilesWithConfig` discarded the measured path list
+  (`{files: [], total: 0, truncated: 1}`), and every later stage recorded
+  `pipelineContextStrategy: full` / `fallbackReason: projection_failure` /
+  `changedFiles: []` -- the stage lost the list of its own changed files
+  exactly when the change was large and searched blind. Now untracked content
+  past the ceiling truncates at a UTF-8 codepoint boundary (a multi-byte
+  codepoint is never cut in half); the projection carries the changed-path
+  list, the true measured size (`untrackedMeasuredBytes`), and the count of
+  capped files (`untrackedTruncatedFiles`), and the decision escalates on that
+  true size via the existing `material_diff`. The three facts the
+  `changedFilesTruncated` counter used to conflate are separate record fields
+  and stable reasons: real path-list truncation widens under the new
+  `path_list_truncated`, sensitive-path redaction under `projection_redacted`
+  (`redactedPaths`), and only a failed git measurement under
+  `projection_failure` (`projectionFailed`, additive optional field on the
+  durable `PipelineContextSnapshot`; records written before this version read
+  as before). A failed measurement keeps the measured path list and is stated
+  as one in stage evidence, never rendered as "no changes"; genuine failures
+  (unsafe path, unreadable or non-UTF-8 untracked file) still throw the typed
+  `diff_metric_failed`. Covered by the config contract entry of the same date
+  and rewritten "Context, usage, and recovery" in `docs/ARCHITECTURE.md`.
+
 ## [0.111.0] - 2026-09-20
 
 ### Fixed
@@ -43,7 +72,6 @@ enforces that dated release headings go in non-increasing date order
 - The wake pump's contained failure lines come from one shared, code-first
   helper (`drainErrorLine`, src/orchestration/wake.ts); no behavior beyond the
   contained failure above changes.
-
 
 ## [0.110.0] - 2026-09-20
 

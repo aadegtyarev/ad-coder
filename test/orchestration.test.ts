@@ -35,10 +35,13 @@ import {
   applyTransition,
   autoDriver,
   createWorkflowSession,
+  safeChangedFilesWithConfig,
   selectPipelineContext,
 } from "../src/orchestration/session";
 import type {
   AvailableTransition,
+  PipelineConfig,
+  PipelineContextProjectionLimits,
   PipelineRouting,
   Plan,
   RoleSpec,
@@ -103,6 +106,131 @@ test("incremental pipeline context keeps retries focused and widens deterministi
       mode: { mode: "incremental", maxFocusedDiffBytes: 0 },
     }),
   ).toEqual({ selection: "focused" });
+});
+
+test("issue #449: measured ceilings and failed measurements are distinct decisions", () => {
+  const base = {
+    round: 2,
+    diffBytes: 100,
+    changedFiles: ["src/a.ts"],
+    changedFilesTruncated: 0,
+    evidencePresent: true,
+  } as const;
+  // A real path-list truncation widens under its own honest reason, keeping
+  // its measured path list -- it is NOT a measurement failure.
+  expect(selectPipelineContext({ ...base, changedFilesTruncated: 1 })).toEqual({
+    selection: "full",
+    fallbackReason: "path_list_truncated",
+  });
+  // A failed measurement widens even with an empty path list, so it can never
+  // be read as "no changes" (a genuinely empty tree stays on the focused path).
+  expect(selectPipelineContext({ ...base, changedFiles: [], projectionFailed: true })).toEqual({
+    selection: "full",
+    fallbackReason: "projection_failure",
+  });
+  // A failed measurement outranks a stale truncation count: the record names
+  // the failure, not the ceiling.
+  expect(
+    selectPipelineContext({ ...base, changedFilesTruncated: 3, projectionFailed: true }),
+  ).toEqual({ selection: "full", fallbackReason: "projection_failure" });
+  // Redaction still outranks path truncation (security signal first).
+  expect(
+    selectPipelineContext({ ...base, changedFiles: [".env.local"], changedFilesTruncated: 1 }),
+  ).toEqual({ selection: "full", fallbackReason: "projection_redacted" });
+  // The reproduced defect: a bounded over-ceiling projection keeps deciding on
+  // material size instead of dying before the escalation -- a large change
+  // reaches material_diff with its path list intact.
+  expect(selectPipelineContext({ ...base, diffBytes: 64 * 1024 + 1 })).toEqual({
+    selection: "full",
+    fallbackReason: "material_diff",
+  });
+});
+
+/** The only fields safeChangedFilesWithConfig reads from a PipelineConfig. */
+function changedFilesConfig(
+  targetDir: string,
+  projection: PipelineContextProjectionLimits,
+): PipelineConfig {
+  return {
+    targetDir,
+    pipelineContext: { mode: "incremental", maxFocusedDiffBytes: 64 * 1024, projection },
+  } as unknown as PipelineConfig;
+}
+
+/** Empty repo with one commit, mirroring the runner-test fixture. */
+function initChangedFilesRepo(prefix: string): string {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+  execFileSync("git", ["init", "-q"], { cwd: dir });
+  execFileSync("git", ["config", "user.name", "Test"], { cwd: dir });
+  execFileSync("git", ["config", "user.email", "test@example.invalid"], { cwd: dir });
+  execFileSync("git", ["commit", "-qm", "base", "--allow-empty"], { cwd: dir });
+  return dir;
+}
+
+test("issue #449: an over-ceiling untracked projection keeps the path list and records the cap", async () => {
+  const dir = initChangedFilesRepo("ad-coder-orch-untracked-");
+  const big = "🚀".repeat(200); // 800 bytes of multi-byte content, ceiling 512
+  fs.writeFileSync(path.join(dir, "big.md"), `${big}\n`);
+  fs.writeFileSync(path.join(dir, "small.md"), "x\n");
+  const measured = await safeChangedFilesWithConfig(
+    changedFilesConfig(dir, { maxPaths: 8, maxPathBytes: 1024, maxAggregateBytes: 512 }),
+  );
+  // The measurement SUCCEEDED: bounded content, not a failure.
+  expect(measured.projectionFailed).toBe(false);
+  expect(measured.files).toEqual(["big.md", "small.md"]);
+  expect(measured.diff).toBeDefined();
+  expect(measured.diff?.bytes ?? 0).toBeLessThanOrEqual(512);
+  expect(measured.diff?.text).not.toContain("\u{FFFD}");
+  expect(measured.diff?.untrackedTruncatedFiles).toBe(2);
+  expect(measured.diff?.untrackedMeasuredBytes).toBe(
+    Buffer.byteLength(`${big}\n`) + Buffer.byteLength("x\n"),
+  );
+});
+
+test("issue #449: a genuine measurement failure keeps the path list and never reads as no changes", async () => {
+  const dir = initChangedFilesRepo("ad-coder-orch-fail-");
+  fs.writeFileSync(path.join(dir, "blob.bin"), Buffer.from([0xff, 0xfe, 0x00, 0x01]));
+  const measured = await safeChangedFilesWithConfig(
+    changedFilesConfig(dir, { maxPaths: 8, maxPathBytes: 1024, maxAggregateBytes: 4096 }),
+  );
+  expect(measured.projectionFailed).toBe(true);
+  // The measured path list SURVIVES the failed projection: total 1, not 0.
+  expect(measured.files).toEqual(["blob.bin"]);
+  expect(measured.total).toBe(1);
+  expect(measured.truncated).toBe(0);
+  expect(measured.diff).toBeUndefined();
+});
+
+test("issue #449: redaction and path truncation keep their own record fields", async () => {
+  const dir = initChangedFilesRepo("ad-coder-orch-redact-");
+  fs.writeFileSync(path.join(dir, ".env.local"), "SECRET=x\n");
+  fs.writeFileSync(path.join(dir, "a.txt"), "a\n");
+  fs.writeFileSync(path.join(dir, "b.txt"), "b\n");
+  const measured = await safeChangedFilesWithConfig(
+    changedFilesConfig(dir, { maxPaths: 1, maxPathBytes: 1024, maxAggregateBytes: 4096 }),
+  );
+  // Redaction is its own fact and does NOT bump the truncated path count.
+  expect(measured.redactedPaths).toBe(1);
+  expect(measured.truncated).toBe(2);
+  expect(measured.total).toBe(3);
+  expect(measured.diff).toBeUndefined();
+  expect(measured.projectionFailed).toBe(false);
+});
+
+test("issue #449: a real path-list truncation keeps its measured count without redaction", async () => {
+  const dir = initChangedFilesRepo("ad-coder-orch-paths-");
+  fs.writeFileSync(path.join(dir, "a.txt"), "a\n");
+  fs.writeFileSync(path.join(dir, "b.txt"), "b\n");
+  fs.writeFileSync(path.join(dir, "c.txt"), "c\n");
+  const measured = await safeChangedFilesWithConfig(
+    changedFilesConfig(dir, { maxPaths: 2, maxPathBytes: 1024, maxAggregateBytes: 4096 }),
+  );
+  expect(measured.files).toEqual(["a.txt", "b.txt"]);
+  expect(measured.total).toBe(3);
+  expect(measured.truncated).toBe(1);
+  expect(measured.redactedPaths).toBe(0);
+  expect(measured.projectionFailed).toBe(false);
+  expect(measured.diff).toBeDefined();
 });
 
 interface Fixture {
@@ -980,6 +1108,74 @@ test("untracked retry evidence remains focused when its bounded projection is sa
   expect(reviewerPrompts.at(1)).toContain("Focused re-review");
   expect(reviewerPrompts.at(1)).toContain("new.ts");
   expect(result.stageMetrics?.at(-1)?.pipelineContextStrategy).toBe("focused");
+});
+
+test("an over-ceiling untracked change escalates on material_diff with its path list intact (issue #449)", async () => {
+  const fx = fixture();
+  execFileSync("git", ["init", "-q"], { cwd: fx.targetDir });
+  execFileSync("git", ["config", "user.name", "Test"], { cwd: fx.targetDir });
+  execFileSync("git", ["config", "user.email", "test@example.invalid"], { cwd: fx.targetDir });
+  fs.writeFileSync(path.join(fx.targetDir, "baseline.txt"), "baseline\n");
+  execFileSync("git", ["add", "baseline.txt"], { cwd: fx.targetDir });
+  execFileSync("git", ["commit", "-qm", "baseline"], { cwd: fx.targetDir });
+  // 70 KiB untracked: past the 64 KiB material ceiling AND the 32 KiB
+  // aggregate projection ceiling -- the reproduced #449 shape, which before
+  // this change died as projection_failure with changedFiles: [] from round
+  // 2 on and left every stage searching blind.
+  fs.writeFileSync(path.join(fx.targetDir, "big.txt"), "a".repeat(70 * 1024));
+  const coder = fx.role("coder", "You code.");
+  const reviewer = reviewerRole(fx);
+  let coderRetryPrompt: string | undefined;
+  const changes: Verdict = {
+    status: "changes_requested",
+    issues: [{ severity: "major", what: "add a null check" }],
+    summary: "needs a fix",
+  };
+  const approve: Verdict = { status: "approved", issues: [], summary: "fixed" };
+  fx.faux.setResponses([
+    fauxAssistantMessage("coded round1"),
+    fauxAssistantMessage(fauxToolCall(SUBMIT_VERDICT_TOOL_NAME, changes)),
+    fauxAssistantMessage("review complete"),
+    (context) => {
+      coderRetryPrompt = lastUserText(context);
+      return fauxAssistantMessage("coded round2");
+    },
+    fauxAssistantMessage(fauxToolCall(SUBMIT_VERDICT_TOOL_NAME, approve)),
+    fauxAssistantMessage("review complete"),
+  ]);
+
+  const session = createWorkflowSession({
+    targetDir: fx.targetDir,
+    models: fx.models,
+    task: "implement over-ceiling untracked",
+    maxRounds: 3,
+    roles: { coder, reviewer },
+  });
+  let state = session.initialState();
+  while (!state.done) {
+    const stepped = await session.step(state);
+    state = applyTransition(stepped.state, autoDriver(stepped.transitions));
+  }
+
+  // The retrying stage kept its measured path list and escalated on material
+  // size -- the durable record never says projection_failure, and "no changes"
+  // is impossible: the files and their true measured size are all there.
+  const round2 = state.stageMetrics?.find((metric) => metric.stage === "code:2");
+  expect(round2?.pipelineContextStrategy).toBe("full");
+  expect(round2?.pipelineContextFallbackReason).toBe("material_diff");
+  expect(state.pipelineContext?.selection).toBe("full");
+  expect(state.pipelineContext?.fallbackReason).toBe("material_diff");
+  expect(state.pipelineContext?.changedFilesTotal).toBe(1);
+  expect(state.pipelineContext?.changedFiles).toEqual(["big.txt"]);
+  expect(state.pipelineContext?.projectionFailed).toBeUndefined();
+  expect(state.pipelineContext?.untrackedTruncatedFiles).toBe(1);
+  expect(state.pipelineContext?.diffBytes ?? 0).toBeGreaterThanOrEqual(70 * 1024);
+  // The coder's round-2 prompt carries the path list and the honest reason,
+  // never a failed measurement rendered as an empty list.
+  expect(coderRetryPrompt).toContain('"big.txt"');
+  expect(coderRetryPrompt).toContain("Full-context retry fallback: material_diff.");
+  expect(coderRetryPrompt).not.toContain("projection_failure");
+  expect(coderRetryPrompt).not.toContain("the git measurement failed");
 });
 
 test("maxRounds exhausted returns approved:false without throwing", async () => {

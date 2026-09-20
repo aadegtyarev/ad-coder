@@ -391,3 +391,27 @@ was shown, under the same overriding rules the banner already answers to.
   loudly, naming the KEY only -- never the value -- so `[object Object]` can
   never be printed again; the leak-class tripwire over every resolved row
   lives in test/cli.test.ts.
+
+- 2026-09-20 (issue #449): **The pipeline diff projection measures, it does
+  not gate.** The projection limits -- `pipelineContext.projection.maxPaths`
+  (128), `maxPathBytes` (1024), and `maxAggregateBytes` (32 KiB), defaulted in
+  `DEFAULT_PIPELINE_CONTEXT_CONFIG` -- are mandatory positive safety ceilings:
+  overridable, and zero is refused rather than disabling the guard. Untracked
+  content past the aggregate ceiling is truncated at a UTF-8 codepoint
+  boundary, never an exception, and the projection carries the changed-path
+  list and the true measured size beside the bounded text
+  (`untrackedMeasuredBytes` before truncation, `untrackedTruncatedFiles` for
+  each capped file); tracked diff output past the ceiling still fails the
+  bounded read as a typed measurement, whose durable record keeps the measured
+  path list under `projectionFailed`. The three facts
+  that used to share one overloaded `changedFilesTruncated` counter each get
+  their own record field and stable reason: real path-list truncation
+  (> `maxPaths`) widens the handoff under `path_list_truncated`;
+  sensitive-path redaction under `projection_redacted` (`redactedPaths`);
+  ONLY a failed git measurement under `projection_failure`
+  (`projectionFailed`) -- so a durable record can never render "measurement
+  failed" as "no changes". `material_diff` escalates on the true measured
+  size (the cumulative tracked diff or the untracked measured bytes), not on
+  the truncated projection's byte count; the threshold that escalation
+  compares against is `pipelineContext.maxFocusedDiffBytes` (64 KiB, zero
+  disables).

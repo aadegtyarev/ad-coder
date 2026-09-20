@@ -213,27 +213,27 @@ the accepted Planner result.
 ## Context, usage, and recovery
 
 ad-coder owns its context policy. Auto mode commits a durable entry: the harness
-cuts the branch, ad-coder supplies the summary of the evicted head; disabled
-mode never summarizes and halts when the full branch no longer fits. Context
-refusals use the effective ceiling `min(maxTokens, contextWindow)`; the
-diagnostic reports that ceiling without transcript content. Retry with a
-larger-window model or a lower budget; cross-provider summarization needs
-explicit authorization.
+cuts the branch, ad-coder supplies the evicted head's summary; disabled
+mode never summarizes, halting when the branch no longer fits. Context
+refusals use the effective ceiling `min(maxTokens, contextWindow)`, reported
+without transcript content. Retry on a larger window or lower budget;
+cross-provider summarization needs explicit authorization.
 
-Pipeline handoff is separate from transcript compaction. The first review
-is broad; later Coder and Reviewer turns default to bounded findings, response,
-contract, path/count, and credential-redacted diff evidence. Modes:
-`incremental`, `full`, and manual `off`. Missing or truncated evidence,
-sensitive paths, review-control or risk changes, and material diffs widen the
-handoff with a stable reason. Workflow state keeps bounded
-metadata, a diff digest, and the decision, never raw patches. An untracked
-addition stays focused (its bounded path permits an explicit role read);
-path truncation still widens the handoff.
+Pipeline handoff is separate from transcript compaction. Modes: `incremental`,
+`full`, and manual `off`. The first review is broad; later turns default to
+bounded findings, response, contract, redacted diff evidence. Missing evidence,
+sensitive paths, review-control or risk changes, path-list truncation, and
+material diffs widen the handoff with a stable reason. Untracked content past
+the projection ceiling truncates UTF-8-safely; path list and measured size
+survive for `material_diff`. Only a failed measurement is `projection_failure`,
+recorded separately, never "no changes". Workflow state keeps the decision and
+diff digest, never raw patches; a bounded untracked addition stays focused (its
+path permits explicit role reads).
 
-The ledger records provider-reported cost rather than recomputing it. Every
+The ledger records provider-reported cost rather than recomputing. Every
 LLM generation path crosses one layered `Models` boundary — provider admission
 outermost, then session limits, cost-anomaly detection, tool-call recovery;
-each proxy delegates inward, so the wrapper applied LAST is entered FIRST.
+each proxy delegates inward; the wrapper applied LAST is entered FIRST.
 Both seams (`runRole`, `startConversation`) wrap identically; a front cannot
 bypass admission with its own client. Session limits meter cost and turns
 there, including tool follow-ups; missing trustworthy usage

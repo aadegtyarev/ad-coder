@@ -558,7 +558,9 @@ export type PipelineContextFallbackReason =
   | "risk_changed"
   | "insufficient_evidence"
   | "projection_failure"
-  | "projection_redacted";
+  | "projection_redacted"
+  /** More changed paths than `maxPaths`: a measured ceiling, not a failure (issue #449). */
+  | "path_list_truncated";
 
 export interface PipelineContextConfig {
   mode: PipelineContextMode;
@@ -580,7 +582,21 @@ export interface PipelineContextSnapshot {
   fallbackReason?: PipelineContextFallbackReason;
   changedFiles: string[];
   changedFilesTotal: number;
+  /**
+   * Paths omitted by the `maxPaths` ceiling -- a real path-list truncation
+   * (issue #449). Never a redaction or failure marker.
+   */
   changedFilesTruncated: number;
+  /** Changed paths that triggered sensitive-path redaction (issue #449), its own fact. */
+  redactedPaths?: number;
+  /** Untracked files whose projected content was capped by the aggregate ceiling (issue #449). */
+  untrackedTruncatedFiles?: number;
+  /**
+   * True ONLY when a git measurement itself failed (issue #449) -- never set
+   * by a ceiling, so a failed measurement can never render as "no changes".
+   * Absent in records written before 0.112.0 and read as false.
+   */
+  projectionFailed?: boolean;
   diffBytes: number;
   /** Bounded digest input used only to notice a changed risk assessment on resume. */
   riskFingerprint?: string;
