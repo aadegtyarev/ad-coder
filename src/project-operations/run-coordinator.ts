@@ -1,6 +1,7 @@
 import * as crypto from "node:crypto";
 import * as path from "node:path";
 import { CostAnomalyBlockedError } from "../economics/cost-anomaly";
+import { redactCredentialLike } from "../orchestration/control-plane";
 import type { WorkflowSession } from "../orchestration/session";
 import {
   applyTransition,
@@ -120,15 +121,23 @@ export interface RunCheckpoint {
  *   rejection such as `invalid_follow_up`, an orchestration precondition -- is
  *   named AS HARNESS WORK with a bounded `cause`, so the durable record can
  *   say what actually failed and the retrying stage can converge on it,
- * - anything untyped keeps the old generic wording and records nothing: its
- *   message is uncontrolled text the numbers-and-codes-only discipline
- *   (documented above) forbids persisting.
+ * - anything UNTYPED still names itself in durable state (issue #403): a
+ *   bounded, redacted cause with the fixed code token `untyped_error`, built
+ *   ONLY from the error's constructor name and the first line of its message,
+ *   passed through a control-character REMOVAL and credential redaction
+ *   BEFORE the char ceiling is applied. The message is uncontrolled text captured as
+ *   quoted data for diagnosis (it may be a harness bug rather than a provider
+ *   outage); it is never classified as a provider failure.
  *
  * NUMBERS AND CODES ONLY. Typed harness errors are built in code from fixed
  * phrases plus safe tokens (statuses, run ids, paths, counts), so their
  * `code`/`message` are harness-authored by construction and bounded to the
- * char ceilings in orchestration/types.ts. No provider response body and no
- * model text can reach a pause record through this path.
+ * char ceilings in orchestration/types.ts. The one exception is the untyped
+ * cause's message: it is UNCONTROLLED text (the failing error's constructor
+ * and first message line, which may embed provider response fragments), but
+ * it is captured as quoted diagnostic data under the same ceilings and after
+ * a control-character removal and credential redaction, marked as quoted data
+ * both in the pause wording and in the retry-prompt carry-over.
  */
 function stageFailurePause(
   phase: WorkflowState["phase"],
@@ -140,14 +149,39 @@ function stageFailurePause(
   // unreviewed branch went quiet. Naming it here is what makes a review that
   // did not happen render differently from any other stage failure.
   if (phase === "review") {
-    const cause = pauseCauseFrom(sourceError, recurrenceOf(priorFailure, phase, sourceError));
+    const typedCause = pauseCauseFrom(sourceError, recurrenceOf(priorFailure, phase, sourceError));
+    // The same gap #403 closed for the generic `stage_failed` path (review
+    // round 4): an unclassified error reaching THIS branch still must name
+    // itself in durable state. A provider rejection stays cause-less -- its
+    // status already sits in the generic early branch's action and it carries
+    // no second surface.
+    if (typedCause === undefined && !(sourceError instanceof ProviderRejectionError)) {
+      const untypedCause = untypedPauseCause(sourceError);
+      const cause = {
+        ...untypedCause,
+        recurrence: untypedRecurrenceOf(priorFailure, phase, untypedCause),
+      };
+      // Same 256-char `action` ceiling as the generic stage_failed path (see
+      // the untyped branch below): the action names the recorded code and
+      // points the operator at the recorded durable cause under
+      // `pause.cause`; the message itself stays in `cause.message`.
+      return {
+        phase,
+        code: "review_not_run",
+        action:
+          cause.recurrence > 0
+            ? `the review stage did not run to a verdict with an untyped error (${cause.code}); the same cause has been recorded ${cause.recurrence + 1} consecutive times -- see cause (this may be a harness bug rather than a provider outage), then resume the review explicitly`
+            : `the review stage did not run to a verdict with an untyped error (${cause.code}); see the recorded durable cause (this may be a harness bug rather than a provider outage), then resume the review explicitly`,
+        cause,
+      };
+    }
     return {
       phase,
       code: "review_not_run",
       action:
         "the review stage did not run to a verdict; inspect the reviewer's registration and " +
         "configuration, then resume the review explicitly",
-      ...(cause === undefined ? {} : { cause }),
+      ...(typedCause === undefined ? {} : { cause: typedCause }),
     };
   }
   if (sourceError instanceof ProviderRejectionError) {
@@ -159,23 +193,51 @@ function stageFailurePause(
         "inspect the request this stage sends (model id, tool schemas, parameters), then retry the stage explicitly",
     };
   }
-  const cause = pauseCauseFrom(sourceError, recurrenceOf(priorFailure, phase, sourceError));
-  if (cause === undefined) {
+  // A typed harness-side error keeps its own recorded cause (issue #363).
+  const typedCause = pauseCauseFrom(sourceError, recurrenceOf(priorFailure, phase, sourceError));
+  if (typedCause === undefined) {
+    // An untyped error is uncontrolled text, but the record must still say
+    // WHAT failed (issue #403): a bounded constructor + first-line cause with
+    // the fixed `untyped_error` code token is persisted, recurrence included so
+    // a repeated identical untyped failure shows the loop signature like its
+    // typed siblings. The recurrence comparison for an untyped cause requires
+    // the recorded MESSAGE to match too -- every untyped error shares the one
+    // code token, so code-only comparison would call two different failures a
+    // loop (see untypedRecurrenceOf).
+    //
+    // The `action` MUST stay within the 256-char ceiling that `requiredString`
+    // (src/orchestration/background-runs.ts) enforces on every persisted
+    // record field, including action. The cause message is clipped to 512
+    // chars on the write side, so any action that interpolated the message
+    // was already longer than 256 for a 512-char cause -- the background run
+    // record and the coordinator checkpoint became unreadable. The action
+    // names the recorded code and points the operator at the recorded
+    // durable cause under `pause.cause`; the message itself stays in
+    // `cause.message`, where its own 512-char ceiling already decodes fine.
+    const untypedCause = untypedPauseCause(sourceError);
+    const cause = {
+      ...untypedCause,
+      recurrence: untypedRecurrenceOf(priorFailure, phase, untypedCause),
+    };
     return {
       phase,
       code: "stage_failed",
-      action: "inspect the provider failure and retry the stage explicitly",
+      action:
+        cause.recurrence > 0
+          ? `the stage failed with an untyped error (${cause.code}); the same cause has been recorded ${cause.recurrence + 1} consecutive times -- see the recorded cause (this may be a harness bug rather than a provider outage), then retry the stage explicitly`
+          : `the stage failed with an untyped error (${cause.code}); see the recorded durable cause (this may be a harness bug rather than a provider outage), then retry the stage explicitly`,
+      cause,
     };
   }
   return {
     phase,
     code: "stage_failed",
     action:
-      cause.recurrence > 0
-        ? `the stage failed inside the harness (${cause.code}); the same cause has now been recorded ` +
-          `${cause.recurrence + 1} consecutive times -- resolve it, then retry the stage explicitly`
-        : `the stage failed inside the harness (${cause.code}); resolve the recorded cause, then retry the stage explicitly`,
-    cause,
+      typedCause.recurrence > 0
+        ? `the stage failed inside the harness (${typedCause.code}); the same cause has now been recorded ` +
+          `${typedCause.recurrence + 1} consecutive times -- resolve it, then retry the stage explicitly`
+        : `the stage failed inside the harness (${typedCause.code}); resolve the recorded cause, then retry the stage explicitly`,
+    cause: typedCause,
   };
 }
 
@@ -195,6 +257,141 @@ function recurrenceOf(
   return prior !== undefined && prior.phase === phase && prior.code === cause.code
     ? prior.recurrence + 1
     : 0;
+}
+
+/**
+ * The recurrence count for an UNTYPED cause, resolved OUTSIDE
+ * `pauseCauseFrom` (issue #403): every untyped error shares the fixed code
+ * token `untyped_error`, so a code-only comparison would call two unrelated
+ * failures a loop. The comparison therefore also requires the recorded
+ * message to be identical (the constructor + first-line composition already
+ * bounds it); a mismatch -- a different concrete failure -- restarts the
+ * count at 0 instead of fabricating a loop signature.
+ */
+function untypedRecurrenceOf(
+  prior: StageFailureRecord | undefined,
+  phase: WorkflowState["phase"],
+  cause: PipelinePauseCause,
+): number {
+  return prior !== undefined &&
+    prior.phase === phase &&
+    prior.code === cause.code &&
+    prior.message === cause.message
+    ? prior.recurrence + 1
+    : 0;
+}
+
+/**
+ * A constructor name usable inside the untyped cause record: a plain bounded
+ * identifier (letters, digits, underscore, dash -- a dash keeps the common
+ * HTTP/driver-style class names readable). Anything else -- empty,
+ * non-string, whitespace, punctuation, control characters, a message
+ * smuggled into a forged name, or an over-length run of text -- is not a
+ * class name and gets the fixed token `Unknown` (issue #403 review round;
+ * same discipline as the console's `ERROR_CLASS_TOKEN` in src/cli/console.ts,
+ * #412).
+ */
+const PAUSE_CONSTRUCTOR_TOKEN = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
+
+/**
+ * The fixed marker a visibly clipped untyped cause message ends in (issue
+ * #467): when the composed first line exceeds the shared 512-char pause-cause
+ * ceiling, the head is kept and this marker is appended WITHIN the ceiling,
+ * so a cut is legible in the durable record instead of a silent slice.
+ * Printable ASCII only, like every byte of the composed message.
+ */
+const PAUSE_CAUSE_CLIP_MARKER = "...[clipped]";
+
+/**
+ * The bounded, redacted cause an UNTYPED error earns (issue #403), with the
+ * fixed code token `untyped_error`. The message is ONLY the error's
+ * constructor name plus the first line of its message -- never model text,
+ * never a provider response body. The composition is exact and ordered:
+ * compose, then REMOVE every character outside printable ASCII (delete, not
+ * substitute -- first-line collation alone does not sanitize control bytes;
+ * terminal-escape and carriage-return injection otherwise survives, and a
+ * substituted `?` could sit inside a credential token and defeat the
+ * redaction pattern), then redact credential-like values, and only then clip
+ * to the message ceiling -- redacting after the clip could leave a truncated
+ * but reconstructible credential prefix on the boundary.
+ *
+ * The read is HOSTILE-PROOF (review round, mirroring `describeErrorClass` in
+ * src/cli/console.ts and the ERROR_CLASS_TOKEN discipline in
+ * docs/contracts/errors.md, issue #412): no own property of the thrown value
+ * is trusted. The constructor name is read only through the PROTOTYPE chain
+ * (`Object.getPrototypeOf`), so a forged own `constructor` cannot inject
+ * text into the record, and every hostile read -- the prototype walk, the
+ * `constructor` access, the `message` access, the `String` coercion (each
+ * can THROW through a Proxy trap or a throwing getter) -- is guarded to
+ * yield a fixed fallback instead of crashing the coordinator's catch: the
+ * name falls back to `Unknown` when it is absent, refusing, or fails the
+ * bounded-identifier check, and the message line falls back to the empty
+ * string (line absent from the record) when it cannot be read. Total and
+ * deterministic by construction: every input yields a fixed token from a
+ * small closed set, never its own output. A first line longer than the
+ * ceiling is clipped VISIBLY: the head survives and the fixed
+ * `...[clipped]` marker is appended inside the ceiling (issue #467), so the
+ * record never drops text without saying so -- and two identical inputs
+ * still compose identical messages, which the recurrence comparison needs.
+ */
+function untypedPauseCause(sourceError: unknown): PipelinePauseCause {
+  const composed = `${boundedConstructorName(sourceError)}: ${boundedFirstMessageLine(sourceError)}`;
+  // Order (review round 2, issue #403): remove non-printable bytes FIRST so a
+  // control byte inside a credential token cannot defeat the redaction
+  // pattern, THEN redact, THEN clip. The clip is VISIBLE (issue #467): a
+  // first line longer than the ceiling keeps its head and ends in the fixed
+  // marker, still within the ceiling, so a cut is always legible in the
+  // record instead of a silent slice.
+  const stripped = redactCredentialLike(composed.replace(/[^\x20-\x7E]/g, "")).trimEnd();
+  const message =
+    stripped.length > MAX_PAUSE_CAUSE_MESSAGE_CHARS
+      ? `${stripped.slice(0, MAX_PAUSE_CAUSE_MESSAGE_CHARS - PAUSE_CAUSE_CLIP_MARKER.length)}${PAUSE_CAUSE_CLIP_MARKER}`
+      : stripped;
+  return {
+    code: "untyped_error",
+    ...(message === "" ? {} : { message }),
+    recurrence: 0,
+  };
+}
+
+/**
+ * The constructor name through the PROTOTYPE chain only. An own (or an
+ * otherwise overridden) `constructor` property is never read, because it is
+ * exactly how a forged name would be supplied; the prototype's constructor
+ * is the one the value was actually built by. Every step can throw (a Proxy
+ * traps `getPrototypeOf` and each `get`), and every throw -- as well as any
+ * non-identifier name -- yields the fixed token `Unknown`.
+ */
+function boundedConstructorName(sourceError: unknown): string {
+  try {
+    const prototypeName: unknown = Object.getPrototypeOf(sourceError)?.constructor?.name;
+    if (typeof prototypeName === "string" && PAUSE_CONSTRUCTOR_TOKEN.test(prototypeName))
+      return prototypeName;
+  } catch {
+    // A value that refuses the question never names itself.
+  }
+  return "Unknown";
+}
+
+/**
+ * The FIRST line of the error's message, guarded per read: the `message`
+ * property access and the `String` coercion each can run through a Proxy
+ * trap or a getter and THROW, and a throw yields the empty string -- the
+ * message line is then simply absent from the record, and the constructor
+ * name still names the failure -- instead of crashing the stage-failure
+ * catch that is building it.
+ */
+function boundedFirstMessageLine(sourceError: unknown): string {
+  try {
+    const raw: unknown = (sourceError as { message?: unknown }).message;
+    try {
+      return String(raw ?? "").split("\n")[0] ?? "";
+    } catch {
+      return "";
+    }
+  } catch {
+    return "";
+  }
 }
 
 /**
@@ -221,11 +418,11 @@ function recordStageFailure(
 
 /**
  * The bounded cause a typed HARNESS-SIDE error earns, or undefined for any
- * source this discipline will not persist (an untyped error, whose message is
- * uncontrolled, or a provider rejection, whose status already sits in the
- * action). The recurrence count is passed in by the caller, which owns the
- * checkpoint comparison (same stage + same code as the previously recorded
- * cause).
+ * source this discipline will not classify on its own (a provider rejection,
+ * whose status already sits in the action; an untyped error, whose bounded
+ * redacted cause is built by `untypedPauseCause` instead). The recurrence
+ * count is passed in by the caller, which owns the checkpoint comparison
+ * (same stage + same code as the previously recorded cause).
  */
 function pauseCauseFrom(sourceError: unknown, recurrence: number): PipelinePauseCause | undefined {
   const typed =
@@ -542,12 +739,23 @@ export class RunCoordinator {
         try {
           intent = this.session.prepareResearch?.(checkpoint.workflowState);
         } catch (error) {
+          // Issue #467: the failure is uncontrolled text, and the raw message
+          // interpolated into `action` made any message over 256 chars
+          // UNDECODABLE on round-trip (`requiredString` in
+          // src/orchestration/background-runs.ts rejects the whole record) --
+          // the same failure mode #403 fixed for the untyped stage action.
+          // Same fix shape: the bounded, redacted message lives in the
+          // recorded durable cause under `pause.cause`; the action names the
+          // pause's code token and the cause's and never carries the message,
+          // so it stays within the 256-char ceiling for ANY thrown value.
+          const cause = pauseCauseFrom(error, 0) ?? untypedPauseCause(error);
           this.save({
             ...checkpoint,
             pause: {
               phase: "research",
               code: "unsafe_request",
-              action: error instanceof Error ? error.message : "narrow the research request",
+              action: `the research request could not be prepared safely (unsafe_request); see the recorded durable cause (${cause.code}), narrow the request, then resume explicitly`,
+              cause,
             },
           });
           return undefined;
@@ -661,9 +869,11 @@ export class RunCoordinator {
             stageMetrics: [...(checkpoint.workflowState.stageMetrics ?? []), error.metrics],
             // The cause reaches the NEXT attempt: the retrying stage reads it
             // from its prompt and converges instead of repeating the identical
-            // rejected submission (issue #363). Only typed harness-side causes
-            // are recorded -- a provider rejection or an untyped error has
-            // nothing the retrying stage can act on.
+            // rejected submission (issue #363). Typed harness-side causes are
+            // recorded as-is; an untyped cause arrives bounded and redacted
+            // (constructor + first line, code `untyped_error`, issue #403).
+            // A provider rejection records nothing: its status already sits
+            // in the action and carries no second surface.
             ...(pause.cause === undefined
               ? {}
               : recordStageFailure(
@@ -754,14 +964,22 @@ export class RunCoordinator {
               stageMetrics: [...(checkpoint.workflowState.stageMetrics ?? []), error.metrics],
             }
           : checkpoint.workflowState;
+      // Issue #467: the same bounded-cause discipline as the untyped stage
+      // action (issue #403). The raw message interpolated into `action` made
+      // any message over 256 chars UNDECODABLE on round-trip; the wrapper is
+      // unwrapped first -- exactly like `stageFailurePause` above -- so the
+      // cause names the REAL failure, and the action names the pause's code
+      // token and the cause's without ever carrying the message.
+      const source = error instanceof WorkflowStageFailureError ? error.sourceError : error;
+      const cause = pauseCauseFrom(source, 0) ?? untypedPauseCause(source);
       this.save({
         ...this.persisted.value,
         workflowState: failedState,
         pause: {
           phase: "research",
           code: "research_rejected",
-          action:
-            error instanceof Error ? error.message : "inspect and retry the research response",
+          action: `the research stage failed (research_rejected); see the recorded durable cause (${cause.code}), inspect and retry the research response explicitly`,
+          cause,
         },
       });
       return undefined;

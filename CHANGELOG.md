@@ -11,6 +11,31 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.119.0] - 2026-09-20
+
+### Fixed
+- **Untyped stage failures now name themselves in durable state (issue #403).**
+  An untyped failure inside a stage (a plain `Error` the harness never
+  classified) previously settled as a generic `stage_failed` pause advising
+  "inspect the provider failure" while recording nothing at all -- no pause
+  cause, no `workflowState.lastStageFailure` -- so an operator could not tell
+  a harness bug from a provider outage without re-deriving the diagnosis from
+  the session log (observed 2026-09-19 on the plan stage: two planner attempts
+  that completed and recorded a plan still paused undiagnosably; #356/#368/
+  #372 family, cf. #363). Now the pause carries code `untyped_error` with a
+  bounded, redacted cause built only from the error's constructor name (read
+  only through the prototype chain, validated as a bounded ASCII identifier,
+  else `Unknown`) and the first line of its message -- every hostile read
+  (Proxy trap, throwing getter) guarded to a deterministic fallback instead
+  of crashing the failure catch. Non-printable characters are REMOVED before
+  credential redaction, which is clipped to the shared 512-char pause-cause
+  ceiling after redaction, so a control byte inside a credential token cannot
+  survive a prefix-only arm as a partially masked form. `workflowState.
+  lastStageFailure` records the loop signature like a typed cause (message
+  identity decides recurrence), the pause action names the recorded cause and
+  the harness-bug possibility instead of prescribing a provider check, and the
+  retrying stage sees the reason quoted as data, not instructions.
+
 ## [0.118.0] - 2026-09-20
 
 ### Fixed

@@ -28,7 +28,11 @@ for machines?
 - Preserve the causal error for programmatic callers while projecting only safe
   fields across human, model, ledger, and durable-state boundaries. Never include
   credentials, secret values, prompts, file contents, or uncontrolled response
-  bodies in an error.
+  bodies in an error. ONE recorded exception: a durable pause cause for code
+  `untyped_error` may carry the bounded, redacted first line of an otherwise
+  unclassified error's own message (see the 2026-09-19 issue #403 entry below);
+  model text and provider response bodies stay out beyond that bounded first
+  line, which is quoted as untrusted data, never instructions.
 - Catch an error only to recover, add safe context, translate it at a boundary, or
   release resources. Silent catches and success-shaped fallbacks are violations.
 - Test failure output and recovery instructions as public behavior. Provider
@@ -210,6 +214,42 @@ for machines?
   always renders the same line, and no message, stack, or provider payload can
   reach the reader through the class field. Class names and `typeof` labels only
   -- never a message, never an anonymous blank.
+- 2026-09-19 (issue #403): a stage that fails on an UNCLASSIFIED error still
+  names itself in durable state. A generic `stage_failed` pause that recorded
+  nothing sent operators re-deriving the diagnosis from the session log, so the
+  coordinator now persists a pause cause with the fixed `untyped_error` code
+  token and a bounded, redacted message composed from the error's constructor
+  name plus the FIRST line of its message -- and nothing else. The composition
+  is ordered and bounded: the constructor name is read only through the
+  PROTOTYPE chain (no own property is consulted, so a forged `constructor.name`
+  cannot inject text), accepted only as a bounded single-line ASCII identifier
+  (else the fixed token `Unknown`), every hostile read -- the prototype walk,
+  the `constructor` access, the `message` access, the `String` coercion, each
+  runnable through a Proxy trap or a throwing getter -- is guarded to a fixed
+  fallback instead of crashing the failure catch, control characters are
+  REMOVED so the printable-ASCII domain holds before any pattern matching,
+  credential-shaped values are then redacted, and only then the line is
+  clipped to the shared 512-char pause-cause ceiling
+  (`MAX_PAUSE_CAUSE_MESSAGE_CHARS`). The accepted residual is exactly this
+  bounded strip-and-clip of uncontrolled text in durable state: a durable pause
+  cause with code `untyped_error` carries the bounded first line as quoted data
+  in `cause.message`; the recorded `action` does NOT interpolate the bounded
+  message -- the `action` field is bounded by `requiredString` to 256 chars
+  (src/orchestration/background-runs.ts) and the cause message can reach the
+  full 512-char ceiling, so any action that interpolated the message would
+  itself be unreadable on round-trip. The action names the recorded code
+  token (`untyped_error`) and points the operator at the recorded durable
+  cause under `pause.cause`; the carry-over into the retry prompt reads the
+  message from `cause.message` and treats it as untrusted data, not
+  instructions; no other surface gains this carve-out -- model text and
+  provider response bodies still never cross a projection beyond that bounded
+  first line. The recurrence comparison for two `untyped_error` causes
+  requires the recorded message to be identical, so two different concrete
+  failures are never called a loop. The same bounded cause also settles a
+  `review_not_run` pause (review round 4): the review stage failing on an
+  unclassified error is the same durable-vs-log question, and its pause
+  wording keeps the verdict frame and the harness-bug caveat.
+
 - 2026-09-19 (issue #418): A provider failure that settles a turn as an empty
   one carries its bounded CAUSE past the boundary, so an operator can read
   "all presets fail with X" without re-running. When none of the owned
@@ -278,3 +318,27 @@ for machines?
   (`src/orchestration/wake.ts`). Silent catches and success-shaped fallbacks
   remain violations; containment here means one loud, bounded, attributed line
   -- not hiding the failure.
+- 2026-09-20 (issue #467): The two RESEARCH refusal pauses compose their
+  `action` under the same bounded-cause discipline the untyped stage failure
+  already follows (issue #403). `unsafe_request` (the researcher request
+  failing to prepare) and `research_rejected` (the research step failing)
+  used to interpolate the raw `error.message` into the pause `action`
+  verbatim; a message over 256 chars made the whole record -- the background
+  run record and the coordinator checkpoint alike -- undecodable on
+  round-trip (`requiredString` in src/orchestration/background-runs.ts
+  rejects any persisted string field over 256 chars), and `background status`
+  exited 1 with {"error":{"code":"not_found","detail":"background_run"}}.
+  Both pauses now record the bounded, redacted cause under `pause.cause`
+  (`pauseCauseFrom` for a typed harness-side error, `untypedPauseCause`
+  otherwise, the `WorkflowStageFailureError` wrapper unwrapped first exactly
+  like `stageFailurePause`), and the action is fixed harness text naming the
+  pause's code token and the cause's code token -- never the message -- so it
+  stays within the 256-char ceiling for ANY thrown value (measured: 656- and
+  665-char actions before the fix; 209 and 196 chars at the worst-case
+  64-char cause code after). The untyped cause's clip at the shared 512-char
+  pause-cause ceiling (`MAX_PAUSE_CAUSE_MESSAGE_CHARS`) is VISIBLE now: a
+  first line longer than the ceiling keeps its head and ends in the fixed
+  `...[clipped]` marker inside the ceiling, so a cut is legible in the record
+  instead of a silent slice; the remove-non-printables -> redact -> clip
+  order is unchanged, and identical inputs still compose identical messages
+  for the recurrence comparison.

@@ -638,16 +638,32 @@ export const MAX_PAUSE_CAUSE_MESSAGE_CHARS = 512;
  * names the failing error's own typed code plus its message WHEN that message
  * is harness-authored by construction -- typed harness errors are built in
  * code from fixed phrases and safe tokens, so nothing model- or provider-
- * authored can enter through it. Numbers and codes only, like every pause
- * field.
+ * authored can enter through it. An UNTYPED failure earns a cause too (issue
+ * #403): code `untyped_error` with a message built only from the error's
+ * constructor name and the first line of its message. That message is
+ * UNCONTROLLED text treated as quoted data -- the ceiling and the
+ * control-character-then-redact pipeline at the single write side are the
+ * accepted residual (non-printable characters are REMOVED first, then
+ * credential-like values are redacted, then the clip); it is never semantic
+ * filtering, and never provider response bodies beyond that bounded first
+ * line. Numbers and codes otherwise, like every pause field.
  */
 export interface PipelinePauseCause {
   /** The failing error's own typed code -- a fixed harness token, never free text. */
   code: string;
   /**
-   * The failing error's own message, clipped to the ceiling. Present only when
-   * the source error is a typed harness error, whose message is harness-authored
-   * by construction; never present for model text or provider response bodies.
+   * The failing error's own message, clipped to the ceiling -- visibly for
+   * an untyped cause (issue #467): a line longer than the ceiling keeps its
+   * head and ends in the fixed `...[clipped]` marker inside the ceiling.
+   * For a typed
+   * harness error this is its own harness-authored message. For an untyped
+   * error the code is the fixed token `untyped_error` and the message is
+   * ONLY the bounded, redacted constructor name plus the first message line
+   * (uncontrolled text captured as quoted data, never model instructions,
+   * never provider response bodies beyond that bounded first line). Two
+   * causes sharing the fixed `untyped_error` code are recurrences only when
+   * this message is also identical: "same recorded cause, message
+   * included".
    */
   message?: string;
   /**
@@ -661,10 +677,21 @@ export interface PipelinePauseCause {
 /**
  * The durable pause a coordinator stops on, carried to a background boundary.
  * `phase`/`code`/`action` are the checkpoint's own pause record -- fixed
- * phrases built in code, never model or provider content. `limitReason` and
+ * phrases built in code, never model or provider content. `action` is kept
+ * within the 256-char ceiling `requiredString`
+ * (src/orchestration/background-runs.ts) enforces on every persisted
+ * record field, so the action cannot interpolate the bounded cause message
+ * itself (which has its own 512-char ceiling). For an untyped stage failure
+ * (issue #403) the `action` therefore names only the recorded code token
+ * (`untyped_error`) and points the operator at the recorded durable cause;
+ * the bounded, redacted message stays in `cause.message`. The research
+ * refusal pauses (`unsafe_request`, `research_rejected`, issue #467) follow
+ * the same discipline. `limitReason` and
  * `limit` are present exactly when the coordinator recorded limit evidence.
  * `cause` is present exactly when the failing error was a typed harness-side
- * error, so a harness failure never reads as a provider one.
+ * error OR an untyped one (with the fixed `untyped_error` code token, issue
+ * #403), or when a research refusal pause settled on one (issue #467), so a
+ * harness failure never reads as a provider one.
  */
 export interface PipelinePause {
   phase: WorkflowPhase;
