@@ -40,7 +40,7 @@ enforces that dated release headings go in non-increasing date order
 ### Fixed
 - **A paused stage whose recorded ceiling happens to equal the session default is resumable again (issue #511).** `resume_pipeline` refused every raise with `invalid_config (unchanged input stage limit)` -- observed live on run 67b85284, whose review stage paused at the 2400000 default and rejected raises to 2500000 and 2600000 alike. The durable resume guard reads the ceiling for the role whose stage paused, but `createWorkflowSession` never put `roleStageLimits` on the object it returns, so the guard always fell through to the session-wide ceiling, where a pause recorded at that same default compares equal to every raise and refuses it however large. The raise itself did reach execution, so only the check was blind. The factory now returns the per-role ceilings beside the session-wide ones, copied so the session does not share the config's object.
 
-## [0.115.0] - 2026-09-20
+## [0.135.0] - 2026-09-20
 
 ### Fixed
 - **A stage that ran into its own budget boundary paused as a generic provider
@@ -64,6 +64,16 @@ enforces that dated release headings go in non-increasing date order
   when its context can no longer be compacted -- while the pause `code` stays
   `stage_failed`, so the pause remains clearable by the same explicit operator
   act and every other source keeps the generic wording verbatim.
+
+  Rebased onto the untyped-cause line (issue #403), the two boundaries no longer
+  record NOTHING -- the untyped path gives them a bounded cause under the
+  generic `untyped_error` token -- but the record still does not say WHICH
+  boundary was hit: the code is the shared token, the action points at "this may
+  be a harness bug rather than a provider outage" instead of the remedy the
+  boundary admits, and that token's recurrence comparison advances only while
+  the composed message is byte-identical, so two closeouts that spent different
+  amounts read as different failures. This change gives each boundary its own
+  typed code and its own action wording on top of that path.
 
 ## [0.134.0] - 2026-09-20
 
