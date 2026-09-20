@@ -653,6 +653,63 @@ test("an escape with intermediate bytes is stripped, not refused (#365)", async 
   }
 });
 
+test("an opener byte after an intermediate ends the sequence, it does not refuse it (#365)", async () => {
+  // Round 7 filed this as a blocker, in the same direction as round 6: the final
+  // byte of an escape needs TWO cases, and the previous commit knew only one.
+  // With NO intermediate in front of it an opener byte IS the longer form --
+  // `ESC [` is CSI, `ESC ]` is OSC -- which is why swallowing one as a two-byte
+  // escape let an unterminated sequence lose its introducer (round 4). AFTER an
+  // intermediate the same byte is unambiguously a FINAL: `ESC # [` is a complete
+  // unassigned escape that introduces nothing, because CSI is `ESC [` and only
+  // `ESC [`. All six openers strip once an intermediate precedes them.
+  for (const draft of [
+    `red${ESC}#[ alert`,
+    `red${ESC}#] alert`,
+    `red${ESC}#P alert`,
+    `red${ESC}#X alert`,
+    `red${ESC}#^ alert`,
+    `red${ESC}#_ alert`,
+    `red${ESC} #[ alert`, // two intermediates
+    `red${ESC}(] alert`, // an opener final after a charset intermediate
+  ]) {
+    expect(createManualSessionName(draft)).toBe("red alert");
+    expect(sanitizeTitle(draft).value).toBe("red alert");
+  }
+  const { manager, stateDir } = makeManager();
+  await manager.ensureSession("opener-final", "telegram:bridge");
+  const record = await manager.renameSession("opener-final", `red${ESC}#] alert`);
+  expect(record.name).toBe("red alert");
+  expect(fs.readFileSync(path.join(stateDir, "bindings.json"), "utf8")).toContain("red alert");
+  // What the wider final byte did NOT loosen: the two OPERATOR bytes stay out of
+  // the class in both cases, because consuming one destroys the assignment the
+  // screens exist to see. That refusal is deliberate -- the one false refusal
+  // this code accepts, and the direction is the safe one.
+  for (const draft of [
+    `token${ESC}#=supersecret`,
+    `token${ESC}#:supersecret`,
+    `token${ESC} #=supersecret`,
+  ]) {
+    expect(createManualSessionName(draft)).toBe(SESSION_FALLBACK_NAME);
+    expect(sanitizeTitle(draft).value).toBe(SESSION_FALLBACK_NAME);
+  }
+  // The class's split shape, in its opener-final spelling: the space the strip
+  // inserts separates the keyword, and the glued projection is the catch.
+  for (const draft of [`sec${ESC}#]ret=supersecret`, `sec${ESC} #[ret=supersecret`]) {
+    expect(createManualSessionName(draft)).toBe(SESSION_FALLBACK_NAME);
+    expect(sanitizeTitle(draft).value).toBe(SESSION_FALLBACK_NAME);
+  }
+  // And the shape this widening lands BESIDE, pinned as the equivalence it is
+  // rather than argued: a terminal ends the escape at that final byte and
+  // displays the rest, so the draft that carries the escape and the draft that
+  // never had one sanitize to the SAME name. The escape hides nothing -- what no
+  // screen can see there is an assignment whose keyword is not in their list,
+  // with or without the escape.
+  const withEscape = `token${ESC}#]0;foo=supersecret`;
+  const asPlainText = "token 0;foo=supersecret";
+  expect(createManualSessionName(withEscape)).toBe(createManualSessionName(asPlainText));
+  expect(sanitizeTitle(withEscape).value).toBe(sanitizeTitle(asPlainText).value);
+});
+
 test("an escape sequence that never terminates is refused, not guessed at (#365)", async () => {
   // Round 4 measured the INCOMPLETE forms, one step past the round-3 grammar: an
   // introducer whose sequence never terminates matched no strict alternative, so

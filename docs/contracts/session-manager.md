@@ -93,7 +93,12 @@ already been checked against.
 - The strip removes only sequences whose END the standard defines: CSI up to its
   final byte, OSC to BEL or ST, DCS/PM/APC/SOS to ST, the 8-bit C1 spellings,
   and every other escape up to its final byte, intermediate bytes included — a
-  delimited sequence is stripped, never refused. A candidate that still carries
+  delimited sequence is stripped, never refused. The one deliberate exception is
+  a sequence whose final byte is an assignment operator (`=` or `:`): stripping
+  it would delete the operator the screens exist to find and leave the secret as
+  a name, so such a candidate is refused into the same neutral fallback instead.
+  An opener byte (`[` `]` `P` `X` `^` `_`) counts as a final only after an
+  intermediate byte, where it cannot introduce anything. A candidate that still carries
   an introducer byte afterwards is REFUSED rather than guessed at — where an
   unterminated sequence ends is not a decision the strip may make — and lands on
   the same neutral fallback as the empty case.

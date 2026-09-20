@@ -73,10 +73,29 @@ const CSI_BODY = "[0-9;:?<>]*[ -/]*[@-~]";
 // stripped, on both paths, and the contract asks for ANSI sequences to be
 // stripped. `\` (0x5C) is a final byte here too: it is the 7-bit string
 // terminator, a delimited two-byte escape on its own, and leaving it out refused
-// `red<ESC>\alert` for the same non-reason. An unterminated opener still cannot
-// be swallowed -- the openers are in no position of this class, before or after
-// the intermediate run.
-const FE_BODY = "[ -/]*[0-9;<>?@A-OQ-WYZa-z`{|}~\\\\]";
+// `red<ESC>\alert` for the same non-reason.
+//
+// The final byte is the one position that needs TWO cases, and the split is
+// load-bearing rather than cosmetic. With NO intermediate byte in front of it,
+// an opener byte IS the longer form -- `ESC [` is CSI, `ESC ]` is OSC -- so
+// swallowing one as a two-byte escape is exactly how an unterminated sequence
+// lost its introducer in round 4. AFTER at least one intermediate byte the same
+// byte is unambiguously a final: `ESC # [` is a complete unassigned escape that
+// introduces nothing, because CSI is `ESC [` and only `ESC [`. Round 7 filed
+// the missing half as a blocker -- `ESC # ]`, `ESC # P` and four more spellings
+// came back as `New session` on both paths where a delimited sequence must be
+// stripped -- and the two cases below are the fix.
+//
+// The two OPERATOR bytes stay excluded from both cases. Consuming one destroys
+// the assignment the screens exist to see (`token<ESC>=hunter2000` -> `token
+// hunter2000`, measured in round 4), and unlike an opener a `=` after an
+// intermediate is a legal final this code chooses not to take: such a draft is
+// REFUSED instead. That is the ONE false refusal this file accepts deliberately,
+// and the direction is the safe one -- a refused title reads `New session`, an
+// assignment eaten by the strip reads as a name.
+const FE_FINAL = "[0-9;<>?@A-OQ-WYZa-z`{|}~\\\\]";
+const FE_FINAL_AFTER_INTERMEDIATE = "[0-9;<>?@A-Z\\[\\\\\\]^_`a-z{|}~]";
+const FE_BODY = `(?:${FE_FINAL}|[ -/]+${FE_FINAL_AFTER_INTERMEDIATE})`;
 // Every alternative below is a sequence whose END the standard defines: CSI up to
 // its final byte, OSC to BEL or ST, DCS/PM/APC/SOS to ST, and intermediates plus
 // a final byte for the rest. NOTHING ELSE may be matched here, and round 5 is
