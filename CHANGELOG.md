@@ -110,7 +110,7 @@ enforces that dated release headings go in non-increasing date order
   the catalog's price -- tiers included -- is what prices the run. Declare the
   catalog's own numbers so the file agrees with the bill.
 
-## [0.132.0] - 2026-09-20
+## [0.138.0] - 2026-09-20
 
 ### Fixed
 - **The console stopped printing the same decision three times (issue #501).**
