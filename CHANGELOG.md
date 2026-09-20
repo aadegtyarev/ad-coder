@@ -11,6 +11,11 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.136.0] - 2026-09-20
+
+### Fixed
+- **A paused stage whose recorded ceiling happens to equal the session default is resumable again (issue #511).** `resume_pipeline` refused every raise with `invalid_config (unchanged input stage limit)` -- observed live on run 67b85284, whose review stage paused at the 2400000 default and rejected raises to 2500000 and 2600000 alike. The durable resume guard reads the ceiling for the role whose stage paused, but `createWorkflowSession` never put `roleStageLimits` on the object it returns, so the guard always fell through to the session-wide ceiling, where a pause recorded at that same default compares equal to every raise and refuses it however large. The raise itself did reach execution, so only the check was blind. The factory now returns the per-role ceilings beside the session-wide ones, copied so the session does not share the config's object.
+
 ## [0.134.0] - 2026-09-20
 
 ### Added
