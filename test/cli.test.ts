@@ -969,6 +969,21 @@ test("each command renders its own help before validating required input", () =>
   expect(stdout).toContain("Role to run.");
   expect(stderr).toBe("");
   expect(runCli(["drive", "--help"]).stdout).toContain("--retry-research");
+  // `profile` is not in the table above -- it carries a positional -- so its
+  // help is read here for the routing pair this branch changed (issue #513).
+  // The replacement is advertised...
+  const profileHelp = runCli(["profile", "--help"]);
+  expect(profileHelp.code).toBe(0);
+  expect(profileHelp.stdout).toContain("--models-profile");
+  // ...and the retired flag is still DECLARED, saying so. Both halves matter:
+  // the option table is the parse table, so a flag deleted from it no longer
+  // reaches the typed refusal and comes back as a bare "unknown option" that
+  // names nothing instead (measured: dropping this entry made that same
+  // `--inventory` invocation answer `unknown option: --inventory`), while a
+  // flag left advertised as "Inventory to snapshot." sends the operator to an
+  // option that cannot work.
+  expect(profileHelp.stdout).toContain("Retired (issue #513)");
+  expect(profileHelp.stdout).not.toContain("--inventory-profile");
 }, 10_000);
 
 test("drive research retry requires a durable run id", () => {

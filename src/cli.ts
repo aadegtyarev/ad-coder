@@ -3769,11 +3769,21 @@ const COMMANDS: readonly CommandDefinition[] = [
         description: "Read an import document or one economic record for profile record.",
       },
       { name: "--target-dir", value: "<dir>", description: "Project receiving a snapshot." },
-      { name: "--inventory", value: "<name>", description: "Inventory to snapshot." },
+      {
+        // Declared, and only so the refusal can be TYPED: the option table is
+        // also the parse table, so a flag deleted from here stops reaching the
+        // handler and comes back as a bare "unknown option: --inventory" --
+        // which names no replacement (issue #513). The description carries the
+        // retirement instead of pretending the flag still takes a source.
+        name: "--inventory",
+        value: "<name>",
+        description:
+          "Retired (issue #513): a JSON inventory is not a routing source. Use --models-profile.",
+      },
       {
         name: "--models-profile",
         value: "<name>",
-        description: "Profile in models.yaml to snapshot, instead of an inventory.",
+        description: "Profile in models.yaml to snapshot (the only routing source).",
       },
       {
         name: "--models-config",
