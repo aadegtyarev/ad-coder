@@ -602,6 +602,29 @@ export type {
   SessionLimits,
 } from "./session-limits";
 export { SessionLimitController, SessionLimitError } from "./session-limits";
+export { defaultStateDir, saveBindings } from "./session-manager/bindings";
+export { DEFAULT_MAX_PROJECTS, deriveSessionId, SessionManager } from "./session-manager/manager";
+export type {
+  AttributedConnection,
+  PeerCredentialsReader,
+  SessionManagerServerOptions,
+} from "./session-manager/server";
+export { DEFAULT_SOCKET_NAME, SessionManagerServer } from "./session-manager/server";
+export type { HandoffProposal, PersistedBindings } from "./session-manager/types";
+export {
+  type BindingRecord,
+  DRIVER_KINDS,
+  type DriverKind,
+  type ProjectRecord,
+  SESSION_FALLBACK_NAME,
+  type SessionLeaseState,
+  type SessionListItem,
+  SessionManagerError,
+  type SessionManagerErrorCode,
+  type SessionManagerOptions,
+  type SessionNameSource,
+  validateDriverKey,
+} from "./session-manager/types";
 export type { BuildLoadSkillToolOptions, SkillLoadRecord } from "./skills/load-tool";
 export {
   buildLoadSkillTool,

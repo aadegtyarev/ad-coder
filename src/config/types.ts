@@ -206,6 +206,22 @@ export interface ProviderAdmissionSettings {
 }
 
 /**
+ * `settings.yaml`'s `session-manager` section (issue #365 layer 2): the
+ * operator's allowed roots and creation volume for the headless
+ * SessionManager. Every field is optional; an absent `allowed-roots` leaves
+ * the manager REFUSING to serve (no root means no reachable project), and a
+ * configured `max-projects: 0` disables project creation entirely — both the
+ * per-key convention (docs/contracts/config.md) and the session-manager
+ * contract's creation-volume rule.
+ */
+export interface SessionManagerSettings {
+  /** Absolute directory paths; a project key is their immediate child only. */
+  allowedRoots: string[];
+  /** Non-negative integer; `0` disables safe project creation. */
+  maxProjects?: number;
+}
+
+/**
  * `settings.yaml`'s `review.require-stamp`: whether the review stamp is
  * demanded of a pipeline run. `auto` is the default and means the harness
  * decides per run; `on` and `off` are the operator forcing that decision.
@@ -232,4 +248,6 @@ export interface SettingsConfig {
   review: ReviewSettings;
   /** Absent section resolves to the enabled default with the module's finite defaults. */
   providerAdmission: ProviderAdmissionSettings;
+  /** Absent section resolves to "no allowed roots" — the manager refuses to serve. */
+  sessionManager: SessionManagerSettings;
 }

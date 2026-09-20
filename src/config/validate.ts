@@ -12,6 +12,7 @@ import type {
   ProviderAdmissionSettings,
   ProviderConfig,
   ReviewSettings,
+  SessionManagerSettings,
   SettingsConfig,
   StampRequirement,
 } from "./types";
@@ -48,7 +49,7 @@ const MODEL_KEYS = new Set([
   "format",
   "concurrency",
 ]);
-const SETTINGS_KEYS = new Set(["review", "provider-admission"]);
+const SETTINGS_KEYS = new Set(["review", "provider-admission", "session-manager"]);
 const REVIEW_KEYS = new Set(["require-stamp", "cost-signature"]);
 const STAMP_REQUIREMENTS: readonly StampRequirement[] = ["auto", "on", "off"];
 
@@ -200,6 +201,69 @@ export function parseSettingsConfig(value: unknown): SettingsConfig {
   return {
     review: parseReviewSection(document.review, bad),
     providerAdmission: parseProviderAdmissionSection(document["provider-admission"], bad),
+    sessionManager: parseSessionManagerSection(document["session-manager"], bad),
+  };
+}
+
+/**
+ * `settings.yaml`'s `session-manager` keys (issue #365 layer 2): the headless
+ * SessionManager's allowed roots and creation-volume cap. `allowed-roots`
+ * entries must be ABSOLUTE paths (keys are resolved against them as immediate
+ * children, so a relative root would be a per-cwd decision the file cannot
+ * keep stable); `max-projects` must be a non-negative integer. An ABSENT
+ * section parses to `{ allowedRoots: [] }`: the module-level refusal rule
+ * (a manager with no root refuses to serve) then makes the operative
+ * default, which keeps absence here well-typed and semantic at the wiring.
+ */
+function parseSessionManagerSection(value: unknown, bad: Bad): SessionManagerSettings {
+  if (value === undefined) return { allowedRoots: [] };
+  if (!isObject(value)) {
+    bad("invalid_config", "session-manager", "`session-manager` must be a map");
+  }
+  const record = value as Record<string, unknown>;
+  refuseUnknownKeys(
+    record,
+    new Set(["allowed-roots", "max-projects"]),
+    "session-manager",
+    bad,
+    "session-manager",
+  );
+  let allowedRoots: string[] = [];
+  const rawRoots = record["allowed-roots"];
+  if (rawRoots !== undefined) {
+    if (!Array.isArray(rawRoots)) {
+      bad(
+        "invalid_config",
+        "session-manager.allowed-roots",
+        "session-manager.allowed-roots must be a list of absolute directory paths",
+      );
+    }
+    allowedRoots = (rawRoots as unknown[]).map((entry) => {
+      if (typeof entry !== "string" || entry.length === 0 || !entry.startsWith("/")) {
+        bad(
+          "invalid_config",
+          "session-manager.allowed-roots",
+          "session-manager.allowed-roots entries must be absolute directory paths",
+        );
+      }
+      return entry as string;
+    });
+  }
+  let maxProjects: number | undefined;
+  const rawMax = record["max-projects"];
+  if (rawMax !== undefined) {
+    if (typeof rawMax !== "number" || !Number.isInteger(rawMax) || rawMax < 0) {
+      bad(
+        "invalid_config",
+        "session-manager.max-projects",
+        "session-manager.max-projects must be a non-negative integer when present",
+      );
+    }
+    maxProjects = rawMax as number;
+  }
+  return {
+    allowedRoots,
+    ...(maxProjects !== undefined ? { maxProjects } : {}),
   };
 }
 

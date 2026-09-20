@@ -142,6 +142,8 @@ import { createRoleRunner } from "./runner/role-runner";
 import type { Tool } from "./runner/tool";
 import type { SessionLimits } from "./session-limits";
 import { SessionLimitController } from "./session-limits";
+import { SessionManager } from "./session-manager/manager";
+import { SessionManagerServer } from "./session-manager/server";
 import { buildLoadSkillTool, LOAD_SKILL_TOOL_NAME } from "./skills/load-tool";
 import {
   dependenciesMet,
@@ -3516,6 +3518,77 @@ const BACKGROUND_RUN_OPTIONS: CommandDefinition["options"] = [
   },
 ];
 
+/**
+ * The `session-manager` front (issue #365 layer 2): THIN by contract
+ * (docs/contracts/session-manager.md front-capability parity). It resolves the
+ * operator's allowed roots and creation volume, then either starts the
+ * owner-private Unix-socket server (the transport's trust boundary lives in
+ * src/session-manager/server.ts, never here) or prints the managed-session
+ * list as machine JSON. No session logic lives in this front.
+ */
+async function runSessionManagerCommand(
+  positionals: string[],
+  flags: Record<string, string | undefined>,
+  json: boolean,
+): Promise<void> {
+  const action = positionals[1];
+  if ((action !== "serve" && action !== "list") || positionals[2] !== undefined)
+    fail("session-manager requires exactly one action: serve or list");
+  const settings = loadOptionalSettingsConfig()?.sessionManager;
+  const configuredRoots = settings?.allowedRoots ?? [];
+  let roots: string[] = configuredRoots;
+  if (flags["--allowed-roots"] !== undefined) {
+    roots = flags["--allowed-roots"].split(",").map((entry) => entry.trim());
+    if (roots.some((entry) => entry.length === 0 || !entry.startsWith("/")))
+      fail("--allowed-roots must be a comma list of absolute directory paths");
+  }
+  const maxProjects = parseNonNegativeIntegerFlag("--max-projects", flags["--max-projects"]);
+  const options = {
+    roots,
+    ...(flags["--state-dir"] !== undefined && { stateDir: path.resolve(flags["--state-dir"]) }),
+    ...(maxProjects !== undefined && { maxProjects }),
+  };
+  if (action === "list") {
+    const manager = new SessionManager(options);
+    const rows = await manager.listSessions();
+    if (json || process.stdout.isTTY !== true) process.stdout.write(`${JSON.stringify(rows)}\n`);
+    else
+      for (const row of rows)
+        process.stdout.write(
+          `${row.projectKey.padEnd(24)} ${row.sessionId.padEnd(28)} ${row.leaseState.padEnd(10)} ${row.name}\n`,
+        );
+    return;
+  }
+  const manager = new SessionManager(options);
+  const server = new SessionManagerServer({
+    socketDir:
+      flags["--socket-dir"] !== undefined
+        ? path.resolve(flags["--socket-dir"])
+        : path.join(manager.stateDir, "socket"),
+    ...(flags["--socket-name"] !== undefined && { socketName: flags["--socket-name"] }),
+    manager,
+  });
+  const socketPath = await server.listen();
+  process.stdout.write(
+    `${JSON.stringify(json ? server.info() : { ...server.info(), serving: true })}\n`,
+  );
+  if (!json)
+    for (const line of [
+      `session-manager serving on ${socketPath}`,
+      "owner-private socket; same-uid fronts only; stop with SIGINT/SIGTERM",
+    ])
+      process.stderr.write(`${line}\n`);
+  process.once("SIGINT", () => {
+    server.close();
+    process.exit(0);
+  });
+  process.once("SIGTERM", () => {
+    server.close();
+    process.exit(0);
+  });
+  await new Promise<void>(() => {});
+}
+
 const COMMANDS: readonly CommandDefinition[] = [
   {
     name: "about",
@@ -4010,6 +4083,50 @@ const COMMANDS: readonly CommandDefinition[] = [
     ],
     run: ({ positionals, flags, booleans }) =>
       consoleCommand(positionals, flags, booleans, booleans["--json"] === true),
+  },
+  {
+    name: "session-manager",
+    description:
+      "Serve the headless SessionManager on its owner-private socket, or list managed sessions.",
+    positionals: [
+      {
+        name: "<serve|list>",
+        description:
+          "serve: listen on the owner-private Unix socket until stopped. list: managed sessions and their lease state.",
+      },
+    ],
+    options: [
+      {
+        name: "--allowed-roots",
+        value: "<comma-list>",
+        description:
+          "Absolute allowed-root directories; falls back to settings.yaml session-manager.allowed-roots.",
+      },
+      {
+        name: "--state-dir",
+        value: "<dir>",
+        description: "Owner-private state directory override (default under XDG state).",
+      },
+      {
+        name: "--socket-dir",
+        value: "<dir>",
+        description: "serve: the socket directory; defaults inside the state directory.",
+      },
+      {
+        name: "--socket-name",
+        value: "<name>",
+        description: "serve: the socket file name (default manager.sock).",
+      },
+      {
+        name: "--max-projects",
+        value: "<n>",
+        description: "Safe project-creation volume cap; 0 disables creation.",
+      },
+      { name: "--json", description: "Emit stable JSON." },
+    ],
+    run: async ({ positionals, flags, booleans }) => {
+      await runSessionManagerCommand(positionals, flags, booleans["--json"] === true);
+    },
   },
 ];
 

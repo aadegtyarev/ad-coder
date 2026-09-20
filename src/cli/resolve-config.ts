@@ -4,7 +4,7 @@ import { assertCredentialPathOutsideProject, FileCredentialStore } from "../auth
 import { ConfigError } from "../config/errors";
 import { loadModelsConfigSeam, loadSettingsConfigSeam } from "../config/seam";
 import { toRegistryAndProfile } from "../config/to-registry";
-import type { ProviderAdmissionSettings } from "../config/types";
+import type { ProviderAdmissionSettings, SessionManagerSettings } from "../config/types";
 import { type ContextBudgetPercents, deriveContextBudget } from "../context/budget";
 import type { CompactionMode } from "../context/compactor";
 import { assertSummarizerWindow } from "../context/compactor";
@@ -62,6 +62,7 @@ import { parseRegistryConfig } from "../registry/validate";
 import type { Role } from "../role";
 import { defineRole } from "../role";
 import type { Tool } from "../runner/tool";
+import { DEFAULT_MAX_PROJECTS } from "../session-manager/manager";
 import { pluginNamesFromToolNames } from "../skills/resolver";
 import { LOAD_SKILL_TOOL_NAME, roleSkillKit } from "../skills/role-kit";
 import { resolveStampRequirement } from "../stamp/record-review-stamp";
@@ -355,6 +356,17 @@ export interface ResolvePipelineConfigOptions {
   activityChannel?: ToolActivityChannel;
   activityConsumer?: ToolActivityConsumer;
   toolActivity?: Partial<ToolActivityConfig>;
+  /**
+   * The headless SessionManager's allowed roots and creation volume
+   * (issue #365 layer 2), surfaced in `config show` the same way admission is:
+   * the configured value and the layer that set it. An empty root list is the
+   * refusal-to-serve default, never a silent zero.
+   */
+  sessionManagerSettings?: SessionManagerSettings;
+
+  /** Where the session-manager settings came from (config:configurable). */
+  sessionManagerSettingsSource?: "settings" | "caller";
+
   /** Monotonic milliseconds seam for deterministic stage metrics. */
   monotonicNow?: () => number;
   /**
@@ -676,6 +688,23 @@ function resolveConfig(
       ? undefined
       : loadSettingsConfigSeam(options.settingsConfigPath);
   const requireStamp = resolveStampRequirement(settingsConfig);
+
+  // The session-manager surface (issue #365 layer 2) reads the same resolved
+  // `settings.yaml` the stamp consumers use, so the operator's roots and
+  // creation volume are visible beside every other effective setting. An
+  // empty root list is the refusal-to-serve default and the row says so.
+  const sessionManagerSettings = settingsConfig?.sessionManager;
+  const sessionManagerRows: Record<string, { value: string | number | boolean; source: string }> = {
+    "sessionManager.allowedRoots": {
+      value:
+        sessionManagerSettings?.allowedRoots.join(", ") || "(none: the manager refuses to serve)",
+      source: sessionManagerSettings?.allowedRoots.length ? "settings" : "built-in-default",
+    },
+    "sessionManager.maxProjects": {
+      value: sessionManagerSettings?.maxProjects ?? DEFAULT_MAX_PROJECTS,
+      source: sessionManagerSettings?.maxProjects !== undefined ? "settings" : "built-in-default",
+    },
+  };
 
   // THE STORED-CONFIG SEAM (issue #280). It is now the ONLY stored routing
   // source (issue #513 retired the JSON inventory): the branch is entered when
@@ -1472,6 +1501,7 @@ function resolveConfig(
     effectiveConfig: {
       ...contextWindowProjection,
       ...providerAdmissionRows,
+      ...sessionManagerRows,
       // Set-valued capability visibility (docs/contracts/config.md): the
       // resolved names and where the selection came from. `none` names the
       // explicit off, never a silent absence.

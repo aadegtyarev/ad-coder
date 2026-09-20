@@ -426,6 +426,7 @@ test("(h) an absent settings.yaml means the documented defaults", () => {
     expect(settings).toEqual({
       review: { requireStamp: "auto", costSignature: false },
       providerAdmission: {},
+      sessionManager: { allowedRoots: [] },
     });
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -447,7 +448,11 @@ test("(h) a present-but-empty settings.yaml stays refused, not silently defaulte
 // (f) require-stamp resolution + writer/checker agreement
 
 function settingsWith(requireStamp: "auto" | "on" | "off"): SettingsConfig {
-  return { review: { requireStamp, costSignature: false }, providerAdmission: {} };
+  return {
+    review: { requireStamp, costSignature: false },
+    providerAdmission: {},
+    sessionManager: { allowedRoots: [] },
+  };
 }
 
 function settledResult() {

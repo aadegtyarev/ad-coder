@@ -143,6 +143,16 @@ export class ProjectStore {
     }
   }
 
+  /**
+   * `ManagerSessionHost.ensureSession` (src/session-manager/types.ts): the ONE
+   * shared durable Orchestrator conversation for a managed project, reopened
+   * idempotently under the store's own per-session lock. Responsible for the
+   * background context only; the session-manager owns WHICH id and when.
+   */
+  async ensureSession(id: string): Promise<Session<ProjectSessionMetadata>> {
+    return await this.openOrCreateSession(id, BACKGROUND_CONTEXT);
+  }
+
   async openOrCreateSession(
     id: string,
     context: Context = BACKGROUND_CONTEXT,
