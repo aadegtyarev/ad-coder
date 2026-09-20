@@ -48,6 +48,7 @@ import type {
   AvailableTransition,
   Complexity,
   Driver,
+  EscalationSignal,
   PipelineConfig,
   PipelineContextFallbackReason,
   PipelineContextSelection,
@@ -1405,6 +1406,22 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     return { state: nextState, result, transitions };
   };
 
+  /**
+   * Count of blocking verdicts in `state.verdicts`: `changes_requested` plus
+   * `decomposition_required`; an `approved` verdict is not blocking. This is the
+   * single source for the review stop rule and the escalation record's
+   * `blockingVerdicts` -- NOT `state.round` and NOT a separately persisted
+   * counter. The count survives a resume unchanged because `state.verdicts` is
+   * accumulated (re-appended) through the durable state surface; a side counter
+   * would need its own resume reconciliation.
+   */
+  function blockingVerdictCount(state: WorkflowState): number {
+    return state.verdicts.filter(
+      (verdict) =>
+        verdict.status === "changes_requested" || verdict.status === "decomposition_required",
+    ).length;
+  }
+
   const stepReview = async (state: WorkflowState): Promise<StepResult> => {
     const round = state.round;
     const attempt = stageAttempt(state, "review", `review:${round}`);
@@ -1545,6 +1562,14 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     // attempt (issue #363).
     delete nextState.lastStageFailure;
 
+    // Stop rule (issue #451). The current verdict is already in `nextState`, so
+    // the count below sees the round settling NOW, not only prior rounds.
+    // `decomposition_required` is a role request and stops immediately; a
+    // SECOND blocking verdict settles the run instead of starting another
+    // identical code round, regardless of `maxRounds`. The FIRST blocking
+    // verdict keeps the preserved single advance.
+    const blockingVerdicts = blockingVerdictCount(nextState);
+    let escalation: EscalationSignal | undefined;
     let transitions: AvailableTransition[];
     if (verdict.status === "approved") {
       transitions = [
@@ -1552,6 +1577,15 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
         // A driver may force another coder pass even after approval.
         { kind: "rework", isDefault: false, toPhase: "code", toRound: round + 1 },
       ];
+    } else if (verdict.status === "decomposition_required") {
+      // The escalation record built here is consumed downstream by the decision
+      // branch at src/orchestration/control-plane.ts:936, which reads
+      // execution.result.outcome (and now this escalation) to route the record.
+      escalation = { required: true, reason: "role_requested", blockingVerdicts };
+      transitions = [{ kind: "stop", isDefault: true, toPhase: "done", toRound: round }];
+    } else if (blockingVerdicts >= 2) {
+      escalation = { required: true, reason: "blocking_verdicts", blockingVerdicts };
+      transitions = [{ kind: "stop", isDefault: true, toPhase: "done", toRound: round }];
     } else if (round < defaults.maxRounds) {
       transitions = [
         {
@@ -1569,8 +1603,13 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       ];
     } else {
       // The cap is reached: the loop can only settle (approved:false). No advance
-      // edge exists past maxRounds -- exactly the old loop's exit.
+      // edge exists past maxRounds -- exactly the old loop's exit. This settle
+      // carries NO escalation: cap exhaustion is a round limit, not a role
+      // request or a second blocking verdict.
       transitions = [{ kind: "stop", isDefault: true, toPhase: "done", toRound: round }];
+    }
+    if (escalation !== undefined) {
+      nextState.escalation = escalation;
     }
     return {
       state: nextState,
@@ -1666,6 +1705,10 @@ export function toPipelineResult(state: WorkflowState): PipelineResult {
     verdicts: state.verdicts,
     reviewRan: state.verdicts.length > 0,
     runIds: state.runIds,
+    // Only the review stop rule sets `state.escalation`; approval, cap
+    // exhaustion, and red-gate settles leave it absent, so this spread keeps
+    // those results byte-identical to before.
+    ...(state.escalation !== undefined && { escalation: state.escalation }),
     stageMetrics: structuredClone(state.stageMetrics ?? []),
     ...(state.lastGateReport !== undefined && {
       gateReport: structuredClone(state.lastGateReport),

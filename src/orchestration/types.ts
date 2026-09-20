@@ -24,15 +24,16 @@ import type { SessionLimitController } from "../session-limits";
 import type { StageCloseoutFact, StageLimitReason, StageLimits } from "./stage-limits";
 
 /**
- * The two verdicts a reviewer round can settle on.
+ * The three verdicts a reviewer round can settle on.
  *
  * `approved` ends the loop; `changes_requested` feeds the reviewer's issues
- * back to the coder for another round. There is deliberately NO third
- * "error"/"unknown" state: a verdict that cannot be parsed into one of these
- * two literals is a hard `OrchestrationError`, not a silent non-approval, so a
- * malformed artifact can never be read as a pass.
+ * back to the coder for another round; `decomposition_required` escalates the
+ * run to an immediate stop (see the stop rule in `session.ts`). There is
+ * deliberately NO "error"/"unknown" state: a verdict that cannot be parsed into
+ * one of these three literals is a hard `OrchestrationError`, not a silent
+ * non-approval, so a malformed artifact can never be read as a pass.
  */
-export type VerdictStatus = "approved" | "changes_requested";
+export type VerdictStatus = "approved" | "changes_requested" | "decomposition_required";
 
 /**
  * Severity of a single reviewer issue. A fixed set BECAUSE the verdict is
@@ -60,7 +61,7 @@ export interface ReviewCoverage {
 /**
  * The structured verdict a reviewer submits via the `submit_verdict` tool call
  * and the pipeline strictly re-validates. Structured-and-schema-checked is
- * strictly stronger than parsing free text: `status` must be one of two
+ * strictly stronger than parsing free text: `status` must be one of three
  * literals, `issues` an array of validated `VerdictIssue`, `summary` a string.
  * The tool's TypeBox `parameters` schema is deliberately permissive at the enum
  * leaves so `parseVerdict` in `verdict.ts` stays the authoritative gate -- see
@@ -402,6 +403,21 @@ export interface RoundRecord {
 }
 
 /**
+ * The escalation signal a settled run carries when the review stop rule (not
+ * the round cap, not a red gate, not an approval) ended the run. `required` is
+ * the literal `true` so an unset optional can never read as a signal. `reason`
+ * names the settle cause: `role_requested` (a `decomposition_required`
+ * verdict) or `blocking_verdicts` (a second blocking verdict);
+ * `blockingVerdicts` is the derived count at settle time. Exactly these three
+ * keys -- no summary, no issue text, no file content, no provider/model text.
+ */
+export interface EscalationSignal {
+  required: true;
+  reason: "role_requested" | "blocking_verdicts";
+  blockingVerdicts: number;
+}
+
+/**
  * The settled outcome of a whole pipeline run.
  *
  * `outcome: "decomposition_required"` with `approved: false` after
@@ -452,6 +468,13 @@ export interface PipelineResult {
    * result here, not a missing verdict field.
    */
   reviewRan?: boolean;
+  /**
+   * Present ONLY when the review stop rule settled the run not approved:
+   * `role_requested` (a `decomposition_required` verdict) or
+   * `blocking_verdicts` (a second blocking verdict). Absent on approval,
+   * round-cap exhaustion, and a red-gate-only settle.
+   */
+  escalation?: EscalationSignal;
 }
 
 export interface PipelineStageMetrics {
@@ -830,6 +853,8 @@ export interface WorkflowState {
   done: boolean;
   /** The settled approval outcome, set by `applyTransition` on a `stop` edge. */
   approved: boolean;
+  /** Settled escalation signal, set by the review stop rule and carried into `PipelineResult`. */
+  escalation?: EscalationSignal;
 }
 
 /**
