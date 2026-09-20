@@ -95,7 +95,7 @@ import { PipelinePauseError } from "./orchestration/types";
 import {
   buildSubmitVerdictTool,
   REVIEW_SUBMISSION_ATTEMPTS,
-  REVIEW_SUBMISSION_RETRY,
+  reviewRetryTask,
   SUBMIT_VERDICT_TOOL_NAME,
   type VerdictCapture,
 } from "./orchestration/verdict";
@@ -516,17 +516,22 @@ export async function runReviewWithSubmissionRetry<
   if (!params.retries || params.submitted()) return first;
   const newRunId = params.newRunId ?? (() => crypto.randomUUID());
   let spent = first.cost;
+  // What the next attempt is handed as "your review": every attempt's prose so
+  // far, because the retry opens a session with no history of its own and would
+  // otherwise submit a verdict over a review it never saw (issue #525).
+  let carried = first.text;
   for (let attempt = 1; attempt < REVIEW_SUBMISSION_ATTEMPTS; attempt += 1) {
     // A FRESH run id per attempt: a turn is keyed by run id in the session
     // store, so re-asking under the first one is rejected as an existing
     // session rather than reaching the model.
-    const retry = await params.run(newRunId(), `${params.task}\n\n${REVIEW_SUBMISSION_RETRY}`);
+    const retry = await params.run(newRunId(), reviewRetryTask(params.task, carried));
     spent += retry.cost;
     // Both texts, not just the retry's: the first attempt holds the review
     // itself, and the retry is asked to submit rather than to restate it --
     // keeping only the second would drop the reasoning the operator reads.
     const text = retry.text === "" ? first.text : `${first.text}\n\n${retry.text}`;
     if (params.submitted()) return { ...retry, text, cost: spent };
+    carried = carried === "" ? retry.text : `${carried}\n\n${retry.text}`;
   }
   // Every attempt ended in prose. The caller reports the missing verdict; the
   // cost of asking twice is still the cost of this run.

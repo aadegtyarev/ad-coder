@@ -22,6 +22,29 @@ export const REVIEW_SUBMISSION_ATTEMPTS = 2;
 /** Re-states only the submission requirement; the inspection already happened. */
 export const REVIEW_SUBMISSION_RETRY = `Your preceding response did not call ${SUBMIT_VERDICT_TOOL_NAME}. Your review stands; submit it now by calling ${SUBMIT_VERDICT_TOOL_NAME} with the complete verdict object, then stop.`;
 
+/**
+ * The task a retry attempt receives: the work, the review the attempts so far
+ * produced, and the submission requirement.
+ *
+ * WHY THE REVIEW TRAVELS WITH IT. A retry runs under a FRESH run id, and a turn
+ * is keyed by run id in the session store, so it opens a session with no
+ * history: the review the retry prompt calls "your review" is nowhere in its
+ * context. Measured 2026-09-20 (issue #525) on a lane whose first review run had
+ * reproduced a blocker: the retry submitted `approved` after two model turns and
+ * sixteen seconds, with a summary reporting six gates it never ran, while the
+ * stamp and the merge gate read the submitted verdict -- the false premise was
+ * resolved by inventing the review. Handing it the text makes the sentence true,
+ * so the verdict is submitted over the review that was actually made.
+ *
+ * An empty prior text (an attempt that produced no prose) keeps the bare retry:
+ * there is no review to carry, and the caller still gets its second attempt.
+ */
+export function reviewRetryTask(task: string, priorText: string): string {
+  const prior = priorText.trim();
+  if (prior === "") return `${task}\n\n${REVIEW_SUBMISSION_RETRY}`;
+  return `${task}\n\nYour review so far, verbatim:\n\n${prior}\n\n${REVIEW_SUBMISSION_RETRY}`;
+}
+
 const VERDICT_STATUSES: readonly VerdictStatus[] = [
   "approved",
   "changes_requested",

@@ -67,7 +67,7 @@ import {
   buildSubmitVerdictTool,
   formatReviewerInstruction,
   REVIEW_SUBMISSION_ATTEMPTS,
-  REVIEW_SUBMISSION_RETRY,
+  reviewRetryTask,
 } from "./verdict";
 
 const RESEARCH_REQUEST_MAX_BYTES = 64 * 1024;
@@ -1630,6 +1630,10 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     let followUps: FollowUp[] = [];
     let rawMetrics: PipelineStageMetrics | undefined;
     let attemptRunId = runId;
+    // The review the next attempt is handed: a retry runs under a fresh run id,
+    // so its session has no history and the prompt's "your review" would name a
+    // review it cannot see (issue #525).
+    let carried = "";
     for (let index = 0; index < REVIEW_SUBMISSION_ATTEMPTS; index += 1) {
       // A FRESH run id per attempt, as the planner's handoff does: a turn is
       // keyed by run id in the session store, so re-asking under the first
@@ -1639,7 +1643,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       const turn = await runWorkflowTurn(
         config.roles.reviewer,
         selection,
-        index === 0 ? prompt : `${prompt}\n\n${REVIEW_SUBMISSION_RETRY}`,
+        index === 0 ? prompt : reviewRetryTask(prompt, carried),
         `review:${round}`,
         attemptRunId,
         [
@@ -1651,6 +1655,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
         index === 0 && attempt.resume ? attempt.stage : undefined,
       );
       text = turn.text;
+      carried = carried === "" ? text : `${carried}\n\n${text}`;
       followUps = turn.followUps;
       rawMetrics = turn.metrics;
       // A rejected submission is a DIFFERENT failure: the reviewer called the

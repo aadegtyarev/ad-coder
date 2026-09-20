@@ -2949,6 +2949,13 @@ async function startTrivialGateSession(options: {
   profile?: Profile;
   /** The cover reviewer's turn throws (a stand-in for a provider failure). */
   reviewerStepThrows?: boolean;
+  /**
+   * How many leading cover attempts end in PROSE without calling
+   * `submit_verdict` -- the failure the retry exists for (issue #278). Each such
+   * attempt answers `draft review <n>`, which is what a carried retry must show
+   * the next attempt (issue #525).
+   */
+  reviewerProseOnlyAttempts?: number;
 }): Promise<TrivialGateSeams & { session: Awaited<ReturnType<typeof startOrchestrator>> }> {
   const seams: TrivialGateSeams = {
     wrap: undefined,
@@ -2989,15 +2996,18 @@ async function startTrivialGateSession(options: {
         task: "",
       };
       seams.reviewerTurns.push(turn);
+      const attempt = seams.reviewerTurns.length;
+      const proseOnly = attempt <= (options.reviewerProseOnlyAttempts ?? 0);
       return {
         ...fakeConversation(config.runId ?? "reviewer-run"),
         step: async (task: string) => {
           turn.task = task;
-          await callTool(submit, {
-            status: "approved",
-            issues: [],
-            summary: "bounded trivial edit is correct",
-          });
+          if (!proseOnly)
+            await callTool(submit, {
+              status: "approved",
+              issues: [],
+              summary: "bounded trivial edit is correct",
+            });
           if (options.reviewerStepThrows === true) {
             throw new Error("provider connection lost");
           }
@@ -3005,7 +3015,7 @@ async function startTrivialGateSession(options: {
             runId: config.runId ?? "reviewer-run",
             step: "turn:1",
             status: "completed" as const,
-            assistantText: "reviewed",
+            assistantText: proseOnly ? `draft review ${attempt}` : "reviewed",
             toolCalls: [],
             droppedRecords: 0,
           };
@@ -3107,6 +3117,39 @@ test("a trivial edit inside the machine bound is reviewer-covered and recorded (
   expect(reviewerTurns[0]?.task).toContain(SUBMIT_VERDICT_TOOL_NAME);
 
   // The edit's own result states the cover plainly.
+  expect(resultText).toContain("trivial-edit cover: approved by reviewer");
+}, 20000);
+
+test("the cover retry is handed the attempt that ended in prose (issue #525)", async () => {
+  // The retry runs under a FRESH run id, so its session holds no review; the
+  // prompt tells it "your review stands" and the only copy of that review is
+  // what the caller carries into the task. Without the carry, the retry submits
+  // a verdict over a review it never made -- measured on a lane where a
+  // two-turn retry approved a tree whose sibling run had reproduced a blocker.
+  const targetDir = trivialTmpDir("gate-retry");
+  const runId = "trivial-gate-retry-run";
+  const { session, wrap, reviewerTurns } = await startTrivialGateSession({
+    targetDir,
+    runId,
+    reviewerProseOnlyAttempts: 1,
+  });
+  writeSrcFile(targetDir, "one\ntwo\n");
+
+  const resultText = await runWrappedTrivialEdit(wrap as TrivialWrap, targetDir, [
+    { oldText: "one", newText: "1\n2" },
+  ]);
+  await session.close();
+
+  // Two attempts: the prose-only one, then the retry that settles the cover.
+  expect(reviewerTurns).toHaveLength(2);
+  expect(reviewerTurns[0]?.task).not.toContain("did not call submit_verdict");
+  const retryTask = reviewerTurns[1]?.task ?? "";
+  expect(retryTask).toContain("did not call submit_verdict");
+  // The carried review, verbatim, and not only its presence: the retry must be
+  // able to read what the first attempt concluded.
+  expect(retryTask).toContain("draft review 1");
+  // The retry is a fresh run id (a turn is keyed by run id).
+  expect(reviewerTurns[1]?.runId).not.toBe(reviewerTurns[0]?.runId);
   expect(resultText).toContain("trivial-edit cover: approved by reviewer");
 }, 20000);
 

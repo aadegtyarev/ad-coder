@@ -17,6 +17,7 @@ import {
 } from "../src/cli";
 import { MemoryLedgerSink } from "../src/ledger/ledger";
 import { StageLimitError } from "../src/orchestration/stage-limits";
+import { REVIEW_SUBMISSION_RETRY, reviewRetryTask } from "../src/orchestration/verdict";
 import { ProjectStore } from "../src/project-store/project-store";
 import { ProjectStoreError } from "../src/project-store/types";
 import type { Role } from "../src/role";
@@ -422,6 +423,25 @@ test("the standalone review retry keeps the first attempt's review and charges b
   // so re-asking under the first is rejected as an existing session.
   expect(runIds).toEqual(["first", "second"]);
   expect(tasks[1]).toContain("did not call submit_verdict");
+  // And the retry can SEE the review it is told stands (issue #525): a fresh
+  // run id means a fresh session, so the prompt's "your review" is only the
+  // review the caller carried into the task.
+  expect(tasks[1]).toContain("the review itself");
+});
+
+test("a retry with nothing carried keeps the bare submission requirement", () => {
+  // An attempt that produced no prose leaves no review to hand over; the retry
+  // still runs, and the task stays exactly what it was before the carry existed
+  // -- no empty "your review so far" block, which would read as a review.
+  const bare = reviewRetryTask("review it", "");
+  expect(bare).toBe(`review it\n\n${REVIEW_SUBMISSION_RETRY}`);
+  // Whitespace is not a review either.
+  expect(reviewRetryTask("review it", "   \n  ")).toBe(bare);
+  // A real one is quoted verbatim, between the task and the requirement.
+  const carried = reviewRetryTask("review it", "  blocker: exit 1, not 3  ");
+  expect(carried.startsWith("review it\n\nYour review so far, verbatim:\n\n")).toBe(true);
+  expect(carried).toContain("blocker: exit 1, not 3");
+  expect(carried.endsWith(REVIEW_SUBMISSION_RETRY)).toBe(true);
 });
 
 test("the standalone review retry does not run when the verdict already arrived", async () => {

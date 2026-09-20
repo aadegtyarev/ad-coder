@@ -85,7 +85,7 @@ import {
   buildSubmitVerdictTool,
   formatReviewerInstruction,
   REVIEW_SUBMISSION_ATTEMPTS,
-  REVIEW_SUBMISSION_RETRY,
+  reviewRetryTask,
   SUBMIT_VERDICT_TOOL_NAME,
   type VerdictCapture,
 } from "./verdict";
@@ -1895,7 +1895,7 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
           const runAttempt = async (
             reviewerRunId: string,
             task: string,
-          ): Promise<TrivialEditCoverSettle | undefined> => {
+          ): Promise<{ settle?: TrivialEditCoverSettle; text: string }> => {
             const capture: VerdictCapture = {};
             const conversation = await (config.startDelegatedConversation ?? startConversationImpl)(
               {
@@ -1914,30 +1914,36 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
                 ...(resolved.compaction !== undefined && { compaction: resolved.compaction }),
               },
             );
+            let text = "";
             try {
-              await conversation.step(task, { step: "role:reviewer" });
+              const turn = await conversation.step(task, { step: "role:reviewer" });
+              text = turn.assistantText;
             } finally {
               await conversation.close();
             }
-            if (capture.verdict === undefined) return undefined;
+            if (capture.verdict === undefined) return { text };
             return {
-              verdict: capture.verdict.status,
-              reviewerRunId,
-              issueCount: capture.verdict.issues.length,
+              settle: {
+                verdict: capture.verdict.status,
+                reviewerRunId,
+                issueCount: capture.verdict.issues.length,
+              },
+              text,
             };
           };
           // Same shape as the CLI's runReviewWithSubmissionRetry: one retry
           // converts a prose-ending review into a settled one, each attempt
           // under a FRESH run id (a turn is keyed by run id in the session
-          // store), and the runId that settles is the one recorded.
-          const first = await runAttempt(crypto.randomUUID(), coverTask);
-          if (first !== undefined) return first;
-          for (let attempt = 1; attempt < REVIEW_SUBMISSION_ATTEMPTS; attempt += 1) {
-            const retry = await runAttempt(
-              crypto.randomUUID(),
-              `${coverTask}\n\n${REVIEW_SUBMISSION_RETRY}`,
-            );
-            if (retry !== undefined) return retry;
+          // store), and the runId that settles is the one recorded. The retry
+          // carries the attempts' prose for the same reason the CLI's does
+          // (issue #525): a fresh session has no review of its own to submit.
+          let attempt = await runAttempt(crypto.randomUUID(), coverTask);
+          if (attempt.settle !== undefined) return attempt.settle;
+          let carried = attempt.text;
+          for (let index = 1; index < REVIEW_SUBMISSION_ATTEMPTS; index += 1) {
+            attempt = await runAttempt(crypto.randomUUID(), reviewRetryTask(coverTask, carried));
+            if (attempt.settle !== undefined) return attempt.settle;
+            carried = carried === "" ? attempt.text : `${carried}\n\n${attempt.text}`;
           }
           // Exhausted attempts and provider errors both throw: the guard
           // records `reviewer_failed` and refuses to report the edit as
