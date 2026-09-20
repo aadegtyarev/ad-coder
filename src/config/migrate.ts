@@ -22,6 +22,7 @@ import { toRegistryAndProfile } from "./to-registry";
 import type {
   ModelConfig as ConfigModelConfig,
   ModelLadder,
+  ModelRung,
   ModelsConfig,
   ProviderConfig,
 } from "./types";
@@ -273,6 +274,23 @@ export function migrateInventoriesToModels(inventory: ModelInventoryConfig): Mig
 
 const TIERS = ["trivial", "medium", "complex"] as const;
 
+/** One emitted rung: the "provider:model" reference plus its declared level. */
+interface RungPair {
+  readonly model: string;
+  readonly thinkingLevel?: string;
+}
+
+/**
+ * The new form's rung: a bare "provider:model" string when the cell declares
+ * no level, a `{ model, thinkingLevel }` mapping when it does -- the only
+ * shape here that CARRIES a level instead of dropping it (#477).
+ */
+function toRung(pair: RungPair): ModelRung {
+  return pair.thinkingLevel === undefined
+    ? pair.model
+    : { model: pair.model, thinkingLevel: pair.thinkingLevel };
+}
+
 /**
  * Migrate one profile: resolve it first (requirement 1), refuse oauth
  * providers, rebuild rows from effective values, report every field with no
@@ -331,7 +349,7 @@ function migrateProfile(
   const roles: string[] = [];
   let unresolvedCell = false;
   for (const [role, cells] of byRole) {
-    const tierRung = new Map<string, string>();
+    const tierPair = new Map<string, RungPair>();
     for (const tier of TIERS) {
       const cell = cells.find((candidate) => candidate.complexity === tier);
       if (cell === undefined) continue;
@@ -343,20 +361,28 @@ function migrateProfile(
         unresolvedCell = true;
         continue;
       }
-      tierRung.set(tier, `${hit.providerId}:${hit.modelId}`);
+      tierPair.set(tier, {
+        model: `${hit.providerId}:${hit.modelId}`,
+        ...(cell.thinkingLevel !== undefined ? { thinkingLevel: cell.thinkingLevel } : {}),
+      });
     }
     if (unresolvedCell) break;
     // Bare row = the trivial tier's rung (or, when trivial is undeclared, the
-    // first declared tier's); every declared tier that differs gets an override.
-    // An override WITHOUT a bare row is invisible to the projection, so the
-    // bare row is always emitted.
-    const bare = TIERS.map((tier) => tierRung.get(tier)).find((rung) => rung !== undefined);
+    // first declared tier's); every declared tier whose (model, level) pair
+    // differs gets an override -- a differing LEVEL needs its own override too,
+    // or the projection would leak the bare row's level onto that tier. An
+    // override WITHOUT a bare row is invisible to the projection, so the bare
+    // row is always emitted.
+    const bareTier = TIERS.find((tier) => tierPair.has(tier));
+    const bare = bareTier === undefined ? undefined : tierPair.get(bareTier);
     if (bare === undefined) continue;
-    routes[role] = [bare];
+    routes[role] = [toRung(bare)];
     roles.push(role);
     for (const tier of ["medium", "complex"] as const) {
-      const rung = tierRung.get(tier);
-      if (rung !== undefined && rung !== bare) routes[`${role}@${tier}`] = [rung];
+      const pair = tierPair.get(tier);
+      if (pair === undefined) continue;
+      if (pair.model === bare.model && pair.thinkingLevel === bare.thinkingLevel) continue;
+      routes[`${role}@${tier}`] = [toRung(pair)];
     }
     for (const cell of cells) {
       const at = `${cell.role}@${cell.complexity}`;
@@ -369,13 +395,7 @@ function migrateProfile(
           field: "cacheRetention",
           value: cell.cacheRetention,
         });
-      if (cell.thinkingLevel !== undefined)
-        report.dropped.push({
-          profile: name,
-          cell: at,
-          field: "thinkingLevel",
-          value: cell.thinkingLevel,
-        });
+      // (#477) `thinkingLevel` is NOT dropped: it rides the emitted rung above.
     }
   }
   if (unresolvedCell) {

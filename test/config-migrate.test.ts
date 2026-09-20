@@ -237,10 +237,10 @@ test("extras reported dropped while identity stays at parity", () => {
     "maxOutput",
     "maxOutput",
     "reasoning",
-    "thinkingLevel",
-    "thinkingLevel",
-    "thinkingLevel",
   ]);
+  expect(report.dropped.some((item) => item.field === "thinkingLevel")).toBe(false);
+  // the level is now CARRIED into the level-bearing rung form, not dropped
+  expect(JSON.stringify(models)).toContain("thinkingLevel");
   // No dropped item carries an unrestricted value: compat/headers name only.
   const compat = report.dropped.find((item) => item.field === "compat")!;
   expect(compat).toEqual({
