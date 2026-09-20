@@ -50,7 +50,18 @@ export interface SanitizedTitle {
 }
 
 function clamp(value: string, maxLength: number): string {
-  return value.length <= maxLength ? value : `${value.slice(0, maxLength - 1).trimEnd()}…`;
+  // Code POINTS, not UTF-16 units (docs/contracts/session-manager.md, "length-
+  // capped in code points"): slicing units cuts a surrogate pair in half and
+  // persists a LONE surrogate into a display name. Measured before this fix
+  // (issue #365, pinned by the astral test in test/session-manager.test.ts):
+  // sixty astral characters clamped to 25 code points with
+  // `isWellFormed() === false`, where the cap is 48.
+  const points = [...value];
+  if (points.length <= maxLength) return value;
+  return `${points
+    .slice(0, maxLength - 1)
+    .join("")
+    .trimEnd()}…`;
 }
 
 export function sanitizeTitle(

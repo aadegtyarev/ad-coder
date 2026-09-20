@@ -44,7 +44,12 @@ import {
   SessionManagerServer,
   verifyBoundSocket,
 } from "../src/session-manager/server";
-import { sanitizeTitle } from "../src/session-manager/title";
+import {
+  createManualSessionName,
+  DEFAULT_TITLE_MAX_LENGTH,
+  MANUAL_NAME_MAX_LENGTH,
+  sanitizeTitle,
+} from "../src/session-manager/title";
 import {
   SESSION_FALLBACK_NAME,
   SessionManagerError,
@@ -433,6 +438,23 @@ test("sanitizeTitle strips control surfaces and screens secrets", () => {
   const long = "x".repeat(100);
   expect(sanitizeTitle(long).value.length).toBe(48);
   expect(sanitizeTitle(undefined).value).toBe(SESSION_FALLBACK_NAME);
+});
+
+test("the length cap counts code points, so a surrogate pair is never cut (#365)", () => {
+  // docs/contracts/session-manager.md: both name paths are "length-capped in
+  // code points". Measured on this tree before the fix: clamping by UTF-16
+  // units sliced through a surrogate pair, and the name persisted with a LONE
+  // surrogate in it -- 25 code points instead of 48, `isWellFormed() === false`.
+  // The ASCII case above never noticed, because a code unit IS a code point
+  // there.
+  const astral = "\u{1D11E}"; // one code point, two UTF-16 units
+  const generated = sanitizeTitle(astral.repeat(60)).value;
+  expect([...generated].length).toBe(DEFAULT_TITLE_MAX_LENGTH);
+  expect(generated.endsWith("…")).toBe(true);
+  expect(generated.isWellFormed()).toBe(true);
+  const manual = createManualSessionName(astral.repeat(80));
+  expect([...manual].length).toBe(MANUAL_NAME_MAX_LENGTH);
+  expect(manual.isWellFormed()).toBe(true);
 });
 
 test("the secret screen covers raw and flattened forms plus the full Cc category", () => {
