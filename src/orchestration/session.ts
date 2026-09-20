@@ -79,7 +79,10 @@ const RESEARCH_PROVENANCE_MAX_BYTES = 16 * 1024;
 const SAFE_RESEARCH_ID = /^[a-z0-9][a-z0-9._:-]{0,127}$/i;
 const LIKELY_SECRET = /(?:bearer\s+|api[_-]?key\s*[:=]|password\s*[:=]|(?:^|\W)sk-[a-z0-9_-]{8,})/i;
 const SAFE_EVIDENCE_REFERENCE_MAX_CHARS = 128;
-const SAFE_TRANSCRIPT_REFERENCE_MAX_CHARS = 256;
+const SAFE_TRANSCRIPT_REFERENCE_MAX_CHARS = 96;
+// Keep the shape below the cause ceiling so the human prefix always has room.
+const SAFE_RESPONSE_SHAPE_MAX_CHARS = MAX_PAUSE_CAUSE_MESSAGE_CHARS - 32;
+const SAFE_ATTEMPT_RUN_IDS_MAX_CHARS = 112;
 
 function boundedSafeEvidenceReference(
   reference: string,
@@ -88,6 +91,24 @@ function boundedSafeEvidenceReference(
   if (reference.length <= maxChars) return reference;
   const marker = "[...]/";
   return `${marker}${reference.slice(-(maxChars - marker.length))}`;
+}
+
+function boundedAttemptRunIds(
+  ids: readonly string[],
+  maxChars = SAFE_ATTEMPT_RUN_IDS_MAX_CHARS,
+): string {
+  const complete = ids.join(",");
+  if (complete.length <= maxChars) return complete;
+  const kept: string[] = [];
+  for (const id of ids) {
+    const omitted = ids.length - kept.length - 1;
+    const marker = `,... +${omitted} more`;
+    const candidate = [...kept, id].join(",") + marker;
+    if (candidate.length > maxChars) break;
+    kept.push(id);
+  }
+  const marker = `,... +${ids.length - kept.length} more`;
+  return `${kept.join(",")}${marker}`.slice(0, maxChars);
 }
 const SENSITIVE_PATH = /(?:^|\/)(?:\.env(?:\.|$)|[^/]*\.pem$|[^/]*\.key$)/i;
 const REVIEW_CONTROL_PATH = /(?:^|\/)(?:prompts|docs\/contracts)(?:\/|$)/;
@@ -965,12 +986,19 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
           : `./${path.relative(config.targetDir, transcriptPath)}`,
         SAFE_TRANSCRIPT_REFERENCE_MAX_CHARS,
       );
-      const safeShape = `attempts=${attemptsRun} submit_plan_called=${mandatoryToolCalled} json_candidate=${text.includes("{")} response_length=${text.length} evidence=${relativeEvidencePath} transcript=${relativeTranscriptPath} attempt_run_ids=${attemptRunIds.join(",")}`;
+      const safeShape = `attempts=${attemptsRun} submit_plan_called=${mandatoryToolCalled} json_candidate=${text.includes("{")} response_length=${text.length} evidence=${relativeEvidencePath} transcript=${relativeTranscriptPath} attempt_run_ids=${boundedAttemptRunIds(attemptRunIds)}`;
+      // The field budgets above make this true by construction. Keep a visible
+      // defensive backstop so a future field cannot silently reintroduce a
+      // cause-overflow that cuts off the invariant fields.
+      const boundedShape =
+        safeShape.length <= SAFE_RESPONSE_SHAPE_MAX_CHARS
+          ? safeShape
+          : `${safeShape.slice(0, SAFE_RESPONSE_SHAPE_MAX_CHARS - "...[shape-clipped]".length)}...[shape-clipped]`;
       const prefix =
         lastRejection?.message === undefined
           ? "planner did not submit required surface analysis"
           : lastRejection.message;
-      const durableMessage = `${prefix.slice(0, Math.max(0, MAX_PAUSE_CAUSE_MESSAGE_CHARS - safeShape.length - 2))}; ${safeShape}`;
+      const durableMessage = `${prefix.slice(0, Math.max(1, MAX_PAUSE_CAUSE_MESSAGE_CHARS - boundedShape.length - 2))}; ${boundedShape}`;
       if (lastRejection !== undefined) {
         throw new OrchestrationError(lastRejection.code, runId, durableMessage);
       }

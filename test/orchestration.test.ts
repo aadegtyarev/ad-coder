@@ -19,6 +19,7 @@ import type {
 } from "@earendil-works/pi-ai/providers/faux";
 import { COMPACTION_SAFETY_PROMPT } from "../src/context/compactor";
 import { MemoryLedgerSink } from "../src/ledger/ledger";
+import type { LedgerRecord } from "../src/ledger/types";
 import {
   buildSubmitFollowUpTool,
   SUBMIT_FOLLOW_UP_TOOL_NAME,
@@ -51,7 +52,11 @@ import type {
   Verdict,
   WorkflowState,
 } from "../src/orchestration/types";
-import { OrchestrationError, PipelinePauseError } from "../src/orchestration/types";
+import {
+  MAX_PAUSE_CAUSE_MESSAGE_CHARS,
+  OrchestrationError,
+  PipelinePauseError,
+} from "../src/orchestration/types";
 import {
   buildSubmitVerdictTool,
   formatReviewerInstruction,
@@ -2082,7 +2087,7 @@ test("a planner emitting only text is refused explicitly before code", async () 
   expect(pause.action).toContain("answered in prose without a JSON object");
   expect(pause.action).not.toContain("inspect the planner's registration and configuration");
   expect(pause.cause?.message).toMatch(
-    /^planner response carried no JSON object; attempts=2 submit_plan_called=false json_candidate=false response_length=\d+ evidence=.*\/\.ad-coder\/ledger\/[^/]+\.jsonl transcript=.*\/\.ad-coder\/sessions\/.*\/[^/]+\.jsonl attempt_run_ids=[^,]+,[^,]+$/,
+    /^planner response carried no JSON object; attempts=2 submit_plan_called=false json_candidate=false response_length=\d+ evidence=.*\/\.ad-coder\/ledger\/[^/]+\.jsonl transcript=(?:.*\/\.ad-coder\/sessions\/|\[\.\.\.\]\/)[^ ]+ attempt_run_ids=[^,]+,[^,]+$/,
   );
   const checkpointPath = fs
     .readdirSync(path.join(fx.targetDir, ".ad-coder", "runs"))
@@ -2097,45 +2102,50 @@ test("a planner emitting only text is refused explicitly before code", async () 
   expect(checkpoint.workflowState.lastStageFailure.message).toBe(pause.cause?.message);
 });
 
-test("a long target path keeps every durable planner-failure field and usable evidence reference", async () => {
+test("max-length durable planner references retain every field and resolvable evidence", async () => {
   const fx = fixture();
-  let longTargetDir = fx.targetDir;
-  for (let index = 0; index < 1; index += 1) {
-    longTargetDir = path.join(longTargetDir, `target-${"x".repeat(100)}`);
-  }
-  fs.mkdirSync(longTargetDir, { recursive: true });
-  fx.faux.setResponses([
-    fauxAssistantMessage("Plan in prose, with no JSON object"),
-    fauxAssistantMessage("Still no JSON object"),
-  ]);
+  const runId = "r".repeat(64);
+  const longResponse = `prose without JSON ${"x".repeat(10_000)}`;
+  const ledgerSink = {
+    write(record: LedgerRecord): void {
+      const ledgerPath = path.join(fx.targetDir, ".ad-coder", "ledger", `${record.runId}.jsonl`);
+      fs.mkdirSync(path.dirname(ledgerPath), { recursive: true });
+      fs.appendFileSync(ledgerPath, `${JSON.stringify(record)}\\n`);
+    },
+  };
+  fx.faux.setResponses([fauxAssistantMessage(longResponse), fauxAssistantMessage(longResponse)]);
+  const session = createWorkflowSession({
+    targetDir: fx.targetDir,
+    models: fx.models,
+    task: "max-length durable cause",
+    maxRounds: 1,
+    ledgerSink,
+    roles: {
+      planner: plannerRole(fx),
+      coder: fx.role("coder", "You code."),
+      reviewer: reviewerRole(fx),
+    },
+  });
+  const coordinator = new RunCoordinator(session, session.projectStore, { runId });
+  await coordinator.run();
 
-  let caught: unknown;
-  try {
-    await runPipeline({
-      targetDir: longTargetDir,
-      models: fx.models,
-      task: "long target durable cause",
-      maxRounds: 1,
-      roles: {
-        planner: plannerRole(fx),
-        coder: fx.role("coder", "You code."),
-        reviewer: reviewerRole(fx),
-      },
-    });
-  } catch (error) {
-    caught = error;
-  }
-
-  expect(caught).toBeDefined();
-  const pause = (caught as { pause: { cause?: { message?: string } } }).pause;
-  const message = pause.cause?.message ?? "";
-  expect(message.length).toBeLessThanOrEqual(512);
-  expect(message).toMatch(
-    /attempts=2 submit_plan_called=false json_candidate=false response_length=\d+ evidence=\.\/\.ad-coder\/ledger\/[^ ]+ transcript=(?:\.\/\.ad-coder\/sessions\/|\[\.\.\.\]\/)[^ ]+ attempt_run_ids=[^,]+,[^,]+$/,
-  );
+  const pause = coordinator.checkpoint.pause;
+  const message = pause?.cause?.message ?? "";
+  expect(message.length).toBeLessThanOrEqual(MAX_PAUSE_CAUSE_MESSAGE_CHARS);
+  expect(message).toContain("attempts=2");
+  expect(message).toContain("submit_plan_called=false");
+  expect(message).toContain("json_candidate=false");
+  expect(message).toContain("response_length=10019");
+  expect(message).toContain("attempt_run_ids=");
   const evidence = message.match(/ evidence=([^ ]+)/)?.[1];
   expect(evidence).toMatch(/^\.\/\.ad-coder\/ledger\/[^ ]+\.jsonl$/);
   expect(path.isAbsolute(evidence!)).toBe(false);
+  expect(fs.existsSync(path.dirname(path.resolve(fx.targetDir, evidence!)))).toBe(true);
+  expect(coordinator.checkpoint.workflowState.lastStageFailure?.message).toBe(message);
+  expect(coordinator.checkpoint.workflowState.lastStageFailure?.message).toContain("attempts=2");
+  expect(coordinator.checkpoint.workflowState.lastStageFailure?.message).toContain(
+    "response_length=10019",
+  );
 });
 
 test("a planner whole-JSON fallback is strictly validated before code", async () => {
