@@ -212,3 +212,55 @@ test("the orchestrator prompt makes classification a step before mutation (issue
   expect(exception).toBeGreaterThan(prohibition);
   expect(prompt).toContain("When unsure, classify up.");
 });
+
+test("the orchestrator prompt carries the expectation block and its three mandatory fields", () => {
+  // An expectation nobody wrote down cannot be checked after the run, and
+  // advice to write one down does not fire: src/skills/load-tool.ts records the
+  // orchestrator holding `delivery-calibration`, never loading it, and
+  // dispatching ten seconds later. The block is therefore a mandatory form in
+  // the prompt itself, and each field is pinned by its label -- deleting the
+  // block or any one field turns this red.
+  const prompt = flat(resolvePrompt("orchestrator"));
+  expect(prompt).toContain("Name the expectation before you dispatch it.");
+  // Field 1: the form of the work, priced from the record, with the budgets.
+  expect(prompt).toContain("the form of the work");
+  expect(prompt).toContain("comparable accepted work in the record");
+  expect(prompt).toContain("numbers and not a recollection");
+  expect(prompt).toContain("the budgets you are setting for it");
+  // Field 2: the sign is something the record can settle, not a retelling.
+  expect(prompt).toContain("the observable sign that the expectation did not hold");
+  expect(prompt).toContain("seen in the record rather than in anyone's retelling");
+  // Field 3: the stop condition, tied to that sign.
+  expect(prompt).toContain("the stop condition — what you do when that sign appears");
+  // It is a dispatching obligation: it sits after the sizing paragraph and
+  // before the issue-claiming one.
+  const sizing = prompt.indexOf("budget the implementation needed.");
+  const expectation = prompt.indexOf("Name the expectation before you dispatch it.");
+  const claiming = prompt.indexOf("**Claim an issue before you work it");
+  expect(sizing).toBeGreaterThan(-1);
+  expect(expectation).toBeGreaterThan(sizing);
+  expect(claiming).toBeGreaterThan(expectation);
+});
+
+test("the skills obligation is pinned to the run's record, not to a promise", () => {
+  // "Mandatory" in the catalogue header did not fire either (same evidence),
+  // so the obligation needs a sign the run itself carries: one tool_activity
+  // record in the run's recorded tool activity carries the skill id each load
+  // targeted (src/observability/tool-activity.ts), and that record is what
+  // evals/scorers/skill-trigger.ts scores -- "not from the model's answer".
+  // Pin the phrases that make absence visible; a pin of bare willingness would
+  // test the promise, not the record.
+  const prompt = flat(resolvePrompt("orchestrator"));
+  // For a dispatch, the matching catalogue id is named...
+  expect(prompt).toContain("name the catalogue id whose description matches the work by place");
+  // ...and the record, not the orchestrator's word, carries the verdict.
+  expect(prompt).toContain("the run's record must show that id among its loads");
+  expect(prompt).toContain("the run's recorded tool activity");
+  // The sign is the absence itself, while the work matches the description.
+  expect(prompt).toContain(
+    "absent from the run's record while the work is of the kind its description names",
+  );
+  // A failed check stops the dispatch rather than passing it.
+  expect(prompt).toContain("hand the method in the brief for a delegate or re-dispatch");
+  expect(prompt).toContain("rather than treating the dispatch as compliant");
+});

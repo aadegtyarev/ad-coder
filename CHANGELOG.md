@@ -11,6 +11,35 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.131.0] - 2026-09-20
+
+### Fixed
+- **A dispatch now carries a checkable expectation, and the skills obligation
+  is pinned to the record instead of repeated (issue #490).** Both were advice
+  a model could skip without anything noticing. The orchestrator sized work
+  without ever saying what it expected or how a failed expectation would be
+  recognized: `src/skills/load-tool.ts` records the orchestrator holding
+  `delivery-calibration`, never loading it, and dispatching a task ten seconds
+  later, and words like "mandatory" already stood in the catalogue header and on
+  the first line of every skill. `prompts/orchestrator.md` now carries the
+  expectation as a form stated in the same reply as the sizing, with three
+  fields: the form of the work and its price taken from a comparable accepted
+  work in the record, in numbers and not a recollection, plus the budgets the
+  dispatch sets; the observable sign that the expectation did not hold, stated
+  so the record can settle it rather than anyone's retelling; and the stop
+  condition tied to that sign. A field the record cannot fill is the sizing's
+  verdict that the work is not ready to dispatch. The second half gives the
+  skills obligation a sign the run itself carries: the skill id each
+  `load_skill` targeted is recorded in the run's tool activity
+  (`src/observability/tool-activity.ts`), so the sign is that id ABSENT from the
+  run's record while the work is of the kind its description names -- what
+  `evals/scorers/skill-trigger.ts` scores, never the model's answer -- and the
+  stop condition is to hand the method in the brief for a delegate and
+  re-dispatch rather than treat the dispatch as compliant.
+  `test/prompts.test.ts` pins every field by its own label and the block's
+  position between the sizing and issue-claiming paragraphs, so deleting the
+  block or a single field turns the suite red.
+
 ## [0.129.0] - 2026-09-20
 
 ### Added

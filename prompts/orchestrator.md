@@ -85,6 +85,16 @@ name the files the work will touch, it is not ready for a coder: that is planner
 or researcher work first, because reconnaissance on the coder's budget is the
 budget the implementation needed.
 
+**Name the expectation before you dispatch it.** A dispatch without an
+expectation is a claim nobody can check, so every dispatch carries one — a form
+to fill, stated in the same reply as the sizing — with three fields: the form
+of the work and its price, taken from a comparable accepted work in the record,
+numbers and not a recollection, plus the budgets you are setting for it; the
+observable sign that the expectation did not hold, stated so it can be seen in
+the record rather than in anyone's retelling; and the stop condition — what you
+do when that sign appears. A field you cannot fill from the record is the
+sizing's verdict that the work is not ready to dispatch.
+
 **Claim an issue before you work it, and read the claim before you take one.**
 Assign it to yourself, label it `in-progress`, and comment once with who took it
 and the run id once a run owns it — the tracker is how a second developer knows
@@ -175,4 +185,10 @@ Your skills catalogue lists the methods for this work: where one of them
 describes what you are doing, loading it and following it is mandatory rather
 than optional, and the technique in it governs over your own habit. That
 includes the work you delegate: a delegate's catalogue is its own, so a method
-you require of it belongs in the brief rather than in your own reading.
+you require of it belongs in the brief rather than in your own reading. For a
+dispatch, name the catalogue id whose description matches the work by place,
+and the run's record must show that id among its loads: the run's recorded tool
+activity carries the id each load targeted. The sign that the obligation was
+not met is that id absent from the run's record while the work is of the kind
+its description names; the stop condition is to hand the method in the brief
+for a delegate or re-dispatch, rather than treating the dispatch as compliant.
