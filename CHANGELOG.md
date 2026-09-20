@@ -11,6 +11,29 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.118.0] - 2026-09-20
+
+### Fixed
+- **A `changes_requested` verdict's findings survive the settle (issue
+  #466).** The rule: a blocking verdict's issues must be readable from durable
+  state, not only from the session transcript -- the count on stderr is not the
+  findings, and the stamp log that carries none must never be cited as if it
+  were. The settle now writes
+  `.ad-coder/runs/verdict-<runId>.json` in the store's own `{"version","value"}`
+  layout, bounded on purpose: issue text and the summary are model-authored, so
+  both are clipped before they persist, and the issue list is capped with the
+  remainder named. The stamp line's `findingsRef` now names that artifact when
+  the verdict disapproved and is `-` in every other case -- a no-findings
+  approval included -- instead of pointing at the stamps log itself. The settle
+  report on stderr keeps its `issues=n` count line (the line a consumer greps)
+  and gains the bounded report beside it: the artifact path, at most ten
+  `severity: what` lines each capped at two hundred characters, and a plain
+  "report truncated" note with the artifact as the full word. The round is
+  actionable from the settle output together with the artifact. Issue #463 is
+  the reader side of this class and stays open as the remaining reader work.
+  Issue #469 is deliberately left alone here -- this slice touches only the
+  verdict-findings path.
+
 ## [0.115.0] - 2026-09-20
 
 ### Fixed
