@@ -73,13 +73,20 @@ Rules for operator authority in ad-coder. A violation is always blocking.
   the machine at one file and five changed lines (2026-09-19 above), so the bound
   is measured rather than argued -- then one `run_role` for a single bounded job,
   taken at the orchestrator's own discretion with no stages and no plan document,
-  then the pipeline. The pipeline is earned by the SEQUENCE -- stages that must
-  run in an order, a review that must write a stamp, gates that must pass before
-  a merge -- never by the work being real and never by its size alone. Where the
-  ask does not fit the orchestrator's hands, the answer is that sentence plus the
-  two options (one role now, or the pipeline if the sequencing is what is being
-  bought), offered to the operator rather than a silent escalation to the
-  heaviest machinery available. Measured 2026-09-20: the operator asked the
+  then the pipeline. The rungs are ordered by PRICE, not by what they excuse: a
+  delegation carries no review -- a review run as a bare `run_role` is advisory
+  and writes no stamp (docs/contracts/quality.md, 2026-09-19) -- so a mutating
+  one-role change still owes its gates and a standalone `ad-coder role reviewer`
+  round over the branch worktree, which is what the pipeline's review stage
+  sells. That is the reason to offer the pipeline when a stamp is owed rather
+  than to discover it after the code is written. The pipeline is earned by the
+  SEQUENCE -- stages that must run in an order, a review that must write a stamp,
+  gates that must pass before a merge -- never by the work being real and never
+  by its size alone. Where the ask does not fit the orchestrator's hands, the
+  answer is that sentence plus the two options (one role now, or the pipeline if
+  the sequencing is what is being bought), offered to the operator rather than a
+  silent escalation to the heaviest machinery available. Measured 2026-09-20:
+  the operator asked the
   orchestrator to fix a small bug himself and the reply was a pipeline run --
   slower and dearer than the path he asked for, and the choice reached him as a
   bill rather than as a sentence. Narration is part of the rule, not politeness:

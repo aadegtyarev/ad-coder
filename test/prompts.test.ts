@@ -210,9 +210,13 @@ test("the orchestrator prompt makes classification a step before mutation (issue
   // the classification step, so the permissive branch cannot match first.
   const prohibition = prompt.indexOf("Editing files is a delegate's work");
   const exception = prompt.indexOf("Direct editing is the classified exception");
-  const pipeline = prompt.indexOf("goes through the pipeline");
+  // The permissive branch, re-anchored for #527: the routing bullet that used to
+  // sit here ("... goes through the pipeline") is gone with the route table it
+  // restated, and the operator-ask paragraph is what now speaks about which path
+  // a mutation takes.
+  const route = prompt.indexOf("An operator's direct ask takes the cheapest path");
   expect(prohibition).toBeGreaterThan(classify);
-  expect(pipeline).toBeGreaterThan(classify);
+  expect(route).toBeGreaterThan(classify);
   // The permission is stated only inside the prohibition that bounds it, never
   // before it.
   expect(exception).toBeGreaterThan(prohibition);
@@ -271,26 +275,35 @@ test("the skills obligation is pinned to the run's record, not to a promise", ()
   expect(prompt).toContain("rather than treating the dispatch as compliant");
 });
 
-test("the orchestrator prompt routes an operator's own ask to the cheapest path and says it out loud", () => {
+test("the orchestrator prompt carries the operator-ask obligation and not the route table", () => {
   // Measured 2026-09-20: the operator asked the orchestrator to fix a small bug
-  // himself and the answer was a pipeline run. The prompt's routing bullets name
+  // himself and the answer was a pipeline run. The prompt's routing bullets named
   // the pipeline for "a feature, refactor, multi-file fix" and said nothing
   // about an ask the operator bounded himself, so the heaviest path matched
-  // first. Pin the rule, the bound that makes it honest, and the sentence the
-  // operator is owed when the ask does not fit -- a rule that cannot say "I
-  // cannot do this by hand" is a rule that escalates in silence.
+  // first. The obligation belongs here -- a rule only a skippable skill carries
+  // is advice -- and the ROUTE TABLE does not: which path is which is the skill's
+  // (docs/contracts/operation-modes.md, 2026-09-17; docs/contracts/skills.md,
+  // 2026-09-18), and a prompt that restates it can contradict it (review of
+  // #527: the paragraph routed a two-file change to one role while the bullet
+  // below sent a multi-file fix to the pipeline).
   const prompt = flat(resolvePrompt("orchestrator"));
   expect(prompt).toContain("An operator's direct ask takes the cheapest path");
   expect(prompt).toContain("is not an invitation to the pipeline");
-  // The bound is the machine's, so the refusal is a fact rather than a mood.
-  expect(prompt).toContain("one file, five changed lines");
-  expect(prompt).toContain("past the bound the write is REFUSED");
-  expect(prompt).toContain("issue #388");
-  // One role, at the orchestrator's discretion, is the middle rung.
-  expect(prompt).toContain("one `run_role` for the one bounded job, at your own discretion");
-  // The pipeline is earned by the sequence, not by size or realness.
-  expect(prompt).toContain("The pipeline is for work whose hard part is its SEQUENCE");
-  expect(prompt).toContain("never for work that is merely real");
+  // Cheap is measured against what the change owes, so a path that drops the
+  // review is not the cheap one. This is the obligation; the skill prices it.
+  expect(prompt).toContain("cheap is measured among the paths");
+  expect(prompt).toContain("a route that leaves either behind is unfinished rather than");
+  // The route table itself lives in the skill, and the prompt says so -- in
+  // general words, because a backticked skill name in a prompt is what the test
+  // below forbids (the catalogue is composition-aware, a prompt is not).
+  expect(prompt).toContain("is routing knowledge, and the skill whose description");
+  expect(prompt).toContain("load that one before you answer a routing question");
+  // The table is GONE from the prompt: no rung list, no bound number, no
+  // per-type route. Restating any of it is the duplication the contract names.
+  expect(prompt).not.toContain("one file, five changed lines");
+  expect(prompt).not.toContain("The pipeline is for work whose hard part is its SEQUENCE");
+  expect(prompt).not.toContain("one `run_role` for the one bounded job");
+  expect(prompt).not.toContain("A feature, refactor, multi-file fix");
   // And the escalation is spoken: the choice, or the reason it is not the
   // orchestrator's to make.
   expect(prompt).toContain("Say the path and the reason in a sentence or two before you take it");
@@ -336,12 +349,24 @@ test("the semi-automatic answer ships in the skill the prompt points at, with it
   );
   expect(text).toContain("Past the bound the write is REFUSED");
   expect(text).toContain("This is the semi-automatic path");
-  expect(text).toContain("no stages, no gates you did not ask for, no plan document");
-  // The pipeline is bought for the sequence.
+  expect(text).toContain("no stages, no plan document");
+  // The middle rung is PRICED, not sold as free (review of #527): a delegated
+  // reviewer is advisory and writes no stamp (docs/contracts/quality.md,
+  // 2026-09-19), so a mutating one-role change still owes the gates and a
+  // standalone round. A rung that dropped them silently would be a change
+  // nobody reviewed, reported as done.
+  expect(text).toContain("What it does NOT carry is the review");
+  expect(text).toContain("a delegated reviewer is advisory and writes no stamp");
+  expect(text).toContain("the standalone `ad-coder role reviewer` run against the branch worktree");
+  expect(text).toContain("offer the pipeline rather than discovering it after the code");
+  // The pipeline is bought for the sequence, in the route table AND in the
+  // marker line above it -- "multi-file" is not a reason.
   expect(text).toContain("earns its cost when the hard part is the SEQUENCE");
   expect(text).toContain(
     '"It is more than five lines" is not that reason, and neither is "it is a bug"',
   );
+  expect(text).toContain("Prefer it when the work needs an ordered sequence, or a review");
+  expect(text).not.toContain("Prefer it for a feature, refactor, multi-file fix");
   // The sentence the operator is owed, and the counter-rule under "when
   // delegation is the wrong call": an ask the operator scoped is not a dispatch.
   expect(text).toContain("and let the operator choose");

@@ -27,9 +27,9 @@ routing uses your assessment rather than the configured default.
   and keep its returned text as your evidence.
 - **Roles plus pipeline** -- `run_pipeline`, `start_pipeline`, `decompose_task`
   are present. A multi-stage run (plan, optional security, code, review, gates)
-  executes autonomously and returns a verdict with named checks. Prefer it for a
-  feature, refactor, multi-file fix, or contract change; reading its verdict
-  beats hand-choreographing its stages.
+  executes autonomously and returns a verdict with named checks. Prefer it when
+  the work needs an ordered sequence, or a review that writes a stamp; reading
+  its verdict beats hand-choreographing its stages.
 
 Which path applies to this session is in the `run_role` tool's own description,
 which also names the reachable roles and their models for this session.
@@ -49,10 +49,19 @@ the work actually live".
   the operator rather than as a change. Size the edit before you promise it.
 - **One role** (`run_role`) carries a single bounded job -- one file, one
   function, one verdict -- with its own acceptance criteria and stop condition.
-  This is the semi-automatic path: no stages, no gates you did not ask for, no
-  plan document, and the conversation stays yours. Take it at your own
-  discretion when the ask is real work but not a sequence, and pass your tier as
-  `complexity`.
+  This is the semi-automatic path: no stages, no plan document, and the
+  conversation stays yours. Take it at your own discretion and pass your tier as
+  `complexity`. What it does NOT carry is the review: a delegated reviewer is
+  advisory and writes no stamp (docs/contracts/quality.md, 2026-09-19), so a
+  delegation that MUTATES the tree leaves the change owing its declared gates
+  and an independent review round that writes one. Outside a pipeline that round
+  is the standalone `ad-coder role reviewer` run against the branch worktree
+  (docs/contracts/product-change.md, 2026-09-18) -- the same thing the pipeline's
+  review stage buys, assembled by hand. One role is therefore the cheap rung for
+  work that mutates nothing (a verdict, evidence, a bounded analysis), or when
+  that round is being arranged anyway; when the review and the gates are what the
+  ask needs, say so and offer the pipeline rather than discovering it after the
+  code is written.
 - **The pipeline** earns its cost when the hard part is the SEQUENCE: stages that
   must run in an order, a review that must write a stamp, gates that must pass
   before a merge. "It is more than five lines" is not that reason, and neither is
@@ -60,10 +69,11 @@ the work actually live".
 
 Whichever you take, say which and why in one or two sentences in the
 conversation before you take it. When the ask does not fit your hands, say that
-plainly and name what does fit -- a coder role now, or the pipeline if the
-sequencing is what you are buying -- and let the operator choose. "I cannot do
-this by hand; here is what I can do" costs one sentence, and a run the operator
-did not expect costs the run.
+plainly and name what does fit -- one role now for a job that mutates nothing or
+whose review you are arranging, or the pipeline when the review and the gates
+are what you are buying -- and let the operator choose. "I cannot do this by
+hand; here is what I can do" costs one sentence, and a run the operator did not
+expect costs the run.
 
 ## What each role is, and when to call it
 

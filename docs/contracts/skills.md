@@ -223,4 +223,19 @@ unbounded prompt directory.
   the defect this entry closes. The DESCRIPTION carries the trigger ("including
   an operator ask"), because the description
   is the only always-read surface a skill has (2026-09-18) and a situation absent
-  from it is a skill a model never loads.
+  from it is a skill a model never loads. The ROUTE TABLE stays here and is not
+  restated in the role prompt: the prompt carries the obligation (take the
+  cheapest path that can carry what the change owes, and say it out loud), the
+  skill carries which path is which and what it costs (review of #527, against
+  the 2026-09-17 operation-modes rule and the 2026-09-18 prompt/skill split). The
+  prompt's own per-type routing bullet -- "a feature, refactor, multi-file fix
+  ... goes through the pipeline" -- was removed with it: it named the pipeline
+  for work by its size, which is the one thing this skill's decision rule says
+  cannot decide. And the middle rung is priced honestly: a delegation carries no
+  review, because a review run as a bare `run_role` is advisory and writes no
+  stamp (docs/contracts/quality.md, 2026-09-19), so a MUTATING one-role change
+  still owes its gates and a standalone `ad-coder role reviewer` round -- which
+  is what the pipeline's review stage sells, and the reason the skill says to
+  offer the pipeline when a stamp is owed rather than after the code is written.
+  A "cheaper" rung that silently drops the review is not cheaper; it is a
+  change nobody reviewed, reported as done.
