@@ -8,6 +8,7 @@ import { loadModelsConfigSeam, loadSettingsConfigSeam } from "../src/config/seam
 import { toRegistryAndProfile } from "../src/config/to-registry";
 import type { SettingsConfig } from "../src/config/types";
 import { parseModelsConfig } from "../src/config/validate";
+import { resolveProfile } from "../src/profiles/resolve";
 import { RegistryError } from "../src/registry/errors";
 import type { RegistryConfig } from "../src/registry/types";
 import { DEFAULT_CONTEXT_WINDOW, parseRegistryConfig } from "../src/registry/validate";
@@ -1077,6 +1078,102 @@ test("(#453) requireResolvableRoute: an env-preset provider key still resolves",
       requireResolvableRoute: true,
     });
     expect(config.delegatedRoute?.source).toBe('provider "openrouter"');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// (#477 step 2) a rung MAY declare a thinking level: the mapping form carries
+// it through the seam onto the live role; the level-less rung is unchanged.
+
+/** The fixture with the coder row replaced by `replacement` (indented 4). */
+function modelsYamlWithCoder(replacement: string): string {
+  return modelsYaml().replace("    coder: opencode-go:glm-5.3-flash\n", replacement);
+}
+
+test("(#477) a mapping rung's thinkingLevel reaches the resolved role through the seam", () => {
+  const dir = scratch();
+  try {
+    const modelsPath = writeModels(
+      dir,
+      modelsYamlWithCoder(
+        "    coder:\n      - model: opencode-go:glm-5.3-flash\n        thinkingLevel: low\n",
+      ),
+    );
+    const config = resolvePipelineConfig({
+      task: "x",
+      targetDir: dir,
+      modelsConfigPath: modelsPath,
+      settingsConfigPath: path.join(dir, "settings.yaml"),
+      env: fakeEnv({ OPENCODE_API_KEY: "k" }),
+      warn: silent,
+    });
+    // YAML -> parse -> projection -> registry resolution -> the live role, all
+    // local (the credential is a name and no request is made).
+    expect(config.roles.coder?.model.name).toBe("glm-5.3-flash");
+    // The ticket's acceptance is on the RESOLVED SELECTION, not on a `RoleSpec`
+    // (a `RoleSpec` carries no `thinkingLevel`). `config.routing` is the
+    // profile/registry pair the runner hands to `resolveProfile`.
+    const routing = config.routing;
+    if (routing === undefined) throw new Error("expected the seam to resolve routing");
+    const coder = resolveProfile(routing.profile, routing.registry, "coder", "trivial");
+    expect(coder.thinkingLevel).toBe("low");
+    expect(coder.model.name).toBe("glm-5.3-flash");
+    // A rung that declares no level stays ABSENT, never defaulted.
+    const planner = resolveProfile(routing.profile, routing.registry, "planner", "trivial");
+    expect(planner.thinkingLevel).toBeUndefined();
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("(#477) a level-less list rung parses and projects exactly as before", () => {
+  const dir = scratch();
+  try {
+    const listFile = writeModels(
+      dir,
+      modelsYamlWithCoder("    coder:\n      - opencode-go:glm-5.3-flash\n"),
+    );
+    const list = loadModelsConfigSeam(listFile);
+    const bare = loadModelsConfigSeam(writeModels(dir, modelsYaml()));
+    if (list === undefined || bare === undefined) {
+      throw new Error("expected the seam to load both rung fixtures");
+    }
+    // The one-rung list is byte-identical to the bare string form.
+    expect(list).toEqual(bare);
+    const entries = toRegistryAndProfile(list, "daily").profile.entries;
+    const coder = entries.find((e) => e.role === "coder" && e.complexity === "trivial");
+    expect(coder?.model).toBe("glm-5.3-flash");
+    // No key materialised: the entry is still exactly {role, complexity, model}.
+    expect(Object.keys(coder ?? {})).toEqual(["role", "complexity", "model"]);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("(#477) an off-vocabulary rung thinkingLevel is refused, naming the allowed values", () => {
+  const dir = scratch();
+  try {
+    const modelsPath = writeModels(
+      dir,
+      modelsYamlWithCoder(
+        "    coder:\n      - model: opencode-go:glm-5.3-flash\n        thinkingLevel: deep\n",
+      ),
+    );
+    try {
+      loadModelsConfigSeam(modelsPath);
+      expect.unreachable();
+    } catch (error) {
+      expect(error).toBeInstanceOf(ConfigError);
+      const ce = error as ConfigError;
+      expect(ce.code).toBe("invalid_config");
+      // Named by field path, and the message names the whole allow-list.
+      expect(ce.detail).toBe("profiles.daily.coder.thinkingLevel");
+      expect(ce.message).toContain("rung thinkingLevel must be one of");
+      expect(ce.message).toContain("low");
+      expect(ce.message).toContain("xhigh");
+    }
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

@@ -11,6 +11,7 @@ import { ConfigError } from "./errors";
 import type {
   ModelConfig as ConfigModelConfig,
   ProviderConfig as ConfigProviderConfig,
+  ModelRung,
   ModelsConfig,
 } from "./types";
 
@@ -25,6 +26,26 @@ const COMPLEXITIES: readonly Complexity[] = ["trivial", "medium", "complex"];
 function modelPart(rung: string): string {
   const colon = rung.indexOf(":");
   return colon === -1 ? rung : rung.slice(colon + 1);
+}
+
+/**
+ * The `provider:model` reference of a rung, for BOTH accepted rung forms (#477):
+ * a bare string rung is the reference itself, a mapping rung carries it under
+ * `model`. Every consumer that wants the model part must go through this, so a
+ * ladder rung never has to be pattern-matched twice (or forgotten once).
+ */
+function refOf(rung: ModelRung): string {
+  return typeof rung === "string" ? rung : rung.model;
+}
+
+/**
+ * The declared thinking level of a rung, or undefined when it declares none.
+ * The bare-string form declares none by construction; only the mapping form can
+ * carry one, and this layer carries it verbatim -- the allow-list was already
+ * enforced at the parsing boundary (`params/config` validate).
+ */
+function levelOf(rung: ModelRung): string | undefined {
+  return typeof rung === "string" ? undefined : rung.thinkingLevel;
 }
 
 /**
@@ -161,8 +182,8 @@ export function toRegistryAndProfile(
   // Ladder failover is not implemented yet: only a row's FIRST rung (index 0)
   // reaches an entry; the remaining rungs of a list-valued row are ignored
   // until the resolver can walk a ladder.
-  const bare = new Map<ProfileRole, string[]>();
-  const overrides = new Map<ProfileRole, Partial<Record<Complexity, string[]>>>();
+  const bare = new Map<ProfileRole, ModelRung[]>();
+  const overrides = new Map<ProfileRole, Partial<Record<Complexity, ModelRung[]>>>();
   for (const [key, ladder] of Object.entries(declared.routes)) {
     const at = key.indexOf("@");
     if (at === -1) {
@@ -195,7 +216,7 @@ export function toRegistryAndProfile(
   const reached = new Set<string>();
   for (const ladder of Object.values(declared.routes)) {
     for (const rung of ladder) {
-      const owner = ownerOf.get(modelPart(rung));
+      const owner = ownerOf.get(modelPart(refOf(rung)));
       if (owner !== undefined && !reached.has(owner)) {
         reached.add(owner);
         reachableProviders.push(owner);
@@ -215,7 +236,15 @@ export function toRegistryAndProfile(
       if (rung === undefined) {
         continue;
       }
-      entries.push({ role, complexity, model: modelPart(rung) });
+      const level = levelOf(rung);
+      entries.push({
+        role,
+        complexity,
+        model: modelPart(refOf(rung)),
+        ...(level !== undefined
+          ? { thinkingLevel: level as NonNullable<ProfileEntry["thinkingLevel"]> }
+          : {}),
+      });
     }
   }
 

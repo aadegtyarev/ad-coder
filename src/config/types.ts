@@ -98,7 +98,7 @@ export type ModelRef = string;
  * single string in the file becomes a one-rung ladder, so a consumer never
  * branches on "string or list" -- that ambiguity is resolved once, here.
  */
-export type ModelLadder = readonly ModelRef[];
+export type ModelLadder = readonly ModelRung[];
 
 /**
  * A rung that MAY carry a thinking level (#477). The accepted YAML forms are a
