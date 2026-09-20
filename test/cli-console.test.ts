@@ -1306,6 +1306,58 @@ test("the busy line names what the turn is doing and never stacks a line per hea
   expect(redraw.text()).toContain("\r");
 });
 
+test("the busy line names a KNOWN zero spend and stays silent about an unknown one", () => {
+  // The busy heartbeat names the spend, and a KNOWN zero is a known spend
+  // (issue #501): it renders `$0.000` instead of dropping the field -- a
+  // dropped field would silently lie by omission. A spend the renderer never
+  // learned stays absent: there, silence means unknown, and any number would
+  // be invented.
+  const zero = new Capture();
+  const zeroRenderer = new ToolActivityRenderer(zero, "human", { groupingRefreshMs: 0 });
+  zeroRenderer.consume({
+    schemaVersion: 1,
+    type: "tool_activity",
+    sequence: 1,
+    timestamp: "2026-01-01T00:00:00.000Z",
+    lifecycle: "started",
+    activity: "Read",
+    role: "coder",
+    runId: "run",
+    operationId: "op",
+    turnId: "turn",
+    toolCallId: "call-1",
+    parentOperation: "step",
+    toolName: "read",
+    droppedCount: 0,
+    budget: { usedCostUsd: 0 },
+  });
+  zeroRenderer.renderBusyLine("ad-coder: console turn still running (1s)");
+  zeroRenderer.close();
+  expect(zero.text()).toContain("$0.000");
+
+  const unknown = new Capture();
+  const unknownRenderer = new ToolActivityRenderer(unknown, "human", { groupingRefreshMs: 0 });
+  unknownRenderer.consume({
+    schemaVersion: 1,
+    type: "tool_activity",
+    sequence: 1,
+    timestamp: "2026-01-01T00:00:00.000Z",
+    lifecycle: "started",
+    activity: "Read",
+    role: "coder",
+    runId: "run",
+    operationId: "op",
+    turnId: "turn",
+    toolCallId: "call-1",
+    parentOperation: "step",
+    toolName: "read",
+    droppedCount: 0,
+  });
+  unknownRenderer.renderBusyLine("ad-coder: console turn still running (1s)");
+  unknownRenderer.close();
+  expect(unknown.text()).not.toMatch(/\$\d/);
+});
+
 test("the human busy heartbeat carries the activity subject instead of stacked lines", async () => {
   const session = fakeSession();
   let consumer:

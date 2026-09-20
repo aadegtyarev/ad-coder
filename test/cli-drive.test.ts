@@ -11,6 +11,7 @@ import {
   fauxToolCall,
 } from "@earendil-works/pi-ai";
 import type { FauxProviderHandle, FauxResponseStep } from "@earendil-works/pi-ai/providers/faux";
+import { renderCliError, renderCliFailureLine } from "../src/cli";
 import {
   assertTransitionOffered,
   DriveError,
@@ -26,6 +27,7 @@ import { createWorkflowSession } from "../src/orchestration/session";
 import type {
   AvailableTransition,
   PipelineConfig,
+  PipelinePause,
   RoleSpec,
   Verdict,
 } from "../src/orchestration/types";
@@ -216,6 +218,86 @@ test("a stage-limit pause is reported as recovery guidance, not a pending decisi
   );
   expect(errorCapture.text()).toContain("the run is resumable, not failed");
   expect(errorCapture.text()).toContain("resume: ad-coder drive");
+  // Exactly ONE pause announcement reaches stderr for a drive invocation that
+  // pauses (review round 3, issue #501), and it is the pause line -- never the
+  // thrown error's bare `code: action` message.
+  expect(errorCapture.text().split("pipeline paused")).toHaveLength(2);
+  expect(errorCapture.text()).not.toContain("stage_limit: increase or disable");
+  // The entry-point catch shares the keyed memo, so the projection of the SAME
+  // caught occurrence writes NOTHING: the drive result path already announced
+  // it, and the generic `code: action` line must not follow it. This is the
+  // strongest form the harness allows: the entry-point catch itself cannot be
+  // driven end-to-end with the faux provider, because a spawned `bun run
+  // src/cli.ts` resolves its models from the operator profile (real
+  // providers, real credentials), no seam injects the in-process faux
+  // provider across that boundary, and `main` sits behind the
+  // `import.meta.main` guard so no in-process call reaches the catch.
+  expect(renderCliFailureLine(caught)).toBeUndefined();
+});
+
+test("the entry-point pause projection announces one occurrence exactly once", () => {
+  // The reviewer's strongest available assertion (see the stage-limit pause
+  // test above for why the entry-point catch cannot be driven end-to-end):
+  // the projection asked twice for ONE occurrence yields ONE line.
+  resetPauseAnnouncements();
+  const error = new PipelinePauseError(
+    "entry-once",
+    {
+      phase: "code",
+      code: "stage_limit",
+      action: "increase or disable the model_turns stage limit, then resume explicitly",
+      limitReason: "model_turns",
+      limit: 2,
+    },
+    { steps: 1, totalCost: 0.01 },
+  );
+  // The winning ask renders the full pause line -- the drive result path's
+  // shape, plus the runId the error carries (it carries neither a checkpoint
+  // path nor a resume command, so the line stops at the runId).
+  expect(renderCliFailureLine(error)).toBe(
+    "ad-coder: pipeline paused (code): stage_limit, limit model_turns (2) -- " +
+      "increase or disable the model_turns stage limit, then resume explicitly -- " +
+      "the run is resumable, not failed; runId=entry-once\n",
+  );
+  // The same occurrence asked again: pure silence -- never the bare
+  // `code: action` message the generic error renderer would print.
+  expect(renderCliFailureLine(error)).toBeUndefined();
+  expect(renderCliError(error)).toBe(
+    "ad-coder: stage_limit: increase or disable the model_turns stage limit, then resume explicitly\n",
+  );
+  // A NEW occurrence (a different run) still announces: the memo is per
+  // occurrence, not a global mute.
+  expect(
+    renderCliFailureLine(
+      new PipelinePauseError(
+        "entry-again",
+        { phase: "code", code: "stage_limit", action: "resume explicitly" },
+        { steps: 0, totalCost: 0 },
+      ),
+    ),
+  ).toContain("pipeline paused (");
+});
+
+test("the entry-point pause projection builds every limit-clause variant", () => {
+  resetPauseAnnouncements();
+  const variant = (runId: string, limit: Pick<PipelinePause, "limitReason" | "limit">): string =>
+    renderCliFailureLine(
+      new PipelinePauseError(
+        runId,
+        { phase: "code", code: "stage_limit", action: "resume explicitly", ...limit },
+        { steps: 0, totalCost: 0 },
+      ),
+    ) ?? "";
+  // Each variant on its own occurrence (every ask consumes the memo): the
+  // clause is byte-for-byte the drive result path's.
+  const reasonLimit = variant("entry-reason-limit", { limitReason: "model_turns", limit: 2 });
+  expect(reasonLimit).toContain("): stage_limit, limit model_turns (2) --");
+  expect(reasonLimit).not.toContain("stage_limit: resume explicitly");
+  expect(variant("entry-reason", { limitReason: "model_turns" })).toContain(
+    "): stage_limit, limit model_turns --",
+  );
+  expect(variant("entry-limit", { limit: 3 })).toContain("): stage_limit, limit (3) --");
+  expect(variant("entry-plain", {})).toContain("): stage_limit --");
 });
 
 test("a paused drive resumes its incomplete stage from the coordinator checkpoint", async () => {

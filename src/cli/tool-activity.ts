@@ -87,8 +87,10 @@ function durationOf(durationMs: number | undefined): string {
  * column never silently lies by omission, but unknown stays blank.
  */
 function costOf(costUsd: number | undefined): string {
-  if (costUsd === undefined || !Number.isFinite(costUsd) || costUsd <= 0) return "";
-  return costUsd < 0.001 ? "<$0.001" : `$${costUsd.toFixed(3)}`;
+  if (costUsd === undefined || !Number.isFinite(costUsd) || costUsd < 0) return "";
+  // A KNOWN zero names itself (`$0.000`, issue #501): the field's silence is
+  // reserved for an UNKNOWN spend, where any number would be invented.
+  return costUsd === 0 ? "$0.000" : costUsd < 0.001 ? "<$0.001" : `$${costUsd.toFixed(3)}`;
 }
 
 /** Tokens at a glance: `850 tok`, `12.3k tok`. Zero or unknown prints nothing. */
@@ -302,7 +304,10 @@ export class ToolActivityRenderer {
       if (actor !== "") parts.push(actor);
     }
     const spend = this.lastSpend?.usedCostUsd;
-    if (spend !== undefined && Number.isFinite(spend) && spend > 0) parts.push(costOf(spend));
+    // A KNOWN zero is still a known spend (issue #501): `>= 0` keeps `$0.000`
+    // on the line; an unknown spend renders no field at all. For a known,
+    // finite spend `costOf` above never returns empty, so no blank part joins.
+    if (spend !== undefined && Number.isFinite(spend) && spend >= 0) parts.push(costOf(spend));
     const text = `${parts.join("  ")} …`;
     // Identical consecutive progress lines are never repeated: the line on
     // screen is already exactly this text, so neither erase nor rewrite fires.
