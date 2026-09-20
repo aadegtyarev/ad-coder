@@ -1,8 +1,9 @@
 // Issue #365 layer 2: the headless SessionManager suite. Covers the socket
 // trust boundary (peer-uid accept/refuse, 0600/0700 verification, no
 // stale-socket reclaim), the project-key adversarial table, fail-closed
-// poisoned bindings, the lease state machine, safe project creation, and the
-// bounded untrusted title path.
+// poisoned bindings, the lease state machine, safe project creation, the
+// bounded untrusted title path, and segment-aware containment (a sibling that
+// merely SHARES a root's prefix is outside it).
 
 import { expect, test } from "bun:test";
 import * as fs from "node:fs";
@@ -28,6 +29,8 @@ import {
 } from "../src/session-manager/manager";
 import {
   AllowedRoots,
+  assertRealPathInsideRoot,
+  isInsideRoot,
   PROJECT_KEY_PATTERN,
   resolveProjectDir,
   validateProjectKey,
@@ -144,6 +147,30 @@ test("a symlink planted at root/<key> is refused, never followed", () => {
   expect(error?.message).not.toContain("/etc");
 });
 
+test("containment is segment-aware: a sibling sharing the root's prefix is outside (#365)", () => {
+  // docs/contracts/session-manager.md names this counter-example by hand:
+  // `root=/home/u/proj` must not admit `/home/u/proj-x`. Measured before this
+  // test existed: replacing `isInsideRoot`'s `path.relative` body with
+  // `candidate.startsWith(root)` left this whole file green (41 pass / 0
+  // fail) -- and `assertRealPathInsideRoot` is that same predicate, gating
+  // every adoption and every creation.
+  const parent = fs.realpathSync.native(scratch());
+  const root = path.join(parent, "proj");
+  const sibling = path.join(parent, "proj-x");
+  fs.mkdirSync(root);
+  fs.mkdirSync(sibling);
+  const roots = new AllowedRoots([root]);
+  expect(isInsideRoot(root, sibling)).toBe(false);
+  expect(isInsideRoot(root, root)).toBe(true);
+  expect(isInsideRoot(root, path.join(root, "child"))).toBe(true);
+  expect(isInsideRoot(root, parent)).toBe(false);
+  // The gate must refuse the sibling AND admit the immediate child: a
+  // predicate that simply threw would satisfy the refusal on its own.
+  expect(() => assertRealPathInsideRoot(sibling, roots)).toThrow(SessionManagerError);
+  expect(() => assertRealPathInsideRoot(sibling, roots)).toThrow(/outside every allowed root/);
+  expect(() => assertRealPathInsideRoot(path.join(root, "child"), roots)).not.toThrow();
+});
+
 // -- bindings: fail-closed poisoned records -----------------------------------
 
 test("a poisoned targetDir record fails closed at load and binds nothing", () => {
@@ -177,6 +204,44 @@ test("a poisoned targetDir record fails closed at load and binds nothing", () =>
   expect(list.includes("poison")).toBe(false);
   const reloaded = JSON.parse(list) as { projects: Record<string, unknown> };
   expect(Object.keys(reloaded.projects)).toEqual([]);
+});
+
+test("a binding whose targetDir is a sibling sharing the root's prefix fails closed (#365)", () => {
+  // The same counter-example as the containment test above, on the durable
+  // record path. Measured before this test existed: weakening the check to
+  // `real.startsWith(root)` adopted this record -- 41 pass / 0 fail, the
+  // poisoned sibling bound as a project.
+  const parent = fs.realpathSync.native(scratch());
+  const rootDir = path.join(parent, "proj");
+  const sibling = path.join(parent, "proj-x");
+  fs.mkdirSync(rootDir);
+  fs.mkdirSync(sibling);
+  const stateDir = path.join(scratch(), "state");
+  fs.mkdirSync(stateDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(stateDir, "bindings.json"),
+    `${JSON.stringify({
+      version: 1,
+      drivers: {},
+      projects: {
+        sibling: {
+          targetDir: sibling,
+          sessionId: "sessabcdefabcdefabc",
+          name: SESSION_FALLBACK_NAME,
+          nameSource: "generated",
+          createdAt: 1,
+        },
+      },
+    })}\n`,
+  );
+  const manager = new SessionManager({
+    roots: [rootDir],
+    stateDir,
+    identity: deadIdentityFactory(),
+  });
+  expect(manager.rejectedRecords.length).toBe(1);
+  const list = fs.readFileSync(path.join(stateDir, "bindings.json"), "utf8");
+  expect(list.includes("sibling")).toBe(false);
 });
 
 test("an unknown persisted field in bindings fails closed loudly", () => {
