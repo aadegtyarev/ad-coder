@@ -50,9 +50,12 @@ function levelOf(rung: ModelRung): string | undefined {
 }
 
 /**
- * One models.yaml model row as a registry model. `name` and `modelId` are the
- * file's row key: this layer derives no alias and no catalog, and the registry
- * documents `name` defaulting to `modelId`.
+ * One models.yaml model row as a registry model. `name` is the file's row key
+ * -- the routing name every consumer addresses -- and `modelId` is the row's
+ * declared `id`, defaulting to that key (#497). This layer derives no catalog
+ * and no other alias, and the registry documents `name` defaulting to
+ * `modelId`; here the DEFAULT runs the other way (the key is required, the id
+ * optional), so a row declares an id only when the two differ.
  *
  * `maxTokens` is the per-completion OUTPUT ceiling a row may declare: a
  * declared value wins, and absence keeps the window default -- the model's
@@ -63,7 +66,7 @@ function levelOf(rung: ModelRung): string | undefined {
 function toRegistryModel(name: string, model: ConfigModelConfig): RegistryModelConfig {
   return {
     name,
-    modelId: name,
+    modelId: model.id ?? name,
     maxTokens: model.maxTokens ?? model.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
     cost: {
       input: model.input,

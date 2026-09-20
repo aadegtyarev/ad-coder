@@ -131,6 +131,28 @@ Rules the operator declared for ad-coder. A violation is always blocking.
   name; before this entry the read was skipped whenever no JSON inventory was
   selected, so a project's committed calibration could never apply once routing
   moved to `models.yaml`.
+- 2026-09-20: **A model row may declare the provider-native model `id` its key
+  stands for (issue #497).** The row key is what a route, a calibration scope
+  and the ledger's route column address; `id` is what the provider is asked for,
+  and absent keeps the two equal -- which is what every row written before this
+  entry declares. The registry has always separated the routing NAME from the
+  wire id (`ResolvedModelConfig.name`/`modelId`, projected onto pi's
+  `Model.name`/`Model.id`); `models.yaml` had no spelling for the distinction,
+  so the row key was both. That is what made one upstream model unreachable
+  through a second provider, and with it a second credential: a routing name is
+  globally unique -- deliberately, since a route resolves a model by name
+  without trusting its own provider prefix -- so the same model could not be
+  declared twice, while the credential store holds ONE key per provider id. Two
+  providers with the same endpoint and their own key each declare the model
+  under their own local name, and both keys live in the same
+  `credentials.json`; `credentials-2.json` plus `--credential-path` is no
+  longer the only way to run a second key. Within ONE provider the id stays
+  unique (two rows sharing it would carry one endpoint, one credential and one
+  billing price while every `(provider, model id)` scope -- the charge record,
+  the price audit -- silently folded them into one), and `config migrate` keeps
+  its documented behaviour of keying rows by the provider-native id, so a
+  migrated file routes exactly as its inventory did and the alias is erased
+  rather than half-expressed.
 - 2026-09-19: **The operator-facing routing config is `models.yaml` and the
   behaviour config is `settings.yaml` (issue #280).** `models.yaml` declares
   `providers` (each with an optional provider-level `baseUrl`, an `enabled`

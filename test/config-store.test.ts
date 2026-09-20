@@ -169,3 +169,84 @@ test("a profile that does not exist is refused by name", () => {
   // And a config with neither a named profile nor a default cannot silently pick one.
   expect(() => toRegistryAndProfile(config)).toThrow(ConfigError);
 });
+
+test("a row's `id` is the provider-native id; the key stays the routing name (#497)", () => {
+  // One upstream model behind two providers -- two keys, one wire id. The row
+  // key is the local address every consumer spells; `id` is what the provider
+  // is asked for. Without it the two providers could not both declare the
+  // model at all (a routing name is globally unique, which is what lets a
+  // route resolve a model without trusting its own provider prefix), and a
+  // second key had nowhere to live but a second credential FILE.
+  const config = parseModelsConfig({
+    providers: {
+      openrouter: {
+        enabled: true,
+        api: "openai-completions",
+        baseUrl: "https://openrouter.example.com/api/v1",
+        credential: "OPENROUTER_API_KEY",
+        models: { "minimax/minimax-m3": { input: 0.3, output: 1.2 } },
+      },
+      "openrouter-2": {
+        enabled: true,
+        api: "openai-completions",
+        baseUrl: "https://openrouter.example.com/api/v1",
+        credential: "OPENROUTER_API_KEY_2",
+        models: {
+          "minimax-m3-key2": { id: "minimax/minimax-m3", input: 0.3, output: 1.2 },
+        },
+      },
+    },
+    default: "daily",
+    profiles: {
+      daily: { coder: ["openrouter:minimax/minimax-m3", "openrouter-2:minimax-m3-key2"] },
+    },
+  });
+  const { registry, profile } = toRegistryAndProfile(config);
+  const second = registry.providers.find((provider) => provider.id === "openrouter-2")?.models?.[0];
+  expect(second?.name).toBe("minimax-m3-key2");
+  expect(second?.modelId).toBe("minimax/minimax-m3");
+  // The row that declares no `id` is unchanged: its key IS the wire id, which
+  // is every row written before this key existed.
+  expect(registry.providers[0]?.models?.[0]?.modelId).toBe("minimax/minimax-m3");
+  // Routing addresses the local name -- the wire id never becomes an address,
+  // and the first rung of the ladder is still the one served.
+  expect(profile.entries.find((entry) => entry.role === "coder")?.model).toBe("minimax/minimax-m3");
+});
+
+test("one provider cannot declare the same provider-native id twice (#497)", () => {
+  // Two local names for one wire model are what `id` is FOR across providers,
+  // and meaningless within one: one endpoint, one credential, one billing
+  // price. Every consumer that scopes by (provider, model id) -- the charge
+  // record, the price audit -- would fold the two rows into a single scope and
+  // silently drop one row's numbers.
+  expect(() =>
+    parseModelsConfig({
+      providers: {
+        p: {
+          enabled: true,
+          models: {
+            "wire-model": { input: 0.3, output: 1.2 },
+            "wire-model-again": { id: "wire-model", input: 0.4, output: 1.6 },
+          },
+        },
+      },
+      profiles: { daily: { coder: "p:wire-model" } },
+    }),
+  ).toThrow(/declares model id "wire-model" twice/);
+});
+
+test("a malformed `id` is refused where it is written (#497)", () => {
+  const withId =
+    (id: unknown): (() => unknown) =>
+    () =>
+      parseModelsConfig({
+        providers: { p: { enabled: true, models: { m: { id, input: 1, output: 2 } } } },
+        profiles: { daily: { coder: "p:m" } },
+      });
+  // The same rule every other string field follows: present means a non-empty
+  // string, and an empty `id` is a row whose id the operator did not write
+  // rather than an id of "".
+  expect(withId("")).toThrow(ConfigError);
+  expect(withId(5)).toThrow(ConfigError);
+  expect(withId("m")).not.toThrow();
+});

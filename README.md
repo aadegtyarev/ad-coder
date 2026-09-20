@@ -421,17 +421,37 @@ profiles:
 ```
 
 A provider block declares `enabled`, the `api` protocol, a `baseUrl`, the
-credential REFERENCE, and one row per model keyed by the provider's own model id
--- that key is the name a route spells after the colon. `config migrate`
-converts a stored `inventories.json` into this file; the stored inventory is no
-longer a routing source, and ad-coder refuses loudly when it finds one without a
-`models.yaml` beside it.
+credential REFERENCE, and one row per model -- that row key is the name a route
+spells after the colon, and it is the name every other part of the harness
+addresses (calibration scopes, the ledger's route column). A row whose key is
+not the id the provider publishes declares it:
+
+```yaml
+  openrouter-2:
+    enabled: true
+    api: openai-completions
+    baseUrl: https://openrouter.ai/api/v1
+    credential: OPENROUTER_API_KEY_2
+    models:
+      minimax-m3-key2: {id: "minimax/minimax-m3", input: 0.3, output: 1.2}
+```
+
+`id` is what the provider is asked for; the key stays the local name, and a row
+that omits `id` is one where the two are the same. That is how one upstream
+model is reached through two providers -- and so through two keys, each stored
+under its own provider id -- because a routing name is unique across the whole
+file. `config migrate` converts a stored `inventories.json` into this file; the
+stored inventory is no longer a routing source, and ad-coder refuses loudly when
+it finds one without a `models.yaml` beside it.
 
 `credential` is a REFERENCE, never a secret: a bare word names the env-var the
 resolver reads, and the reserved literal `oauth` selects the OAuth route whose
-token lives in the credential store. Codex is OAuth-only -- there is no env-var
-to name -- so `credential: oauth` is the only spelling that reaches it. An
-enabled provider that declares no credential is refused by name.
+token lives in the credential store. A key already stored in
+`~/.config/ad-coder/credentials.json` under the provider's id is used first and
+needs no environment variable at all; the env-var name is what a provider
+without a stored key reads. Codex is OAuth-only -- there is no env-var to name
+-- so `credential: oauth` is the only spelling that reaches it. An enabled
+provider that declares no credential is refused by name.
 
 A row key is the role (`coder`) or the tier override (`coder@complex`), and its
 value is a list of rungs. Only the FIRST rung is served today -- writing a

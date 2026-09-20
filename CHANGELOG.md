@@ -11,6 +11,31 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.134.0] - 2026-09-20
+
+### Added
+- **A `models.yaml` model row may declare the provider-native model `id` its
+  key stands for (issue #497).** The row key is the routing name -- what a
+  route spells after the colon, what a calibration scope and the ledger's route
+  column carry -- and `id` is what the provider is actually asked for; absent
+  keeps them equal, which is every row written before this change. The registry
+  has always separated the two (`ResolvedModelConfig.name`/`modelId`, projected
+  onto pi's `Model.name`/`Model.id`); the file had no spelling for the
+  distinction, so the key was both, and that is what made a second credential
+  cost a second credential FILE. A routing name is unique across the whole file
+  -- deliberately, so a route resolves a model by name without trusting its own
+  provider prefix -- so one upstream model could not be declared under two
+  providers, while the credential store holds exactly one key per provider id.
+  Now the second provider declares the same wire model under its own local
+  name, both keys live in the same `credentials.json`, and
+  `credentials-2.json` plus `--credential-path` stops being the only way to run
+  a second key. Within ONE provider the id stays unique: two rows sharing one
+  provider-native id would carry one endpoint, one credential and one billing
+  price while every `(provider, model id)` scope -- the charge record, the
+  price audit -- silently folded them into a single scope. `config migrate` is
+  unchanged: it still keys rows by the provider-native id and rewrites rungs to
+  match, so a migrated file routes exactly as its inventory did.
+
 ## [0.133.0] - 2026-09-20
 
 ### Added
