@@ -36,9 +36,11 @@ import {
   autoDriver,
   createWorkflowSession,
   safeChangedFilesWithConfig,
-  WorkflowStageLimitError,
   selectPipelineContext,
+  type WorkflowSession,
+  WorkflowStageLimitError,
 } from "../src/orchestration/session";
+import { StageLimitError } from "../src/orchestration/stage-limits";
 import type {
   AvailableTransition,
   PipelineConfig,
@@ -59,7 +61,6 @@ import {
 import { buildDefaultProfile } from "../src/profiles/default-profile";
 import type { Profile } from "../src/profiles/types";
 import { ProjectOperationsError } from "../src/project-operations/errors";
-import { StageLimitError } from "../src/orchestration/stage-limits";
 import { validateFollowUpCandidate } from "../src/project-operations/follow-ups";
 import { type RunCheckpoint, RunCoordinator } from "../src/project-operations/run-coordinator";
 import { ProjectStore } from "../src/project-store/project-store";
@@ -1233,6 +1234,7 @@ test("an over-ceiling untracked change escalates on material_diff with its path 
 
 test("factory sessions preserve role ceilings for durable review-limit resumes (issue #511)", async () => {
   const fx = fixture();
+  const coder = fx.role("coder", "You code.");
   const reviewer = reviewerRole(fx);
   const target = new ProjectStore(fx.targetDir);
   let firstAttempt = true;
@@ -1243,7 +1245,7 @@ test("factory sessions preserve role ceilings for durable review-limit resumes (
       models: fx.models,
       task: "resume a paused review",
       maxRounds: 1,
-      roles: { reviewer },
+      roles: { coder, reviewer },
       stageLimits: { maxInputTokens: 2_400_000 },
       roleStageLimits: { reviewer: { maxInputTokens: reviewLimit } },
     });
