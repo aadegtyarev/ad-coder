@@ -38,6 +38,13 @@ export const DEFAULT_PROJECT_GATES: readonly QualityGate[] = Object.freeze([
   { name: "bun run check", kind: "project", command: ["bun", "run", "check"] },
   { name: "bun run check:release", kind: "project", command: ["bun", "run", "check:release"] },
   { name: "bun run check:docs", kind: "project", command: ["bun", "run", "check:docs"] },
+  // Issue #474: a rebase-resolved tree can carry markers no other gate reads;
+  // deterministic, whole-project, cheap `git grep --cached` over the index projection.
+  {
+    name: "bun run check:conflict-markers",
+    kind: "project",
+    command: ["bun", "run", "check:conflict-markers"],
+  },
   { name: "bun run smoke:artifact", kind: "project", command: ["bun", "run", "smoke:artifact"] },
   // NOT here, deliberately (issue #271): `bun run stamp:check` is this
   // repository's PRE-MERGE gate, run by the operator or CI, not an in-run

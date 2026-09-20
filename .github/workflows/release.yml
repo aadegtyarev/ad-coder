@@ -49,6 +49,9 @@ jobs:
       - run: bun run check
       - run: bun run check:release
       - run: bun run check:docs
+      # Same conflict-marker gate as CI (issue #474): a tag can be pushed at any
+      # commit, so the index projection is ruled again here.
+      - run: bun run check:conflict-markers
       - run: bun test
       - run: bun run smoke:artifact
 

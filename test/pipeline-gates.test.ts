@@ -107,6 +107,30 @@ test("the default declared set never contains the stamp gate, whose writer is th
   expect(DEFAULT_PROJECT_GATES.every((gate) => gate.kind === "project")).toBe(true);
 });
 
+test("the default declared set carries the conflict-marker gate between docs and smoke (issue #474)", () => {
+  // Issue #474: a rebase-resolved tree carried conflict markers and passed
+  // EVERY gate that ran over it -- the in-run set is this list, executed by
+  // the existing `GateRunner` verbatim, so the marker grep must be DECLARED
+  // here and not only wired into CI. Its property is what an in-run gate can
+  // hold: a deterministic, whole-project, cheap `git grep --cached` over the
+  // index projection, decided by bytes no other declared gate reads.
+  const gate = DEFAULT_PROJECT_GATES.find(
+    (declared) => declared.name === "bun run check:conflict-markers",
+  );
+  expect(gate).toBeDefined();
+  expect(gate?.kind).toBe("project");
+  expect(gate?.command).toEqual(["bun", "run", "check:conflict-markers"]);
+  // In order with its check:* neighbours: after the docs check, before the
+  // artifact smoke, so a marker tree is named before anything is packaged.
+  const names = DEFAULT_PROJECT_GATES.map((declared) => declared.name);
+  expect(names.indexOf("bun run check:docs")).toBeLessThan(
+    names.indexOf("bun run check:conflict-markers"),
+  );
+  expect(names.indexOf("bun run check:conflict-markers")).toBeLessThan(
+    names.indexOf("bun run smoke:artifact"),
+  );
+});
+
 test("the pipeline runs the declared gates after the coder and hands the reviewer the evidence", async () => {
   const fx = fixture();
   const coder = fx.role("coder", "You code.");

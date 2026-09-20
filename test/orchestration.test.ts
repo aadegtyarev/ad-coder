@@ -58,6 +58,7 @@ import {
 import { buildDefaultProfile } from "../src/profiles/default-profile";
 import type { Profile } from "../src/profiles/types";
 import { ProjectOperationsError } from "../src/project-operations/errors";
+import { validateFollowUpCandidate } from "../src/project-operations/follow-ups";
 import { type RunCheckpoint, RunCoordinator } from "../src/project-operations/run-coordinator";
 import { ProjectStore } from "../src/project-store/project-store";
 import { MODEL_INVENTORY_RESEARCH_BRIEF, RoleBriefError } from "../src/prompts/role-briefs";
@@ -3266,6 +3267,156 @@ test("the submission schemas state their vocabulary in descriptions, not in unio
   ) as Leaf;
   expect(severity.type).toBe("string");
   expect(severity.description).toContain("blocker");
+});
+
+test("a submission satisfying the declared verdict schema is accepted by the validator (issue #489)", () => {
+  // The regression this pins, measured 2026-09-20: #484 added a description to
+  // `issues` and deleted the neighbouring `summary` property from the schema in
+  // the same hunk. `parseVerdict` went on demanding the field, so the shape the
+  // provider was asked to hold the model to (the tool sets
+  // `constrainedSampling: strict`) was narrower than the shape the validator
+  // accepts -- the reviewer was refused for omitting a field no schema offered.
+  // Three paid rounds of #477 died on it and the durable ledger kept only a
+  // 0-token provider row, which read as a provider failure.
+  //
+  // The assertion is deliberately ONE-DIRECTIONAL and derived, not retyped: a
+  // payload built from the schema's OWN `required` list must be accepted. Add a
+  // required property and this test fails until the payload teaches it; delete
+  // one the validator still wants and it fails on the validator's refusal.
+  // Retyping the field names here would have passed through the very deletion
+  // it exists to catch.
+  type Node = { required?: string[]; properties?: Record<string, Node> };
+  const schema = buildSubmitVerdictTool({}, "run").parameters as Node;
+  const declared = schema.required ?? [];
+
+  // The values are the ones `formatReviewerInstruction` draws in the shape it
+  // tells the reviewer to send. `coverage` is absent on purpose: it is
+  // `Type.Optional`, so a submission without it must stay legal.
+  const sample: Record<string, unknown> = { status: "approved", issues: [] };
+  const sampleNames = new Set(["status", "issues", "summary", "coverage"]);
+  // A required property this test has never been taught fails here, which is
+  // the other direction: the schema growing a demand the validator does not
+  // accept is the same defect mirrored.
+  expect(declared.filter((name) => !sampleNames.has(name))).toEqual([]);
+
+  // Built from `declared` alone -- nothing hand-added beyond the sample map, so
+  // losing a required property loses it from the payload too.
+  const payload: Record<string, unknown> = {};
+  for (const name of declared) payload[name] = name === "summary" ? "ok" : sample[name];
+
+  let refusal: unknown;
+  try {
+    parseVerdict(payload, "run");
+  } catch (error) {
+    refusal = error;
+  }
+  expect(refusal).toBeUndefined();
+
+  // And the instruction text the reviewer reads must name every required field:
+  // a schema-only requirement stays invisible on a route that samples freely.
+  const instruction = formatReviewerInstruction();
+  for (const name of declared) expect(instruction).toContain(name);
+});
+
+test("no submission validator demands a field its own schema never declares (issue #489)", () => {
+  // The test above pins the instance. This one pins the CLASS, because the
+  // instance was not caught by anything for a full release: the existing
+  // structural guard only asserts that nested objects carry no `required`, so a
+  // property deleted from the top level -- which is what #484 did -- was
+  // invisible to it. Three submission tools reach an `unknown`-typed validator
+  // (`parseVerdict`, `parsePlan`, `validateFollowUpCandidate`), which is the
+  // only place in this codebase where a demand can exist without a declaration;
+  // TypeScript covers every other tool, which is why the class is this small.
+  type Node = { required?: string[]; properties?: Record<string, Node>; items?: Node };
+  const declaredFields = (node: Node, into = new Set<string>()): Set<string> => {
+    for (const [name, child] of Object.entries(node.properties ?? {})) {
+      into.add(name);
+      declaredFields(child, into);
+    }
+    if (node.items !== undefined) declaredFields(node.items, into);
+    return into;
+  };
+  // Every spelling a refusal in this codebase uses to name a field: the tail of
+  // a dotted path (`verdict.summary`, `coverage[0].contractIds`) and the
+  // subject of a `must`/`is` sentence (`plan.summary must be a string`). The
+  // extraction is deliberately generous and the assertion is one-directional:
+  // naming a declared field proves nothing, naming an undeclared one is the
+  // defect. A message this misses is silence, never a false alarm.
+  const namedFields = (message: string): string[] => [
+    ...[...message.matchAll(/\.([A-Za-z_][A-Za-z0-9_]*)/g)].map((match) => match[1] as string),
+    ...[...message.matchAll(/\b([A-Za-z_][A-Za-z0-9_]*) (?:must|is|cannot|needs) /g)].map(
+      (match) => match[1] as string,
+    ),
+  ];
+
+  // The VALUES are hand-written: a validator walks its branches in order, and
+  // only a value it accepts reaches the next branch -- a payload of placeholders
+  // stops at the first leaf and never reaches the one that was deleted. The
+  // NAMES are not hand-written: each payload is assembled from its schema's own
+  // `required`, so a property deleted from a schema disappears from the payload
+  // and the validator's refusal names a field no schema declares. That is
+  // exactly what #484 shipped.
+  const probes = [
+    {
+      tool: "submit_verdict",
+      schema: buildSubmitVerdictTool({}, "run").parameters as Node,
+      values: { status: "approved", issues: [], summary: "ok" } as Record<string, unknown>,
+      validate: (payload: object): unknown => parseVerdict(payload, "run"),
+    },
+    {
+      tool: "submit_plan",
+      schema: buildSubmitPlanTool({}, "run").parameters as Node,
+      values: {
+        complexity: "trivial",
+        securitySurface: "none",
+        summary: "ok",
+        surfaceAnalysis: { projectType: "cli", surfaces: [], coverage: [] },
+      } as Record<string, unknown>,
+      validate: (payload: object): unknown => parsePlan(payload, "run"),
+    },
+    {
+      tool: "submit_follow_up",
+      schema: buildSubmitFollowUpTool({ followUps: [] }, { producer: "engine", runId: "capture" })
+        .parameters as Node,
+      values: {
+        kind: "note",
+        title: "a durable note",
+        evidence: [{ summary: "an evidence summary" }],
+      } as Record<string, unknown>,
+      validate: (payload: object): unknown => validateFollowUpCandidate(payload),
+    },
+  ];
+
+  for (const probe of probes) {
+    const required = probe.schema.required ?? [];
+    // A required property this test was never taught fails here, which is the
+    // mirrored direction: the schema grew a demand and the payload must be
+    // taught the value that satisfies it before any of this means anything.
+    expect({
+      tool: probe.tool,
+      untaught: required.filter((name) => !(name in probe.values)),
+    }).toEqual({ tool: probe.tool, untaught: [] });
+
+    const payload: Record<string, unknown> = {};
+    for (const name of required) payload[name] = probe.values[name];
+
+    let refusal = "";
+    try {
+      probe.validate(payload);
+    } catch (error) {
+      refusal = error instanceof Error ? error.message : String(error);
+    }
+    // A refusal may legitimately demand a nested leaf the schema declares
+    // `Type.Optional` -- the documented soft family, where the schema
+    // advertises and the validator decides, so an incomplete submission gets
+    // the validator's corrective sentence instead of a pre-execute bounce. It
+    // may never demand a field the schema does not declare at all.
+    const declared = declaredFields(probe.schema);
+    expect({
+      tool: probe.tool,
+      undeclared: namedFields(refusal).filter((name) => !declared.has(name)),
+    }).toEqual({ tool: probe.tool, undeclared: [] });
+  }
 });
 
 test("an incomplete submit_verdict reaches parseVerdict and is named, not reported as a missing verdict", async () => {

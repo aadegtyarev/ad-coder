@@ -21,6 +21,9 @@ jobs:
       - run: git fetch origin main --depth=1 || true
       - run: bun run check:version
       - run: bun run check:docs
+      # Index-projection gate (issue #474): a resolved rebase that left conflict
+      # markers staged passed every other gate here green.
+      - run: bun run check:conflict-markers
       - run: bun test
       - run: bun run smoke:artifact
       # The pre-merge review-stamp gate (issue #295), deliberately LAST: it

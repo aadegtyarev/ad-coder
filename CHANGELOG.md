@@ -11,6 +11,58 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.127.0] - 2026-09-20
+
+### Fixed
+- **A rebase-resolved tree can no longer carry conflict markers through every
+  gate (issue #474).** A rebase was resolved in `CHANGELOG.md` and the
+  resolution left `<<<<<<<` / `=======` / `>>>>>>>` in the file; the tree was
+  committed in that state and every gate stayed green -- the marker text
+  satisfies `check:release`'s heading and version checks, `check:docs` has no
+  marker rule, the test suite never reads those bytes, and `stamp:check`
+  digests exactly the bytes that were committed. A mechanical slip a grep
+  catches in milliseconds was caught only by a paid, non-deterministic review
+  round. `scripts/check-conflict-markers.ts` is that grep, declared as
+  `check:conflict-markers` and wired as a step in `ci.yml` and `release.yml`
+  beside the other checks, and into the in-run `DEFAULT_PROJECT_GATES`, so the
+  tree that would have failed the round fails before the round is paid for.
+  The projection is the INDEX (`git grep --cached -n -I -z`, one process,
+  NUL-safe, binary files skipped): that is the tree about to be committed and
+  the one a rebase resolution leaves behind. The output names at most fifty
+  hits with the total stated, and a record the gate cannot parse fails it
+  rather than being silently dropped. The path-exact exception list is empty,
+  and the emptiness is a measurement rather than a hope -- zero files with
+  markers and zero legitimate `^=======+$` lines on both the base commit and
+  the then-current `origin/main` -- with the rule that a future legitimate case
+  is added there by name instead of the pattern being narrowed: narrowing to
+  `^=======+$` would mute an eight-equals run inside a real conflict region.
+- **The `submit_verdict` schema declares `summary` again, and the instruction
+  says which fields are required (issue #489).** `#484` (0.124.0) added a
+  `description` to `issues` and, in the same hunk, deleted the neighbouring
+  `summary: Type.String({...})` from the tool's parameters. Nothing referenced
+  the deletion because nothing was supposed to move: `parseVerdict` still
+  refuses a submission without the field (`verdict.summary must be a string`),
+  `formatReviewerInstruction` still draws it in the shape it tells the reviewer
+  to send, and `record.summary` is what the verdict record keeps. The tool
+  asks providers for a strict JSON schema (`constrainedSampling`), so the
+  declared shape is the one the model is held to -- the field was required by
+  the validator and offered by no schema at all. Measured cost over `#477`'s
+  three lost rounds: **6 of 7** `submit_verdict` calls omitted it, each refusal
+  was retried with the identical payload, and the third round ended on
+  `stage input limit reached (2045632/2000000)` having decided its verdict and
+  recorded none -- while the durable ledger showed a 0-token `faux/faux-1` row
+  that reads as a provider failure. `summary` is restored with its requirement
+  stated where the model reads it, beside `status`'s, and the instruction now
+  names the fields required on the first call and the cost of dropping one,
+  because a JSON shape example alone reads as illustrative. The guard is on the
+  CLASS and not on the instance: a test assembles a payload from each of the
+  three submission schemas' own `required` list and requires that no validator
+  refusal names a field that schema does not declare at all, so the same
+  deletion in `submit_plan` or `submit_follow_up` fails the suite as well. The
+  only structural guard that existed asserted that nested objects carry no
+  `required` -- true of every schema here, and blind to precisely this
+  deletion.
+
 ## [0.126.0] - 2026-09-20
 
 ### Fixed
