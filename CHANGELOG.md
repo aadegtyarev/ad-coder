@@ -11,6 +11,32 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.146.0] - 2026-09-20
+
+### Changed
+- **An operator's own ask takes the cheapest path that can carry it, and the
+  path is said out loud (issue #527).** Asked to fix a small bug himself, the
+  orchestrator answered with a pipeline run: the routing bullets named the
+  pipeline for "a feature, refactor, multi-file fix" and said nothing about a
+  request the operator had already bounded, so the heaviest path matched first --
+  slower and dearer than what he asked for, and the choice reached him as a bill
+  rather than as a sentence. The order of preference is now explicit, and it
+  sits on both surfaces the 2026-09-18 split requires. The orchestrator prompt
+  holds the obligation: route a direct ask to the cheapest path that can carry
+  it, say which path and why in a sentence or two before taking it, and when the
+  ask does not fit its hands, say exactly that, name what does fit and offer the
+  choice instead of silently escalating. `role-selection` (version 5) holds the
+  technique: the machine bound on the first rung (one file, five changed lines,
+  #388 -- past it the write is REFUSED rather than discouraged), what the
+  roles-only rung is for (one bounded job, taken at the orchestrator's own
+  discretion, no stages and no plan document), and what the pipeline is bought
+  for (the SEQUENCE -- stages in an order, a stamp-writing review, gates before a
+  merge -- never size alone and never because the work is real). The skill's
+  description carries the trigger, since the description is the only always-read
+  surface a skill has. Narration is part of the rule rather than politeness: the
+  operator reads replies and not tool calls, so a silent stretch is
+  indistinguishable from being stuck.
+
 ## [0.145.0] - 2026-09-20
 
 ### Fixed

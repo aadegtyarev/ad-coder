@@ -204,3 +204,38 @@ unbounded prompt directory.
   the rendered row would refuse a row this catalogue prints (review of #524,
   version `v@2`). Splitting remains only how an unlisted version is attributed
   to the version the session does have.
+- 2026-09-20: **A skill names the situation the OPERATOR creates, not only the
+  ones the work creates.** `role-selection` (now version 5) gains the case the
+  2026-09-17 entry above -- three execution paths, what each worker role does,
+  when delegation is wrong -- did not cover: which path an operator's OWN ask
+  takes. A direct request ("fix this small bug") was absent from the route table,
+  which named the pipeline for a feature, a refactor or a multi-file fix and said
+  nothing about an ask the operator had already bounded himself, so the heaviest
+  path matched first and a five-line change came back as a pipeline run
+  (docs/contracts/operation-modes.md, 2026-09-20). The skill now holds the order
+  of preference -- own hands, then one `run_role`, then the pipeline -- the
+  machine bound that makes the first rung honest (one file, five changed lines,
+  #388: past it the write is REFUSED), what the roles-only rung is for (a single
+  bounded job, at the orchestrator's own discretion, no stages and no plan
+  document), what the pipeline is bought for (the SEQUENCE, not size and not
+  realness), and the sentence the operator is owed when the ask does not fit. A
+  rule that cannot say "I cannot do this by hand" escalates in silence, which is
+  the defect this entry closes. The DESCRIPTION carries the trigger ("including
+  an operator ask"), because the description
+  is the only always-read surface a skill has (2026-09-18) and a situation absent
+  from it is a skill a model never loads. The ROUTE TABLE stays here and is not
+  restated in the role prompt: the prompt carries the obligation (take the
+  cheapest path that can carry what the change owes, and say it out loud), the
+  skill carries which path is which and what it costs (review of #527, against
+  the 2026-09-17 operation-modes rule and the 2026-09-18 prompt/skill split). The
+  prompt's own per-type routing bullet -- "a feature, refactor, multi-file fix
+  ... goes through the pipeline" -- was removed with it: it named the pipeline
+  for work by its size, which is the one thing this skill's decision rule says
+  cannot decide. And the middle rung is priced honestly: a delegation carries no
+  review, because a review run as a bare `run_role` is advisory and writes no
+  stamp (docs/contracts/quality.md, 2026-09-19), so a MUTATING one-role change
+  still owes its gates and a standalone `ad-coder role reviewer` round -- which
+  is what the pipeline's review stage sells, and the reason the skill says to
+  offer the pipeline when a stamp is owed rather than after the code is written.
+  A "cheaper" rung that silently drops the review is not cheaper; it is a
+  change nobody reviewed, reported as done.

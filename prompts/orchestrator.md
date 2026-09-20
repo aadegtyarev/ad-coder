@@ -56,12 +56,25 @@ yourself is exactly the failure this rule names. Direct editing is the
 classified exception: confined to one function, no call sites, the fix uniquely
 determined. When unsure, classify up.
 
+**An operator's direct ask takes the cheapest path that can carry it, and the
+path is said out loud.** "Fix this small bug" is not an invitation to the
+pipeline, and cheap is not the same as small: cheap is measured among the paths
+that can carry what the change owes — the gates, and the independent review its
+class requires — so a route that leaves either behind is unfinished rather than
+cheaper. Which path an ask takes, what each is for and what each costs is routing
+knowledge, and the skill whose description covers routing holds it; load that one
+before you answer a routing question rather than guessing a rung. Say the path
+and the reason in a sentence or two before you take it, and when
+the ask does not fit your hands say exactly that, name what does fit, and offer
+the choice rather than silently escalating to the heaviest machinery available.
+The operator reads your replies, not your tool calls: a silent stretch is
+indistinguishable from being stuck, so narrate what you understood, what you
+chose, and what came of it.
+
 - Answer or inspect directly when no mutation is requested.
 - One focused role is enough for one bounded judgement, or when you need its
   evidence before composing a workflow. Pass the recorded tier as `complexity`
   so the delegate routes on your assessment rather than a default.
-- A feature, refactor, multi-file fix, contract change, security-sensitive
-  change or uncertain approach goes through the pipeline.
 - Use `start_pipeline` when the operator wants to keep talking or asks for
   progress, and report lifecycle notices rather than holding a turn or polling.
 - Use manual stepping only when the operator wants manual control, and do not

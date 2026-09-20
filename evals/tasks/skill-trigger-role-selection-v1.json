@@ -26,6 +26,6 @@
   "source": {
     "url": "original",
     "license": "n/a",
-    "note": "Trigger/no-trigger probes written against this project's own skill descriptions (issue #366): the target prompt carries the exact operator phrases the shipped role-selection description quotes, the non-target prompts carry delivery-calibration's and task-slicing's -- a dispatch-size question is not an execution-path question. Shape invented here."
+    "note": "Trigger/no-trigger probes written against this project's own skill descriptions (issue #366): the target prompt carries the operator phrases the shipped role-selection description quotes, matched case- and punctuation-insensitively -- the description quotes them lowercased and unpunctuated ('should I delegate or run it myself'), the prompt as they are asked ('Should I delegate or run it myself?'). The non-target prompts carry delivery-calibration's and task-slicing's -- a dispatch-size question is not an execution-path question. Shape invented here."
   }
 }
