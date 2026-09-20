@@ -36,6 +36,7 @@ import {
   autoDriver,
   createWorkflowSession,
   safeChangedFilesWithConfig,
+  WorkflowStageLimitError,
   selectPipelineContext,
 } from "../src/orchestration/session";
 import type {
@@ -58,6 +59,7 @@ import {
 import { buildDefaultProfile } from "../src/profiles/default-profile";
 import type { Profile } from "../src/profiles/types";
 import { ProjectOperationsError } from "../src/project-operations/errors";
+import { StageLimitError } from "../src/orchestration/stage-limits";
 import { validateFollowUpCandidate } from "../src/project-operations/follow-ups";
 import { type RunCheckpoint, RunCoordinator } from "../src/project-operations/run-coordinator";
 import { ProjectStore } from "../src/project-store/project-store";
@@ -1227,6 +1229,91 @@ test("an over-ceiling untracked change escalates on material_diff with its path 
   expect(coderRetryPrompt).toContain("Full-context retry fallback: material_diff.");
   expect(coderRetryPrompt).not.toContain("projection_failure");
   expect(coderRetryPrompt).not.toContain("the git measurement failed");
+});
+
+test("factory sessions preserve role ceilings for durable review-limit resumes (issue #511)", async () => {
+  const fx = fixture();
+  const reviewer = reviewerRole(fx);
+  const target = new ProjectStore(fx.targetDir);
+  let firstAttempt = true;
+
+  const makeSession = (reviewLimit: number): WorkflowSession => {
+    const factorySession = createWorkflowSession({
+      targetDir: fx.targetDir,
+      models: fx.models,
+      task: "resume a paused review",
+      maxRounds: 1,
+      roles: { reviewer },
+      stageLimits: { maxInputTokens: 2_400_000 },
+      roleStageLimits: { reviewer: { maxInputTokens: reviewLimit } },
+    });
+    return {
+      ...factorySession,
+      initialState: () => ({ ...factorySession.initialState(), phase: "review" }),
+      async step(state) {
+        if (firstAttempt) {
+          firstAttempt = false;
+          const limit = new StageLimitError("input", 2_400_000, 2_400_000, {
+            maxDurationMs: 0,
+            maxModelTurns: 0,
+            maxToolTurns: 0,
+            maxInputTokens: 2_400_000,
+            maxCostUsd: 0,
+            finalResponseReserveModelTurns: 0,
+            finalResponseReserveDurationMs: 0,
+            finalResponseReserveToolTurns: 0,
+            finalResponseReserveInputTokens: 0,
+            elapsedMs: 1,
+            modelTurns: 0,
+            toolTurns: 0,
+            inputTokens: 2_400_000,
+            lastInputTokens: 2_400_000,
+            costUsd: 0,
+            costInFlight: false,
+          });
+          throw new WorkflowStageLimitError(limit, "paused-review", {
+            stage: "review:1",
+            status: "paused",
+            input: 2_400_000,
+            cachedInput: 0,
+            freshInput: 2_400_000,
+            output: 0,
+            costUsd: 0,
+            requestBytes: { systemPrompt: 0, prompt: 0, toolDefinitions: 0, total: 0 },
+            readFiles: [],
+            readFilesTotal: 0,
+            readFilesTruncated: 0,
+            diffBytes: 0,
+            contextStrategy: "auto",
+          });
+        }
+        return {
+          state: { ...state, done: true, approved: true },
+          result: { phase: "review", runId: "review-resumed", text: "approved" },
+          transitions: [{ kind: "stop", isDefault: true, toPhase: "done", toRound: state.round }],
+        };
+      },
+    };
+  };
+
+  const paused = await new RunCoordinator(makeSession(2_400_000), target, {
+    runId: "factory-role-limit",
+  }).run();
+  expect(paused.checkpoint.pause).toMatchObject({
+    phase: "review",
+    code: "stage_limit",
+    limitReason: "input",
+    limit: 2_400_000,
+  });
+
+  const resumed = new RunCoordinator(makeSession(2_600_000), new ProjectStore(fx.targetDir), {
+    runId: "factory-role-limit",
+    resumeExisting: true,
+  });
+  expect(() => resumed.resumeStage({ source: "operator", action: "retry" })).not.toThrow(
+    "unchanged input stage limit",
+  );
+  expect((await resumed.run()).status).not.toBe("paused");
 });
 
 test("maxRounds exhausted returns approved:false without throwing", async () => {

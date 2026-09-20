@@ -1708,6 +1708,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     prepareResearch,
     projectStore,
     ...(config.stageLimits === undefined ? {} : { stageLimits: { ...config.stageLimits } }),
+    ...(config.roleStageLimits === undefined ? {} : { roleStageLimits: { ...config.roleStageLimits } }),
   };
 }
 
