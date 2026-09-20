@@ -9,6 +9,10 @@ import * as fs from "node:fs";
 import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
+// The public surface, spelled the way an embedder reaches it (see the barrel
+// test at the end of this file): the deep import above would keep working with
+// the export gone.
+import { SessionManager as BarrelSessionManager } from "../src";
 import { writeOwnedJson } from "../src/session-manager/bindings";
 import {
   acquireManagerLease,
@@ -660,4 +664,21 @@ test("driver identity comes from the connection, never the request body", async 
 test("a server declares its front kind and derives the driver key from it", () => {
   expect(deriveDriverKey("console", 0)).toBe("console:u0");
   expect(deriveDriverKey("telegram", 1000)).toBe("telegram:u1000");
+});
+
+test("the capability is reachable through the library barrel, not only its own modules (#365)", async () => {
+  // The layer-2 claim is that the capability is EXPORTED from the library API
+  // (`src/index.ts`) -- which is the file an embedder imports and the one this
+  // module can drop out of while every other test here stays green, because
+  // they all import the deep paths. Constructed and used THROUGH the barrel:
+  // presence alone would pass for a binding that is exported and broken.
+  // Measured against that removal -- the export dropped from `src/index.ts` --
+  // this file reports 0 pass / 1 fail: the import is static, so the file fails
+  // to load rather than failing one assertion. Still a red gate for the same
+  // edit, and worth knowing which of the two you are looking at.
+  const rootDir = scratch();
+  const stateDir = path.join(scratch(), "state");
+  const manager = new BarrelSessionManager({ roots: [rootDir], stateDir });
+  expect(manager.stateDir).toBe(stateDir);
+  expect(await manager.listSessions()).toEqual([]);
 });
