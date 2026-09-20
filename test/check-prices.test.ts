@@ -120,6 +120,20 @@ describe("check-prices: the provider's own charge answer is the verdict", () => 
     expect(absent.stdout).toContain("does not exist");
   });
 
+  test("--inventory is retired: refused BY NAME, with the replacement (issue #513)", () => {
+    // The rename to `--models-config` is only half a contract; the other half
+    // is that the old flag does not quietly keep working. Measured against a
+    // parser that accepts BOTH names -- the compatibility mutation a later
+    // "helpful" change would make -- this test goes red: the run then audits
+    // the fixture and exits 0, which a pin on the new flag alone never sees.
+    const retired = runCheckPrices(["--inventory", MODELS_CONFIG, "--offline"]);
+    expect(retired.code).toBe(1);
+    // It names the flag it refuses and the way forward, rather than leaving the
+    // operator to diff two usage lines.
+    expect(retired.stdout).toContain("no longer takes --inventory");
+    expect(retired.stdout).toContain("--models-config");
+  });
+
   test("--offline states that the public-list hint half was skipped by request", () => {
     const run = runCheckPrices([
       "--models-config",

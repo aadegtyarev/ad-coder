@@ -270,6 +270,21 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
       index += 1;
       continue;
     }
+    // The one flag this command RETIRED says so, the way the CLI's refusals do
+    // (issue #513): the generic usage line below names the supported flags, but
+    // an operator still passing `--inventory` deserves to read which flag is
+    // gone and what replaced it, not to diff two usage strings.
+    // The one flag this command RETIRED says so, the way the CLI's refusals do
+    // (issue #513): the generic usage line below names the supported flags, but
+    // an operator still passing `--inventory` deserves to read which flag is
+    // gone and what replaced it, not to diff two usage strings.
+    if (flag === "--inventory") {
+      return {
+        kind: "bad",
+        error:
+          "check-prices no longer takes --inventory: a JSON inventory is not a routing source; name the models.yaml file with --models-config <path> (issue #513)",
+      };
+    }
     return {
       kind: "bad",
       error:

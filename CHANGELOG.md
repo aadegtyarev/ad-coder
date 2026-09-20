@@ -28,7 +28,8 @@ enforces that dated release headings go in non-increasing date order
   whose fields name an inventory fails with the command that re-takes it
   (`profile snapshot --models-profile <name>`), never as an anonymous shape
   error. `scripts/check-prices.ts` takes `--models-config`, the name the CLI
-  already used, instead of `--inventory`.
+  already used, and refuses `--inventory` by name with the replacement in the
+  message rather than dropping an operator into the generic usage line.
 
 ### Changed
 - **This repository no longer commits a calibration snapshot, and the reason is
