@@ -69,6 +69,13 @@ export interface RunConsoleParams {
    * controls immediately.
    */
   controlDrainMs?: number;
+  /**
+   * Total time a transient-refusal retry loop may wait for the active step to
+   * settle (issue #452). The budget covers all attempts together; each
+   * whenSettled() is awaited only up to the remaining budget. Zero means do
+   * not wait: refuse immediately with the typed not-accepted failure.
+   */
+  settleWaitMs?: number;
   toolActivity?: Partial<ToolActivityConfig>;
   /** Process-local cooperative shutdown probe supplied by the CLI front. */
   interrupted?: () => boolean;
@@ -225,6 +232,17 @@ function renderFailure(
 }
 export const DEFAULT_CONSOLE_ESCAPE_SEQUENCE_TIMEOUT_MS = 1_000;
 export const DEFAULT_CONSOLE_CONTROL_DRAIN_MS = 2_000;
+/**
+ * Total wait budget for a transient-refusal retry loop (issue #452).
+ * A real wake or pipeline turn runs for minutes; the reported incident's
+ * brief sat for ~10 minutes. Fifteen minutes keeps the dispatch patient
+ * without threatening the shutdown-finite contract (ui-responsiveness.md:20).
+ * Zero means do not wait: refuse immediately with the typed not-accepted
+ * failure so a fifo dispatcher retries.
+ */
+export const DEFAULT_CONSOLE_SETTLE_WAIT_MS = 15 * 60_000;
+/** Max attempts in the transient-refusal retry loop, before the settle budget runs out. */
+export const DEFAULT_CONSOLE_MAX_RETRY_ATTEMPTS = 10;
 
 interface TtyReadableStream extends NodeJS.ReadableStream {
   isTTY?: boolean;
@@ -670,6 +688,7 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
   const escapeSequenceTimeoutMs =
     params.escapeSequenceTimeoutMs ?? DEFAULT_CONSOLE_ESCAPE_SEQUENCE_TIMEOUT_MS;
   const controlDrainMs = params.controlDrainMs ?? DEFAULT_CONSOLE_CONTROL_DRAIN_MS;
+  const settleWaitMs = params.settleWaitMs ?? DEFAULT_CONSOLE_SETTLE_WAIT_MS;
   if (!Number.isInteger(maxInputBytes) || maxInputBytes <= 0) {
     throw new RangeError("maxInputBytes must be a positive integer");
   }
@@ -681,6 +700,8 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
     throw new RangeError("escapeSequenceTimeoutMs must be a positive safe integer");
   if (!Number.isSafeInteger(controlDrainMs) || controlDrainMs < 0)
     throw new RangeError("controlDrainMs must be a non-negative safe integer");
+  if (!Number.isSafeInteger(settleWaitMs) || settleWaitMs < 0)
+    throw new RangeError("settleWaitMs must be a non-negative safe integer");
 
   let reason: ConsoleExitReason = "eof";
   let completedTurns = 0;
@@ -741,7 +762,7 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
   };
   const handleLine = async (
     rawLine: string,
-    lane: { prompt?: number; control?: number } = {},
+    lane: { prompt?: number; control?: number; source?: string } = {},
     // An untrusted multi-line message (piped brief, pasted brief, /task file)
     // is PROMPT text: console-command-looking lines inside it must never
     // execute as controls (docs/contracts/cli.md, 2026-09-16).
@@ -765,35 +786,22 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
       if (mode === "formatted") params.output.write("ad-coder> ");
       return;
     }
-    try {
-      const backgroundRuns = (
-        params.session as ConversationSession & {
-          backgroundRuns?: BackgroundRunManager;
-        }
-      ).backgroundRuns;
-      const managed = forcePrompt
-        ? undefined
-        : executeConsoleControl(line.trim(), {
-            ...(backgroundRuns === undefined ? {} : { backgroundRuns }),
-            ...(params.costAnomaly === undefined ? {} : { costAnomaly: params.costAnomaly }),
-            interrupt: params.session.interrupt ?? (async () => false),
-            maxPageSize: controlPageSize,
-          });
-      if (managed !== undefined) {
-        params.output.write(renderControl(await managed, mode, controlPageSize));
-        if (mode === "formatted") params.output.write("ad-coder> ");
-        return;
-      }
-      const started = Date.now();
-      let lastActivity = started;
-      const progress = (event: "started" | "heartbeat") => {
-        const elapsedSeconds = Math.floor((Date.now() - started) / 1000);
-        params.error.write(
-          mode === "json"
-            ? `${JSON.stringify({ type: "progress", event, stage: "console-turn", elapsedSeconds })}\n`
-            : `ad-coder: console turn ${event === "started" ? "started" : "still running"} (${elapsedSeconds}s)\n`,
-        );
-      };
+    // Declared here so the catch block can access them for retry (issue #452).
+    const started = Date.now();
+    let lastActivity = started;
+    const progress = (event: "started" | "heartbeat") => {
+      const elapsedSeconds = Math.floor((Date.now() - started) / 1000);
+      params.error.write(
+        mode === "json"
+          ? `${JSON.stringify({ type: "progress", event, stage: "console-turn", elapsedSeconds })}\n`
+          : `ad-coder: console turn ${event === "started" ? "started" : "still running"} (${elapsedSeconds}s)\n`,
+      );
+    };
+    /**
+     * Call step(line) with fresh activity monitoring and progress machinery,
+     * and clean up regardless of outcome. Returns the raw turn result.
+     */
+    const runMonitoredStep = async (inputLine: string): Promise<ConversationTurnResult> => {
       const renderer = new ToolActivityRenderer(
         params.error,
         mode === "json" ? "json" : "human",
@@ -814,20 +822,45 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
               }
             }, heartbeatMs)
           : undefined;
-      let rawResult: ConversationTurnResult;
       try {
-        rawResult = await params.session.step(line);
+        return await params.session.step(inputLine);
       } finally {
         if (timer !== undefined) clearInterval(timer);
         unsubscribe?.();
         renderer.close();
       }
+    };
+    /** Render a successful step's result and increment completedTurns. */
+    const renderStepSuccess = (rawResult: ConversationTurnResult): void => {
       const result = sanitizeTurn(rawResult);
       completedTurns++;
       params.output.write(
         mode === "json" ? `${JSON.stringify(result)}\n` : renderFormatted(result),
       );
       if (mode === "formatted") params.output.write("ad-coder> ");
+    };
+    let rawResult: ConversationTurnResult;
+    try {
+      const backgroundRuns = (
+        params.session as ConversationSession & {
+          backgroundRuns?: BackgroundRunManager;
+        }
+      ).backgroundRuns;
+      const managed = forcePrompt
+        ? undefined
+        : executeConsoleControl(line.trim(), {
+            ...(backgroundRuns === undefined ? {} : { backgroundRuns }),
+            ...(params.costAnomaly === undefined ? {} : { costAnomaly: params.costAnomaly }),
+            interrupt: params.session.interrupt ?? (async () => false),
+            maxPageSize: controlPageSize,
+          });
+      if (managed !== undefined) {
+        params.output.write(renderControl(await managed, mode, controlPageSize));
+        if (mode === "formatted") params.output.write("ad-coder> ");
+        return;
+      }
+      rawResult = await runMonitoredStep(line);
+      renderStepSuccess(rawResult);
     } catch (error) {
       // The typed branches below READ fields off the caught value (`status`,
       // `failure`, `attempts`, `provider`, `block`, `retryAfterMs`), and
@@ -1042,33 +1075,97 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
           if (refusalReason === undefined) {
             // Outside the closed set: not falsifiable, not ours to render.
             writeUntypedTurnFailure(error);
+          } else if (refusalReason === "step_active" || refusalReason === "lane_stopping") {
+            // Transient refusal: the dispatch keeps its place and runs once the
+            // active step settles (issue #452). Never hot-loop, never drop.
+            // The payload's position in the queue is preserved because
+            // `handleLine` is awaited inside `lineQueue.then()` — the next
+            // queued prompt cannot start until this one delivers or fails.
+            const MAX_RETRY_ATTEMPTS = DEFAULT_CONSOLE_MAX_RETRY_ATTEMPTS;
+            // Each whenSettled() is bounded by the remaining settle budget;
+            // the budget covers all attempts together so the loop can never
+            // outlive it (ui-responsiveness.md:20). Zero means refuse
+            // immediately: the typed not-accepted failure names the source.
+            const settleDeadline = Date.now() + settleWaitMs;
+            for (let attempt = 0; attempt < MAX_RETRY_ATTEMPTS; attempt++) {
+              if (settleWaitMs === 0) break;
+              const remaining = settleDeadline - Date.now();
+              if (remaining <= 0) break;
+              // Clear the budget timer as soon as the race settles (the shape
+              // drainControls uses): a pending timer would hold the process open.
+              let budgetTimer: ReturnType<typeof setTimeout> | undefined;
+              await Promise.race([
+                params.session.whenSettled(),
+                new Promise<void>((r) => {
+                  budgetTimer = setTimeout(r, remaining);
+                }),
+              ]).finally(() => {
+                if (budgetTimer !== undefined) clearTimeout(budgetTimer);
+              });
+              try {
+                rawResult = await runMonitoredStep(line);
+                renderStepSuccess(rawResult);
+                return;
+              } catch (retryError) {
+                if (isInstanceOf(retryError, ConversationRefusedError)) {
+                  if (retryError.reason === "closed") {
+                    // The session closed while we were waiting.
+                    params.error.write(
+                      renderFailure(
+                        {
+                          code: "turn_refused",
+                          message: CONVERSATION_REFUSAL_TEXT.closed,
+                          action: "restart the console",
+                          retryable: false,
+                        },
+                        mode,
+                      ),
+                    );
+                    reason = "turn_failed";
+                    return;
+                  }
+                  // Still transient: continue the retry loop.
+                  continue;
+                }
+                // Any other error from the retry re-throws to the outer catch,
+                // where the typed branches handle it normally.
+                throw retryError;
+              }
+            }
+            // Exhausted retries: the payload could not be delivered. A typed
+            // failure names the source so a fifo dispatcher can retry it.
+            const sourceLabel =
+              lane.source !== undefined ? `task from ${lane.source}` : "the queued line";
+            params.error.write(
+              renderFailure(
+                {
+                  code: "turn_refused",
+                  message: `${sourceLabel} was not accepted`,
+                  action:
+                    lane.source !== undefined
+                      ? "the conversation did not settle in time; the task was not delivered — retry from the source"
+                      : "the conversation did not settle in time; retry the prompt",
+                  retryable: true,
+                },
+                mode,
+              ),
+            );
+            if (mode === "formatted") params.output.write("ad-coder> ");
+            return;
           } else {
+            // Closed (the only remaining reason in the closed set).
             params.error.write(
               renderFailure(
                 {
                   code: "turn_refused",
                   message: CONVERSATION_REFUSAL_TEXT[refusalReason],
-                  action:
-                    refusalReason === "closed"
-                      ? "restart the console"
-                      : refusalReason === "step_active"
-                        ? "retry the prompt once the current turn settles"
-                        : "wait for the provider call to settle, then retry the prompt",
-                  // A closed session cannot accept a retry; the other two
-                  // refusals clear on their own, and the input is kept open
-                  // so the promised retry is actually reachable here.
-                  retryable: refusalReason !== "closed",
+                  action: "restart the console",
+                  retryable: false,
                 },
                 mode,
               ),
             );
-            if (refusalReason === "closed") {
-              // Nothing can succeed again in this session.
-              reason = "turn_failed";
-            } else {
-              if (mode === "formatted") params.output.write("ad-coder> ");
-              return;
-            }
+            reason = "turn_failed";
           }
         } else {
           writeUntypedTurnFailure(error);
@@ -1149,14 +1246,17 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
     // Normalise line endings and strip the file's trailing newline terminator:
     // a /task file is ONE message whose interior newlines arrive exactly as
     // written.
-    queueLine(load.text.replace(/\r\n?/g, "\n").replace(/\n+$/, ""), true);
+    queueLine(load.text.replace(/\r\n?/g, "\n").replace(/\n+$/, ""), true, taskPath);
   };
   /**
    * Queue one dispatchable unit of input. `forcePrompt` marks content that is
    * a message by construction — a pasted brief or a /task file — so even a
    * leading slashes line inside it reaches the model as prompt text.
+   *
+   * `source` is the original path for a `/task` dispatch so a dropped payload
+   * can name the file the dispatcher must re-read (issue #452).
    */
-  const queueLine = (line: string, forcePrompt = false): void => {
+  const queueLine = (line: string, forcePrompt = false, source?: string): void => {
     if (line.trim() === "") {
       if (mode === "formatted") params.output.write("ad-coder> ");
       return;
@@ -1197,7 +1297,13 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
       }
     }
     const promptNumber = ++queuedPromptCount;
-    lineQueue = lineQueue.then(() => handleLine(line, { prompt: promptNumber }, forcePrompt));
+    lineQueue = lineQueue.then(() =>
+      handleLine(
+        line,
+        { prompt: promptNumber, ...(source !== undefined && { source }) },
+        forcePrompt,
+      ),
+    );
   };
   /**
    * EOF is the only message boundary for non-tty stdin: a piped brief is ONE

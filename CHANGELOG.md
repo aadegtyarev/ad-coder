@@ -11,6 +11,29 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.121.0] - 2026-09-20
+
+- **A task dispatched mid-turn keeps its place and is never dropped (issue
+  #452).** A `/task <path>` line written into a console's fifo while that
+  console was running a turn was read, acknowledged (`dispatching task read
+  from ...`) and then silently dropped: the conversation is single-step, `step`
+  refused with `step_active`, and the refusal branch rendered "retry the prompt
+  once the current turn settles" and returned -- advice addressed to a human at
+  the keyboard, while the fifo is how the fleet is driven. In the reported
+  session the brief for #451 sat undelivered for ~10 minutes with the
+  coordinator believing the lane had it. A dispatch now keeps its place and
+  runs once the active step settles, which is the promise the console already
+  makes for a dispatched line (issue #397): `whenSettled()` exposes the settle
+  promise the conversation already kept internally, and the transient refusal
+  re-runs the SAME payload -- the task text is not re-read -- through the
+  shared per-step machinery. The wait is bounded, one settle budget for the
+  whole retry loop (15 minutes) plus an attempt cap, because a holder can
+  ignore cancellation and shutdown must stay finite (ui-responsiveness.md);
+  past the budget the outcome is typed and names the source ("task from <path>
+  was not accepted"), so a fifo dispatcher retries it and the refusal is never
+  again read as success. Retention follows wake.ts's rule: never hot-loop,
+  never lose.
+
 ## [0.120.0] - 2026-09-20
 
 ### Fixed

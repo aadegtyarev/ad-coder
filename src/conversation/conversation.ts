@@ -262,6 +262,13 @@ export interface ConversationSession {
   readonly runId: string;
   /** Absolute ledger path when the default file sink was used; undefined for a custom sink. */
   readonly ledgerPath: string | undefined;
+  /**
+   * Resolves when the currently-active step settles (no provider work in
+   * flight), or immediately when no step is active. A front awaiting this
+   * can safely dispatch the next prompt; it is the read-only waiter the
+   * internal `activeSettled` promise already serves internally.
+   */
+  whenSettled(): Promise<void>;
 }
 
 /**
@@ -817,6 +824,7 @@ export async function startConversation(config: ConversationConfig): Promise<Con
     }),
     runId,
     ledgerPath,
+    whenSettled: () => activeSettled ?? Promise.resolve(),
   };
 }
 
