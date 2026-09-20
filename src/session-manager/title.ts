@@ -17,10 +17,59 @@ export const MANUAL_NAME_MAX_LENGTH = 64;
 // Constructed rather than regex-literal: the lint refuses literal control
 // characters and escape sequences in regex literals, so the ANSI bytes are
 // joined from numeric constants instead — ONE shared definition, no state.
+//
+// Seven alternatives, LONGEST FIRST within each introducer, because the last
+// one of a pair is a catch-all: an Fe/Fs/Fp escape is ESC plus exactly ONE byte
+// in 0x30–0x7E (ECMA-48), and that byte is also what opens the longer forms —
+// so a terminated sequence must be consumed whole rather than split into its
+// opener plus text, and an UNTERMINATED one must still lose its ESC. Round 3
+// measured what the old two-alternative form left behind, on BOTH name paths:
+// `ESC 7` (DECSC), `ESC c` (RIS), `ESC X … ESC \` (SOS), and the CSI forms the
+// old parameter class could not spell — private `ESC [ ?25l` and intermediate
+// `ESC [ 1 q`. Each survived as ordinary text (`token 7=supersecret`,
+// `token [?25l=supersecret`) and hid the assignment from the secret screen.
+// Round 4 measured the two families that were still missing, both of which
+// produce the same hidden assignment: the 8-BIT (C1) introducers, which are the
+// same sequences one byte wide and are turned into a space by the class strip
+// below — leaving their payload (`token 31m=supersecret`); and the CSI
+// parameter byte `=`, whose consumption DESTROYS the assignment while keeping
+// the secret (`token<ESC>[=supersecret` became `token upersecret`).
 const ESC = String.fromCharCode(0x1b);
 const BEL = String.fromCharCode(0x07);
+const C1_CSI = String.fromCharCode(0x9b);
+const C1_OSC = String.fromCharCode(0x9d);
+const C1_ST = String.fromCharCode(0x9c);
+const C1_STRING_OPENERS = [0x90, 0x98, 0x9e, 0x9f]
+  .map((code) => String.fromCharCode(code))
+  .join("");
+// The string terminator, shared by the 7-bit and 8-bit forms: ST is either
+// `ESC \` or the single C1 byte 0x9C.
+const ST = `(?:${ESC}\\\\|${C1_ST})`;
+// CSI payload: parameter bytes 0x30–0x3F WITHOUT `=`, then intermediate bytes
+// 0x20–0x2F, then one final byte 0x40–0x7E. `=` is excluded deliberately — it
+// is the one parameter byte that doubles as the assignment operator this screen
+// looks for. Excluding it costs only the rare real `ESC [ = …` sequence, which
+// then keeps its `=` as ordinary text: a false positive at worst, never a
+// hidden secret.
+const CSI_BODY = "[0-9;:?<>]*[ -/]*[@-~]";
+// The single-byte catch-all covers every Fe/Fs/Fp escape EXCEPT the two bytes
+// that are this screen's assignment operators: a catch-all that eats `ESC =`
+// turns `token<ESC>=hunter2000` into `token hunter2000`, destroying the
+// assignment and keeping the secret. Round 4 measured exactly that leak on both
+// paths -- a regression the catch-all itself introduced, which is why it is
+// excluded here rather than left to the class strip. `ESC :` and `ESC =` are
+// unassigned in ECMA-48, so nothing real is lost.
+const FE_BODY = "[0-9;<>?@-~]";
 const ANSI_PATTERN = new RegExp(
-  `${ESC}(?:\\[[0-9;]*[A-Za-z]|\\][^${BEL}]*(?:${BEL}|${ESC}\\\\)|[P^_][^${ESC}]*${ESC}\\\\)`,
+  `${ESC}(?:` +
+    `\\[${CSI_BODY}` + // CSI
+    `|\\][^${BEL}]*(?:${BEL}|${ST})` + // OSC, to BEL or to ST
+    `|[PX^_][^${ESC}]*${ST}` + // DCS, PM, APC, SOS, each to ST
+    `|${FE_BODY}` + // any other Fe/Fs/Fp: ESC plus one byte
+    `)` +
+    `|${C1_CSI}${CSI_BODY}` + // 8-bit CSI
+    `|${C1_OSC}[^${BEL}${C1_ST}]*(?:${BEL}|${ST})` + // 8-bit OSC
+    `|[${C1_STRING_OPENERS}][^${ESC}${C1_ST}]*${ST}`, // 8-bit DCS/SOS/PM/APC
   "g",
 );
 // Literal control characters and escape sequences are refused in regex
@@ -114,11 +163,24 @@ export function sanitizeTitle(
  * screen still sees the flattened projection, so keeping them hides nothing.
  */
 export function createManualSessionName(raw: string): string {
+  // Screen the RAW draft first, in the same order as the generated path. Round
+  // 3 disproved the claim that the screens below dominate this one: `token<BEL>`
+  // IS matched here (`\S+` counts the BEL as a non-whitespace character) and is
+  // matched by nothing after the strip, which turns the BEL into a space and
+  // trims it away. So the line is not redundant, and it is not asserted as
+  // harmless either — it has its own failing control in the test file. It
+  // cannot shadow the typed refusal below: every pattern in the shared list
+  // needs at least one visible character, so a draft that strips to nothing
+  // never reaches this line.
+  if (SECRET_SCREEN_PATTERNS.some((pattern) => pattern.test(raw))) return SESSION_FALLBACK_NAME;
   // The manual strip, in the order the contract's clauses imply: ANSI sequences
   // go FIRST, as whole sequences. Round 2 measured what happens otherwise:
   // ESC is a control character and the class strip below only replaces it, so
   // `token<ESC>[31m=supersecret` became `token [31m=supersecret` -- the screen
-  // saw no assignment and the secret persisted into a display name.
+  // saw no assignment and the secret persisted into a display name. Round 3
+  // found the same shape one level down, in the escape grammar itself: the
+  // pattern only spelled CSI, OSC and DCS/PM/APC, so `ESC 7`, `ESC c`, `ESC X`
+  // and `ESC [ ?25l` were not sequences to it at all and survived as text.
   const value = raw
     .replace(ANSI_PATTERN, " ")
     .replace(/[^\p{L}\p{N}\p{Zs}\p{P}\p{S}]/gu, " ")
@@ -126,14 +188,21 @@ export function createManualSessionName(raw: string): string {
     .trim();
   if (value.length === 0)
     throw new RangeError("a manual name must contain at least one visible character");
-  // Screen the form this path will PERSIST. It is also every form the RAW draft
-  // can match, and that is why there is no separate raw screen here: these
-  // transforms only ever REPLACE a character with an ordinary space, they never
-  // delete, and every pattern either spans whitespace freely (`\s*`, `\S+`) or
-  // works on characters the strip keeps, so nothing that matches the raw draft
-  // stops matching after normalization. What this screen catches on its own is
-  // the separator the FLATTENED form destroys: `sk-abcdefg_h1234` is one token
-  // to this screen and two to the next.
+  // Screen the form this path will PERSIST. What this screen catches on its own
+  // is the separator the FLATTENED form destroys: `sk-abcdefg_h1234` is one
+  // token to this screen and two to the next.
+  // Screen the form this path will PERSIST — the contract's own screen on the
+  // value that is about to be stored. It is the WEAKEST of the three, and that
+  // is MEASURED, not assumed: a brute force over 7392 injected drafts (every
+  // position of every separator family in eight secret shapes) found exactly one
+  // shape it catches alone — a hidden separator before the `=` plus a tail made
+  // ONLY of markdown characters, `token<ZWSP>=*`, persisted as `token =*`. That
+  // shape holds no secret: a hidden separator cannot hide a secret that is not
+  // there, and every draft that DOES carry one is caught by the raw screen or by
+  // the flattened projection. It stays because it is the form the contract
+  // names, because its removal is not measured safe, and because round 2's
+  // claim that it DOMINATED the others was disproved in the other direction by
+  // round 3 — stated as what was measured, not as strength.
   if (SECRET_SCREEN_PATTERNS.some((pattern) => pattern.test(value))) return SESSION_FALLBACK_NAME;
   // And screen the markdown-flattened PROJECTION -- the exact form the
   // generated path screens. A manual name keeps `* _ ` # ~` (the contract does

@@ -59,6 +59,7 @@ import {
 } from "../src/session-manager/types";
 
 const ESC = String.fromCharCode(0x1b);
+const ZWSP = "​";
 const REPO_ROOT = path.resolve(import.meta.dir, "..");
 const scratch = (): string => fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-smtest-"));
 const uidOr0 = (): number => process.getuid?.() ?? 0;
@@ -509,9 +510,10 @@ test("no separator hides a secret from the manual screen (#365)", async () => {
     "token~=supersecret",
   ])
     expect(createManualSessionName(draft)).toBe(SESSION_FALLBACK_NAME);
-  // The separator the FLATTENED projection destroys, caught by the
-  // persisted-form screen alone: `_` is a markdown character, so flattening
-  // splits this token in two and the next screen can no longer see 8+ chars.
+  // A markdown character inside a token: `_` is one, and flattening splits the
+  // token in two, so the projection alone can no longer see 8+ chars — but the
+  // RAW screen sees the token whole, which is why this draft is caught by the
+  // raw and flattened screens together rather than by the persisted one.
   expect(createManualSessionName("sk-abcdefg_h1234")).toBe(SESSION_FALLBACK_NAME);
   // The durable path, not just the function: a rename leaves no fragment of
   // the sequence and no secret in the store.
@@ -526,6 +528,105 @@ test("no separator hides a secret from the manual screen (#365)", async () => {
   // screen works on a projection that is never persisted.
   expect(createManualSessionName("Fix *urgent* thing")).toBe("Fix *urgent* thing");
   expect(createManualSessionName("snake_case name")).toBe("snake_case name");
+});
+
+test("every escape family is stripped whole, not just CSI (#365)", async () => {
+  // Round 3 measured the escape GRAMMAR, one level below the round-2 fix:
+  // ANSI_PATTERN spelled CSI, OSC and DCS/PM/APC only, so an Fe/Fs/Fp escape
+  // (`ESC 7`, `ESC 8`, `ESC c`), an SOS, and the CSI forms the parameter class
+  // could not spell (private `ESC [ ?25l`, intermediate `ESC [ 1 q`) were not
+  // sequences to it at all. ESC is a control character, so the class strip
+  // replaced it with a space and the REST of the sequence stayed as ordinary
+  // text -- `token 7=supersecret`, `token [?25l=supersecret` -- which is an
+  // assignment to no screen pattern, on BOTH name paths (they share the
+  // constant).
+  const ST = `${ESC}\\`;
+  // The 8-bit (C1) introducers are the same sequences one byte wide: they are
+  // Unicode Cc, so the class strip turns the introducer into a space and leaves
+  // the payload as text — the identical hidden assignment, one byte shorter.
+  const C1 = String.fromCharCode;
+  for (const draft of [
+    `token${ESC}7=supersecret`,
+    `token${ESC}8=supersecret`,
+    `token${ESC}c=supersecret`,
+    `token${ESC}[?25l=supersecret`,
+    `token${ESC}[1 q=supersecret`,
+    `token${ESC}X1${ST}=supersecret`,
+    `token${C1(0x9b)}31m=supersecret`,
+    `token${C1(0x9b)}?25l=supersecret`,
+    `token${C1(0x9d)}0;x${String.fromCharCode(0x07)}=supersecret`,
+    `token${C1(0x90)}1;2q${C1(0x9c)}=supersecret`,
+    `token${C1(0x98)}1${C1(0x9c)}=supersecret`,
+    `token${C1(0x9e)}1${C1(0x9c)}=supersecret`,
+    `token${C1(0x9f)}1${C1(0x9c)}=supersecret`,
+    // And the byte a CSI may NOT swallow: `=` is a legal parameter byte, so a
+    // grammar that accepts it eats the assignment OPERATOR and the first
+    // character of the secret, leaving `token upersecret` — a mangled secret in
+    // a display name and nothing for the screen to see at all.
+    `token${ESC}[=supersecret`,
+    `token${ESC}[=1supersecret`,
+    `token${C1(0x9b)}=supersecret`,
+    // Nor may the single-byte catch-all eat the operator: an ESC whose next
+    // byte IS the operator used to disappear together with it and leave
+    // `token supersecret` — the assignment destroyed, the secret kept. Both
+    // bytes are unassigned escapes in ECMA-48, so excluding them costs nothing.
+    `token${ESC}=supersecret`,
+    `token${ESC}:supersecret`,
+  ])
+    expect(createManualSessionName(draft)).toBe(SESSION_FALLBACK_NAME);
+  expect(sanitizeTitle(`token${ESC}7=supersecret`).value).toBe(SESSION_FALLBACK_NAME);
+  expect(sanitizeTitle(`token${ESC}[?25l=supersecret`).value).toBe(SESSION_FALLBACK_NAME);
+  expect(sanitizeTitle(`token${ESC}[=supersecret`).value).toBe(SESSION_FALLBACK_NAME);
+  expect(sanitizeTitle(`token${C1(0x9b)}31m=supersecret`).value).toBe(SESSION_FALLBACK_NAME);
+  expect(sanitizeTitle(`token${ESC}=supersecret`).value).toBe(SESSION_FALLBACK_NAME);
+  // The durable path, not just the function.
+  const { manager, stateDir } = makeManager();
+  await manager.ensureSession("escape-family", "telegram:bridge");
+  const record = await manager.renameSession("escape-family", `token${ESC}7=supersecret`);
+  expect(record.name).toBe(SESSION_FALLBACK_NAME);
+  const durable = fs.readFileSync(path.join(stateDir, "bindings.json"), "utf8");
+  expect(durable).not.toContain("supersecret");
+  expect(durable).not.toContain("token 7");
+  // A sequence that IS stripped is still stripped WHOLE: the visible text
+  // around it survives and leaves no gap behind.
+  expect(createManualSessionName(`red${ESC}[31m alert`)).toBe("red alert");
+  expect(sanitizeTitle(`red${ESC}[31m alert`).value).toBe("red alert");
+});
+
+test("the persisted form is screened before it is stored (#365)", () => {
+  // The contract's own sentence is about the value that gets STORED
+  // ("secret-screened ... A candidate that sanitizes to empty falls back to
+  // `New session`"), so this is the screen that must exist even when the two
+  // projections around it cover most of the same ground. Its unique coverage is
+  // NARROW and MEASURED, not claimed: a brute force over 7392 injected drafts
+  // (every separator family at every position of a keyword/assignment/tail
+  // grammar) found 1872 drafts it catches alone, and every one of them has a
+  // markdown-only tail — a separator hidden from the raw screen by an invisible
+  // character, `token<ZWSP>=*`, stored as `token =*`. A hidden separator cannot
+  // hide a secret that is not there, so this is a false positive, not a catch;
+  // a second brute force over eight REAL secret shapes (1620 drafts) found no
+  // case this screen catches alone. It stays because it is the form the
+  // contract names and because its removal is not measured safe — and this is
+  // its failing control: drop it and the draft below comes back as `token =*`.
+  expect(createManualSessionName(`token${ZWSP}=*`)).toBe(SESSION_FALLBACK_NAME);
+});
+
+test("the raw draft is screened before the strip (#365)", () => {
+  // Round 3 disproved the round-2 claim that the persisted-form screen
+  // DOMINATES the raw one, and this case is the counterexample. `token<BEL>` is
+  // an assignment to the raw screen -- `\S+` counts the BEL as a non-whitespace
+  // character -- and nothing at all to the screens after it: the strip turns
+  // the BEL into a space, the collapse and the trim take it away, and the
+  // persisted draft is the bare `token=`. So the raw screen is not redundant
+  // and it is kept, with this as its failing control: drop it and this test
+  // gets `token=` back instead of the fallback.
+  const BEL = String.fromCharCode(0x07);
+  expect(createManualSessionName(`token=${BEL}`)).toBe(SESSION_FALLBACK_NAME);
+  expect(sanitizeTitle(`token=${BEL}`).value).toBe(SESSION_FALLBACK_NAME);
+  // The same draft with a visible character after the assignment is still
+  // caught by the persisted-form screen, so the two screens overlap without
+  // either covering the other.
+  expect(createManualSessionName(`token${BEL}=supersecret`)).toBe(SESSION_FALLBACK_NAME);
 });
 
 test("a uid with the high bit set decodes as the kernel's unsigned uid (#365)", () => {
