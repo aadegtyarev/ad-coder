@@ -30,6 +30,11 @@ import {
   readReviewStamps,
   verifyReviewStamp,
 } from "./review-stamp";
+import {
+  VERDICT_FINDINGS_MAX_ISSUES,
+  VERDICT_FINDINGS_TEXT_CHARS,
+  writeVerdictFindings,
+} from "./verdict-findings";
 
 export type { ReviewStampFailure };
 
@@ -81,6 +86,15 @@ export interface ReviewStampOutcome {
   /** Why no stamp was written; absent when one was. */
   skippedBecause?: string;
   filePath?: string;
+  /**
+   * "-" when the verdict approved with no findings, otherwise the
+   * store-relative path of the findings artifact this settle wrote
+   * (`.ad-coder/runs/verdict-<runId>.json`, issue #466) -- the ref the stamp
+   * line carries and the settle report names. Carried ON the outcome so the
+   * CLI front reports the path from the same derivation that wrote the file
+   * instead of recomputing it (and possibly disagreeing).
+   */
+  findingsRef: string;
 }
 
 /**
@@ -96,15 +110,33 @@ export interface ReviewStampSource {
   runIds: string[];
   stageMetrics: readonly { stage: string; provider?: string; model?: string }[];
   reviewRan?: boolean;
+  /**
+   * The settled verdicts, when the caller carries them (a `PipelineResult`
+   * always does; the standalone reviewer passes the one verdict). Optional so
+   * legacy callers stay valid, but the findings ARTIFACT (issue #466) is
+   * derived from it: without it a `changes_requested` settle can only stamp a
+   * count, never persist the findings themselves.
+   */
+  verdicts?: readonly {
+    status: string;
+    issues: readonly { severity: string; what: string }[];
+    summary: string;
+  }[];
 }
 
 /**
  * Derive and append the stamp, from the settled result only.
  *
- * A run with `reviewRan: false` writes NOTHING -- there was no review, and a
- * stamp must never certify silence. `changes_requested` results DO stamp: the
- * merge gate reads the newest verdict, and "theReviewer said no" is a fact
- * the gate should be able to see, not re-derive from prose.
+ * A run with `reviewRan: false` settles without a verdict, so it persists no
+ * findings and writes no stamp -- a stamp must never certify silence.
+ * `changes_requested` results DO stamp: the merge gate reads the newest
+ * verdict, and "theReviewer said no" is a fact the gate should be able to
+ * see, not re-derive from prose.
+ *
+ * The verdict's FINDINGS are persisted before any stamp gating (issue #466):
+ * stamps are marker-governed target paperwork, while the findings artifact is
+ * ad-coder's own `.ad-coder` durable state beside the run record -- a set of
+ * findings that never survives the settle is the loss this fixes.
  */
 export function recordReviewStampFromResult(
   repoRoot: string,
@@ -112,13 +144,43 @@ export function recordReviewStampFromResult(
   now: Date = new Date(),
   requireStamp: StampRequirement = "auto",
 ): ReviewStampOutcome {
+  if (result.reviewRan === false)
+    return {
+      recorded: false,
+      skippedBecause: "the run settled without a review round",
+      findingsRef: "-",
+    };
+  // Bounded at the source too: the artifact clips again, and the CLI's stderr
+  // report renders at most these ceilings (issue #466).
+  const lastVerdict = result.verdicts?.[result.verdicts.length - 1];
+  let findingsRef = "-";
+  if (result.approved === false && lastVerdict?.status === "changes_requested") {
+    findingsRef = writeVerdictFindings(
+      repoRoot,
+      {
+        // The findings belong to the REVIEW run that settled them; in a
+        // pipeline `runIds` is in run order, so the last id is that reviewer
+        // run.
+        runId: result.runIds[result.runIds.length - 1] ?? "unknown",
+        summary: lastVerdict.summary.slice(0, VERDICT_FINDINGS_TEXT_CHARS),
+        issues: lastVerdict.issues.slice(0, VERDICT_FINDINGS_MAX_ISSUES),
+      },
+      localIsoNow(now),
+    );
+  }
   const marker = readStampsMarker(repoRoot);
   if (requireStamp === "off")
-    return { recorded: false, skippedBecause: "review stamps are off (require-stamp: off)" };
+    return {
+      recorded: false,
+      skippedBecause: "review stamps are off (require-stamp: off)",
+      findingsRef,
+    };
   if (requireStamp !== "on" && marker === undefined)
-    return { recorded: false, skippedBecause: "target is not a stamp-writing repository" };
-  if (result.reviewRan === false)
-    return { recorded: false, skippedBecause: "the run settled without a review round" };
+    return {
+      recorded: false,
+      skippedBecause: "target is not a stamp-writing repository",
+      findingsRef,
+    };
   const lastMetrics = result.stageMetrics.filter((entry) => entry.stage.startsWith("review:"));
   const reviewerMetrics = lastMetrics[lastMetrics.length - 1];
   const filePath = marker?.file ?? "docs/reviews/stamps.log";
@@ -131,14 +193,20 @@ export function recordReviewStampFromResult(
     reviewer: `${reviewerMetrics?.provider ?? "?"}/${reviewerMetrics?.model ?? "?"}`,
     reviewedAt: localIsoNow(now),
     runIds: result.runIds,
-    findingsRef: filePath,
+    // The stamp line's own documented meaning (ReviewStamp.findingsRef): the
+    // findings artifact when the verdict disapproved with findings, "-" in
+    // every other case -- the no-findings approval included. It NEVER names
+    // the stamps log itself: a pointer that answers "where the findings live"
+    // with the log that carries none was the second half of the loss issue
+    // #466 fixes.
+    findingsRef: findingsRef,
   };
   try {
     appendReviewStamp(repoRoot, filePath, stamp);
   } catch (error) {
     throw new Error(`could not write the review stamp to ${filePath}: ${String(error)}`);
   }
-  return { recorded: true, filePath };
+  return { recorded: true, filePath, findingsRef };
 }
 
 /** Local-wall-clock ISO-8601 with the machine's own UTC offset. */

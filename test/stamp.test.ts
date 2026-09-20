@@ -23,6 +23,12 @@ import {
   REVIEW_STAMP_VERSION,
   renderReviewStamp,
 } from "../src/stamp/review-stamp";
+import {
+  findingsReportLines,
+  readVerdictFindings,
+  VERDICT_FINDINGS_MAX_ISSUES,
+  VERDICT_FINDINGS_REPORT_MAX_ISSUES,
+} from "../src/stamp/verdict-findings";
 
 const USAGE = {
   input: 500,
@@ -426,4 +432,138 @@ test("a standalone reviewer run stamps through the same writer as the pipeline",
   expect(parsed.verdict).toBe("changes_requested");
   expect(parsed.reviewer).toBe("opencode-go/glm-5.3-flash");
   expect(parsed.runIds).toEqual(["standalone-run"]);
+});
+
+test("a changes_requested settle persists the findings as the run artifact, and the stamp ref names it", () => {
+  // The loss issue #466 fixes: a blocking verdict whose issues existed only in
+  // the settle's live objects and the transcript. The artifact must be ON DISK
+  // in the store's durable layout, with the verdict's own issues, before any
+  // stamp gating decides whether target paperwork happens.
+  const root = gitRepo();
+  fs.writeFileSync(path.join(root, STAMPS_MARKER_FILE), JSON.stringify({ file: "stamps.log" }));
+  const result = recordReviewStampFromResult(root, {
+    approved: false,
+    runIds: ["run-a", "run-review"],
+    stageMetrics: [{ stage: "review:1", provider: "opencode-go", model: "glm-5.3-flash" }],
+    reviewRan: true,
+    verdicts: [
+      { status: "approved", issues: [], summary: "first round looked fine" },
+      {
+        status: "changes_requested",
+        issues: [
+          { severity: "blocker", what: "the gate acceptor is untested" },
+          { severity: "major", what: "the migration help lies about the default" },
+        ],
+        summary: "two real findings; the rest is style",
+      },
+    ],
+  });
+  // The outcome carries the ref the settle derived, not a recomputation.
+  expect(result.findingsRef).toBe(".ad-coder/runs/verdict-run-review.json");
+  // The artifact's OWN content is asserted -- the file on disk, not a rendering.
+  const value = readVerdictFindings(root, "run-review");
+  expect(value.verdict).toBe("changes_requested");
+  expect(value.runId).toBe("run-review");
+  expect(value.summary).toBe("two real findings; the rest is style");
+  expect(value.issues).toEqual([
+    { severity: "blocker", what: "the gate acceptor is untested" },
+    { severity: "major", what: "the migration help lies about the default" },
+  ]);
+  expect(value.issueCount).toBe(2);
+  expect(value.issuesTruncated).toBe(false);
+  expect(value.schemaVersion).toBe(1);
+  expect(value.writtenAt).toBeTruthy();
+  // And the artifact was written BEFORE the stamp gating: it survives even a
+  // stamp the target does not want.
+  const noMarker = gitRepo();
+  const notStamped = recordReviewStampFromResult(noMarker, {
+    approved: false,
+    runIds: ["run-only"],
+    stageMetrics: [{ stage: "review:1", provider: "faux", model: "m" }],
+    reviewRan: true,
+    verdicts: [
+      {
+        status: "changes_requested",
+        issues: [{ severity: "major", what: "the wording lies" }],
+        summary: "one finding",
+      },
+    ],
+  });
+  expect(notStamped.recorded).toBe(false); // no marker -> no stamp
+  expect(notStamped.findingsRef).toBe(".ad-coder/runs/verdict-run-only.json");
+  expect(readVerdictFindings(noMarker, "run-only").issues).toEqual([
+    { severity: "major", what: "the wording lies" },
+  ]);
+});
+
+test("the findings ref is the artifact for changes_requested and '-' for approved", () => {
+  const root = gitRepo();
+  fs.writeFileSync(path.join(root, STAMPS_MARKER_FILE), JSON.stringify({ file: "stamps.log" }));
+  // Approved with no findings: '-' everywhere, and nothing is written.
+  const approved = recordReviewStampFromResult(root, settledResult());
+  expect(approved.recorded).toBe(true);
+  expect(approved.findingsRef).toBe("-");
+  expect(fs.existsSync(path.join(root, ".ad-coder/runs/verdict-run-b.json"))).toBe(false);
+  // And the stamp line itself carries the ref, never the stamps log it lives in.
+  const stampLine = fs
+    .readFileSync(path.join(root, "stamps.log"), "utf8")
+    .trimEnd()
+    .split("\n")
+    .at(-1);
+  const parsed = parseReviewStamp(stampLine ?? "");
+  if (typeof parsed === "string") throw new Error(parsed);
+  expect(parsed.findingsRef).toBe("-");
+  // findingsRef on the stamp line names the artifact when the verdict
+  // disapproved.
+  fs.rmSync(path.join(root, "stamps.log"));
+  const blocked = recordReviewStampFromResult(root, {
+    ...settledResult(),
+    approved: false,
+    verdicts: [
+      {
+        status: "changes_requested",
+        issues: [{ severity: "major", what: "the wording lies" }],
+        summary: "one finding",
+      },
+    ],
+  });
+  expect(blocked.findingsRef).toBe(".ad-coder/runs/verdict-run-b.json");
+  const blockedLine = fs
+    .readFileSync(path.join(root, "stamps.log"), "utf8")
+    .trimEnd()
+    .split("\n")
+    .at(-1);
+  const blockedParsed = parseReviewStamp(blockedLine ?? "");
+  if (typeof blockedParsed === "string") throw new Error(blockedParsed);
+  expect(blockedParsed.verdict).toBe("changes_requested");
+  expect(blockedParsed.findingsRef).toBe(".ad-coder/runs/verdict-run-b.json");
+});
+
+test("the settle report is bounded in lines and length, and says plainly when it truncates", () => {
+  // Issue #463 is the reader side of this class; HERE the writer's stderr
+  // report must shade in the findings beside the count line, but never without
+  // bound: a verbose reviewer cannot write an unbounded stderr through it.
+  const little = findingsReportLines(".ad-coder/runs/verdict-r.json", [
+    { severity: "major", what: "the gate acceptor is untested" },
+  ]);
+  expect(little[0]).toBe("findings .ad-coder/runs/verdict-r.json");
+  expect(little).toEqual([
+    "findings .ad-coder/runs/verdict-r.json",
+    "1. major: the gate acceptor is untested",
+  ]);
+  // Long text is clipped per line WITH the clip named.
+  const clipped = findingsReportLines("ref", [{ severity: "minor", what: "x".repeat(500) }]);
+  expect(clipped).toHaveLength(2);
+  expect(clipped[1]).toBe(`1. minor: ${"x".repeat(200)}…[report line clipped]`);
+  // More issues than the report shades in: the truncation is SAID, with the
+  // pointer to where the full findings are.
+  const many = Array.from({ length: VERDICT_FINDINGS_MAX_ISSUES * 2 }, (_, index) => ({
+    severity: "major",
+    what: `finding ${index + 1}`,
+  }));
+  const truncated = findingsReportLines("ref", many);
+  expect(truncated).toHaveLength(1 + VERDICT_FINDINGS_REPORT_MAX_ISSUES + 1);
+  expect(truncated.at(-1)).toContain("report truncated");
+  expect(truncated.at(-1)).toContain(String(many.length));
+  expect(truncated.at(-1)).toContain("in ref");
 });

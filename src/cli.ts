@@ -156,6 +156,7 @@ import {
 } from "./skills/resolver";
 import { stampBodyCheckErrors, stampCheckErrors, stampDeliveryText } from "./stamp/cli";
 import { recordReviewStampFromResult, resolveStampRequirement } from "./stamp/record-review-stamp";
+import { findingsReportLines } from "./stamp/verdict-findings";
 import { formatUpdateResult, UpdateError, updateAdCoder } from "./update/updater";
 import {
   createDefaultUserProfileStore,
@@ -2800,7 +2801,10 @@ async function roleCommand(
     process.stderr.write(`ad-coder: verdict ${verdict.status} issues=${verdict.issues.length}\n`);
     // Same writer the pipeline settles through, fed the same structured fields
     // (issue #283): a review is a review wherever it ran, and no path transcribes
-    // a verdict out of prose.
+    // a verdict out of prose. The settled verdict is handed over too so the
+    // findings artifact (issue #466) is written from this front as it is from
+    // the pipeline fronts -- without it a `changes_requested` settle here could
+    // only stamp a count, never persist the findings themselves.
     const outcome = recordReviewStampFromResult(
       configOptions.targetDir,
       {
@@ -2808,10 +2812,19 @@ async function roleCommand(
         runIds: [standaloneRunId],
         stageMetrics: [{ stage: "review:1", provider: spec.model.provider, model: spec.model.id }],
         reviewRan: true,
+        verdicts: [{ status: verdict.status, issues: verdict.issues, summary: verdict.summary }],
       },
       new Date(),
       config.requireStamp,
     );
+    // The bounded findings report BESIDE the count line (issue #466): the count
+    // line above is what a consumer greps and it stays; these lines are what
+    // make a `changes_requested` round actionable from the settle output alone,
+    // and the ref names the artifact carrying the durable findings.
+    if (outcome.findingsRef !== "-") {
+      for (const line of findingsReportLines(outcome.findingsRef, verdict.issues))
+        process.stderr.write(`ad-coder: ${line}\n`);
+    }
     process.stderr.write(
       outcome.recorded
         ? `ad-coder: review stamp appended to ${outcome.filePath}\n`
