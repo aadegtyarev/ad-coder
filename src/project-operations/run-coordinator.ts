@@ -31,6 +31,7 @@ import type {
 import {
   MAX_PAUSE_CAUSE_CODE_CHARS,
   MAX_PAUSE_CAUSE_MESSAGE_CHARS,
+  MAX_PERSISTED_STRING_CHARS,
   OrchestrationError,
 } from "../orchestration/types";
 import type { ProjectStore } from "../project-store/project-store";
@@ -427,18 +428,48 @@ function recordStageFailure(
  * a context that can fit. The two boundary errors word their own remedy; the
  * recurrence tail stays the loop signature every other cause already carries
  * (issue #363); every other typed source keeps the generic wording verbatim.
+ *
+ * THE PERSISTED CEILING (issue #458 review round): the durable writer rejects
+ * any persisted record string over `MAX_PERSISTED_STRING_CHARS`
+ * (`requiredString`, src/orchestration/background-runs.ts), and the closeout
+ * action interpolates two GROWING pieces -- the detail StageLimits composes
+ * from the configured limits (valid limits accept Number.MAX_SAFE_INTEGER, so
+ * its numbers reach 16 digits each) and the recurrence count, whose digits
+ * grow as a loop repeats. The lead-in is therefore dropped ("the stage
+ * entered its " -- the reason token opening the action already says what
+ * happened), which keeps every composition of valid inputs within the
+ * ceiling. If a composition would still not fit, the detail is the ONLY piece
+ * that is shortened, and never silently: the head survives and the fixed
+ * `...[clipped]` marker is appended inside the parentheses (the same visible
+ * clip the untyped cause message uses, issue #467), while the reason, the
+ * remedy and the recurrence tail -- the three things the operator needs, and
+ * what distinguishes a loop from a raiseable ceiling -- always survive
+ * intact. For every valid reason token (the closed four-token union of
+ * `StageCloseoutReason`) and every safe-integer count, the room left for the
+ * detail stays positive, so the bound is total: the action never exceeds the
+ * ceiling, and a pause never fails durable serialization.
  */
 function harnessFailureAction(sourceError: unknown, cause: PipelinePauseCause): string {
   const recurrenceSuffix =
     cause.recurrence > 0
       ? `; the same cause has now been recorded ${cause.recurrence + 1} consecutive times`
       : "";
-  if (sourceError instanceof StageCloseoutError)
-    return (
-      `the stage entered its ${sourceError.reason} closeout reserve (${sourceError.detail}); ` +
-      `raise or disable the ${sourceError.reason} stage ceiling for this role, then resume explicitly` +
-      recurrenceSuffix
+  if (sourceError instanceof StageCloseoutError) {
+    const head = `${sourceError.reason} closeout reserve (`;
+    const tail = `); raise or disable the ${sourceError.reason} stage ceiling for this role, then resume explicitly`;
+    const composed = head + sourceError.detail + tail + recurrenceSuffix;
+    if (composed.length <= MAX_PERSISTED_STRING_CHARS) return composed;
+    // Deliberate, visible bound (see above): shorten only the detail, keep its
+    // head, say so with the marker inside the parentheses. `Math.max` keeps the
+    // slice non-negative even for a hostile reason token; for the closed union
+    // of real ones the room is always well above zero.
+    const roomForDetail = Math.max(
+      0,
+      MAX_PERSISTED_STRING_CHARS -
+        (head.length + tail.length + recurrenceSuffix.length + PAUSE_CAUSE_CLIP_MARKER.length),
     );
+    return `${head}${sourceError.detail.slice(0, roomForDetail)}${PAUSE_CAUSE_CLIP_MARKER}${tail}${recurrenceSuffix}`;
+  }
   if (sourceError instanceof ContextCompactionLostError)
     return (
       "the stage's context can no longer be compacted; reopen the session from its durable state " +

@@ -46,6 +46,7 @@ import {
   resumeImportedLdoWork,
   routeDocumentationFollowUp,
   StageCloseoutError,
+  StageLimitController,
   StageLimitError,
   startRepositoryPublishing,
   suggestBacklogMigrationOnce,
@@ -54,7 +55,11 @@ import {
   WorkflowStageLimitError,
 } from "../src";
 import { CostAnomalyBlockedError } from "../src/economics/cost-anomaly";
-import { MAX_PAUSE_CAUSE_MESSAGE_CHARS, OrchestrationError } from "../src/orchestration/types";
+import {
+  MAX_PAUSE_CAUSE_MESSAGE_CHARS,
+  MAX_PERSISTED_STRING_CHARS,
+  OrchestrationError,
+} from "../src/orchestration/types";
 import { SUBMIT_VERDICT_TOOL_NAME } from "../src/orchestration/verdict";
 import { defineRole } from "../src/role";
 import {
@@ -885,6 +890,120 @@ test("repeated closeout failures count their recurrence at last (issue #458)", a
   coordinator.resumeStage({ source: "operator", action: "retry" });
   expect((await coordinator.run()).status).toBe("complete");
   expect(attempts).toBe(3);
+});
+
+test("a closeout pause action fits the persisted ceiling for MAX_SAFE_INTEGER limits (issue #458 review)", async () => {
+  // The review round measured the recurrence-1 closeout action OVER the
+  // persisted ceiling: valid stage limits accept Number.MAX_SAFE_INTEGER, the
+  // model_turns closeout detail then interpolates 16-digit numbers, and the
+  // ordinary recurrence-1 action crossed the limit `requiredString` enforces
+  // on every persisted record string -- so the REPEATED pause failed durable
+  // serialization instead of producing a clearable pause. The ceiling here is
+  // read from the writer's own constant (MAX_PERSISTED_STRING_CHARS), so the
+  // test fails if either side moves. Both pauses are asserted: the first (no
+  // recurrence tail) and the repeated one (the tail included -- exactly what
+  // pushed the old wording over the edge).
+  const maxSafe = Number.MAX_SAFE_INTEGER;
+  // The real controller builds the closeout from the real limits: the detail
+  // is the one StageLimits composes at the closeout boundary, not a hand-typed
+  // stand-in.
+  const controller = new StageLimitController(
+    { maxModelTurns: maxSafe, finalResponseReserveModelTurns: 1 },
+    () => 0,
+    { modelTurns: maxSafe - 1 },
+  );
+  let closeoutError: StageCloseoutError | undefined;
+  try {
+    controller.admitToolTurn("read_file");
+  } catch (error) {
+    if (error instanceof StageCloseoutError) closeoutError = error;
+  }
+  expect(closeoutError).toBeDefined();
+  const target = root();
+  const store = new ProjectStore(target);
+  const base = coordinatorSession(store, []);
+  let attempts = 0;
+  const session: WorkflowSession = {
+    ...base,
+    async step(state) {
+      attempts += 1;
+      if (attempts <= 2)
+        throw new WorkflowStageFailureError(closeoutError!, "failed-code", {
+          ...failureMetrics,
+        });
+      return base.step(state);
+    },
+  };
+  const coordinator = new RunCoordinator(session, store, { runId: "closeout-ceiling" });
+  const first = await coordinator.run();
+  const firstAction = first.checkpoint.pause?.action;
+  expect(first.checkpoint.pause?.code).toBe("stage_failed");
+  expect(firstAction).toBeDefined();
+  // Which ceiling was exhausted, the remedy, the act -- the shortening that
+  // keeps the composition inside the ceiling must never drop one of these.
+  expect(firstAction).toContain(`model_turns closeout reserve (${closeoutError!.detail})`);
+  expect(firstAction).toContain("raise or disable the model_turns stage ceiling for this role");
+  expect(firstAction).toContain("then resume explicitly");
+  expect(firstAction!.length).toBeLessThanOrEqual(MAX_PERSISTED_STRING_CHARS);
+  coordinator.resumeStage({ source: "operator", action: "retry" });
+  const second = await coordinator.run();
+  const secondAction = second.checkpoint.pause?.action;
+  expect(second.checkpoint.pause?.cause).toMatchObject({ code: "stage_closeout", recurrence: 1 });
+  expect(secondAction).toBeDefined();
+  // The recurrence tail -- the loop signature -- lives inside the same budget:
+  expect(secondAction).toContain("the same cause has now been recorded 2 consecutive times");
+  expect(secondAction).toContain("raise or disable the model_turns stage ceiling for this role");
+  expect(secondAction!.length).toBeLessThanOrEqual(MAX_PERSISTED_STRING_CHARS);
+});
+
+test("a closeout action that would not fit is clipped visibly, never mid-remedy (issue #458 review)", async () => {
+  // The deliberate bound behind the ceiling guarantee: the detail is the ONLY
+  // piece a too-long composition may lose, because the reason, the remedy and
+  // the recurrence tail are what the operator needs and are never cut. An
+  // oversized detail (harness-internal; the controller's own templates stay
+  // far below this) drives the bound: the head of the detail survives, the
+  // fixed clip marker says a cut happened -- legible, not silent -- and the
+  // total lands within the persisted ceiling on the first pause and, with the
+  // recurrence tail inside the same budget, on the repeated one too.
+  const target = root();
+  const store = new ProjectStore(target);
+  const base = coordinatorSession(store, []);
+  let attempts = 0;
+  const detail = "x".repeat(400);
+  const session: WorkflowSession = {
+    ...base,
+    async step(state) {
+      attempts += 1;
+      if (attempts <= 2)
+        throw new WorkflowStageFailureError(
+          new StageCloseoutError("model_turns", detail),
+          "failed-code",
+          { ...failureMetrics },
+        );
+      return base.step(state);
+    },
+  };
+  const coordinator = new RunCoordinator(session, store, { runId: "closeout-clip" });
+  const first = await coordinator.run();
+  const firstAction = first.checkpoint.pause?.action;
+  expect(firstAction).toBeDefined();
+  expect(firstAction!.length).toBeLessThanOrEqual(MAX_PERSISTED_STRING_CHARS);
+  expect(firstAction).toContain("model_turns closeout reserve (");
+  expect(firstAction).toContain("...[clipped]");
+  expect(firstAction).not.toContain(detail);
+  // The remedy and the resume act survive the clip INTACT, after the cut:
+  expect(firstAction).toContain(
+    "); raise or disable the model_turns stage ceiling for this role, then resume explicitly",
+  );
+  coordinator.resumeStage({ source: "operator", action: "retry" });
+  const second = await coordinator.run();
+  const secondAction = second.checkpoint.pause?.action;
+  expect(secondAction).toBeDefined();
+  expect(secondAction!.length).toBeLessThanOrEqual(MAX_PERSISTED_STRING_CHARS);
+  expect(secondAction).toContain("the same cause has now been recorded 2 consecutive times");
+  expect(secondAction).toContain(
+    "); raise or disable the model_turns stage ceiling for this role, then resume explicitly",
+  );
 });
 
 test("a budget-boundary pause stays clearable by an explicit operator act (issue #458)", async () => {

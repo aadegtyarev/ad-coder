@@ -9,6 +9,7 @@ import type { PipelinePause, PipelinePauseCause } from "./types";
 import {
   MAX_PAUSE_CAUSE_CODE_CHARS,
   MAX_PAUSE_CAUSE_MESSAGE_CHARS,
+  MAX_PERSISTED_STRING_CHARS,
   PipelinePauseError,
 } from "./types";
 
@@ -254,7 +255,7 @@ interface BackgroundSubscriber {
 
 const MAX_BACKGROUND_EVENT_PAGE_EVENT: BackgroundRunEvent = {
   sequence: Number.MAX_SAFE_INTEGER,
-  runId: "x".repeat(256),
+  runId: "x".repeat(MAX_PERSISTED_STRING_CHARS),
   lifecycle: "stage_changed",
   timestamp: Number.MAX_SAFE_INTEGER,
   stage: "security",
@@ -263,7 +264,7 @@ const MAX_BACKGROUND_EVENT_PAGE_EVENT: BackgroundRunEvent = {
   pause: {
     phase: "security",
     code: "provider_rejected",
-    action: "a".repeat(256),
+    action: "a".repeat(MAX_PERSISTED_STRING_CHARS),
     limitReason: "cost_unknown",
     limit: Number.MAX_VALUE,
     cause: {
@@ -1126,7 +1127,7 @@ function finiteNumber(value: unknown): number {
   return value;
 }
 function requiredString(value: unknown): string {
-  if (typeof value !== "string" || value.length === 0 || value.length > 256)
+  if (typeof value !== "string" || value.length === 0 || value.length > MAX_PERSISTED_STRING_CHARS)
     throw new TypeError("record contains an invalid string");
   return value;
 }
