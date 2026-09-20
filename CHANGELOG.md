@@ -11,6 +11,24 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.126.0] - 2026-09-20
+
+### Fixed
+
+- **A credential lock that its owner released no longer reads as an unsafe lock
+  (issue #483).** `removeAbandonedLock` opens the lock by name and only then
+  stats the descriptor it holds; when the holder released the lock inside that
+  window, the held inode has no links left, and the guard
+  (`!isFile() || nlink !== 1 || uid !== getuid`) read a normal release as a
+  foreign file -- an `AuthError: unsafe credential lock` in place of "the lock
+  is gone, retry", which is what reddened `ci` on main. The released state
+  (`nlink === 0`) now returns the way the already-handled missing-lock state
+  does, while every genuinely foreign state still refuses: a non-regular file,
+  a lock name carrying another hard link, and a foreign owner. The interleaving
+  is pinned by a regression test that injects the release between the
+  descriptor and the stat: it fails on the unfixed source with the field's own
+  stack and passes on the fixed one.
+
 ## [0.125.0] - 2026-09-20
 
 ### Added

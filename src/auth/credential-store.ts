@@ -554,6 +554,16 @@ export class FileCredentialStore implements CredentialStore {
       let stat: fs.Stats;
       try {
         stat = await handle.stat();
+        // A lock its owner released while this handle was open: the unlink
+        // removed the last link to the inode we hold, so this stat reports
+        // nlink 0. That is the lock being GONE -- the same fact a fresh open
+        // reports as ENOENT further down, already answered with `return true`
+        // so `withLock` retries -- and not a foreign file at the lock's name.
+        // Only the link count can change under us: an open handle pins the
+        // inode, so its type and owner cannot. Every genuinely foreign state
+        // still refuses below: a non-regular file, a lock name carrying
+        // another hard link (nlink > 1), and a foreign owner.
+        if (stat.nlink === 0) return true;
         if (!stat.isFile() || stat.nlink !== 1 || stat.uid !== process.getuid?.())
           throw storeError(lockPath, "unsafe credential lock");
         if (Date.now() - stat.mtimeMs < this.staleLockMs) return false;
