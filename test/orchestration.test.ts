@@ -3268,6 +3268,55 @@ test("the submission schemas state their vocabulary in descriptions, not in unio
   expect(severity.description).toContain("blocker");
 });
 
+test("a submission satisfying the declared verdict schema is accepted by the validator (issue #489)", () => {
+  // The regression this pins, measured 2026-09-20: #484 added a description to
+  // `issues` and deleted the neighbouring `summary` property from the schema in
+  // the same hunk. `parseVerdict` went on demanding the field, so the shape the
+  // provider was asked to hold the model to (the tool sets
+  // `constrainedSampling: strict`) was narrower than the shape the validator
+  // accepts -- the reviewer was refused for omitting a field no schema offered.
+  // Three paid rounds of #477 died on it and the durable ledger kept only a
+  // 0-token provider row, which read as a provider failure.
+  //
+  // The assertion is deliberately ONE-DIRECTIONAL and derived, not retyped: a
+  // payload built from the schema's OWN `required` list must be accepted. Add a
+  // required property and this test fails until the payload teaches it; delete
+  // one the validator still wants and it fails on the validator's refusal.
+  // Retyping the field names here would have passed through the very deletion
+  // it exists to catch.
+  type Node = { required?: string[]; properties?: Record<string, Node> };
+  const schema = buildSubmitVerdictTool({}, "run").parameters as Node;
+  const declared = schema.required ?? [];
+
+  // The values are the ones `formatReviewerInstruction` draws in the shape it
+  // tells the reviewer to send. `coverage` is absent on purpose: it is
+  // `Type.Optional`, so a submission without it must stay legal.
+  const sample: Record<string, unknown> = { status: "approved", issues: [] };
+  const sampleNames = new Set(["status", "issues", "summary", "coverage"]);
+  // A required property this test has never been taught fails here, which is
+  // the other direction: the schema growing a demand the validator does not
+  // accept is the same defect mirrored.
+  expect(declared.filter((name) => !sampleNames.has(name))).toEqual([]);
+
+  // Built from `declared` alone -- nothing hand-added beyond the sample map, so
+  // losing a required property loses it from the payload too.
+  const payload: Record<string, unknown> = {};
+  for (const name of declared) payload[name] = name === "summary" ? "ok" : sample[name];
+
+  let refusal: unknown;
+  try {
+    parseVerdict(payload, "run");
+  } catch (error) {
+    refusal = error;
+  }
+  expect(refusal).toBeUndefined();
+
+  // And the instruction text the reviewer reads must name every required field:
+  // a schema-only requirement stays invisible on a route that samples freely.
+  const instruction = formatReviewerInstruction();
+  for (const name of declared) expect(instruction).toContain(name);
+});
+
 test("an incomplete submit_verdict reaches parseVerdict and is named, not reported as a missing verdict", async () => {
   // Same pre-execute hazard on the reviewer's side, and worse here: the
   // coverage branch of `parseVerdict` answers with the exact contract IDs to
