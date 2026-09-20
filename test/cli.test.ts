@@ -44,7 +44,451 @@ function runCli(
   };
 }
 
-test("background start propagates an explicit owner to the detached worker", async () => {
+/**
+ * Live `background worker` processes whose command serves exactly `target`
+ * under exactly `runId`.
+ *
+ * Why the process table and not a record: `background start` returns as soon as
+ * the detached worker has spawned, and nothing durable names its pid (`lease`
+ * carries a random `workerId`, not a pid), so the process table is the only
+ * place the pid exists. The match is on the argv the launcher built
+ * (`background worker --target-dir <target> --id <runId> …`) scoped to this
+ * test's own `mkdtemp` target, so a concurrently running suite in another
+ * worktree -- which has a different target -- can never be selected by the
+ * termination below.
+ *
+ * The argv is parsed completely rather than probed at the first hit (review
+ * round). `--target-dir` is compared against EVERY pair of the flag and its
+ * value: `indexOf`-style first-occurrence matching hides this test's own worker
+ * whenever the worker's argv carries the flag more than once -- a wrapper that
+ * repeats an outer invocation's `--target-dir`, or a launcher that passes a
+ * default value first -- because the first pair then holds a different path
+ * while the pair that matches sits behind it. Whole-argument comparison is kept
+ * either way (`…-cli-abc` never selects `…-cli-abcd`), and `background`/`worker`
+ * must be adjacent, so a foreign process merely mentioning both words is not
+ * matched.
+ *
+ * `--id <runId>` is required in the SAME argv when the caller knows the run id
+ * (both callers do). Two filters, each closing a different hole: without the
+ * target filter a foreign worker is signalled, and without the run-id filter a
+ * worker that is NOT this run's -- a stale process from an earlier attempt on a
+ * reused path, or another run in the same target -- is counted as a survivor
+ * and then killed, while this run's own worker could still be missed by a
+ * target spelling this function does not know. The launcher
+ * (`createBackgroundHostLauncher`, src/cli.ts) passes both flags verbatim for
+ * every worker it spawns, so the pair is always there to match.
+ */
+async function backgroundWorkerPids(target: string, runId: string): Promise<number[]> {
+  // Asynchronous on purpose, and the cost of the synchronous form is a
+  // measurement rather than a worry: one `Bun.spawnSync(["ps", "-eo",
+  // "pid,args"])` takes 63 ms on an idle box and 245 ms on the same box bound
+  // to two loaded cores, and the teardown below could issue ~320 of them per
+  // run (the 1 s + 10 s + 5 s of fixed phases, sampled every 50 ms). `bun test`
+  // shares one process -- and therefore one event loop -- across test files,
+  // so those tens of seconds of blocked loop were spent inside other tests'
+  // budgets. That is exactly what CI run 35481736583 on 2ca84f5 shows in both
+  // of its failed attempts: `record store > reads an absent record as empty
+  // and caps entries, dropping the oldest` (test/trivial-edit.test.ts:112, from
+  // #388, unrelated to #419) was reported `this test timed out after 5000ms` at
+  // 6832.12 ms, and the run also logged `[test-preload] run root
+  // ad-coder-test-94gb7J survived 5 teardown attempts` -- the preload's own
+  // `rmSync` series starved by the same loop. Awaiting a spawned `ps` keeps
+  // every one of those milliseconds off this thread, so the sampler no longer
+  // spends a neighbour's 5-second test budget -- and, since awaiting means a
+  // `ps` that never returns would hang the teardown inside the runner's
+  // per-test budget, the spawn itself is bounded (see `readProcessTable`).
+  const stdout = await readProcessTable();
+  // Both spellings of one target: the launcher passes the path it was given
+  // (`--target-dir <raw>`), while the comparison is anchored on the realpath so
+  // a symlinked tmpdir cannot hide the process by spelling the same directory
+  // differently. Any single pair matching either spelling is this target.
+  const targetSpellings = new Set([target, fs.realpathSync(target)]);
+  const pids: number[] = [];
+  for (const line of stdout.split("\n")) {
+    const fields = /^\s*(\d+)\s+(.*)$/.exec(line);
+    if (fields === null) continue;
+    const words = fields[2]!.split(" ");
+    const action = words.findIndex(
+      (word, index) => word === "background" && words[index + 1] === "worker",
+    );
+    if (action < 0) continue;
+    if (!flagValues(words, "--target-dir").some((value) => targetSpellings.has(value))) continue;
+    if (!flagValues(words, "--id").includes(runId)) continue;
+    pids.push(Number(fields[1]));
+  }
+  return pids;
+}
+
+/**
+ * Every value that follows `flag` in one argv word list.
+ *
+ * The whole list is scanned rather than the first `indexOf` hit: a single
+ * occurrence is what the launcher emits today, but "the first one is the right
+ * one" is an assumption about a process command line this test does not own,
+ * and getting it wrong fails in the dangerous direction -- the worker that is
+ * alive is not seen, so the teardown declares a clean end over a live process.
+ */
+function flagValues(words: readonly string[], flag: string): string[] {
+  const values: string[] = [];
+  for (let index = 0; index < words.length - 1; index += 1) {
+    if (words[index] === flag) values.push(words[index + 1]!);
+  }
+  return values;
+}
+
+/**
+ * One `ps -eo pid,args` read, bounded by `WORKER_SAMPLE_TIMEOUT_MS` (review
+ * round).
+ *
+ * Awaiting a sample (see `backgroundWorkerPids`) bought the neighbours' event
+ * loop back, and it also means a `ps` that never returns holds the teardown
+ * open until the RUNNER's timeout -- reported as the bare `timed out after
+ * Nms` this file exists to replace, with nothing naming the sampler. Past the
+ * bound the process is killed and the sampler throws with the number in it, so
+ * a hung sample is attributed to the sample.
+ */
+async function readProcessTable(): Promise<string> {
+  const listing = Bun.spawn(["ps", "-eo", "pid,args"], { stdout: "pipe", stderr: "pipe" });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      listing.kill();
+      reject(
+        new Error(`process-table sampler did not return within ${WORKER_SAMPLE_TIMEOUT_MS} ms`),
+      );
+    }, WORKER_SAMPLE_TIMEOUT_MS);
+  });
+  try {
+    const [exitCode, stdout, stderr] = await Promise.race([
+      Promise.all([
+        listing.exited,
+        new Response(listing.stdout).text(),
+        new Response(listing.stderr).text(),
+      ]),
+      timedOut,
+    ]);
+    if (exitCode !== 0) throw new Error(`ps failed: ${stderr.trim() || `exit code ${exitCode}`}`);
+    // The header line is returned on purpose: its first field is not a pid and
+    // the caller's regex skips it exactly like any other unparseable line.
+    return stdout;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** One teardown's outcome: what the polls found and what they decided. */
+type WorkerTeardown = {
+  /** Pids still serving the target when the wait ended; empty is a clean end. */
+  survivors: number[];
+  /** Wall clock since the cancel that opened the teardown, in ms. */
+  elapsedMs: number;
+  /** The phases the polls passed through, in order, with their numbers. */
+  phases: string[];
+};
+
+/**
+ * Samples the process table until no worker serving `target` is left, driving
+ * the signal escalation from what it observes (issue #419).
+ *
+ * The shape this replaced was three fixed phases -- 1 s of self-exit grace,
+ * 10 s after SIGTERM, 5 s after SIGKILL -- where the escalation happened
+ * because a sleep had ended rather than because a sample said so, and the
+ * phases summed to 16 s of sampling regardless of the observation. One loop
+ * now owns the whole teardown against a single ABSOLUTE ceiling
+ * (`WORKER_TEARDOWN_CEILING_MS`, 30 s measured from the cancel): SIGTERM only
+ * on a sample that still finds workers past the self-exit grace, SIGKILL only
+ * on a sample that still finds them past the SIGTERM window, and the loop ends
+ * on a sample that finds none or on the ceiling, whichever it observes first.
+ * `phases` records each of those observations for the failure message.
+ *
+ * The sampling gap backs off from 25 ms to 250 ms while consecutive samples
+ * report the same state and resets to 25 ms when a signal changes it: a
+ * healthy teardown costs a handful of `ps` calls (the old 50 ms cadence over
+ * that 16 s cost ~320, see `backgroundWorkerPids`), and the hopeless tail after
+ * SIGKILL -- only an unschedulable process produces one -- does not fork `ps`
+ * every 25 ms until the ceiling. A signalled worker is not waited for: it was
+ * measured gone within 1 ms of SIGTERM under two loaded cores plus six
+ * spinners, so the fast cadence is what usually pays off.
+ *
+ * An empty sample is NOT the end (review round): the loop declares a clean end
+ * only after TWO consecutive empty samples, and the confirmation is taken at
+ * the MINIMUM cadence -- after the first empty sample it sleeps
+ * `WORKER_POLL_MIN_MS` instead of the gap backoff had grown to, so the pair is
+ * one observation taken twice 25 ms apart rather than two observations 250 ms
+ * apart. That window is what a single empty sample could not rule out: a worker
+ * ending (or a re-spawned one appearing) between two widely spaced samples left
+ * one empty reading as the last word. The measured pause is recorded in
+ * `phases` rather than asserted against: `Date.now()`'s resolution and the
+ * timer's own granularity put a healthy 25 ms pause at 25-26 ms on any box, so
+ * an assertion there would either flake or (re-pairing forever) spend the whole
+ * ceiling on a busy box while proving nothing new -- both samples DID see an
+ * empty process table, and by construction they are one minimum cadence apart.
+ */
+async function waitForBackgroundWorkers(target: string, runId: string): Promise<WorkerTeardown> {
+  const startedAt = Date.now();
+  const phases: string[] = [];
+  let signalStage: 0 | 1 | 2 = 0;
+  let signalledAt = 0;
+  let gapMs = WORKER_POLL_MIN_MS;
+  let samples = 0;
+  let emptySamples = 0;
+  for (;;) {
+    samples += 1;
+    const survivors = await backgroundWorkerPids(target, runId);
+    const elapsedMs = Date.now() - startedAt;
+    if (survivors.length === 0) {
+      if (emptySamples === 0) {
+        // First empty reading: schedule the confirmation at the minimum
+        // cadence -- explicitly not `gapMs`, which the backoff may have grown
+        // to 250 ms -- and take it before deciding anything.
+        emptySamples = 1;
+        const pauseStartedAt = Date.now();
+        await Bun.sleep(WORKER_POLL_MIN_MS);
+        phases.push(
+          `first empty sample at ${elapsedMs} ms; confirmation scheduled after the ` +
+            `measured ${Date.now() - pauseStartedAt} ms minimum cadence`,
+        );
+        continue;
+      }
+      emptySamples += 1;
+      phases.push(`${emptySamples} consecutive empty samples at ${elapsedMs} ms`);
+      return { survivors, elapsedMs, phases };
+    }
+    emptySamples = 0;
+    if (elapsedMs >= WORKER_TEARDOWN_CEILING_MS) {
+      phases.push(
+        `absolute ceiling ${WORKER_TEARDOWN_CEILING_MS} ms reached with ` +
+          `${survivors.length} worker(s) alive after ${samples} sample(s)`,
+      );
+      return { survivors, elapsedMs, phases };
+    }
+    let signalled = false;
+    if (signalStage === 0 && elapsedMs >= WORKER_SELF_EXIT_MS) {
+      signalWorkers(survivors, "SIGTERM");
+      signalStage = 1;
+      signalledAt = elapsedMs;
+      signalled = true;
+      phases.push(
+        `SIGTERM to ${survivors.length} worker(s) [${survivors.join(",")}] after ` +
+          `${elapsedMs} ms of self-exit grace`,
+      );
+    } else if (signalStage === 1 && elapsedMs - signalledAt >= WORKER_SIGTERM_MS) {
+      signalWorkers(survivors, "SIGKILL");
+      signalStage = 2;
+      signalled = true;
+      phases.push(
+        `SIGKILL to ${survivors.length} worker(s) [${survivors.join(",")}] after ` +
+          `${elapsedMs - signalledAt} ms of SIGTERM window`,
+      );
+    }
+    gapMs = signalled ? WORKER_POLL_MIN_MS : Math.min(gapMs * 2, WORKER_POLL_MAX_MS);
+    await Bun.sleep(gapMs);
+  }
+}
+
+function signalWorkers(pids: readonly number[], signal: NodeJS.Signals): void {
+  for (const pid of pids) {
+    try {
+      process.kill(pid, signal);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      // ESRCH is the ONE expected failure: the worker exited between the sample
+      // and this line, which is the outcome the caller is waiting for anyway.
+      // Everything else is rethrown with its code -- swallowing the catch-all
+      // was a promise the comment above could not keep: EPERM (a pid that is
+      // not this user's, e.g. a recycled pid or a worker started by another
+      // account) means the process was NOT signalled and the teardown must not
+      // go on to report a bound it never actually tested.
+      if (code === "ESRCH") continue;
+      throw new Error(`cannot send ${signal} to pid ${pid}: ${code ?? "unknown error"}`);
+    }
+  }
+}
+
+/** Grace for a worker that was already ending on its own before it is signalled. */
+const WORKER_SELF_EXIT_MS = 1_000;
+/** Window after SIGTERM before SIGKILL. Measured: a worker disappears within
+ * 1 ms of the SIGTERM under two loaded cores plus six spinners, so the rest is
+ * headroom for a box that is worse than the one this was measured on -- and it
+ * is a WINDOW, not a sleep: the escalation happens on the first sample past it. */
+const WORKER_SIGTERM_MS = 5_000;
+/**
+ * The absolute bound on one teardown, from the cancel to giving up: 30 s.
+ *
+ * It replaces the old 1 s + 10 s + 5 s of fixed phases. Those summed to 16 s of
+ * waiting WHETHER OR NOT anything was still alive, and the sum was not a bound
+ * -- the phases were walks through `Bun.sleep`, so a starved loop stretched
+ * them by however long its samples took. This ceiling is the only clock the
+ * teardown answers to, it covers the post-SIGKILL tail (a process the kernel
+ * cannot schedule is the one case no signal ends), and it is deliberately
+ * larger than the 16 s it replaces: a longer bound that is actually enforced
+ * says more than a shorter one that is not.
+ */
+const WORKER_TEARDOWN_CEILING_MS = 30_000;
+/** Sampling gap after a signal, in ms: the observation that matters most is the
+ * one right after SIGTERM, which the measured worker answers in ~1 ms. */
+const WORKER_POLL_MIN_MS = 25;
+/** Sampling gap once consecutive samples keep reporting the same state, in ms:
+ * a teardown that is not converging must not fork a `ps` every 25 ms. */
+const WORKER_POLL_MAX_MS = 250;
+/**
+ * Bound on ONE process-table sample, in ms (review round).
+ *
+ * The sample is awaited, so a `ps` that never returns used to hold the
+ * teardown open until the runner's per-test timeout and be reported as a bare
+ * `timed out after Nms` -- indistinguishable from a slow teardown and naming
+ * nothing. Past this bound the child is killed and `readProcessTable` throws
+ * `process-table sampler did not return within 5000 ms`, so a hang lands on the
+ * sampler with its number in the message.
+ */
+const WORKER_SAMPLE_TIMEOUT_MS = 5_000;
+/** Runner headroom, in ms: process startup, `bun run src/cli.ts` for the cancel,
+ * the target's `rmSync` and the scheduler's own slack on a loaded box. */
+const WORKER_TEARDOWN_RUNNER_HEADROOM_MS = 5_000;
+/**
+ * Budget for the two tests that end a real worker, in ms.
+ *
+ * `bun test`'s default is 5 s, which is SHORTER than the teardown ceiling
+ * below: a teardown that legitimately used its full bound would be killed by
+ * the runner and reported as a bare `timed out after 5000ms` -- the shape of
+ * output this issue exists to replace -- instead of as the named failure with
+ * pids, states, etimes and passed phases. Nothing else changes with this
+ * number: the zero-worker and no-residue assertions stay hard, and the run is
+ * still red. It only decides whether the red run says WHY.
+ *
+ * The budget is the SUM of what the teardown can actually consume, not a round
+ * number with room to hide in (review round: 30 s + 20 s of "spare" let a
+ * hanging teardown spend 20 s nobody could account for and still be reported as
+ * a runner timeout):
+ *
+ *   ceiling (30 s)                       the teardown's own absolute bound
+ * + one sampler timeout (5 s)            a sample is awaited, then the ceiling
+ *                                        is compared, so one over-long sample
+ *                                        lands past the bound
+ * + one poll gap (0.25 s)                the sleep between two samples
+ * + runner headroom (5 s)                see above
+ * = 40.25 s
+ *
+ * A hang is therefore not what this budget is for: it is caught by the sampler
+ * in 5 s (or by the ceiling), and every second past those sums is the runner's.
+ */
+const WORKER_TEARDOWN_TEST_TIMEOUT_MS =
+  WORKER_TEARDOWN_CEILING_MS +
+  WORKER_SAMPLE_TIMEOUT_MS +
+  WORKER_POLL_MAX_MS +
+  WORKER_TEARDOWN_RUNNER_HEADROOM_MS;
+
+/**
+ * `test` with the worker-teardown budget attached.
+ *
+ * The budget is a named constant rather than a literal, and the formatter only
+ * hugs `test(name, async () => …, <ms>)` when that last argument is a literal:
+ * a constant there re-indents both test bodies wholesale. A two-argument call
+ * keeps the two tests the same shape as every other test in this file.
+ */
+function testBudget(name: string, body: () => Promise<void>): void {
+  test(name, body, WORKER_TEARDOWN_TEST_TIMEOUT_MS);
+}
+
+/**
+ * Ends the detached run a test started, waits for its process to actually
+ * disappear, and removes the test's own `mkdtemp` target (issue #419).
+ *
+ * `background cancel` alone is not enough, and that is measured rather than
+ * assumed: cancellation is an in-memory flag of whichever `BackgroundRunManager`
+ * runs the pipeline, and the detached worker reads it only between stages, so an
+ * external cancel reaches the record and never the process -- observed as the
+ * record flipping from `cancelled` back to `started` on the worker's own lease
+ * heartbeat while the process lived on. The durable way to end it is the signal
+ * an operator's `kill` sends, so the cancel is still issued (it is the
+ * operator-facing record transition, and its success proves the record is
+ * addressable by that owner) and the pid is then awaited, then SIGTERM, then
+ * SIGKILL -- each transition decided by what a sample of the process table
+ * found, all of them inside the absolute ceiling, and none of them read off a
+ * fixed sleep (see `waitForBackgroundWorkers`).
+ *
+ * A cancelled run whose worker outlives an external stop is the product
+ * question, not this file's: it is ticketed as #459 (with #426 for the record
+ * side) and is NOT fixed here. What this teardown owes is an attributed
+ * failure: if a worker survives, the message names each pid, its state read
+ * from `/proc/<pid>/stat`, its `etime`, the elapsed milliseconds, the phases
+ * that were passed -- and `see #459`, so the next reader finds the reproduction
+ * instead of a silent flake.
+ *
+ * The target is removed only AFTER the process is provably gone: a live writer
+ * re-creates `<target>/.ad-coder/runs/background/<id>.json` with a recursive
+ * `mkdir`, and with it every deleted parent -- including the test run's
+ * `ad-coder-test-…` tmpdir root, which is exactly the leaked directory whose
+ * record carried no `run-pid` marker.
+ */
+async function endBackgroundRun(
+  target: string,
+  runId: string,
+  ownerArgs: readonly string[] = [],
+): Promise<void> {
+  const cancelled = runCli([
+    "background",
+    "cancel",
+    "--target-dir",
+    target,
+    ...ownerArgs,
+    "--id",
+    runId,
+  ]);
+  expect(cancelled.code).toBe(0);
+  const teardown = await waitForBackgroundWorkers(target, runId);
+  // A leak must be red in the run that caused it, not recovered later by a
+  // sweep: the whole point of the fix is that no worker outlives its test.
+  // The message carries the numbers the reproducibility claim rests on.
+  expect(
+    teardown.survivors,
+    `background worker teardown for ${target} ended with ` +
+      `${teardown.survivors.length} live worker(s) after ${teardown.elapsedMs} ms ` +
+      `(absolute ceiling ${WORKER_TEARDOWN_CEILING_MS} ms, ` +
+      `phases: ${teardown.phases.join(" -> ")}): ` +
+      `${teardown.survivors.map(describeWorker).join(", ")}; ` +
+      "a worker of a cancelled run outliving an external stop is tracked in see #459",
+  ).toEqual([]);
+  fs.rmSync(target, { recursive: true, force: true });
+  // The residue half of the same check, and the reason the process check is
+  // first: inside the test run's root, THIS test owns exactly one directory,
+  // and a worker that is still writing re-creates its `.ad-coder/runs/...`
+  // parents `rmSync` just deleted. Sampled after the workers are provably gone,
+  // so an absence here is a statement about the worker rather than about the
+  // deletion; the parent root itself belongs to the run and to `test/preload.ts`
+  // (#419) and is not this test's to remove or to assert on.
+  expect(fs.existsSync(target), `test target ${target} still exists after removal`).toBe(false);
+}
+
+/**
+ * `pid <n> (state S, etime 12.3 s)` for one surviving worker.
+ *
+ * The state comes from field 3 of `/proc/<pid>/stat` and `etime` is derived
+ * from field 22 (starttime) against `/proc/uptime`: `comm` (field 2) can carry
+ * spaces and parentheses, so fields are counted from the LAST `)` -- field 3
+ * (state) is first there and starttime is index 19. `/proc/<pid>/stat` times
+ * are in USER_HZ, which the kernel fixes at 100 on every Linux architecture.
+ * Unreadable procfs (a pid gone between the sample and this line, or a platform
+ * without `/proc`) is reported as `unreadable` rather than guessed at.
+ */
+function describeWorker(pid: number): string {
+  let state = "unreadable";
+  let etime = "unreadable";
+  try {
+    const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+    const tail = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+    state = tail[0] ?? "unreadable";
+    const starttimeTicks = Number(tail[19]);
+    const uptimeSeconds = Number(fs.readFileSync("/proc/uptime", "utf8").split(" ")[0]);
+    if (Number.isFinite(starttimeTicks) && Number.isFinite(uptimeSeconds))
+      etime = `${Math.max(0, uptimeSeconds - starttimeTicks / 100).toFixed(1)} s`;
+  } catch {
+    // Left as `unreadable`: naming a vanished pid is still a reproduction step.
+  }
+  return `pid ${pid} (state ${state}, etime ${etime})`;
+}
+
+testBudget("background start propagates an explicit owner to the detached worker", async () => {
   const target = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-background-cli-"));
   const ownerId = `fresh-owner-${Date.now()}`;
   const started = runCli([
@@ -92,9 +536,12 @@ test("background start propagates an explicit owner to the detached worker", asy
   expect(["started", "paused", "failed", "cancelled", "timed_out", "completed"]).toContain(
     JSON.parse(status.stdout).lifecycle,
   );
+  // Assertions above, teardown below: cancelling earlier would have satisfied
+  // `not requested` with this test's own cancel instead of the worker's state.
+  await endBackgroundRun(target, runId, ["--owner-id", ownerId]);
 });
 
-test("the default background owner is stable across processes for one target", async () => {
+testBudget("the default background owner is stable across processes for one target", async () => {
   // The default owner used to embed the target path, which the manager rejects
   // (`^[A-Za-z0-9._:-]{1,128}$`), so every ownerless background command failed
   // invalid_request before it could reach a record.
@@ -114,6 +561,12 @@ test("the default background owner is stable across processes for one target", a
   const status = runCli(["background", "status", "--target-dir", target, "--id", runId]);
   expect(status.code).toBe(0);
   expect(JSON.parse(status.stdout).runId).toBe(runId);
+
+  // No `--owner-id` here on purpose: the default the second process derives
+  // from the target must address the record the worker is still writing, which
+  // is the stability this test exists for. The worker itself is then ended and
+  // awaited, so the run holds nothing on the shared tmpfs after the test.
+  await endBackgroundRun(target, runId);
 });
 
 test("target dotenv cannot supply provider credentials", () => {

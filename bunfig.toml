@@ -1,0 +1,4 @@
+# Test runner configuration. Developer-only: `bunfig.toml` is intentionally
+# excluded from the package's `files` (see scripts/artifact-smoke.ts).
+[test]
+preload = ["./test/preload.ts"]

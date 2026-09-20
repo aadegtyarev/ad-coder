@@ -69,6 +69,19 @@ Rules for the project's own code quality. A violation is always blocking.
   suppression that must be inline carries a one-line reason.
 - 2026-09-12: Install and release claims require a bounded temporary smoke of
   the produced artifact, with integrity checked and no global installation mutation.
+- 2026-09-19: Test tooling that deletes inside the shared system tmpdir operates only on
+  the project's own test-run scratch (`ad-coder-test-` roots, `test/tmp-hygiene.ts` and
+  `test/preload.ts`): directories only by lstat (a symlink is never followed), past a
+  stated age threshold, with per-entry failure containment — an errno note, never an
+  aborted run. Nothing else in the shared tmpdir is touched. There are two named
+  thresholds, one per kind of proof: a root whose owner marker is provably absent (ENOENT
+  on `run-pid` where the platform can write one, i.e. a readable `/proc/self/stat`) is
+  scratch abandoned by a late writer and goes past the SHORT threshold
+  (`MARKERLESS_MAX_AGE_MS`, one minute); any other root falls under the LONG threshold
+  (`ORPHAN_MAX_AGE_MS`, four hours), and a root whose marker proves its owner dead goes at
+  once. A missing marker is never read as proof of death where markers cannot be written
+  (no procfs, e.g. macOS): the short threshold does not apply there at all and only the
+  long rule runs.
 - 2026-09-12: Every user-visible change updates `CHANGELOG.md`. Every shipped
   release or installable release candidate increments `package.json` according
   to Semantic Versioning; its exact version has a dated changelog heading, passes
