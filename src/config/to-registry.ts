@@ -152,6 +152,32 @@ export function toRegistryProvider(
 }
 
 /**
+ * The PROVIDER/MODEL PAIRS a `models.yaml` profile can serve, in the portable
+ * shape the calibration layer scopes economics and capacity by (issue #506).
+ *
+ * A models profile is a routing source like an inventory: it names the models
+ * a run may be routed to. The pairs are derived THE WAY THE RESOLVER DISPATCHES
+ * -- each rung's model part, owned by whichever projected provider declares
+ * that name -- so a calibration snapshot built from this can never scope
+ * economics to a provider the profile cannot actually reach. A rung whose model
+ * no enabled provider declares contributes nothing here; the resolver raises
+ * `unknown_model` for it at run time, loudly, which is where that belongs.
+ */
+export function modelsProfileSource(
+  config: ModelsConfig,
+  profileName?: string,
+): { name: string; providers: Array<{ id: string; models: string[] }> } {
+  const { name, reachable } = toRegistryAndProfile(config, profileName);
+  const byProvider = new Map<string, string[]>();
+  for (const { provider, model } of reachable) {
+    const models = byProvider.get(provider) ?? [];
+    if (!models.includes(model)) models.push(model);
+    byProvider.set(provider, models);
+  }
+  return { name, providers: [...byProvider].map(([id, models]) => ({ id, models })) };
+}
+
+/**
  * The pure projection of a validated `models.yaml` into the registry
  * declaration and a routing profile. No I/O, no mutation, and no error from
  * data content -- the input is already validated; the only failures are
@@ -166,11 +192,23 @@ export function toRegistryProvider(
  * rule. The registry stays FULL: every enabled provider is still projected
  * and registered (and still fails loudly on a missing credential/endpoint
  * declaration), only the KEY preflight narrows.
+ *
+ * `reachable` is the same walk one level finer -- the (provider, model) PAIRS,
+ * in first-reached order, that `reachableProviders` is the projection of. The
+ * calibration layer scopes a project snapshot's economics by exactly these
+ * pairs (issue #506), so the pairs come from the walk that already exists
+ * rather than from a second implementation of it.
  */
 export function toRegistryAndProfile(
   config: ModelsConfig,
   profileName?: string,
-): { registry: RegistryConfig; profile: Profile; name: string; reachableProviders: string[] } {
+): {
+  registry: RegistryConfig;
+  profile: Profile;
+  name: string;
+  reachableProviders: string[];
+  reachable: Array<{ provider: string; model: string }>;
+} {
   const name = profileName ?? config.defaultProfile;
   if (name === undefined) {
     throw new ConfigError(
@@ -223,17 +261,22 @@ export function toRegistryAndProfile(
   for (const provider of registry.providers) {
     for (const model of provider.models ?? []) ownerOf.set(model.name, provider.id);
   }
-  const reachableProviders: string[] = [];
+  const reachable: Array<{ provider: string; model: string }> = [];
   const reached = new Set<string>();
   for (const ladder of Object.values(declared.routes)) {
     for (const rung of ladder) {
-      const owner = ownerOf.get(modelPart(refOf(rung)));
-      if (owner !== undefined && !reached.has(owner)) {
-        reached.add(owner);
-        reachableProviders.push(owner);
+      const model = modelPart(refOf(rung));
+      const owner = ownerOf.get(model);
+      const pair = owner === undefined ? undefined : `${owner}\u0000${model}`;
+      if (owner !== undefined && pair !== undefined && !reached.has(pair)) {
+        reached.add(pair);
+        reachable.push({ provider: owner, model });
       }
     }
   }
+  const reachableProviders: string[] = [];
+  for (const { provider } of reachable)
+    if (!reachableProviders.includes(provider)) reachableProviders.push(provider);
 
   const entries: ProfileEntry[] = [];
   for (const [role, ladder] of bare) {
@@ -259,5 +302,5 @@ export function toRegistryAndProfile(
     }
   }
 
-  return { registry, profile: { entries }, name, reachableProviders };
+  return { registry, profile: { entries }, name, reachableProviders, reachable };
 }

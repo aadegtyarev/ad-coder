@@ -9,7 +9,7 @@ import {
   UserProfileError,
   writeProjectCalibrationSnapshot,
 } from "../src";
-import { parseProjectCalibrationSnapshot } from "../src/project-calibration";
+import { parseProjectCalibrationSnapshot, snapshotSource } from "../src/project-calibration";
 
 const REPO_ROOT = path.resolve(import.meta.dir, "..");
 
@@ -84,6 +84,106 @@ test("project snapshot limits and missing calibrated inventories fail loudly", (
   expect(() => createProjectCalibrationSnapshot(profile, "work", { maxEconomics: -1 })).toThrow(
     UserProfileError,
   );
+});
+
+test("a snapshot calibrated against a models.yaml profile names it, in its own namespace", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-calibration-models-"));
+  try {
+    const routing = {
+      entries: [{ role: "coder" as const, complexity: "trivial" as const, model: "gpt-5.6-luna" }],
+    };
+    const modelsProfile = {
+      version: 1 as const,
+      inventories: [],
+      calibratedRouting: [
+        {
+          modelsProfile: "codex-pro100",
+          profile: routing,
+          observedOn: "2026-09-20",
+          source: "benchmark",
+          confidence: "measured" as const,
+        },
+      ],
+      economicRecords: [
+        {
+          id: "luna-price",
+          observedAt: "2026-09-20T00:00:00.000Z",
+          provider: "openai-codex",
+          model: "gpt-5.6-luna",
+          kind: "price" as const,
+          value: 0.2,
+          unit: "USD/1M tokens",
+          source: "provider-measurement",
+          confidence: "measured" as const,
+        },
+        {
+          id: "outside-price",
+          observedAt: "2026-09-20T00:00:00.000Z",
+          provider: "openai-codex",
+          model: "gpt-5.6-terra",
+          kind: "price" as const,
+          value: 2,
+          unit: "USD/1M tokens",
+          source: "provider-measurement",
+          confidence: "measured" as const,
+        },
+      ],
+      subscriptionCapacityRanges: [],
+    };
+    // The pairs come from the config layer's own walk over `models.yaml`; here
+    // they name one of the two models, so the economics must be scoped to it.
+    const source = {
+      kind: "models-profile" as const,
+      name: "codex-pro100",
+      providers: [{ id: "openai-codex", models: ["gpt-5.6-luna"] }],
+    };
+    const snapshot = createProjectCalibrationSnapshot(modelsProfile, source);
+    // The source is named in ITS OWN namespace: a models.yaml profile is never
+    // written down as an inventory block it is not.
+    expect(snapshot).toMatchObject({ modelsProfile: "codex-pro100" });
+    expect(snapshot).not.toHaveProperty("inventory");
+    expect(snapshotSource(snapshot)).toEqual({ kind: "models-profile", name: "codex-pro100" });
+    expect(snapshot.economics.map((entry) => entry.model)).toEqual(["gpt-5.6-luna"]);
+    expect(writeProjectCalibrationSnapshot(root, snapshot)).toBe(
+      path.join(root, ".ad-coder", "calibration.json"),
+    );
+    // Round-trip: the committed file reads back as the same models-profile arm.
+    expect(readProjectCalibrationSnapshot(root)).toEqual(snapshot);
+
+    // A cell the profile cannot serve is refused BY NAME, not shipped.
+    expect(() =>
+      createProjectCalibrationSnapshot(
+        {
+          ...modelsProfile,
+          calibratedRouting: [
+            {
+              ...modelsProfile.calibratedRouting[0]!,
+              profile: {
+                entries: [{ role: "coder", complexity: "trivial", model: "gpt-5.6-sol" }],
+              },
+            },
+          ],
+        },
+        source,
+      ),
+    ).toThrow(/gpt-5.6-sol/);
+    // A profile the document does not calibrate is not found, and the arm is
+    // part of the lookup: the same name as an INVENTORY is a different source.
+    expect(() =>
+      createProjectCalibrationSnapshot(modelsProfile, {
+        kind: "models-profile",
+        name: "other",
+        providers: [],
+      }),
+    ).toThrow(UserProfileError);
+    expect(() => createProjectCalibrationSnapshot(modelsProfile, "codex-pro100")).toThrow(
+      UserProfileError,
+    );
+    // A bare string still means the inventory arm, unchanged.
+    expect(createProjectCalibrationSnapshot(profile, "work").inventory?.name).toBe("work");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("project snapshot refuses symlinked directories and destinations", () => {

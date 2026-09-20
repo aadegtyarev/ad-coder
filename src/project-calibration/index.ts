@@ -1,3 +1,4 @@
+export type { CalibrationSourceRef } from "./project-calibration";
 export {
   createProjectCalibrationSnapshot,
   parseProjectCalibrationSnapshot,
@@ -10,3 +11,4 @@ export type {
   ProjectCalibrationSnapshot,
   ProjectEconomicSnapshot,
 } from "./types";
+export { snapshotSource } from "./types";

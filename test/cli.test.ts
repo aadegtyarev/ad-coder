@@ -719,6 +719,104 @@ test("profile CLI writes a bounded project calibration snapshot", () => {
   }
 });
 
+test("profile CLI snapshots a models.yaml profile, and refuses an ambiguous source", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-profile-models-"));
+  try {
+    const profilePath = path.join(root, "profile.json");
+    const modelsPath = path.join(root, "models.yaml");
+    const inputPath = path.join(root, "portable.json");
+    fs.writeFileSync(
+      modelsPath,
+      [
+        "providers:",
+        "  opencode-go:",
+        "    enabled: true",
+        "    api: openai-completions",
+        "    baseUrl: https://opencode.example.com",
+        "    credential: OPENCODE_API_KEY",
+        "    models:",
+        "      glm-5.3-flash: {input: 0.15, output: 0.5}",
+        "default: daily",
+        "profiles:",
+        "  daily:",
+        "    coder: opencode-go:glm-5.3-flash",
+        "",
+      ].join("\n"),
+    );
+    fs.writeFileSync(
+      inputPath,
+      JSON.stringify({
+        version: 1,
+        inventories: [],
+        calibratedRouting: [
+          {
+            modelsProfile: "daily",
+            profile: {
+              entries: [{ role: "coder", complexity: "trivial", model: "glm-5.3-flash" }],
+            },
+            observedOn: "2026-09-20",
+            source: "benchmark",
+            confidence: "measured",
+          },
+        ],
+        economicRecords: [],
+        subscriptionCapacityRanges: [],
+      }),
+    );
+    expect(
+      runCli([
+        "profile",
+        "import-apply",
+        "--input",
+        inputPath,
+        "--mode",
+        "replace",
+        "--profile-path",
+        profilePath,
+      ]).code,
+    ).toBe(0);
+
+    const snapshot = runCli([
+      "profile",
+      "snapshot",
+      "--profile-path",
+      profilePath,
+      "--target-dir",
+      root,
+      "--models-profile",
+      "daily",
+      "--models-config",
+      modelsPath,
+    ]);
+    expect(snapshot.code).toBe(0);
+    const written = JSON.parse(
+      fs.readFileSync(path.join(root, ".ad-coder", "calibration.json"), "utf8"),
+    );
+    // The committed snapshot names the models.yaml profile, in its namespace.
+    expect(written).toMatchObject({ modelsProfile: "daily" });
+    expect(written).not.toHaveProperty("inventory");
+
+    const bad = (args: string[]) =>
+      runCli(["profile", "snapshot", "--profile-path", profilePath, "--target-dir", root, ...args]);
+    // One source, named once: both is ambiguous, neither has nothing to build.
+    // A usage refusal is the CLI's `usage` front (exit 2); a source the profile
+    // or the models file cannot supply is a typed refusal (exit 1).
+    const refusals: Array<[string[], number]> = [
+      [[], 2],
+      [["--inventory", "work", "--models-profile", "daily"], 2],
+      [["--models-profile", "daily", "--models-config", path.join(root, "absent.yaml")], 2],
+      [["--models-profile", "missing", "--models-config", modelsPath], 1],
+    ];
+    for (const [args, code] of refusals) {
+      const result = bad(args);
+      expect(result.code).toBe(code);
+      expect(result.stderr.length).toBeGreaterThan(0);
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("profile CLI returns stable JSON errors for invalid input, conflicts, and unsafe stores", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-profile-errors-"));
   try {

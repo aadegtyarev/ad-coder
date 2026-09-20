@@ -31,13 +31,14 @@ import {
 import { resolveResumeRun, resumeOrchestratorConfig, resumeSeedNote } from "./cli/resume";
 import { ToolActivityRenderer } from "./cli/tool-activity";
 import { migrateInventoriesToModels } from "./config/migrate";
-import { loadSettingsConfigSeam } from "./config/seam";
+import { loadModelsConfigSeam, loadSettingsConfigSeam } from "./config/seam";
 import {
   defaultModelsPath,
   defaultSettingsPath,
   loadSettingsConfig,
   writeFreshModelsConfig,
 } from "./config/store";
+import { modelsProfileSource } from "./config/to-registry";
 import type { ProviderAdmissionSettings, SettingsConfig } from "./config/types";
 import type { CompactionPolicy } from "./context/compactor";
 import { SessionNotAcquiredError } from "./conversation/conversation";
@@ -98,6 +99,7 @@ import {
 } from "./orchestration/verdict";
 import { parseProfile } from "./profiles/validate";
 import {
+  type CalibrationSourceRef,
   createProjectCalibrationSnapshot,
   writeProjectCalibrationSnapshot,
 } from "./project-calibration";
@@ -1449,6 +1451,25 @@ function stampCommand(positionals: string[], flags: Record<string, string | unde
   process.stdout.write("stamp check: the newest review stamp is fresh\n");
 }
 
+/**
+ * The calibration source for a `models.yaml` profile (#506): which provider/
+ * model pairs that profile can serve, derived by the SAME walk the registry
+ * resolves with, so a snapshot scopes its economics to what the profile really
+ * reaches. `models.yaml` is read through the resolver's own seam -- a
+ * present-but-unusable file is a typed refusal that names the field, and an
+ * absent one is refused HERE, because a snapshot names a profile it must have
+ * been able to read.
+ */
+function modelsProfileSourceRef(
+  name: string,
+  modelsConfigPath: string | undefined,
+): CalibrationSourceRef {
+  const models = loadModelsConfigSeam(modelsConfigPath ?? defaultModelsPath());
+  if (models === undefined)
+    fail(`profile snapshot --models-profile needs models.yaml: no models.yaml at the models path`);
+  return { kind: "models-profile", ...modelsProfileSource(models, name) };
+}
+
 async function profileCommand(positionals: string[], flags: Record<string, string | undefined>) {
   const action = positionals[1];
   if (
@@ -1481,9 +1502,18 @@ async function profileCommand(positionals: string[], flags: Record<string, strin
   if (action === "snapshot") {
     const targetDir = flags["--target-dir"];
     const inventory = flags["--inventory"];
-    if (targetDir === undefined || inventory === undefined)
-      fail("profile snapshot requires --target-dir and --inventory");
-    const snapshot = createProjectCalibrationSnapshot(current, inventory);
+    const modelsProfile = flags["--models-profile"];
+    if (targetDir === undefined) fail("profile snapshot requires --target-dir");
+    // EXACTLY ONE SOURCE (#506). The two namespaces resolve against different
+    // model sets, so naming both would leave the snapshot's own provenance
+    // ambiguous -- and naming neither has nothing to calibrate.
+    if ((inventory === undefined) === (modelsProfile === undefined))
+      fail("profile snapshot requires exactly one of --inventory and --models-profile");
+    const source: CalibrationSourceRef =
+      inventory !== undefined
+        ? { kind: "inventory", name: inventory }
+        : modelsProfileSourceRef(modelsProfile as string, flags["--models-config"]);
+    const snapshot = createProjectCalibrationSnapshot(current, source);
     const file = writeProjectCalibrationSnapshot(resolveTargetDir(targetDir), snapshot);
     process.stdout.write(`${JSON.stringify({ file, snapshot })}\n`);
     return;
@@ -3790,6 +3820,16 @@ const COMMANDS: readonly CommandDefinition[] = [
       },
       { name: "--target-dir", value: "<dir>", description: "Project receiving a snapshot." },
       { name: "--inventory", value: "<name>", description: "Inventory to snapshot." },
+      {
+        name: "--models-profile",
+        value: "<name>",
+        description: "Profile in models.yaml to snapshot, instead of an inventory.",
+      },
+      {
+        name: "--models-config",
+        value: "<path>",
+        description: "models.yaml to read for --models-profile (default: the standard path).",
+      },
       {
         name: "--evidence",
         value: "<jsonl>",
