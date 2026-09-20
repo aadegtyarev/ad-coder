@@ -11,6 +11,58 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.141.0] - 2026-09-20
+
+### Fixed
+- **A stage that ran into its own budget boundary paused as a generic provider
+  failure with no recorded cause; the two harness-side budget boundaries now
+  name themselves and their remedy (issue #458).** `pauseCauseFrom` recognised
+  seven typed harness errors and nothing else, so `StageCloseoutError` -- raised
+  by `admitToolTurn` the moment a stage inside its closeout reserve calls a
+  non-submission tool -- and `ContextCompactionLostError` fell through to the
+  generic branch: the pause said "inspect the provider failure and retry the
+  stage explicitly" and recorded no `cause` at all. An operator was sent looking
+  at a provider that had done nothing, and because the cause was dropped,
+  `recordStageFailure` wrote nothing and `recurrenceOf` could only return 0, so
+  the counter that tells a loop from a raiseable ceiling could not count the
+  repetitive case. Observed in run `bc2c97fb-cd6d-4078-90cf-afcb2694a72d`: four
+  byte-identical `{phase: code, code: stage_failed}` pauses with no cause over
+  roughly 60 minutes, while the plan stage's pause in the same run carried
+  `cause: {code: empty_turn, recurrence: 0}` for a class that was listed. Both
+  classes are now their own typed cause (`stage_closeout`,
+  `context_compaction_lost`) with the next step each admits -- raise or disable
+  the exhausted ceiling and resume, or reopen the session from its durable state
+  when its context can no longer be compacted -- while the pause `code` stays
+  `stage_failed`, so the pause remains clearable by the same explicit operator
+  act and every other source keeps the generic wording verbatim.
+
+  Rebased onto the untyped-cause line (issue #403), the two boundaries no longer
+  record NOTHING -- the untyped path gives them a bounded cause under the
+  generic `untyped_error` token -- but the record still does not say WHICH
+  boundary was hit: the code is the shared token, the action points at "this may
+  be a harness bug rather than a provider outage" instead of the remedy the
+  boundary admits, and that token's recurrence comparison advances only while
+  the composed message is byte-identical, so two closeouts that spent different
+  amounts read as different failures. This change gives each boundary its own
+  typed code and its own action wording on top of that path.
+
+  Both review rounds then found the same class of defect in the composed action.
+  The durable writer rejects any persisted string over
+  `MAX_PERSISTED_STRING_CHARS`, and the closeout action interpolates two GROWING
+  pieces -- the detail `StageLimits` composes from the configured limits, whose
+  numbers reach 16 digits because a valid limit may be
+  `Number.MAX_SAFE_INTEGER`, and the recurrence count, whose digits grow as the
+  loop repeats -- so the REPEATED pause failed durable serialization instead of
+  producing a clearable pause (216 characters for the first action, 274 for the
+  recurrence-1 one). The ceiling now lives once, in
+  `src/orchestration/types.ts`, shared by the writer and both composers, and a
+  composition that would not fit shortens its detail -- visibly, with the
+  `...[clipped]` marker the untyped cause message already uses -- while the
+  reason, the remedy and the recurrence tail always survive intact. The second
+  round measured the same overflow in the context-compaction action, whose
+  conditional aside about choosing a summarizer is now bounded and clipped under
+  the same rule (206 characters without the recurrence tail, 264 with it).
+
 ## [0.140.0] - 2026-09-20
 
 ### Fixed

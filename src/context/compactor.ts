@@ -336,6 +336,8 @@ export function describeCompactionFailure(failure: CompactionFailure | undefined
  */
 export class ContextCompactionLostError extends ContextBudgetError {
   override readonly name = "ContextCompactionLostError";
+  /** The typed code a pause cause or session record files this error under. */
+  readonly code = "context_compaction_lost" as const;
   readonly attempts: number;
   readonly failures: readonly CompactionFailure[];
 

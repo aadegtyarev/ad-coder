@@ -630,6 +630,21 @@ export const MAX_PAUSE_CAUSE_CODE_CHARS = 64;
 export const MAX_PAUSE_CAUSE_MESSAGE_CHARS = 512;
 
 /**
+ * Char ceiling the durable writer (`requiredString` in
+ * src/orchestration/background-runs.ts) enforces on every persisted record
+ * string -- run ids, owner and worker ids, and the pause `action`, which is
+ * the binding case: the longest such string the coordinator composes. This
+ * constant is the single source of truth for that limit, so the writer, the
+ * action composer (`harnessFailureAction` in
+ * src/project-operations/run-coordinator.ts) and the tests all read the same
+ * number and move together if it ever changes. The binding risk is a pause
+ * whose action exceeds it: durable serialization then rejects the record on
+ * read and the pause is no longer clearable (issue #458 review round), so
+ * every composed action must fit inside this ceiling by construction.
+ */
+export const MAX_PERSISTED_STRING_CHARS = 256;
+
+/**
  * The recorded cause of a harness-side stage failure (issue #363).
  *
  * WHY IT EXISTS. The fixed "inspect the provider failure" wording collapsed

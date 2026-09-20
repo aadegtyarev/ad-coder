@@ -22,6 +22,8 @@ import {
   aggregateFollowUps,
   appendDocumentationProposal,
   buildPublishingPrBody,
+  type CompactionFailure,
+  ContextCompactionLostError,
   clearsOnExplicitAct,
   createBacklogStore,
   DEFAULT_REPOSITORY_PUBLISHING_CONFIG,
@@ -43,6 +45,8 @@ import {
   resolveRepositoryPublishingConfig,
   resumeImportedLdoWork,
   routeDocumentationFollowUp,
+  StageCloseoutError,
+  StageLimitController,
   StageLimitError,
   startRepositoryPublishing,
   suggestBacklogMigrationOnce,
@@ -51,7 +55,11 @@ import {
   WorkflowStageLimitError,
 } from "../src";
 import { CostAnomalyBlockedError } from "../src/economics/cost-anomaly";
-import { MAX_PAUSE_CAUSE_MESSAGE_CHARS, OrchestrationError } from "../src/orchestration/types";
+import {
+  MAX_PAUSE_CAUSE_MESSAGE_CHARS,
+  MAX_PERSISTED_STRING_CHARS,
+  OrchestrationError,
+} from "../src/orchestration/types";
 import { SUBMIT_VERDICT_TOOL_NAME } from "../src/orchestration/verdict";
 import { defineRole } from "../src/role";
 import {
@@ -777,6 +785,348 @@ test("a harness-side stage failure is worded as harness work and carries its cau
     // The cause stays resumable by the same explicit operator act.
     expect(PAUSES_CLEARED_BY_AN_EXPLICIT_ACT).toContain("stage_failed");
   }
+});
+
+test("a harness-side budget boundary is worded as its own remedy (issue #458)", async () => {
+  // Two more HARNESS-SIDE failures were still mapped to "inspect the provider
+  // failure and retry the stage explicitly" with the cause dropped entirely
+  // (issue #458): the closeout reserve a stage ceiling grants its own
+  // deliverable, and a context whose compaction is spent. Neither is a
+  // provider fault -- one is the stage's own ceiling, the other the harness's
+  // summarization -- and neither has a retry that works, so the action has to
+  // word the remedy that exists and the cause has to travel, or the recurrence
+  // counter could never count the repeats.
+  const failure: CompactionFailure = {
+    attempt: 1,
+    errorName: "CompactionError",
+    stopReason: "summarization_failed",
+    measuredTokens: 190_000,
+    thresholdTokens: 160_000,
+  };
+  const cases: readonly (readonly [unknown, string, readonly string[], readonly string[]])[] = [
+    [
+      new StageCloseoutError("duration", "2613125/2700000 ms used, 90000 ms reserved"),
+      "stage_closeout",
+      [
+        "duration closeout reserve (2613125/2700000 ms used, 90000 ms reserved)",
+        "raise or disable the duration stage ceiling for this role",
+        "then resume explicitly",
+      ],
+      ["retry the stage explicitly", "then retry"],
+    ],
+    [
+      new ContextCompactionLostError({
+        role: "coder",
+        budget: { maxTokens: 180_000, reserveTokens: 20_000, keepRecentTokens: 50_000 },
+        measuredTokens: 203_000,
+        contextWindow: 200_000,
+        failures: [failure],
+      }),
+      "context_compaction_lost",
+      [
+        "can no longer be compacted",
+        "reopen the session from its durable state",
+        "retrying the same prompt cannot succeed",
+      ],
+      ["retry the stage explicitly", "then retry"],
+    ],
+  ];
+  for (const [index, [sourceError, expectedCode, mustName, mustNot]] of cases.entries()) {
+    const checkpoint = await pauseOnFailure(sourceError, `budget-cause-${index}`);
+    const pause = checkpoint.pause;
+    expect(pause?.code).toBe("stage_failed");
+    // The classification is the point: a budget boundary must not be reported
+    // as a provider failure, and must not advise a retry that cannot work.
+    expect(pause?.action).not.toContain("inspect the provider failure");
+    for (const fragment of mustName) expect(pause?.action).toContain(fragment);
+    for (const fragment of mustNot) expect(pause?.action).not.toContain(fragment);
+    expect(pause?.cause).toEqual(expect.objectContaining({ code: expectedCode, recurrence: 0 }));
+    // The cause stays resumable by the same explicit operator act.
+    expect(PAUSES_CLEARED_BY_AN_EXPLICIT_ACT).toContain("stage_failed");
+  }
+});
+
+test("repeated closeout failures count their recurrence at last (issue #458)", async () => {
+  // The closeout failure used to record NOTHING, so `recurrenceOf` could only
+  // ever answer 0: the counter that distinguishes a loop from a ceiling an
+  // operator could raise could not advance for this class at all (issue #458).
+  const target = root();
+  const store = new ProjectStore(target);
+  const base = coordinatorSession(store, []);
+  let attempts = 0;
+  const session: WorkflowSession = {
+    ...base,
+    async step(state) {
+      attempts += 1;
+      if (attempts <= 2)
+        throw new WorkflowStageFailureError(
+          new StageCloseoutError("duration", "2613125/2700000 ms used, 90000 ms reserved"),
+          "failed-code",
+          { ...failureMetrics },
+        );
+      return base.step(state);
+    },
+  };
+  const coordinator = new RunCoordinator(session, store, { runId: "closeout-recurrence" });
+  const first = await coordinator.run();
+  // The FIRST failure records its cause into the durable workflowState ...
+  expect(first.checkpoint.workflowState.lastStageFailure).toMatchObject({
+    phase: "code",
+    code: "stage_closeout",
+    recurrence: 0,
+  });
+  coordinator.resumeStage({ source: "operator", action: "retry" });
+  const second = await coordinator.run();
+  // ... and the SAME cause on the next attempt is a recurrence -- the loop
+  // signature that could never be counted while the cause was dropped.
+  expect(second.checkpoint.pause?.cause).toMatchObject({ code: "stage_closeout", recurrence: 1 });
+  expect(second.checkpoint.pause?.action).toContain(
+    "the same cause has now been recorded 2 consecutive times",
+  );
+  expect(second.checkpoint.workflowState.lastStageFailure).toMatchObject({
+    code: "stage_closeout",
+    recurrence: 1,
+  });
+  coordinator.resumeStage({ source: "operator", action: "retry" });
+  expect((await coordinator.run()).status).toBe("complete");
+  expect(attempts).toBe(3);
+});
+
+test("a closeout pause action fits the persisted ceiling for MAX_SAFE_INTEGER limits (issue #458 review)", async () => {
+  // The review round measured the recurrence-1 closeout action OVER the
+  // persisted ceiling: valid stage limits accept Number.MAX_SAFE_INTEGER, the
+  // model_turns closeout detail then interpolates 16-digit numbers, and the
+  // ordinary recurrence-1 action crossed the limit `requiredString` enforces
+  // on every persisted record string -- so the REPEATED pause failed durable
+  // serialization instead of producing a clearable pause. The ceiling here is
+  // read from the writer's own constant (MAX_PERSISTED_STRING_CHARS), so the
+  // test fails if either side moves. Both pauses are asserted: the first (no
+  // recurrence tail) and the repeated one (the tail included -- exactly what
+  // pushed the old wording over the edge).
+  const maxSafe = Number.MAX_SAFE_INTEGER;
+  // The real controller builds the closeout from the real limits: the detail
+  // is the one StageLimits composes at the closeout boundary, not a hand-typed
+  // stand-in.
+  const controller = new StageLimitController(
+    { maxModelTurns: maxSafe, finalResponseReserveModelTurns: 1 },
+    () => 0,
+    { modelTurns: maxSafe - 1 },
+  );
+  let closeoutError: StageCloseoutError | undefined;
+  try {
+    controller.admitToolTurn("read_file");
+  } catch (error) {
+    if (error instanceof StageCloseoutError) closeoutError = error;
+  }
+  expect(closeoutError).toBeDefined();
+  const target = root();
+  const store = new ProjectStore(target);
+  const base = coordinatorSession(store, []);
+  let attempts = 0;
+  const session: WorkflowSession = {
+    ...base,
+    async step(state) {
+      attempts += 1;
+      if (attempts <= 2)
+        throw new WorkflowStageFailureError(closeoutError!, "failed-code", {
+          ...failureMetrics,
+        });
+      return base.step(state);
+    },
+  };
+  const coordinator = new RunCoordinator(session, store, { runId: "closeout-ceiling" });
+  const first = await coordinator.run();
+  const firstAction = first.checkpoint.pause?.action;
+  expect(first.checkpoint.pause?.code).toBe("stage_failed");
+  expect(firstAction).toBeDefined();
+  // Which ceiling was exhausted, the remedy, the act -- the shortening that
+  // keeps the composition inside the ceiling must never drop one of these.
+  expect(firstAction).toContain(`model_turns closeout reserve (${closeoutError!.detail})`);
+  expect(firstAction).toContain("raise or disable the model_turns stage ceiling for this role");
+  expect(firstAction).toContain("then resume explicitly");
+  expect(firstAction!.length).toBeLessThanOrEqual(MAX_PERSISTED_STRING_CHARS);
+  coordinator.resumeStage({ source: "operator", action: "retry" });
+  const second = await coordinator.run();
+  const secondAction = second.checkpoint.pause?.action;
+  expect(second.checkpoint.pause?.cause).toMatchObject({ code: "stage_closeout", recurrence: 1 });
+  expect(secondAction).toBeDefined();
+  // The recurrence tail -- the loop signature -- lives inside the same budget:
+  expect(secondAction).toContain("the same cause has now been recorded 2 consecutive times");
+  expect(secondAction).toContain("raise or disable the model_turns stage ceiling for this role");
+  expect(secondAction!.length).toBeLessThanOrEqual(MAX_PERSISTED_STRING_CHARS);
+});
+
+test("a closeout action that would not fit is clipped visibly, never mid-remedy (issue #458 review)", async () => {
+  // The deliberate bound behind the ceiling guarantee: the detail is the ONLY
+  // piece a too-long composition may lose, because the reason, the remedy and
+  // the recurrence tail are what the operator needs and are never cut. An
+  // oversized detail (harness-internal; the controller's own templates stay
+  // far below this) drives the bound: the head of the detail survives, the
+  // fixed clip marker says a cut happened -- legible, not silent -- and the
+  // total lands within the persisted ceiling on the first pause and, with the
+  // recurrence tail inside the same budget, on the repeated one too.
+  const target = root();
+  const store = new ProjectStore(target);
+  const base = coordinatorSession(store, []);
+  let attempts = 0;
+  const detail = "x".repeat(400);
+  const session: WorkflowSession = {
+    ...base,
+    async step(state) {
+      attempts += 1;
+      if (attempts <= 2)
+        throw new WorkflowStageFailureError(
+          new StageCloseoutError("model_turns", detail),
+          "failed-code",
+          { ...failureMetrics },
+        );
+      return base.step(state);
+    },
+  };
+  const coordinator = new RunCoordinator(session, store, { runId: "closeout-clip" });
+  const first = await coordinator.run();
+  const firstAction = first.checkpoint.pause?.action;
+  expect(firstAction).toBeDefined();
+  expect(firstAction!.length).toBeLessThanOrEqual(MAX_PERSISTED_STRING_CHARS);
+  expect(firstAction).toContain("model_turns closeout reserve (");
+  expect(firstAction).toContain("...[clipped]");
+  expect(firstAction).not.toContain(detail);
+  // The remedy and the resume act survive the clip INTACT, after the cut:
+  expect(firstAction).toContain(
+    "); raise or disable the model_turns stage ceiling for this role, then resume explicitly",
+  );
+  coordinator.resumeStage({ source: "operator", action: "retry" });
+  const second = await coordinator.run();
+  const secondAction = second.checkpoint.pause?.action;
+  expect(secondAction).toBeDefined();
+  expect(secondAction!.length).toBeLessThanOrEqual(MAX_PERSISTED_STRING_CHARS);
+  expect(secondAction).toContain("the same cause has now been recorded 2 consecutive times");
+  expect(secondAction).toContain(
+    "); raise or disable the model_turns stage ceiling for this role, then resume explicitly",
+  );
+});
+
+test("a context-compaction pause action fits the persisted ceiling at every recurrence (issue #458 review round 3)", async () => {
+  // The closeout branch gained the bound in the first review round; the
+  // compaction branch kept composing unbounded and the SECOND round measured
+  // it over the writer's ceiling -- 206 characters without the recurrence
+  // tail, 264 with it -- so a REPEATED context-compaction pause failed durable
+  // serialization instead of producing a clearable pause. The ceiling here is
+  // read from the writer's own constant, and the assertion is made at three
+  // recurrence depths, because the tail that broke it only appears from the
+  // second pause on.
+  const failure: CompactionFailure = {
+    attempt: 1,
+    errorName: "CompactionError",
+    stopReason: "summarization_failed",
+    measuredTokens: 190_000,
+    thresholdTokens: 160_000,
+  };
+  const compactionError = new ContextCompactionLostError({
+    role: "coder",
+    budget: { maxTokens: 180_000, reserveTokens: 20_000, keepRecentTokens: 50_000 },
+    measuredTokens: 203_000,
+    contextWindow: 200_000,
+    failures: [failure],
+  });
+  const target = root();
+  const store = new ProjectStore(target);
+  const base = coordinatorSession(store, []);
+  let attempts = 0;
+  const session: WorkflowSession = {
+    ...base,
+    async step(state) {
+      attempts += 1;
+      if (attempts <= 3)
+        throw new WorkflowStageFailureError(compactionError, "failed-code", { ...failureMetrics });
+      return base.step(state);
+    },
+  };
+  const coordinator = new RunCoordinator(session, store, { runId: "compaction-ceiling" });
+  const first = await coordinator.run();
+  const firstAction = first.checkpoint.pause?.action;
+  expect(first.checkpoint.pause?.cause).toMatchObject({
+    code: "context_compaction_lost",
+    recurrence: 0,
+  });
+  expect(firstAction).toBeDefined();
+  // The first pause still fits whole -- and the conditional aside is what the
+  // later clippings are allowed to shorten, never the remedy.
+  expect(firstAction).toContain(
+    "choosing a different summarizer model when the summarizer itself failed",
+  );
+  expect(firstAction!.length).toBeLessThanOrEqual(MAX_PERSISTED_STRING_CHARS);
+  const recurrences: readonly (readonly [number, string])[] = [
+    [1, "2 consecutive times"],
+    [2, "3 consecutive times"],
+  ];
+  for (const [depth, tail] of recurrences) {
+    coordinator.resumeStage({ source: "operator", action: "retry" });
+    const next = await coordinator.run();
+    const action = next.checkpoint.pause?.action;
+    expect(next.checkpoint.pause?.cause).toMatchObject({
+      code: "context_compaction_lost",
+      recurrence: depth,
+    });
+    expect(action).toBeDefined();
+    expect(action!.length).toBeLessThanOrEqual(MAX_PERSISTED_STRING_CHARS);
+    // The loop signature is the whole point of the tail: it must survive the
+    // cut, along with the reason and the remedy the stage has to act on.
+    expect(action).toContain(`the same cause has now been recorded ${tail}`);
+    expect(action).toContain("can no longer be compacted");
+    expect(action).toContain("reopen the session from its durable state (");
+    expect(action).toContain("retrying the same prompt cannot succeed");
+    // And the cut is legible, never silent.
+    expect(action).toContain("...[clipped]");
+    expect(action).not.toContain(
+      "choosing a different summarizer model when the summarizer itself failed",
+    );
+  }
+  expect(attempts).toBe(3);
+});
+
+test("a budget-boundary pause stays clearable by an explicit operator act (issue #458)", async () => {
+  const target = root();
+  const store = new ProjectStore(target);
+  const base = coordinatorSession(store, []);
+  let attempts = 0;
+  const failure: CompactionFailure = {
+    attempt: 1,
+    errorName: "CompactionError",
+    stopReason: "summarization_failed",
+    measuredTokens: 190_000,
+    thresholdTokens: 160_000,
+  };
+  const session: WorkflowSession = {
+    ...base,
+    async step(state) {
+      attempts += 1;
+      if (attempts === 1)
+        throw new WorkflowStageFailureError(
+          new ContextCompactionLostError({
+            role: "coder",
+            budget: { maxTokens: 180_000, reserveTokens: 20_000, keepRecentTokens: 50_000 },
+            measuredTokens: 203_000,
+            contextWindow: 200_000,
+            failures: [failure],
+          }),
+          "failed-code",
+          { ...failureMetrics },
+        );
+      return base.step(state);
+    },
+  };
+  const coordinator = new RunCoordinator(session, store, { runId: "budget-pause-resumable" });
+  const paused = await coordinator.run();
+  // The cause travels, ...
+  expect(paused.checkpoint.pause?.cause).toMatchObject({ code: "context_compaction_lost" });
+  // ... and naming it must not cost the pause its resumability: the code is
+  // still `stage_failed`, which the explicit operator act clears (an
+  // unauthorized act is what `resumeStage` refuses).
+  expect(clearsOnExplicitAct(paused.checkpoint.pause?.code)).toBe(true);
+  coordinator.resumeStage({ source: "operator", action: "retry" });
+  expect((await coordinator.run()).status).toBe("complete");
+  expect(attempts).toBe(2);
 });
 
 test("a recorded stage failure reaches the next attempt and counts recurrences (issue #363)", async () => {
