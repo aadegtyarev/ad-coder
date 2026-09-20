@@ -128,25 +128,53 @@ export interface OpenClaim {
   version: string;
 }
 
-export type ClaimsResult = { ok: true; claims: OpenClaim[] } | { ok: false; message: string };
+export type ClaimsResult =
+  | { ok: true; claims: OpenClaim[]; note?: string }
+  | { ok: false; message: string };
 
 const GIT_UNAVAILABLE =
   "git is unavailable, so open-branch version claims cannot be read and the claim gate cannot " +
   "pass silently. Run `check:version` where git is on PATH.";
 
 /**
- * Enumerate open claims: candidate refs under refs/heads and refs/remotes/origin,
- * minus self -- a ref is self when its tip commit equals the commit at HEAD, or
- * when it is the locally named current branch (a detached checkout names none)
- * or that branch's refs/remotes/origin twin. Self must not be identified by a
- * branch name alone: main's release path runs detached, and under a name-only
- * rule a legitimate landing would be blocked by its own refs. Then main and
- * origin/main (the base) are minus, and every ref already an ancestor of the
- * base (merged or stale). Git is injected so tests need no real branches and no
- * network; unavailable git or an unreadable ref is a named failure, never a
- * silent pass.
+ * Named state reported when HEAD is detached and no CI variable carries a
+ * branch name: self cannot be known, so every ref is evaluated as a potential
+ * foreign claim and the pass is not silent.
  */
-export function readOpenClaims(git: GitRun): ClaimsResult {
+const DETACHED_NO_NAME_NOTE =
+  "HEAD is detached and no branch name is available (GITHUB_HEAD_REF, GITHUB_REF_NAME and " +
+  "CI_COMMIT_REF_NAME are all unset), so self could not be determined and every open ref was " +
+  "evaluated as a potential foreign claim.";
+
+/** Detached fallback: first non-empty CI branch name, in that priority order. */
+function envBranchName(env: Record<string, string | undefined>): string | null {
+  for (const key of ["GITHUB_HEAD_REF", "GITHUB_REF_NAME", "CI_COMMIT_REF_NAME"] as const) {
+    const value = env[key];
+    if (typeof value === "string" && value.length > 0) return value;
+  }
+  return null;
+}
+
+/**
+ * Enumerate open claims: candidate refs under refs/heads and refs/remotes/origin,
+ * minus self -- self is the checkout's branch and its refs/remotes/origin twin
+ * and is NEVER identified by commit identity (round-2 review fix, issue #383):
+ * in a detached checkout an unrelated open ref that merely shares HEAD's commit
+ * must stay a live claim. The branch name is the locally checked-out branch;
+ * when HEAD is detached it comes from the CI environment -- GITHUB_HEAD_REF,
+ * then GITHUB_REF_NAME, then CI_COMMIT_REF_NAME, empty values skipped. Detached
+ * with no name in any of them: no ref is treated as self and the state is named
+ * (`note`), never silent -- every ref is evaluated as a potential foreign claim,
+ * so a genuine duplicate is still refused and a legitimate landing is not
+ * blocked by mere commit coincidence. Then main and origin/main (the base) are
+ * minus, and every ref already an ancestor of the base (merged or stale). Git
+ * and env are injected so tests need no real branches and no network;
+ * unavailable git or an unreadable ref is a named failure, never a silent pass.
+ */
+export function readOpenClaims(
+  git: GitRun,
+  env: Record<string, string | undefined> = {},
+): ClaimsResult {
   const listing = git([
     "for-each-ref",
     "--format=%(refname) %(objectname)",
@@ -165,10 +193,7 @@ export function readOpenClaims(git: GitRun): ClaimsResult {
     .filter((line) => line.length > 0)
     .map((line) => {
       const sep = line.indexOf(" ");
-      return {
-        ref: sep < 0 ? line : line.slice(0, sep),
-        commit: sep < 0 ? null : line.slice(sep + 1),
-      };
+      return sep < 0 ? line : line.slice(0, sep);
     });
   const baseRev = git(["rev-parse", "--verify", "refs/remotes/origin/main"]);
   if (baseRev === null) return { ok: false, message: GIT_UNAVAILABLE };
@@ -180,16 +205,12 @@ export function readOpenClaims(git: GitRun): ClaimsResult {
         "claims. Run `git fetch origin main`, then re-run `check:version`.",
     };
   const base = baseRev.stdout.trim();
-  const headRev = git(["rev-parse", "HEAD"]);
-  if (headRev === null) return { ok: false, message: GIT_UNAVAILABLE };
-  const head = headRev.exitCode === 0 ? headRev.stdout.trim() : null;
   const symref = git(["symbolic-ref", "-q", "--short", "HEAD"]);
   if (symref === null) return { ok: false, message: GIT_UNAVAILABLE };
-  const branch =
-    symref.exitCode === 0 && symref.stdout.trim().length > 0 ? symref.stdout.trim() : null;
+  const local = symref.exitCode === 0 ? symref.stdout.trim() : "";
+  const branch = local.length > 0 ? local : envBranchName(env);
   const claims: OpenClaim[] = [];
-  for (const { ref, commit } of refs) {
-    if (head !== null && commit === head) continue;
+  for (const ref of refs) {
     if (
       branch !== null &&
       (ref === `refs/heads/${branch}` || ref === `refs/remotes/origin/${branch}`)
@@ -227,6 +248,7 @@ export function readOpenClaims(git: GitRun): ClaimsResult {
       };
     claims.push({ ref, version });
   }
+  if (branch === null) return { ok: true, claims, note: DETACHED_NO_NAME_NOTE };
   return { ok: true, claims };
 }
 
@@ -371,11 +393,15 @@ async function main(): Promise<number> {
   }
   // Ladder owner (issue #383): the number must also be free of claims by other
   // open branches, derived from local refs; an unreadable state is named above.
-  const claims = readOpenClaims(runGit);
+  const claims = readOpenClaims(runGit, process.env);
   if (!claims.ok) {
     process.stderr.write(`check:version: ${claims.message}\n`);
     return 1;
   }
+  // Round-2 review fix (#383): a detached checkout without a CI branch name
+  // cannot know self, so every ref is a potential foreign claim; that state is
+  // named here rather than passed silently, and a refusal below still stands.
+  if (claims.note !== undefined) process.stderr.write(`check:version: ${claims.note}\n`);
   const claimDecision = decideClaimConflict({
     candidate: decision.version,
     claims: claims.claims,

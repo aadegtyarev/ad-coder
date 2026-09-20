@@ -1,6 +1,8 @@
-// Pure-helper tests for the version gate (issue #424). Git and env side channels
-// stay untested here; only decide() / compareSemver() / extractTitleVersion() /
-// isMainContext() are exercised, red and green for every case.
+// Pure-helper tests for the version gate (issues #424 and #383). Git and env
+// side channels run through injected seams -- no real branches, no network, no
+// real process env -- and compareSemver() / extractTitleVersion() /
+// isMainContext() / decide() / readOpenClaims() are exercised, red and green
+// for every case.
 import { describe, expect, test } from "bun:test";
 import {
   compareSemver,
@@ -232,21 +234,73 @@ describe("readOpenClaims (issue #383, git via injected seam)", () => {
   });
 });
 
-describe("readOpenClaims in a detached checkout (#383 review fix): self by commit, not name", () => {
-  test("green: detached HEAD at its own branch's tip -- neither the local ref nor its origin twin is a claim", () => {
-    const selfAtHead = { ...SELF, commit: HEAD_SHA };
-    const twinAtHead: FakeRef = {
-      ref: `refs/remotes/origin/${THIS_BRANCH}`,
-      version: SELF.version,
-      merged: false,
-      commit: HEAD_SHA,
-    };
-    const result = readOpenClaims(fakeGit([selfAtHead, twinAtHead], DETACHED));
+// Round-2 review fix (#383): in a detached checkout self is NEVER guessed from
+// commit identity -- an unrelated open ref sharing HEAD's commit must stay a
+// live claim. The detached branch name comes from the CI environment; with no
+// name anywhere, nothing is self, the state is named, and every ref is
+// evaluated as a potential foreign claim.
+describe("readOpenClaims in a detached checkout (#383 round-2 review fix): self by name or named, never by commit", () => {
+  const selfAtHead = { ...SELF, commit: HEAD_SHA };
+  const twinAtHead: FakeRef = {
+    ref: `refs/remotes/origin/${THIS_BRANCH}`,
+    version: SELF.version,
+    merged: false,
+    commit: HEAD_SHA,
+  };
+  const UNRELATED_AT_HEAD: FakeRef = {
+    ref: "refs/heads/unrelated-open-lane",
+    version: SELF.version,
+    merged: false,
+    commit: HEAD_SHA,
+  };
+  test("green: detached HEAD with a branch name in the environment -- that branch and its origin twin are self", () => {
+    const result = readOpenClaims(fakeGit([selfAtHead, twinAtHead], DETACHED), {
+      GITHUB_HEAD_REF: THIS_BRANCH,
+    });
     expect(result.ok).toBe(true);
-    if (result.ok) expect(result.claims).toEqual([]);
+    if (result.ok) {
+      expect(result.claims).toEqual([]);
+      expect(result.note).toBeUndefined();
+    }
+  });
+  test("red: detached with a name, an unrelated ref at the same commit is NOT swallowed -- its claim is refused", () => {
+    const result = readOpenClaims(fakeGit([selfAtHead, twinAtHead, UNRELATED_AT_HEAD], DETACHED), {
+      GITHUB_HEAD_REF: THIS_BRANCH,
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.claims.map((claim) => claim.ref)).toEqual([UNRELATED_AT_HEAD.ref]);
+      expect(decideClaimConflict({ candidate: "0.137.0", claims: result.claims }).ok).toBe(false);
+    }
+  });
+  test("the detached name falls back GITHUB_HEAD_REF, then GITHUB_REF_NAME, then CI_COMMIT_REF_NAME, empty values skipped", () => {
+    const selfRefsFor = (env: Record<string, string | undefined>) => {
+      const result = readOpenClaims(fakeGit([selfAtHead, twinAtHead], DETACHED), env);
+      expect(result.ok).toBe(true);
+      return result.ok ? result.claims.map((claim) => claim.ref) : [];
+    };
+    expect(selfRefsFor({ GITHUB_HEAD_REF: THIS_BRANCH, GITHUB_REF_NAME: "other" })).toEqual([]);
+    expect(selfRefsFor({ GITHUB_HEAD_REF: "", GITHUB_REF_NAME: THIS_BRANCH })).toEqual([]);
+    expect(
+      selfRefsFor({ GITHUB_HEAD_REF: "", GITHUB_REF_NAME: "", CI_COMMIT_REF_NAME: THIS_BRANCH }),
+    ).toEqual([]);
+  });
+  test("named state: detached HEAD with NO branch name reports it and evaluates every ref as a foreign claim", () => {
+    const result = readOpenClaims(fakeGit([LANE_A, selfAtHead, twinAtHead], DETACHED), {});
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.note).toContain("self could not be determined");
+      expect(result.note).toContain("detached");
+      expect(result.claims.map((claim) => claim.ref)).toEqual([
+        LANE_A.ref,
+        selfAtHead.ref,
+        twinAtHead.ref,
+      ]);
+      expect(decideClaimConflict({ candidate: "0.135.0", claims: result.claims }).ok).toBe(false);
+    }
   });
   test("red: detached HEAD with a genuinely foreign open claim is still counted and refused", () => {
-    const result = readOpenClaims(fakeGit([LANE_A], DETACHED));
+    const result = readOpenClaims(fakeGit([LANE_A], DETACHED), {});
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.claims.map((claim) => claim.ref)).toEqual([LANE_A.ref]);
