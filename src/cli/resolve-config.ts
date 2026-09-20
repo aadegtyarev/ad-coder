@@ -71,6 +71,7 @@ import { resolveStampRequirement } from "../stamp/record-review-stamp";
 import type { CalibrationSource } from "../user-profile";
 import { buildImageInspectionTool, buildWebTools } from "../web/tools";
 import { BUILT_IN_PIPELINE_WORKFLOW_NAME } from "../workflows/builtin-pipeline";
+import { printStartupBannerOnce } from "./startup-banner";
 
 /**
  * The three shipped providers this resolver can select from the environment.
@@ -905,17 +906,14 @@ function resolveConfig(
         preflightCredentialIds: preflightCredentialSet,
       }),
     });
+  // The providers are validated here and nowhere printed: naming an environment
+  // variable and a host is naming the plumbing, not a decision, and the banner
+  // below carries the selection and the role->model ladder the operator checks
+  // (issue #501). The resolved data keeps its home in the config surface.
   for (const configuredProvider of registryConfig.providers) {
-    const credentialName =
-      configuredProvider.credential.kind === "env-var"
-        ? configuredProvider.credential.envVar
-        : "oauth";
     const firstModel = configuredProvider.models[0];
     if (firstModel === undefined) throw new Error("provider must declare a model");
-    const resolvedModel = registry.getModel(firstModel.name);
-    warn(
-      `ad-coder: provider destination "${resolvedModel.provider}" host "${new URL(resolvedModel.baseUrl).host}" credential "${credentialName}"\n`,
-    );
+    registry.getModel(firstModel.name);
   }
   const defaultProfile = buildDefaultProfile({ strong, mid, cheap });
   // A committed project snapshot applies when it names the SAME source the run
@@ -1078,10 +1076,17 @@ function resolveConfig(
   // Roles are grouped by the model they resolve to at the default complexity,
   // which is the routing decision an operator checks before letting a run go.
   const layout = new Map<string, ProfileRole[]>();
+  // The provider id behind every routed model name, collected while the roles
+  // are resolved so the banner can name it (issue #501) without a second
+  // registry walk: the layout key is the model's display name, and the
+  // provider lives on the resolved model beside it.
+  const layoutProvider = new Map<string, string>();
   for (const role of PROFILE_ROLES) {
     let modelName: string;
     try {
-      modelName = resolveRole(role).model.name;
+      const resolved = resolveRole(role);
+      modelName = resolved.model.name;
+      layoutProvider.set(modelName, resolved.model.provider);
     } catch {
       // A role the profile does not map at this complexity is reported as
       // unrouted rather than crashing the banner: the run may never reach it,
@@ -1101,7 +1106,34 @@ function resolveConfig(
   const routing = [...layout]
     .map(([modelName, roles]) => `${modelName}: ${roles.join(", ")}`)
     .join(" | ");
-  warn(`ad-coder: ${source} | complexity "${defaultComplexity}" | ${routing}\n`);
+  // The operator asked for the provider by name (issue #501): a selection of
+  // `models.yaml "x"` or `inventory "y"` names a cell, not a destination, and
+  // a routing is not checkable without knowing who serves it. The distinct
+  // provider ids the routed models actually resolve to -- never a host, never
+  // a credential variable name -- are named here, but only where `source` does
+  // not already name them: `provider "deepseek"` restating itself is noise.
+  const routedProviders = [
+    ...new Set(
+      [...layout.keys()].flatMap((modelName) =>
+        modelName === "unrouted" ? [] : (layoutProvider.get(modelName) ?? []),
+      ),
+    ),
+  ].sort();
+  const unnamedProviders = routedProviders.filter((id) => !source.includes(id));
+  const providers =
+    unnamedProviders.length === 0
+      ? ""
+      : unnamedProviders.length === 1
+        ? ` | provider "${unnamedProviders[0]}"`
+        : ` | providers ${unnamedProviders.map((id) => `"${id}"`).join(", ")}`;
+  // ONE line, ONCE per process (issue #501): the selection, the provider and
+  // the role->model ladder. No built-in default complexity -- the orchestrator
+  // classifies each brief and routes on that tier, so a number resolved before
+  // any brief was seen described no real turn. The memo keys on the banner's
+  // CONTENT, so the per-delegation re-resolutions behind one session (twenty
+  // in a measured session, each printing the old two-line banner) stay silent,
+  // while a genuinely different routing prints once more.
+  printStartupBannerOnce(`ad-coder: ${source}${providers} | ${routing}\n`, warn);
   // The same resolved facts, projected onto the roles general delegation can
   // reach, so a delegation tool's description reuses the banner's data instead
   // of restating role names. A role that stays unwritten in the profile is

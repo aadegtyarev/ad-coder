@@ -591,7 +591,11 @@ test("target dotenv cannot supply provider credentials", () => {
     { cwd: REPO_ROOT, env: explicitEnv },
   );
   expect(external.code).toBe(0);
-  expect(external.stderr).toContain('provider destination "deepseek"');
+  // The banner names the selection and the role->model ladder once (issue #501):
+  // the old per-provider plumbing line (host and credential variable name) is
+  // gone, so what proves the deepseek route here is the banner's own selection.
+  expect(external.stderr).toContain('ad-coder: provider "deepseek"');
+  expect(external.stderr).toContain("deepseek-chat");
   expect(external.stderr).not.toContain("operator-owned-value");
 });
 

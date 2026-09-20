@@ -54,6 +54,12 @@ cannot.
 - 2026-09-16: The system persists a routing it derived into the project-local
   override itself. Requiring the operator to hand-edit a profile to apply a
   recommendation the system just made is not a workflow.
+- 2026-09-20 (issue #501): The startup banner is one line, printed once per process: the selection, the provider(s)
+  the routed models resolve to, and the role->model ladder. One console session re-resolves per role delegation, and
+  the same banner stacking twenty times read as twenty milestones; a repeated identical banner is a defect, not
+  emphasis, while a genuinely different routing prints once more. The banner names no credential variable and no host
+  -- plumbing, not a decision -- and no built-in default complexity: the orchestrator classifies each brief and routes
+  on that tier.
 
 ## Interruptions are decisions, not notifications
 
@@ -139,6 +145,17 @@ cannot.
   is tracked as issue #460 and is not yet wired, so the rung is not claimed as
   raised while no mechanism raises it. Known remaining gaps where a role's
   signal still does not reach a decision: issues #461 and #462.
+
+- 2026-09-20 (issue #501): The busy console line names what the turn is doing -- the activity subject, the worker once
+  a second role has worked, and the spend so far -- updated in one in-place line, instead of a bare "still running"
+  that stacked a fresh line per heartbeat. Identical progress is never rewritten, and machine mode stays structured:
+  JSON progress events remain complete lines, never drawn in place.
+
+- 2026-09-20 (issue #501): A pause notice carries the recovery action in words and is printed once per occurrence. The
+  same pause reaches the terminal through more than one path -- a re-delivered background event, and the result path
+  that drove the run -- and printing it twice reads as a new decision where the operator already made one, so the
+  first renderer of an occurrence wins. The line still says the phase, the code, and that the run is resumable, not
+  failed; a payload that fails validation degrades to "unknown", never an invented limit.
 
 ## What the system learns without being told
 

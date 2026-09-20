@@ -17,6 +17,7 @@ import { resolveBuildInfo } from "./build-info";
 import { runAuthCommand } from "./cli/auth";
 import { runConsole } from "./cli/console";
 import { driveWorkflow, silentNoopWarning } from "./cli/drive";
+import { announcePauseOnce, pauseAnnouncementKey } from "./cli/pause-notice";
 import type {
   BudgetPercents,
   ConfigurableRole,
@@ -90,6 +91,7 @@ import {
 } from "./orchestration/stage-limits";
 import { isSubmissionToolName } from "./orchestration/submission-tools";
 import type { Complexity, PipelineConfig, RoleSpec, WorkflowPhase } from "./orchestration/types";
+import { PipelinePauseError } from "./orchestration/types";
 import {
   buildSubmitVerdictTool,
   REVIEW_SUBMISSION_ATTEMPTS,
@@ -4198,6 +4200,53 @@ export function renderCliError(error: unknown): string {
   return `ad-coder: ${errorMessage(error)}${action === undefined ? "" : `; ${action}`}\n`;
 }
 
+/**
+ * The failure line the ENTRY POINT's catch writes to stderr, pauses included
+ * exactly once (issue #501).
+ *
+ * A thrown `PipelinePauseError` must not fall through to the generic `code:
+ * action` message: the pause may already have been announced by the renderer
+ * that drove the run (the drive loop's result path) or by the console's notice
+ * renderer, so this projection asks the same keyed memo (`announcePauseOnce`)
+ * FIRST. When the occurrence was already announced it returns `undefined` and
+ * the catch writes NOTHING -- a second human pause line reads as a new decision
+ * where the operator already made one. When it wins the memo, it writes the
+ * pause line in the same shape the other renderers use: phase, code, the limit
+ * clause, the action in words, resumable not failed -- plus the runId the
+ * error itself carries. `PipelinePauseError` carries neither a checkpoint path
+ * nor a resume command, so the line stops at that runId. Any other error falls
+ * through to `renderCliError` unchanged. Returns `undefined` only for an
+ * already-announced pause, which the caller must render as pure silence.
+ */
+export function renderCliFailureLine(error: unknown): string | undefined {
+  if (error instanceof PipelinePauseError) {
+    // ONE announcement per pause occurrence (issue #501): the drive result
+    // path and the console's notice renderer ask this same keyed memo, so the
+    // first renderer of the occurrence wins and this one stays silent.
+    if (
+      !announcePauseOnce(pauseAnnouncementKey(error.detail, error.pause.phase, error.pause.code))
+    ) {
+      return undefined;
+    }
+    // The limit clause is byte-for-byte the drive result path's shape
+    // (src/cli/drive.ts): `, limit <reason> (<n>)`, `, limit <reason>`,
+    // `, limit (<n>)`, or nothing.
+    const limit =
+      error.pause.limitReason !== undefined
+        ? `, limit ${error.pause.limitReason}${
+            error.pause.limit === undefined ? "" : ` (${error.pause.limit})`
+          }`
+        : error.pause.limit === undefined
+          ? ""
+          : `, limit (${error.pause.limit})`;
+    return (
+      `ad-coder: pipeline paused (${error.pause.phase}): ${error.pause.code}${limit} -- ` +
+      `${error.pause.action} -- the run is resumable, not failed; runId=${error.detail}\n`
+    );
+  }
+  return renderCliError(error);
+}
+
 // Only run when invoked as the entry point, so importing this module for tests
 // (e.g. to exercise runRoleStandalone) does not fire the CLI dispatch.
 if (import.meta.main) {
@@ -4206,7 +4255,13 @@ if (import.meta.main) {
   } catch (error) {
     if (machineJsonFront)
       process.stderr.write(`${JSON.stringify({ error: projectCliError(error) })}\n`);
-    else process.stderr.write(renderCliError(error));
+    else {
+      // The entry point's projection (issue #501): an already-announced pause
+      // writes NOTHING -- the renderer that won the memo printed the full
+      // line -- and any other failure writes its one human line.
+      const line = renderCliFailureLine(error);
+      if (line !== undefined) process.stderr.write(line);
+    }
     process.exit(1);
   } finally {
     closeOpenAICodexWebSocketSessions();

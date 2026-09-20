@@ -28,6 +28,7 @@ import {
   ProviderRejectionError,
 } from "../runner/errors";
 import { SessionLimitError } from "../session-limits";
+import { announcePauseOnce, pauseAnnouncementKey } from "./pause-notice";
 import { loadTaskFile } from "./task-file";
 import { ToolActivityRenderer } from "./tool-activity";
 
@@ -661,16 +662,31 @@ function renderBackgroundNotice(notice: BackgroundRunNotice, mode: ConsoleOutput
       pending,
     })}\n`;
   }
-  const lines = events.map(({ lifecycle, stage, pause }) => {
-    const renderedStage = stage === undefined ? "" : ` (${stage})`;
+  const lines = events.flatMap(({ lifecycle, stage, pause }) => {
     if (lifecycle === "paused" && pause !== undefined) {
-      const limit = pause.limitReason !== undefined ? `, limit ${pause.limitReason}` : "";
-      return (
+      const limit =
+        pause.limitReason !== undefined
+          ? `, limit ${pause.limitReason}${pause.limit === undefined ? "" : ` (${pause.limit})`}`
+          : pause.limit === undefined
+            ? ""
+            : `, limit (${pause.limit})`;
+      // The pause line says the phase even when the event carries no stage: the
+      // phase is the pause's own identifier, and "what paused" is the first
+      // question the operator asks (issue #501).
+      const renderedStage = ` (${stage ?? pause.phase})`;
+      // ONE announcement per pause occurrence (issue #501): a re-delivered
+      // event (gap recovery) and the result path must not print the same pause
+      // twice -- a repeated pause reads as a new decision where the operator
+      // already made one. The key is composed from the pause's own identifiers,
+      // never from its action text, so a re-render never rekeys.
+      if (!announcePauseOnce(pauseAnnouncementKey(runId, pause.phase, pause.code))) return [];
+      return [
         `ad-coder: background pipeline ${runId} paused${renderedStage}: ${pause.code}${limit} -- ` +
-        "the run is resumable, not failed"
-      );
+          `${pause.action} -- the run is resumable, not failed`,
+      ];
     }
-    return `ad-coder: background pipeline ${runId} ${lifecycle}${renderedStage}`;
+    const renderedStage = stage === undefined ? "" : ` (${stage})`;
+    return [`ad-coder: background pipeline ${runId} ${lifecycle}${renderedStage}`];
   });
   if (droppedEvents > 0)
     lines.push(`ad-coder: background pipeline ${runId} dropped ${droppedEvents} events`);
@@ -789,13 +805,26 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
     // Declared here so the catch block can access them for retry (issue #452).
     const started = Date.now();
     let lastActivity = started;
+    // The renderer that owns this turn's single in-place slot on stderr; the
+    // busy heartbeat line draws through it (issue #501) instead of stacking a
+    // fresh "still running" line per heartbeat.
+    let busyRenderer: ToolActivityRenderer | undefined;
     const progress = (event: "started" | "heartbeat") => {
       const elapsedSeconds = Math.floor((Date.now() - started) / 1000);
-      params.error.write(
-        mode === "json"
-          ? `${JSON.stringify({ type: "progress", event, stage: "console-turn", elapsedSeconds })}\n`
-          : `ad-coder: console turn ${event === "started" ? "started" : "still running"} (${elapsedSeconds}s)\n`,
-      );
+      if (mode === "json") {
+        params.error.write(
+          `${JSON.stringify({ type: "progress", event, stage: "console-turn", elapsedSeconds })}\n`,
+        );
+        return;
+      }
+      const prefix = `ad-coder: console turn ${
+        event === "started" ? "started" : "still running"
+      } (${elapsedSeconds}s)`;
+      // The start is a milestone (one per turn); the busy line after it is the
+      // stall signal, updated in place by the renderer: same slot as the
+      // activity line, subject and spend carried, never a line per heartbeat.
+      if (event === "started" || busyRenderer === undefined) params.error.write(`${prefix}\n`);
+      else busyRenderer.renderBusyLine(prefix);
     };
     /**
      * Call step(line) with fresh activity monitoring and progress machinery,
@@ -807,6 +836,7 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
         mode === "json" ? "json" : "human",
         params.toolActivity,
       );
+      busyRenderer = renderer;
       const unsubscribe = params.session.subscribeToolActivity?.((event) => {
         lastActivity = Date.now();
         renderer.consume(event);
@@ -827,6 +857,7 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
       } finally {
         if (timer !== undefined) clearInterval(timer);
         unsubscribe?.();
+        busyRenderer = undefined;
         renderer.close();
       }
     };

@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { beforeEach, expect, test } from "bun:test";
 import type { Stats } from "node:fs";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -6,9 +6,16 @@ import * as path from "node:path";
 import { PassThrough, Readable, Writable } from "node:stream";
 import { createModels, fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 import { DEFAULT_CONSOLE_MAX_RETRY_ATTEMPTS, runConsole } from "../src/cli/console";
+import {
+  announcePauseOnce,
+  pauseAnnouncementKey,
+  resetPauseAnnouncements,
+} from "../src/cli/pause-notice";
 import { DEFAULT_STAGE_LIMITS } from "../src/cli/resolve-config";
 import { resolveResumeRun, resumeOrchestratorConfig, resumeSeedNote } from "../src/cli/resume";
+import { resetStartupBanners } from "../src/cli/startup-banner";
 import { loadTaskFile } from "../src/cli/task-file";
+import { ToolActivityRenderer } from "../src/cli/tool-activity";
 import { ContextCompactionLostError } from "../src/context/compactor";
 import {
   CONSOLE_COMMANDS,
@@ -132,6 +139,24 @@ function fakeSession(
     whenSettled: () => options.settleDelay ?? Promise.resolve(),
   };
 }
+
+// Both announcement memos are process-level, so a pause a previous test
+// already announced would leave the next one silent: every test here starts
+// with forgotten seams and reads only what IT printed (issue #501).
+beforeEach(() => {
+  resetPauseAnnouncements();
+  resetStartupBanners();
+});
+
+// The memo key must keep delimiter-bearing occurrences distinct (issue #501,
+// review round 1): an unescaped "|" join would collide ("r|plan", "x", "y")
+// with ("r", "plan", "x|y") and suppress a NEW pause.
+test("the pause announcement key keeps delimiter-bearing occurrences distinct", () => {
+  resetPauseAnnouncements();
+  expect(announcePauseOnce(pauseAnnouncementKey("r|plan", "x", "y"))).toBe(true);
+  expect(announcePauseOnce(pauseAnnouncementKey("r", "plan", "x|y"))).toBe(true);
+  expect(announcePauseOnce(pauseAnnouncementKey("r", "plan", "x|y"))).toBe(false);
+});
 
 test("keeps one session across ordered turns, ignores blanks, and closes once on exit", async () => {
   const session = fakeSession();
@@ -1236,6 +1261,223 @@ test("semantic activity resets heartbeat inactivity", async () => {
     .map((line) => JSON.parse(line));
   expect(records.filter(({ event }) => event === "heartbeat")).toEqual([]);
   expect(records.filter(({ type }) => type === "tool_activity")).toHaveLength(4);
+});
+
+test("the busy line names what the turn is doing and never stacks a line per heartbeat", () => {
+  // The busy heartbeat drew through the SAME single in-place slot the activity
+  // line uses: one line per distinct text, the activity subject carried, never
+  // a fresh "still running" line per heartbeat (issue #501).
+  const out = new Capture();
+  const renderer = new ToolActivityRenderer(out, "human", { groupingRefreshMs: 0 });
+  renderer.consume({
+    schemaVersion: 1,
+    type: "tool_activity",
+    sequence: 1,
+    timestamp: "2026-01-01T00:00:00.000Z",
+    lifecycle: "started",
+    activity: "Read",
+    role: "coder",
+    runId: "run",
+    operationId: "op",
+    turnId: "turn",
+    toolCallId: "call-1",
+    parentOperation: "step",
+    toolName: "read",
+    droppedCount: 0,
+    projection: { path: "src/cli/console.ts", readOffset: 1, readLimit: 40 },
+  });
+  // Three heartbeats over one unchanged turn: the text is identical, so one
+  // draw total, and it names what the turn is acting on.
+  for (let heartbeat = 0; heartbeat < 3; heartbeat++)
+    renderer.renderBusyLine("ad-coder: console turn still running (1s)");
+  renderer.close();
+  const text = out.text();
+  expect(text).toContain("Read");
+  expect(text).toContain("src/cli/console.ts:1+40");
+  expect(text).toContain("…");
+  expect(text.split("still running (1s)")).toHaveLength(2); // one draw: text + split tail
+  // A CHANGED line redraws in place -- erase sequence, not a stacked line.
+  const redraw = new Capture();
+  const second = new ToolActivityRenderer(redraw, "human", { groupingRefreshMs: 0 });
+  second.renderBusyLine("ad-coder: console turn still running (1s)");
+  second.renderBusyLine("ad-coder: console turn still running (2s)");
+  second.close();
+  expect(redraw.text().split("still running (2s)")).toHaveLength(2);
+  expect(redraw.text()).toContain("\r");
+});
+
+test("the busy line names a KNOWN zero spend and stays silent about an unknown one", () => {
+  // The busy heartbeat names the spend, and a KNOWN zero is a known spend
+  // (issue #501): it renders `$0.000` instead of dropping the field -- a
+  // dropped field would silently lie by omission. A spend the renderer never
+  // learned stays absent: there, silence means unknown, and any number would
+  // be invented.
+  const zero = new Capture();
+  const zeroRenderer = new ToolActivityRenderer(zero, "human", { groupingRefreshMs: 0 });
+  zeroRenderer.consume({
+    schemaVersion: 1,
+    type: "tool_activity",
+    sequence: 1,
+    timestamp: "2026-01-01T00:00:00.000Z",
+    lifecycle: "started",
+    activity: "Read",
+    role: "coder",
+    runId: "run",
+    operationId: "op",
+    turnId: "turn",
+    toolCallId: "call-1",
+    parentOperation: "step",
+    toolName: "read",
+    droppedCount: 0,
+    budget: { usedCostUsd: 0 },
+  });
+  zeroRenderer.renderBusyLine("ad-coder: console turn still running (1s)");
+  zeroRenderer.close();
+  expect(zero.text()).toContain("$0.000");
+
+  const unknown = new Capture();
+  const unknownRenderer = new ToolActivityRenderer(unknown, "human", { groupingRefreshMs: 0 });
+  unknownRenderer.consume({
+    schemaVersion: 1,
+    type: "tool_activity",
+    sequence: 1,
+    timestamp: "2026-01-01T00:00:00.000Z",
+    lifecycle: "started",
+    activity: "Read",
+    role: "coder",
+    runId: "run",
+    operationId: "op",
+    turnId: "turn",
+    toolCallId: "call-1",
+    parentOperation: "step",
+    toolName: "read",
+    droppedCount: 0,
+  });
+  unknownRenderer.renderBusyLine("ad-coder: console turn still running (1s)");
+  unknownRenderer.close();
+  expect(unknown.text()).not.toMatch(/\$\d/);
+});
+
+test("the human busy heartbeat carries the activity subject instead of stacked lines", async () => {
+  const session = fakeSession();
+  let consumer:
+    | Parameters<NonNullable<ConversationSession["subscribeToolActivity"]>>[0]
+    | undefined;
+  session.subscribeToolActivity = (next) => {
+    consumer = next;
+    return () => {
+      consumer = undefined;
+    };
+  };
+  const originalStep = session.step.bind(session);
+  session.step = async (input) => {
+    // Two activity events ~40ms apart: the gap is longer than heartbeatMs, so
+    // heartbeats fire between them (an event every 4ms would keep the
+    // inactivity gap below the threshold and no heartbeat would fire at all).
+    for (const sequence of [1, 2]) {
+      consumer?.({
+        schemaVersion: 1,
+        type: "tool_activity",
+        sequence,
+        timestamp: "2026-01-01T00:00:00.000Z",
+        lifecycle: "started",
+        activity: "Read",
+        role: "coder",
+        runId: "run",
+        operationId: "op",
+        turnId: "turn",
+        toolCallId: "call-1",
+        parentOperation: "step",
+        toolName: "read",
+        droppedCount: 0,
+        projection: { path: "src/cli/console.ts" },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 40));
+    }
+    return originalStep(input);
+  };
+  const error = new Capture();
+  await runConsole({
+    session,
+    input: ttyFrom("hello\n/exit\n"),
+    output: new Capture(),
+    error,
+    heartbeatMs: 5,
+  });
+  // The turn stays under one second, so every heartbeat draws the same text:
+  // the whole run carries exactly ONE busy line, and it names the subject.
+  const busyLines = error
+    .text()
+    .split("\n")
+    .filter((line) => line.includes("still running"));
+  expect(busyLines).toHaveLength(1);
+  expect(busyLines[0]).toContain("Read");
+  expect(busyLines[0]).toContain("src/cli/console.ts");
+});
+
+function pauseNotice(runId: string, code: string): BackgroundRunNotice {
+  return {
+    type: "background_events",
+    runId,
+    events: [
+      {
+        sequence: 1,
+        runId,
+        lifecycle: "paused",
+        stage: "plan",
+        timestamp: 1,
+        pause: {
+          phase: "plan",
+          code,
+          action: "increase or disable the duration stage limit, then resume explicitly",
+          limitReason: "duration",
+          limit: 180000,
+        },
+        metrics: { steps: 1, totalCost: 0.0064 },
+      },
+    ],
+    nextCursor: 1,
+    gap: false,
+    droppedEvents: 0,
+    pending: false,
+  } as unknown as BackgroundRunNotice;
+}
+
+async function renderPauseNotice(runId: string, code: string): Promise<string> {
+  const session = fakeSession();
+  session.subscribeBackgroundRuns = (consumer) => {
+    consumer(pauseNotice(runId, code));
+    return () => undefined;
+  };
+  const error = new Capture();
+  await runConsole({
+    session,
+    input: ttyFrom("/exit\n"),
+    output: new Capture(),
+    error,
+  });
+  return error.text();
+}
+
+test("a pause notice carries the recovery action once per occurrence", async () => {
+  // The first delivery of an occurrence prints the pause line: phase, code,
+  // the recovery action in words, and the resumable-not-failed frame (issue #501).
+  const first = await renderPauseNotice("pause-run", "stage_limit");
+  expect(first).toContain(
+    "background pipeline pause-run paused (plan): stage_limit, limit duration (180000)",
+  );
+  expect(first).toContain("increase or disable the duration stage limit, then resume explicitly");
+  expect(first).toContain("the run is resumable, not failed");
+
+  // The SAME occurrence re-delivered (gap recovery) prints NOTHING: a repeated
+  // pause reads as a new decision where the operator already made one.
+  expect(await renderPauseNotice("pause-run", "stage_limit")).toBe("");
+
+  // A NEW occurrence -- different code, same run -- is a different pause and
+  // prints once again.
+  const next = await renderPauseNotice("pause-run", "plan_not_submitted");
+  expect(next).toContain("plan_not_submitted");
+  expect(next).toContain("the run is resumable, not failed");
 });
 
 test("background notices render on stderr while input queues without starting model turns", async () => {
@@ -2819,11 +3061,16 @@ test("a paused notice whose pause payload fails validation still projects the li
     error,
   });
   expect(session.inputs).toEqual([]);
-  // A payload that cannot be validated never renders one: a pause without its
-  // record must not invent confidence about the limit.
-  expect(error.text()).toContain("background pipeline pause-run paused");
+  // A payload that cannot be validated never renders confidence it does not
+  // have (issue #501): the code it gave is not a code, so the projection
+  // degrades it to "unknown" and invents no limit clause -- while the lifecycle
+  // itself stays fully visible: the pause, its phase, the event's own recovery
+  // action, and the resumable-not-failed frame.
+  expect(error.text()).toContain("background pipeline pause-run paused (plan)");
+  expect(error.text()).toContain("unknown");
+  expect(error.text()).toContain("the run is resumable, not failed");
   expect(error.text()).not.toContain("stage_limit");
-  expect(error.text()).not.toContain("increase it");
+  expect(error.text()).not.toContain(", limit");
 });
 
 /**

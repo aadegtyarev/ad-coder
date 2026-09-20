@@ -87,8 +87,10 @@ function durationOf(durationMs: number | undefined): string {
  * column never silently lies by omission, but unknown stays blank.
  */
 function costOf(costUsd: number | undefined): string {
-  if (costUsd === undefined || !Number.isFinite(costUsd) || costUsd <= 0) return "";
-  return costUsd < 0.001 ? "<$0.001" : `$${costUsd.toFixed(3)}`;
+  if (costUsd === undefined || !Number.isFinite(costUsd) || costUsd < 0) return "";
+  // A KNOWN zero names itself (`$0.000`, issue #501): the field's silence is
+  // reserved for an UNKNOWN spend, where any number would be invented.
+  return costUsd === 0 ? "$0.000" : costUsd < 0.001 ? "<$0.001" : `$${costUsd.toFixed(3)}`;
 }
 
 /** Tokens at a glance: `850 tok`, `12.3k tok`. Zero or unknown prints nothing. */
@@ -110,6 +112,11 @@ export class ToolActivityRenderer {
   private readonly seenRoles = new Set<string>();
   /** The in-place line, if any: erased on the next flush and redrawn. */
   private live: { key: string; text: string } | undefined;
+  /**
+   * The last known stage spend, so a line drawn when NO call is running (a
+   * stall between calls) still names the price instead of going mute about it.
+   */
+  private lastSpend?: { usedTokens?: number; usedCostUsd?: number };
   private readonly queue: string[] = [];
   private queuedBytes = 0;
   private dropped = 0;
@@ -173,6 +180,14 @@ export class ToolActivityRenderer {
       if (record.budget?.usedTokens !== undefined) previous.tokens = record.budget.usedTokens;
       if (record.model !== undefined) previous.model = record.model;
     }
+    if (record.budget?.usedCostUsd !== undefined || record.budget?.usedTokens !== undefined) {
+      this.lastSpend = {
+        ...(record.budget?.usedTokens !== undefined && { usedTokens: record.budget.usedTokens }),
+        ...(record.budget?.usedCostUsd !== undefined && {
+          usedCostUsd: record.budget.usedCostUsd,
+        }),
+      };
+    }
     this.scheduleFlush(record.lifecycle);
   };
 
@@ -229,10 +244,7 @@ export class ToolActivityRenderer {
       this.timer = undefined;
     }
     // Erase the in-place line before anything new lands under it.
-    if (this.live !== undefined) {
-      this.raw(`\r${" ".repeat(Buffer.byteLength(this.live.text))}\r`);
-      this.live = undefined;
-    }
+    this.eraseLive();
     let liveKey: string | undefined;
     let liveGroup: HumanGroup | undefined;
     for (const [key, group] of this.groups) {
@@ -249,6 +261,60 @@ export class ToolActivityRenderer {
       this.write(text, false);
       this.live = liveKey === undefined ? undefined : { key: liveKey, text };
     }
+  }
+
+  /** Erase whatever this renderer last drew in place, before the next draw. */
+  private eraseLive(): void {
+    if (this.live === undefined) return;
+    this.raw(`\r${" ".repeat(Buffer.byteLength(this.live.text))}\r`);
+    this.live = undefined;
+  }
+
+  /**
+   * The busy line (issue #501): one line, updated in place, that says what the
+   * turn is DOING -- the current activity's subject and, once a second role
+   * works, the worker; the caller's prefix carries the elapsed time -- and the
+   * spend so far -- instead of a bare "still running" that names nothing and
+   * stacks a fresh line per heartbeat. Drawing goes through the SAME single
+   * in-place slot the activity lines use, so a heartbeat can never become a
+   * line storm: identical text is not rewritten, and the next flush erases
+   * whatever the busy line last drew. JSON mode keeps complete event lines and
+   * never draws in place.
+   */
+  renderBusyLine(prefix: string): void {
+    if (this.closed || this.mode === "json") return;
+    // The newest call still running: what the turn is acting on right now.
+    let live: HumanGroup | undefined;
+    for (const group of this.groups.values()) {
+      if (!TERMINAL_LIFECYCLE.has(group.lifecycle)) live = group;
+    }
+    const parts = [prefix];
+    if (live !== undefined) {
+      const count = live.count > 1 ? ` ×${live.count}` : "";
+      const subject = [`${live.activity}${count}`, live.label]
+        .filter((part) => part !== "")
+        .join(" ");
+      if (subject !== "") parts.push(subject);
+      // The worker is named only once a second role has been seen, exactly as
+      // the activity line names it: while one role works, the column collapses.
+      const actor =
+        this.seenRoles.size > 1
+          ? [live.role, live.model].filter((part) => part !== "" && part !== undefined).join("·")
+          : "";
+      if (actor !== "") parts.push(actor);
+    }
+    const spend = this.lastSpend?.usedCostUsd;
+    // A KNOWN zero is still a known spend (issue #501): `>= 0` keeps `$0.000`
+    // on the line; an unknown spend renders no field at all. For a known,
+    // finite spend `costOf` above never returns empty, so no blank part joins.
+    if (spend !== undefined && Number.isFinite(spend) && spend >= 0) parts.push(costOf(spend));
+    const text = `${parts.join("  ")} …`;
+    // Identical consecutive progress lines are never repeated: the line on
+    // screen is already exactly this text, so neither erase nor rewrite fires.
+    if (this.live?.text === text) return;
+    this.eraseLive();
+    this.write(text, false);
+    this.live = { key: "", text };
   }
 
   /** Direct write, bypassing newline framing: used only for erase sequences. */

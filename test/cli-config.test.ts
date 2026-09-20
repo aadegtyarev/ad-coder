@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { beforeEach, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -9,6 +9,7 @@ import {
   resolveOrchestratorSeed,
   resolvePipelineConfig,
 } from "../src/cli/resolve-config";
+import { resetStartupBanners } from "../src/cli/startup-banner";
 import { deriveContextBudget } from "../src/context/budget";
 import {
   COST_ANOMALY_STATE_PATH,
@@ -32,6 +33,13 @@ function fakeEnv(vars: Record<string, string>): (name: string) => string | undef
 
 /** Swallow the resolver's stderr notices so tests stay quiet. */
 const silent = () => {};
+
+// The startup banner memo is process-level and content-keyed, so two resolves
+// with the same routing would leave the second one silent: every test here
+// starts with a forgotten memo and reads only what IT printed (issue #501).
+beforeEach(() => {
+  resetStartupBanners();
+});
 
 function mixedRegistry(): RegistryConfig {
   const make = (name: string, contextWindow: number) => ({
@@ -538,6 +546,11 @@ test("the summarizer reads its profile cell, and the flag overrides it visibly",
   expect(fromProfile.effectiveConfig?.summarizerModel?.source).toBe("profile");
 
   const warnings: string[] = [];
+  // The two resolves route identically here (the profile's default summarizer
+  // IS deepseek-chat), so without forgetting the memo first, the flag-carrying
+  // resolve would print nothing and the banner would be unreadable -- the seam
+  // exists exactly for this (issue #501).
+  resetStartupBanners();
   const overridden = resolvePipelineConfig({
     task: "x",
     targetDir: "/tmp/target",
@@ -549,10 +562,12 @@ test("the summarizer reads its profile cell, and the flag overrides it visibly",
   expect(overridden.compaction?.summarizerModel?.id).toBe("deepseek-chat");
   expect(overridden.effectiveConfig?.summarizerModel?.source).toBe("cli");
   // The banner reports the routing the run will take, so the override has to
-  // show up there too rather than only in the compaction config.
-  const banner = warnings.find((line) => line.includes("complexity"));
+  // show up there too rather than only in the compaction config: the ladder
+  // names the summarizer's role and the model the flag resolved it to.
+  const banner = warnings.find((line) => line.includes(" | "));
   expect(banner).toContain("summarizer");
   expect(banner).toContain("deepseek-chat");
+  expect(banner).toContain('provider "deepseek"');
 });
 
 test("selects openrouter when only OPENROUTER_API_KEY is present", () => {
@@ -615,8 +630,14 @@ test("falls back to codex OAuth when no env-var key is present", () => {
     ["medium", "codex-sol", "low"],
     ["complex", "codex-sol", "low"],
   ]);
-  const banner = warnings.find((line) => line.includes("complexity"));
+  // The banner names the selection and the role->model ladder the run takes:
+  // the orchestrator resolves through Sol and the banner says exactly that.
+  const banner = warnings.find((line) => line.includes(" | "));
+  expect(banner).toContain('provider "openai-codex"');
   expect(banner).toContain(`${config.roles.orchestrator?.model.name}: orchestrator`);
+  // The routed models' provider is the OAuth default's own provider, which the
+  // selection already names -- it is not restated as a second provider field.
+  expect((banner ?? "").match(/provider "/g)).toHaveLength(1);
 });
 
 test("explicit profile and spawn override keep precedence over provider defaults", () => {
@@ -1245,13 +1266,21 @@ test("the startup banner reports the live role layout, not three collapsed tiers
     warn: (message) => warnings.push(message),
   });
 
-  const banner = warnings.find((line) => line.includes("complexity"));
+  // The banner is the ONE line: the selection, the provider the routed models
+  // resolve to, and the roles grouped by the model they actually resolve to --
+  // the operator checks the routing decision, and under an inventory the three
+  // tiers collapse onto one name and describe nothing (issue #501).
+  const banner = warnings.find((line) => line.includes(" | "));
   expect(banner).toBeDefined();
-  // Roles grouped by the model they actually resolve to: the operator checks
-  // the routing decision, and under an inventory the three tiers collapse onto
-  // one name and describe nothing.
   expect(banner).toContain('provider "custom"');
-  expect(banner).toContain('complexity "medium"');
+  expect(banner).toContain('provider "local"');
+  // No default complexity is printed: the orchestrator classifies each brief
+  // and routes on that tier, so a number resolved before any brief was seen
+  // described no real turn.
+  expect(banner).not.toContain("complexity");
+  // Nothing about the plumbing: no credential variable name, no host.
+  expect(banner).not.toContain("credential");
+  expect(banner).not.toContain("host");
   expect(banner).toContain("large: planner");
   expect(banner).toContain("small: ");
   expect(banner).toContain("coder");
@@ -1259,8 +1288,9 @@ test("the startup banner reports the live role layout, not three collapsed tiers
   // vocabulary but missed by the banner would leave the operator checking a
   // routing that is silently incomplete.
   const listed = (banner ?? "")
-    .slice((banner ?? "").indexOf('" | ', (banner ?? "").indexOf("complexity")) + 4)
+    .replace(/^ad-coder: /, "")
     .split(" | ")
+    .filter((segment) => segment.includes(": "))
     .flatMap((group) => group.slice(group.indexOf(": ") + 2).split(", "))
     .map((role) => role.trim());
   expect([...listed].sort()).toEqual([
@@ -1299,10 +1329,84 @@ test("a profile written before the orchestrator cell existed still routes, audib
   expect(notices).toHaveLength(1);
   expect(notices[0]).toContain("coder");
   // The banner reports the route the run takes, so the fallback is visible
-  // there too rather than leaving the role listed as unrouted.
-  const banner = warnings.find((line) => line.includes("complexity"));
+  // there too rather than leaving the role listed as unrouted: the selection,
+  // the provider and the role->model ladder, once (issue #501).
+  const banner = warnings.find((line) => line.includes(" | "));
   expect(banner).toContain("orchestrator");
   expect(banner).not.toContain("unrouted");
+  expect(banner).toContain('provider "local"');
+});
+
+test("a repeated identical banner prints once per process; a new routing prints again", () => {
+  // One console session re-resolves per role delegation; the twenty banner
+  // printings measured there were repeated noise, not milestones (issue #501).
+  // The memo keys on the banner's CONTENT, so this pins both edges: identical
+  // routing is silent, genuinely different routing is not.
+  const base = {
+    task: "x",
+    targetDir: "/tmp/target",
+    provider: "deepseek" as const,
+    env: fakeEnv({ DEEPSEEK_API_KEY: "k" }),
+  };
+  const warnings: string[] = [];
+  const bannerOf = () =>
+    warnings.filter((line) => line.startsWith("ad-coder: ") && line.includes(" | "));
+  // The first resolve prints (and memoizes) the banner; the second, with the
+  // identical routing, must have added nothing.
+  resolvePipelineConfig({ ...base, warn: (message) => warnings.push(message) });
+  resolvePipelineConfig({ ...base, warn: (message) => warnings.push(message) });
+  expect(bannerOf()).toHaveLength(1);
+
+  resolvePipelineConfig({
+    task: base.task,
+    targetDir: base.targetDir,
+    registryConfig: mixedRegistry(),
+    profile: buildDefaultProfile({ strong: "large", mid: "small", cheap: "small" }),
+    plannerModel: "large",
+    summarizerModel: "large",
+    env: fakeEnv({ DEEPSEEK_API_KEY: "k", LOCAL_KEY: "k" }),
+    warn: (message) => warnings.push(message),
+  });
+  const banners = bannerOf();
+  expect(banners).toHaveLength(2);
+  expect(banners[1]).not.toBe(banners[0]);
+  expect(banners[1]).toContain('provider "local"');
+});
+
+test("the banner carries selection, provider and ladder, and no plumbing or default tier", () => {
+  // The whole point of the redesign: one line an operator can check, naming
+  // WHAT was selected, WHO serves it, and WHAT each role resolves to -- and
+  // never the credential variable name, the host, or a complexity the brief
+  // has not been classified into yet (issue #501).
+  const warnings: string[] = [];
+  resolvePipelineConfig({
+    task: "x",
+    targetDir: "/tmp/target",
+    registryConfig: mixedRegistry(),
+    profile: buildDefaultProfile({ strong: "large", mid: "small", cheap: "small" }),
+    plannerModel: "large",
+    summarizerModel: "large",
+    env: fakeEnv({ LOCAL_KEY: "k" }),
+    warn: (message) => warnings.push(message),
+  });
+  const banner = warnings.find((line) => line.includes(" | "));
+  expect(banner).toBeDefined();
+  // The selection and the provider: `provider "custom"` is the selection (a
+  // hand-written registry has no named selection), and the provider the routed
+  // models actually resolve to is named beside it.
+  expect(banner).toContain('ad-coder: provider "custom"');
+  expect(banner).toContain('provider "local"');
+  // The ladder: roles grouped by the model they resolve to.
+  expect(banner).toContain(": ");
+  expect(banner).toContain("coder");
+  // And never the plumbing or the default tier.
+  expect(banner).not.toContain("credential");
+  expect(banner).not.toContain("host");
+  expect(banner).not.toContain("LOCAL_KEY");
+  expect(banner).not.toContain("complexity");
+  // ONE line.
+  expect(banner?.endsWith("\n")).toBe(true);
+  expect(banner?.trimEnd().includes("\n")).toBe(false);
 });
 
 test("a profile missing a non-orchestrator cell still fails instead of falling back", () => {
