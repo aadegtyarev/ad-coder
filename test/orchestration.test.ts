@@ -463,8 +463,45 @@ test("reviewer instruction says issues only names REMAINING defects and approved
   const instruction = formatReviewerInstruction();
   expect(instruction).toContain("issues");
   expect(instruction).toContain("REMAIN");
-  expect(instruction).toContain("approved\" is exactly the verdict whose issues list is empty");
+  expect(instruction).toContain('approved" is exactly the verdict whose issues list is empty');
   expect(instruction).toContain("belongs in the summary");
+});
+
+test("parseVerdict rejects changes_requested with an empty issues list, naming the rule", () => {
+  // issue #478: this passed today and deadlocked the round (round 3ca17be2
+  // over #445) -- a reviewer with nothing left to fix still stamped
+  // "changes_requested" because nothing said an empty issues list is
+  // "approved". Refuse mechanically, the way the coverage branch does: name
+  // the field path, the rule and the resubmission.
+  let caught: unknown;
+  try {
+    parseVerdict(
+      { status: "changes_requested", issues: [], summary: "all findings RESOLVED" },
+      "run-id",
+    );
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught).toBeInstanceOf(OrchestrationError);
+  expect((caught as OrchestrationError).code).toBe("malformed_verdict");
+  expect((caught as Error).message).toBe(
+    'verdict.issues must name at least one REMAINING defect when verdict.status is "changes_requested" (an empty list means nothing must change: resolved findings belong in verdict.summary, and "approved" is the verdict with an empty verdict.issues); resubmit the corrected verdict',
+  );
+});
+
+test("parseVerdict accepts an approved verdict with a non-empty issues list (minor notes)", () => {
+  // issue #478: "approved with minor notes" is a legal form and must keep
+  // passing alongside the new empty-issues refusal on "changes_requested".
+  const verdict = parseVerdict(
+    {
+      status: "approved",
+      issues: [{ severity: "minor", what: "consider renaming x to y in a follow-up" }],
+      summary: "s",
+    },
+    "run-id",
+  );
+  expect(verdict.status).toBe("approved");
+  expect(verdict.issues[0]?.what).toContain("follow-up");
 });
 
 test("parseVerdict rejects a bad status, non-array issues, a missing what, and a non-object", () => {

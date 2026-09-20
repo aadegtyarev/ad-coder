@@ -90,6 +90,15 @@ export function parseVerdict(value: unknown, detail: string, expected?: SurfaceA
     return { severity: severity as IssueSeverity, what: issue.what };
   });
 
+  // issue #478: "changes_requested" with an empty issues list is not a
+  // verdict -- it names no defect to fix, so the round deadlocks on a stamp
+  // that blocks it. Same stance as the coverage branch below: refuse
+  // mechanically rather than guessing at the issue bodies' wording.
+  if (status === "changes_requested" && issues.length === 0)
+    return bad(
+      'verdict.issues must name at least one REMAINING defect when verdict.status is "changes_requested" (an empty list means nothing must change: resolved findings belong in verdict.summary, and "approved" is the verdict with an empty verdict.issues); resubmit the corrected verdict',
+    );
+
   if (typeof record.summary !== "string") {
     return bad("verdict.summary must be a string");
   }
