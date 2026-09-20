@@ -118,6 +118,28 @@ cannot.
   this entry: the orchestrator cutting a slice into children, raising the rung,
   and merging small adjacent follow-ups into one slice.
 
+- 2026-09-20 (issue #451): CUT: a settled run carrying the escalation signal is
+  cut by the orchestrator -- one child per `blocker`/`major` issue of its last
+  `changes_requested` verdict, at most four; host-supplied children take
+  precedence; when nothing is derivable the run pauses with a deferred decision
+  naming why, and `decomposition.children` is never `invalid_config`. This
+  stops a twice-blocked slice from round-tripping as another identical run
+  instead of being cut. CONSOLIDATE: several small adjacent follow-ups merge
+  into one -- same kind and kind-destination, evidence paths equal or sharing a
+  directory prefix, two to five members, each with at most two distinct
+  evidence paths, and only when the merged item still passes the validation it
+  will face at save, configured evidence limit included; otherwise the group is
+  left exactly as it was, never partially merged. This is the mirror of the cut
+  and the same automatic decision, not the operator's: it stops a run's
+  scattered-but-related follow-ups from surfacing as a pile of near-duplicates.
+  RAISE: the run's failed tier is readable from its persisted classification in
+  `PipelineResult.complexity`, but acting on it needs a per-dispatch tier the
+  control plane does not carry, and the routing ladder's steps beyond the first
+  are future work (`docs/contracts/config.md`, 2026-09-19 entry); the mechanism
+  is tracked as issue #460 and is not yet wired, so the rung is not claimed as
+  raised while no mechanism raises it. Known remaining gaps where a role's
+  signal still does not reach a decision: issues #461 and #462.
+
 ## What the system learns without being told
 
 - 2026-09-16: Stage budgets, like model choice, are corrected by what actually

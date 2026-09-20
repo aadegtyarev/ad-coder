@@ -11,6 +11,34 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.114.0] - 2026-09-20
+
+### Added
+- **The orchestrator sizes the work itself: it cuts a slice, and it consolidates
+  small neighbours (issue #451).** Following the escalation signal that step 1
+  landed, a settled run carrying it is now cut inside `src/`: `deriveChildSpecs`
+  (`src/orchestration/decompose.ts`) derives one child per `blocker`/`major`
+  issue of the run's last `changes_requested` verdict, at most four, and children
+  the host supplies still take precedence. A child's scope is the run's own scope,
+  so the existing scope-narrowing validation applies untouched. When nothing is
+  derivable the run PAUSES with a deferred decision naming the cause, instead of
+  throwing `invalid_config("decomposition.children")` -- host-supplied children
+  are no longer required, though they remain supported. The mirror operation is
+  the same decision:
+  `consolidateFollowUps` (`src/project-operations/consolidate.ts`) merges several
+  small adjacent follow-ups -- same kind and same destination, evidence paths
+  equal or sharing a directory prefix, two to five members, at most two distinct
+  evidence paths each -- into one entry after `aggregateFollowUps` at the run
+  coordinator's two follow-up call sites. A group is left exactly as it was when
+  the merged item would fail the validation it will meet at save, a configured
+  evidence limit included; partial merges do not exist.
+- **The scale criteria are contract, not operator knowledge.** The dated entry in
+  `docs/contracts/operator-flow.md` (2026-09-20, issue #451) states when to cut,
+  when to consolidate and when to raise, and says plainly that raising the
+  complexity rung is not wired yet (issue #460) instead of implying it works;
+  issues #461 and #462 are named there as the remaining places where a role's
+  signal does not reach a decision.
+
 ## [0.113.0] - 2026-09-20
 
 ### Fixed
