@@ -382,6 +382,8 @@ export interface SafeRunStatus {
   decisionCount: number;
   verdictStatuses: Verdict["status"][];
   outcome?: PipelineResult["outcome"];
+  /** Escalation signal, present only when the review stop rule settled the run. */
+  escalation?: PipelineResult["escalation"];
   externalLimit?: ExternalLimit;
 }
 
@@ -458,6 +460,7 @@ function safeStatus(record: DurableRunRecord): SafeRunStatus {
     decisionCount: record.decisions.length,
     verdictStatuses: record.verdicts.map((verdict) => verdict.status),
     ...(record.result !== undefined && { outcome: record.result.outcome }),
+    ...(record.result?.escalation !== undefined && { escalation: record.result.escalation }),
     ...(record.externalLimit !== undefined && { externalLimit: record.externalLimit }),
   };
 }
@@ -1459,6 +1462,9 @@ export function buildControlPlaneTools(control: OrchestratorControlPlane): Tool[
             children: report.children,
             decisionCount: report.decisions.length,
             verdictStatuses: report.verdicts.map((v) => v.status),
+            ...(report.run.escalation !== undefined && {
+              escalation: report.run.escalation,
+            }),
             contentHash: report.contentBinding?.manifestHash,
             publicationPhase: report.publication?.phase,
             decomposition: report.decomposition,

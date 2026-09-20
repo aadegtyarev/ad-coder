@@ -22,7 +22,11 @@ export const REVIEW_SUBMISSION_ATTEMPTS = 2;
 /** Re-states only the submission requirement; the inspection already happened. */
 export const REVIEW_SUBMISSION_RETRY = `Your preceding response did not call ${SUBMIT_VERDICT_TOOL_NAME}. Your review stands; submit it now by calling ${SUBMIT_VERDICT_TOOL_NAME} with the complete verdict object, then stop.`;
 
-const VERDICT_STATUSES: readonly VerdictStatus[] = ["approved", "changes_requested"];
+const VERDICT_STATUSES: readonly VerdictStatus[] = [
+  "approved",
+  "changes_requested",
+  "decomposition_required",
+];
 const ISSUE_SEVERITIES: readonly IssueSeverity[] = ["blocker", "major", "minor"];
 
 /**
@@ -43,7 +47,7 @@ export interface VerdictCapture {
  *
  * The verdict arrives as `submit_verdict` tool-call args: its shape is NOT
  * trusted. This is a pure, self-contained, hand-written validator (no `eval`,
- * no schema library): `value` must be an object; `status` one of the two
+ * no schema library): `value` must be an object; `status` one of the three
  * allowed literals; `issues` an array where every element is an object with a
  * `severity` in the three allowed literals and a string `what`; `summary` a
  * string. Any deviation throws `OrchestrationError('malformed_verdict')` --
@@ -178,7 +182,13 @@ export function buildSubmitVerdictTool(
 ): Tool {
   return defineTool({
     name: SUBMIT_VERDICT_TOOL_NAME,
-    description: "Record the review verdict.",
+    description:
+      "Record the review verdict. `status` may be approved, changes_requested, or " +
+      "decomposition_required. Submit decomposition_required ONLY for a measurable " +
+      "escalation signal: repeated rework of one place, two or more roles producing no " +
+      "signal, one role monopolising the run, a stage consuming large input while " +
+      "emitting almost nothing, input ceilings exhausted, or sources of truth that " +
+      "disagree. Never use it for a mood, or because the work merely feels large.",
     label: "submit verdict",
     // Prefer provider-native strict schemas without excluding portable
     // tool-calling providers from the review workflow.
@@ -200,7 +210,8 @@ export function buildSubmitVerdictTool(
     // run 8998ec7c).
     parameters: Type.Object({
       status: Type.String({
-        description: "REQUIRED. Exactly one of: approved, changes_requested",
+        description:
+          "REQUIRED. Exactly one of: approved, changes_requested, decomposition_required",
       }),
       issues: Type.Array(
         Type.Object({

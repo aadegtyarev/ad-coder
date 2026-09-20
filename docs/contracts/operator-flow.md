@@ -96,12 +96,27 @@ cannot.
   `resume_pipeline` carries the role, the exhausted reason and the new value.
   A raise names one role and one reason: raising every ceiling because one was
   hit discards the evidence the pause produced.
+
 - 2026-09-19 (issue #387): The system's own wake obligation completes this: a
   state notice (`paused`, `failed`, `operator_attention`, `timed_out`,
   `completed`, `stage_changed`) is a durable wake record that starts an
   orchestrator turn so the system raises and records the correction itself,
   without the operator or a watching coordinator; activity notices stay
   rendering-only.
+
+- 2026-09-20 (issue #451): The "one bounded raise, then decompose" rule is
+  round-level (`docs/CHECKPOINT.md:200`), while `stage-limit-calibration.md`
+  governs stage-time ceilings. A second blocking verdict on a slice is an
+  escalation signal, not another identical round: the run settles not-approved
+  carrying it, regardless of the round cap. A role may submit
+  `decomposition_required` to ask for decomposition, distinctly from
+  `changes_requested`. The signal is a bounded, typed record on the run result
+  (`required`, `reason` = `role_requested` | `blocking_verdicts`,
+  `blockingVerdicts`) and on the status projection the orchestrator reads, so
+  the orchestrator can act on it without the operator. The fail-not-raise rule
+  for ceiling grows stays as the 2026-09-17 entry wrote it. Future work, not in
+  this entry: the orchestrator cutting a slice into children, raising the rung,
+  and merging small adjacent follow-ups into one slice.
 
 ## What the system learns without being told
 

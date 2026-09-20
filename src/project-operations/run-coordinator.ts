@@ -64,7 +64,7 @@ export interface OperatorDecision {
 
 export interface ContractReviewRecord {
   decisionId: string;
-  status: "pending" | "approved" | "changes_requested";
+  status: "pending" | "approved" | "changes_requested" | "decomposition_required";
   runId?: string;
 }
 

@@ -25,6 +25,7 @@ import {
 import type { ProjectStore } from "../project-store/project-store";
 import type { VersionedState } from "../project-store/types";
 import { ProjectStoreError } from "../project-store/types";
+import type { VerdictStatus } from "./types";
 
 /**
  * At most ONE file per trivial-edit window. A frozen constant, not a
@@ -337,7 +338,8 @@ export interface TrivialEditChange {
 
 /** The reviewer's settled answer, handed back by the cover callback. */
 export interface TrivialEditCoverSettle {
-  verdict: "approved" | "changes_requested";
+  /** `decomposition_required` is blocking here: the cover records it as needs-changes, never approval. */
+  verdict: VerdictStatus;
   reviewerRunId: string;
   issueCount?: number;
 }

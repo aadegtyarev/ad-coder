@@ -349,6 +349,25 @@ test("parseVerdict rejects a bad status, non-array issues, a missing what, and a
   }
 });
 
+test("parseVerdict accepts decomposition_required and still rejects an unknown status", () => {
+  // Pins pre-change: `decomposition_required` was not a member of the status
+  // union, so it was rejected as malformed alongside genuinely unknown values.
+  const verdict = parseVerdict(
+    { status: "decomposition_required", issues: [], summary: "needs decomposition" },
+    "run-id",
+  );
+  expect(verdict.status).toBe("decomposition_required");
+
+  let caught: unknown;
+  try {
+    parseVerdict({ status: "unknown_status", issues: [], summary: "s" }, "run-id");
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught).toBeInstanceOf(OrchestrationError);
+  expect((caught as OrchestrationError).code).toBe("malformed_verdict");
+});
+
 test("submit_follow_up advertises one typed object and rejects all-fields calls safely", () => {
   const tool = buildSubmitFollowUpTool({ followUps: [] }, { producer: "coder", runId: "run-1" });
   const schema = tool.parameters as unknown as {
@@ -986,6 +1005,210 @@ test("maxRounds exhausted returns approved:false without throwing", async () => 
   expect(result.outcome).toBe("decomposition_required");
   expect(result.rounds).toBe(1);
   expect(result.verdicts[0]?.status).toBe("changes_requested");
+});
+
+test("first changes_requested verdict still advances to a second code round (issue #451)", async () => {
+  // Pins pre-change: only the SECOND blocking verdict stops; the first keeps
+  // the single advance into another code round.
+  const fx = fixture();
+  const coder = fx.role("coder", "You code.");
+  const reviewer = reviewerRole(fx);
+  fx.faux.setResponses([
+    fauxAssistantMessage("code r1"),
+    ...reviewerTurn({
+      status: "changes_requested",
+      issues: [{ severity: "major", what: "handle empty input" }],
+      summary: "needs a fix",
+    }),
+    fauxAssistantMessage("code r2"),
+    ...reviewerTurn({ status: "approved", issues: [], summary: "fixed" }),
+  ]);
+  const result = await runPipeline({
+    targetDir: fx.targetDir,
+    models: fx.models,
+    task: "implement",
+    maxRounds: 3,
+    roles: { coder, reviewer },
+  });
+  expect(result.approved).toBe(true);
+  expect(result.rounds).toBe(2);
+  expect((result.stageMetrics ?? []).filter((m) => m.stage.startsWith("code:"))).toHaveLength(2);
+});
+
+test("second blocking verdict settles not-approved with blocking_verdicts and no third code round (issue #451)", async () => {
+  // Pins pre-change: two changes_requested verdicts used to advance into a
+  // third identical code round; the stop rule settles on the second instead,
+  // regardless of maxRounds.
+  const fx = fixture();
+  const coder = fx.role("coder", "You code.");
+  const reviewer = reviewerRole(fx);
+  const changes: Verdict = {
+    status: "changes_requested",
+    issues: [{ severity: "major", what: "still not right" }],
+    summary: "again",
+  };
+  fx.faux.setResponses([
+    fauxAssistantMessage("code r1"),
+    ...reviewerTurn(changes),
+    fauxAssistantMessage("code r2"),
+    ...reviewerTurn(changes),
+  ]);
+  const result = await runPipeline({
+    targetDir: fx.targetDir,
+    models: fx.models,
+    task: "implement",
+    maxRounds: 5,
+    roles: { coder, reviewer },
+  });
+  expect(result.approved).toBe(false);
+  expect(result.outcome).toBe("decomposition_required");
+  expect(result.escalation).toEqual({
+    required: true,
+    reason: "blocking_verdicts",
+    blockingVerdicts: 2,
+  });
+  // Two code rounds, never a third.
+  expect((result.stageMetrics ?? []).filter((m) => m.stage.startsWith("code:"))).toHaveLength(2);
+});
+
+test("second blocking verdict settles at the shipped maxRounds: 2 with blocking_verdicts (issue #451)", async () => {
+  // Pins pre-change: at the shipped default maxRounds (2) the second blocking
+  // verdict arrives exactly when round === maxRounds, so the cap branch used to
+  // settle first and the blocking_verdicts signal was never set.
+  const fx = fixture();
+  const coder = fx.role("coder", "You code.");
+  const reviewer = reviewerRole(fx);
+  const changes: Verdict = {
+    status: "changes_requested",
+    issues: [{ severity: "major", what: "still not right" }],
+    summary: "again",
+  };
+  fx.faux.setResponses([
+    fauxAssistantMessage("code r1"),
+    ...reviewerTurn(changes),
+    fauxAssistantMessage("code r2"),
+    ...reviewerTurn(changes),
+  ]);
+  const result = await runPipeline({
+    targetDir: fx.targetDir,
+    models: fx.models,
+    task: "implement",
+    maxRounds: 2,
+    roles: { coder, reviewer },
+  });
+  expect(result.approved).toBe(false);
+  expect(result.escalation).toEqual({
+    required: true,
+    reason: "blocking_verdicts",
+    blockingVerdicts: 2,
+  });
+  // Two code rounds, never a third.
+  expect((result.stageMetrics ?? []).filter((m) => m.stage.startsWith("code:"))).toHaveLength(2);
+});
+
+test("decomposition_required verdict stops on round 1 with role_requested (issue #451)", async () => {
+  // Pins pre-change: decomposition_required was not parseable, so a role
+  // request to stop-and-decompose could never settle the run on round 1.
+  const fx = fixture();
+  const coder = fx.role("coder", "You code.");
+  const reviewer = reviewerRole(fx);
+  fx.faux.setResponses([
+    fauxAssistantMessage("code r1"),
+    ...reviewerTurn({
+      status: "decomposition_required",
+      issues: [],
+      summary: "needs decomposition",
+    }),
+  ]);
+  const result = await runPipeline({
+    targetDir: fx.targetDir,
+    models: fx.models,
+    task: "implement",
+    maxRounds: 5,
+    roles: { coder, reviewer },
+  });
+  expect(result.approved).toBe(false);
+  expect(result.outcome).toBe("decomposition_required");
+  expect(result.escalation).toEqual({
+    required: true,
+    reason: "role_requested",
+    blockingVerdicts: 1,
+  });
+  expect((result.stageMetrics ?? []).filter((m) => m.stage.startsWith("code:"))).toHaveLength(1);
+});
+
+test("escalation record carries exactly the three keys (issue #451)", async () => {
+  // Pins pre-change: the escalation record must expose only required/reason/
+  // blockingVerdicts -- no summary, issue text, file content, or model text.
+  const fx = fixture();
+  const coder = fx.role("coder", "You code.");
+  const reviewer = reviewerRole(fx);
+  fx.faux.setResponses([
+    fauxAssistantMessage("code r1"),
+    ...reviewerTurn({
+      status: "decomposition_required",
+      issues: [{ severity: "major", what: "not a trivial fix" }],
+      summary: "needs decomposition",
+    }),
+  ]);
+  const result = await runPipeline({
+    targetDir: fx.targetDir,
+    models: fx.models,
+    task: "implement",
+    maxRounds: 2,
+    roles: { coder, reviewer },
+  });
+  const escalation = result.escalation;
+  expect(escalation).toBeDefined();
+  expect(Object.keys(escalation ?? {}).sort()).toEqual(["blockingVerdicts", "reason", "required"]);
+});
+
+test("approved result carries no escalation (issue #451)", async () => {
+  // Pins pre-change: escalation is absent on approval, so the approved result
+  // stays byte-identical to before the signal existed.
+  const fx = fixture();
+  const coder = fx.role("coder", "You code.");
+  const reviewer = reviewerRole(fx);
+  fx.faux.setResponses([
+    fauxAssistantMessage("code r1"),
+    ...reviewerTurn({ status: "approved", issues: [], summary: "good" }),
+  ]);
+  const result = await runPipeline({
+    targetDir: fx.targetDir,
+    models: fx.models,
+    task: "implement",
+    maxRounds: 2,
+    roles: { coder, reviewer },
+  });
+  expect(result.approved).toBe(true);
+  expect("escalation" in result).toBe(false);
+});
+
+test("cap-exhausted not-approved result carries no escalation (issue #451)", async () => {
+  // Pins pre-change: round-cap exhaustion with fewer than two blocking verdicts
+  // is a round limit, not the review stop rule, so it must not gain an
+  // escalation signal.
+  const fx = fixture();
+  const coder = fx.role("coder", "You code.");
+  const reviewer = reviewerRole(fx);
+  fx.faux.setResponses([
+    fauxAssistantMessage("code r1"),
+    ...reviewerTurn({
+      status: "changes_requested",
+      issues: [{ severity: "major", what: "x" }],
+      summary: "needs a fix",
+    }),
+  ]);
+  const result = await runPipeline({
+    targetDir: fx.targetDir,
+    models: fx.models,
+    task: "implement",
+    maxRounds: 1,
+    roles: { coder, reviewer },
+  });
+  expect(result.approved).toBe(false);
+  expect(result.outcome).toBe("decomposition_required");
+  expect("escalation" in result).toBe(false);
 });
 
 test("a shared ledger sink carries distinct role/step records per round", async () => {

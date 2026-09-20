@@ -11,6 +11,20 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.110.0] - 2026-09-20
+
+### Added
+- **Escalation signal (issue #451).** A second blocking verdict on a slice
+  settles not-approved carrying a bounded, typed record (`required`, `reason` =
+  `role_requested` | `blocking_verdicts`, `blockingVerdicts`) on the result and
+  the status projection the orchestrator reads, so the orchestrator can act
+  without the operator; a role may also submit `decomposition_required`,
+  distinctly from `changes_requested`.
+
+### Docs
+- Operator-flow contract records the escalation-signal rule (2026-09-20, issue
+  #451).
+
 ## [0.108.0] - 2026-09-20
 
 ### Fixed
