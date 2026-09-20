@@ -613,6 +613,75 @@ test("the orchestrator core dispatches the classified tier into the per-run conf
   expect(seen[1]).toEqual({ task: "step the run", complexity: "complex" });
 });
 
+test("foreground coordinator records are readable through status/result, while events/cancel refuse them (#515)", async () => {
+  const fx = fixture();
+  const runId = "foreground-515";
+  const config = fx.buildConfig("secret task content");
+  const workflow = createWorkflowSession(config);
+  const state = workflow.initialState();
+  const store = new ProjectStore(fx.targetDir);
+  store.writeVersionedJson(
+    path.join(store.layout.runs, `coordinator-${runId}.json`),
+    {
+      schemaVersion: 1,
+      runId,
+      phase: "workflow",
+      workflowState: {
+        ...state,
+        phase: "plan",
+        round: 2,
+        stageMetrics: [{ stage: "plan", costUsd: 0.42 } as never],
+      },
+      followUps: [],
+      completedEffects: [],
+      decisions: [],
+      contractReviews: [],
+      taskDigest: "must-not-leak",
+      pause: {
+        phase: "plan",
+        code: "plan_not_submitted",
+        action: "resume",
+        cause: { code: "missing_plan", message: "planner was silent", recurrence: 1 },
+      },
+    } as unknown as RunCheckpoint,
+    0,
+  );
+  const core = createOrchestrator({
+    buildConfig: () => config,
+    ledgerSink: fx.sink,
+    backgroundTargetDir: fx.targetDir,
+  });
+  const tools = buildOrchestratorTools(core, [], [BUILT_IN_PIPELINE_WORKFLOW]);
+  const tool = (name: string) => tools.find(({ name: candidate }) => candidate === name) as Tool;
+
+  const status = JSON.parse(await callTool(tool(PIPELINE_STATUS_TOOL_NAME), { runId }));
+  expect(status).toMatchObject({
+    runId,
+    lifecycle: "paused",
+    foreground: true,
+    phase: "plan",
+    round: 2,
+    pause: { phase: "plan", code: "plan_not_submitted", action: "resume" },
+    metrics: { steps: 1, totalCost: 0.42 },
+  });
+  expect(JSON.stringify(status)).not.toContain("must-not-leak");
+  expect(JSON.stringify(status)).not.toContain("secret task content");
+
+  const result = JSON.parse(await callTool(tool(PIPELINE_RESULT_TOOL_NAME), { runId }));
+  expect(result).toMatchObject({
+    lifecycle: "paused",
+    foreground: true,
+    metrics: { totalCost: 0.42 },
+  });
+  expect(await callTool(tool(PIPELINE_EVENTS_TOOL_NAME), { runId, cursor: 0 })).toContain(
+    "foreground_run",
+  );
+  expect(await callTool(tool(CANCEL_PIPELINE_TOOL_NAME), { runId })).toContain("foreground_run");
+  expect(await callTool(tool(PIPELINE_STATUS_TOOL_NAME), { runId: "unknown-515" })).toContain(
+    "not_found",
+  );
+});
+
 test("the run_pipeline tool carries the classified tier into the run (issues #263/#264)", async () => {
   const fx = fixture();
   const verdict: Verdict = { status: "approved", issues: [], summary: "ok" };
