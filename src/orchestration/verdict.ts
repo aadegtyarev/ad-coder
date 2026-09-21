@@ -324,10 +324,7 @@ export function parseVerdict(
     const carriedIds = new Set(carriedFindings.map((finding) => finding.findingId as string));
     const resolvedIds = new Set(
       issues
-        .filter(
-          (issue) =>
-            issue.resolution === "closed" || issue.resolution === "remains",
-        )
+        .filter((issue) => issue.resolution === "closed" || issue.resolution === "remains")
         .map((issue) => issue.findingId),
     );
     for (const id of carriedIds) {
@@ -337,8 +334,7 @@ export function parseVerdict(
         );
     }
     for (const issue of issues) {
-      const carriesPriorFinding =
-        issue.findingId !== undefined && carriedIds.has(issue.findingId);
+      const carriesPriorFinding = issue.findingId !== undefined && carriedIds.has(issue.findingId);
       if (issue.severity === "minor" && !carriesPriorFinding) continue;
       if (issue.findingId === undefined || issue.resolution === undefined)
         return bad(
