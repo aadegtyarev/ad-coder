@@ -480,9 +480,13 @@ else yet: `silentRaiseFactor` (K6.2), `maxContinuations` (K3.4) and
 `waitTimeoutMs` (K7.7). Naming them here is a requirement owed to code (K11.1),
 not a description of a surface a reader could go and read: each is the name under
 which the behaviour its clause requires must become configurable, with the default
-above. Their absence from the code is an audit finding. The remaining settings of
-K10.6 -- the mode, `review.require-stamp` and the flags -- name surfaces the code
-already carries.
+above. Their absence from the code is an audit finding. Of the remaining settings
+of K10.6, two name surfaces the code carries today -- the mode (`RunMode`,
+`src/orchestration/control-plane.ts`) and `review.require-stamp`
+(`src/config/validate.ts`) -- while the intake clarification (K4.3) and the flags
+of K9.1.5, K9.1.6 and K9.1.8 are requirements in the same sense as the three names
+above: the code does not carry them yet, and their absence is likewise an audit
+finding rather than a reason to read the clause as descriptive.
 
 ## K11. Contract and memory discipline
 
