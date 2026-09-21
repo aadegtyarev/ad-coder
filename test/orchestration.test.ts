@@ -2897,6 +2897,21 @@ test("research_required accepts canonical contract IDs and evidence at plan subm
   });
 });
 
+test("planner surfaces reject text-only plans and preserve the submit_plan boundary", () => {
+  const roleText = fs
+    .readFileSync(path.join(import.meta.dir, "..", "prompts", "planner.md"), "utf8")
+    .replace(/\s+/g, " ");
+  const stageInstruction = formatPlannerInstruction();
+
+  for (const text of [roleText, stageInstruction]) {
+    expect(text).toContain("Text without a");
+    expect(text).toContain("tool call is not a submission");
+    expect(text).toContain("the turn is rejected and the plan is lost");
+    expect(text).toContain("Only the");
+    expect(text).toContain("tool call records and submits the plan");
+  }
+});
+
 test("planner instruction exposes canonical IDs accepted by validation", () => {
   const instruction = formatPlannerInstruction();
   expect(instruction).toContain("Canonical contract IDs accepted by this pipeline:");

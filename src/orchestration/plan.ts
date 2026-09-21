@@ -738,6 +738,7 @@ export function formatPlannerInstruction(): string {
     "Call it with this shape:",
     '{ "complexity": "trivial" | "medium" | "complex", "securitySurface": "none" | "low" | "elevated", "summary": "<short summary>", "contractRequirements": ["<rule>"], "affectedFiles": ["<path>"], "surfaceAnalysis": { "projectType": "<type>", "surfaces": [{"id":"<stable-id>","name":"<surface>","rationale":"<why affected>"}], "coverage": [{"surfaceId":"<stable-id>","status":"covered|not_applicable|research_required","contractIds":["<canonical id>"],"evidence":["<source or gap evidence>"],"rationale":"<decision>"}] } }',
     "This structured submission is mandatory. Identify every affected product surface before coding.",
+    `Text without a ${SUBMIT_PLAN_TOOL_NAME} tool call is not a submission: the turn is rejected and the plan is lost. Only the ${SUBMIT_PLAN_TOOL_NAME} tool call records and submits the plan.`,
     // The text fallback used to demand a bare object with "no Markdown", which
     // asked models to suppress the fenced form they emit by default and made a
     // recoverable handoff look like a refusal. State what the parser accepts

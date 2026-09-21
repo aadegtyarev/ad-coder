@@ -4,6 +4,11 @@ All notable changes to ad-coder are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project aims at
 [Semantic Versioning](https://semver.org/).
 
+## [0.164.0] - 2026-09-21
+
+### Fixed
+- **Planner text-only turns are explicitly rejected (issue #554).** Only a `submit_plan` tool call records and submits a plan.
+
 Release and contract dates are the operator's LOCAL calendar day -- the day the
 release shipped, in the operator's own timezone. Never date an entry by
 `date -u`; on an evening after 20:00 local (UTC+04) that is one day behind and
