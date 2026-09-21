@@ -310,6 +310,7 @@ describe("ProjectStore", () => {
           lockRetry: { delaysMs: [1], unknown: true } as never,
         }),
     ).toThrow(ProjectStoreError);
+    expect(() => new ProjectStore(target(), { lockRetry: [] as never })).toThrow(ProjectStoreError);
   });
 
   test("recovers a stale session lease but never steals a live one", async () => {

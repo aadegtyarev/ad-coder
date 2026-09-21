@@ -581,19 +581,31 @@ export class ProjectStore {
 
   private withVersionedLockCoordination<T>(lockPath: string, operation: () => T): T {
     const coordinationPath = `${lockPath}.coordination`;
-    for (;;) {
+    const identity = { ...this.processIdentity(), token: crypto.randomUUID() };
+    for (let attempt = 0; ; attempt += 1) {
       try {
         fs.mkdirSync(coordinationPath, 0o700);
+        fs.writeFileSync(path.join(coordinationPath, "owner"), `${JSON.stringify(identity)}\n`, {
+          mode: 0o600,
+        });
         break;
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1);
+        const owner = this.readVersionedLock(path.join(coordinationPath, "owner"));
+        if (owner !== undefined && !this.isVersionedLockHolderAlive(owner)) {
+          fs.rmSync(coordinationPath, { recursive: true, force: true });
+          continue;
+        }
+        const delay = this.lockRetryDelaysMs[attempt];
+        if (delay === undefined)
+          throw new ProjectStoreError("version_conflict", lockPath, "managed state is locked");
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay);
       }
     }
     try {
       return operation();
     } finally {
-      fs.rmdirSync(coordinationPath);
+      fs.rmSync(coordinationPath, { recursive: true, force: true });
     }
   }
 
@@ -833,6 +845,8 @@ export class ProjectStore {
     if (
       typeof config !== "object" ||
       config === null ||
+      Array.isArray(config) ||
+      Object.getPrototypeOf(config) !== Object.prototype ||
       Object.keys(config).some((key) => key !== "delaysMs")
     )
       throw new ProjectStoreError(

@@ -236,6 +236,17 @@ function fail(message: string): never {
   process.exit(2);
 }
 
+function failInvalidConfig(message: string): never {
+  if (machineJsonFront) {
+    process.stderr.write(
+      `${JSON.stringify({ error: { code: "invalid_config", detail: message } })}\n`,
+    );
+    process.exit(2);
+  }
+  process.stderr.write(`ad-coder: ${message}\n`);
+  process.exit(2);
+}
+
 // Human budget for one `config show` row -- the same 120-column line the docs
 // readability gate uses: ids join the row only while the whole row still fits,
 // so an unbounded catalogue can never flood a terminal.
@@ -1138,7 +1149,7 @@ function parseProjectStoreConfig(value: string | undefined): ProjectStoreConfig 
           (delay) => typeof delay !== "number" || !Number.isSafeInteger(delay) || delay <= 0,
         ))
     )
-      fail("invalid --project-store-config setting: lockRetry.delaysMs");
+      failInvalidConfig("invalid --project-store-config setting: lockRetry.delaysMs");
   }
   const operations = object.projectOperations;
   if (operations !== undefined) {

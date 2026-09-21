@@ -1648,6 +1648,7 @@ test("project-store config accepts default lock retry policy in the CLI", () => 
   fs.writeFileSync(config, JSON.stringify({ lockRetry: { delaysMs: [] } }), { mode: 0o600 });
   const empty = run();
   expect(empty.code).toBe(2);
+  expect(empty.stderr).toContain('"code":"invalid_config"');
   expect(empty.stderr).toContain("lockRetry.delaysMs");
 
   fs.writeFileSync(config, JSON.stringify({ lockRetry: { unexpected: true } }), { mode: 0o600 });
