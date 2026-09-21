@@ -11,6 +11,15 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.164.0] - 2026-09-21
+
+### Fixed
+- **Foreground pipeline resumes now publish their terminal run record (issue #545).**
+  Resumed runs atomically project their completed steps, outcome, and metrics into
+  the durable background-run record; a resumed pause likewise preserves the
+  completed segment before recording the new pause, and wake handling keeps a
+  newly created wake window for a later turn.
+
 ## [0.163.0] - 2026-09-21
 
 ### Fixed

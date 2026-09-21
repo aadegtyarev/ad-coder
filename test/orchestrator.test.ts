@@ -1612,6 +1612,79 @@ test("run_pipeline tool projects safe malformed-plan field and remediation", asy
   }
 });
 
+test("foreground resume settles the same paused background record with a red-gate outcome", async () => {
+  const fx = fixture();
+  let stageMaxModelTurns = 1;
+  const runId = "foreground-background-red-gate";
+  const buildConfig = (task: string): PipelineConfig => ({
+    ...fx.buildConfig(task),
+    coordinator: { runId },
+    stageLimits: { maxModelTurns: stageMaxModelTurns },
+  });
+  const core = createOrchestrator({
+    buildConfig,
+    ledgerSink: fx.sink,
+    backgroundTargetDir: fx.targetDir,
+    backgroundOwnerId: "foreground-resume-test",
+  });
+
+  fx.faux.setResponses(governedPlanTurn());
+  const started = core.backgroundRuns.start("implement X");
+  await core.backgroundRuns.wait(started.runId);
+  const paused = core.backgroundRuns.status(started.runId);
+  const pausedEvents = core.backgroundRuns.events(started.runId, 0, 100).events;
+  expect(paused.lifecycle).toBe("paused");
+  expect(paused.pause?.code).toBe("stage_limit");
+  expect(paused.metrics.steps).toBeGreaterThan(0);
+  expect(pausedEvents.some((event) => event.lifecycle === "paused")).toBe(true);
+
+  stageMaxModelTurns = 8;
+  const changes: Verdict = {
+    status: "changes_requested",
+    issues: [
+      {
+        severity: "major",
+        findingId: "fix-x",
+        what: "fix X",
+        location: "src/example.ts:1",
+        closureCriterion: "the focused regression test passes",
+        resolution: "remains",
+      },
+    ],
+    summary: "needs work",
+  };
+  fx.faux.setResponses([
+    ...governedPlanTurn(),
+    ...[0, 1, 2].flatMap(() => [
+      fauxAssistantMessage("coded X"),
+      fauxAssistantMessage(fauxToolCall(SUBMIT_VERDICT_TOOL_NAME, changes)),
+      fauxAssistantMessage("review complete"),
+    ]),
+  ]);
+  const resumed = await core.resumePipeline("implement X", started.runId);
+  expect(resumed.runId).toBe(started.runId);
+  expect(resumed.result.approved).toBe(false);
+  expect(resumed.result.verdicts.at(-1)?.status).toBe("changes_requested");
+
+  const settled = core.backgroundRuns.status(started.runId);
+  const outcome = core.backgroundRuns.result(started.runId);
+  const events = core.backgroundRuns.events(started.runId, 0, 100).events;
+  expect(settled.lifecycle).toBe("completed");
+  expect(settled.pause).toBeUndefined();
+  expect(settled.metrics.steps).toBe(resumed.perStep.length + paused.metrics.steps);
+  expect(settled.metrics.totalCost).toBe(resumed.totalCost + paused.metrics.totalCost);
+  expect(outcome.lifecycle).toBe("completed");
+  if (outcome.lifecycle !== "completed") throw new Error("expected terminal background outcome");
+  expect(outcome.approved).toBe(false);
+  expect(outcome.verdict).toBe("changes_requested");
+  expect(outcome.rounds).toBe(resumed.result.rounds);
+  expect(events.filter((event) => event.lifecycle === "paused")).toHaveLength(1);
+  expect(events.some((event) => event.lifecycle === "started")).toBe(true);
+  expect(events.some((event) => event.lifecycle === "completed")).toBe(true);
+  expect(events.at(-1)?.lifecycle).toBe("completed");
+  await core.backgroundRuns.close();
+});
+
 test("resume_pipeline reopens a durable stage pause and completes it", async () => {
   const fx = fixture();
   let stageMaxModelTurns = 1;

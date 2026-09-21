@@ -609,21 +609,81 @@ export class BackgroundRunManager {
     runId: string,
     pause: PipelinePause,
     metrics: { steps: number; totalCost: number },
+    segment: readonly StepCost[] = [],
   ): void {
     if (this.entries.get(runId) === undefined) return;
     const entry = this.owned(runId);
     if (entry.active) return;
+    entry.outcome = undefined;
+    if (segment.length > 0) {
+      entry.lifecycle = "started";
+      this.append(entry, "started", {}, false);
+      for (const step of segment) {
+        entry.metrics = {
+          steps: entry.metrics.steps + 1,
+          totalCost: entry.metrics.totalCost + step.cost,
+        };
+        entry.lifecycle = "stage_changed";
+        this.append(
+          entry,
+          "stage_changed",
+          { stage: step.phase, metrics: { ...entry.metrics } },
+          false,
+        );
+      }
+    }
     entry.lifecycle = "paused";
     entry.metrics = { ...metrics };
     entry.pause = copyPause(pause);
+    this.append(
+      entry,
+      "paused",
+      {
+        ...((PHASES as readonly string[]).includes(pause.phase)
+          ? { stage: pause.phase as StepCost["phase"] }
+          : {}),
+        pause: copyPause(pause),
+        metrics: { ...entry.metrics },
+      },
+      false,
+    );
+    this.persist(entry);
+    this.notify(entry);
+  }
+  /** Atomically project a foreground resume's terminal segment and outcome. */
+  projectForegroundResult(runId: string, result: RunPipelineResult): void {
+    if (this.entries.get(runId) === undefined) return;
+    const entry = this.owned(runId);
+    if (entry.active) return;
+    entry.pause = undefined;
     entry.outcome = undefined;
-    this.append(entry, "paused", {
-      ...((PHASES as readonly string[]).includes(pause.phase)
-        ? { stage: pause.phase as StepCost["phase"] }
-        : {}),
-      pause: copyPause(pause),
-      metrics: { ...entry.metrics },
-    });
+    entry.lifecycle = "started";
+    this.append(entry, "started", {}, false);
+    for (const step of result.perStep) {
+      entry.metrics = {
+        steps: entry.metrics.steps + 1,
+        totalCost: entry.metrics.totalCost + step.cost,
+      };
+      entry.lifecycle = "stage_changed";
+      this.append(
+        entry,
+        "stage_changed",
+        { stage: step.phase, metrics: { ...entry.metrics } },
+        false,
+      );
+    }
+    entry.lifecycle = "completed";
+    const lastVerdict = result.result.verdicts.at(-1);
+    entry.outcome = {
+      ...this.statusOf(entry),
+      lifecycle: "completed",
+      approved: result.result.approved,
+      rounds: result.result.rounds,
+      ...(lastVerdict === undefined ? { verdict: "not_run" } : { verdict: lastVerdict.status }),
+    };
+    this.append(entry, "completed", { metrics: { ...entry.metrics } }, false);
+    this.persist(entry);
+    this.notify(entry);
   }
   /**
    * Subscribe to future owner-scoped, content-free lifecycle pages.
@@ -736,13 +796,24 @@ export class BackgroundRunManager {
     return pending;
   }
   /** Mark the named wake kinds handled for a run, on durable state and in memory. */
-  markWakesHandled(runId: string, kinds: readonly WakeKind[]): void {
+  markWakesHandled(runId: string, wakes: readonly PendingWake[] | readonly WakeKind[]): void {
     if (this.closed) throw new BackgroundRunError("closed");
     const entry = this.entries.get(runId);
     const now = Date.now();
+    const exact = wakes.length > 0 && typeof wakes[0] !== "string";
+    const matches = (w: WakeEntry): boolean =>
+      exact
+        ? (wakes as readonly PendingWake[]).some(
+            (wake) =>
+              wake.kind === w.kind &&
+              wake.firstAt === w.firstAt &&
+              wake.lastAt === w.lastAt &&
+              wake.count === w.count,
+          )
+        : (wakes as readonly WakeKind[]).includes(w.kind);
     if (entry !== undefined) {
       for (const w of entry.wake.entries)
-        if (kinds.includes(w.kind) && !w.handled) {
+        if (matches(w) && !w.handled) {
           w.handled = true;
           w.handledAt = now;
         }
@@ -756,7 +827,7 @@ export class BackgroundRunManager {
       const value = current?.value;
       if (value === undefined) throw new BackgroundRunError("not_found", runId);
       const entries = (value.wake?.entries ?? []).map((w) =>
-        kinds.includes(w.kind) && !w.handled ? { ...w, handled: true, handledAt: now } : w,
+        matches(w) && !w.handled ? { ...w, handled: true, handledAt: now } : w,
       );
       return { ...value, wake: { entries } };
     });
@@ -820,6 +891,7 @@ export class BackgroundRunManager {
     e: Entry,
     lifecycle: BackgroundLifecycle,
     fields: Partial<BackgroundRunEvent> = {},
+    persist = true,
   ): void {
     e.events.push({
       sequence: e.nextSequence++,
@@ -831,8 +903,10 @@ export class BackgroundRunManager {
     if (this.limits.maxEventsPerRun > 0 && e.events.length > this.limits.maxEventsPerRun)
       e.events.splice(0, e.events.length - this.limits.maxEventsPerRun);
     this.coalesceWake(e, lifecycle);
-    this.persist(e);
-    this.notify(e);
+    if (persist) {
+      this.persist(e);
+      this.notify(e);
+    }
   }
 
   /** Record (or extend) a wake window for a turn-initiating lifecycle. */

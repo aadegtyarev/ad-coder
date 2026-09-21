@@ -465,7 +465,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         // the registry otherwise keeps the stale earlier pause. A runId with
         // no entry here (a run this process never registered) projects
         // nothing.
-        backgroundRuns.projectForegroundPause(pause.detail, pause.pause, pause.metrics);
+        backgroundRuns.projectForegroundPause(pause.detail, pause.pause, pause.metrics, perStep);
         throw pause;
       }
       const decision = completed.checkpoint.decisions.find((item) => item.status === "pending");
@@ -487,7 +487,14 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       config.requireStamp,
     );
     const totalCost = perStep.reduce((sum, e) => sum + e.cost, 0);
-    return { runId: completed.checkpoint.runId, result: completed.result, perStep, totalCost };
+    const pipelineResult = {
+      runId: completed.checkpoint.runId,
+      result: completed.result,
+      perStep,
+      totalCost,
+    };
+    backgroundRuns.projectForegroundResult(completed.checkpoint.runId, pipelineResult);
+    return pipelineResult;
   };
 
   const runPipeline = (task: string, complexity?: Complexity): Promise<RunPipelineResult> =>
@@ -2093,7 +2100,7 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
   >();
   const wakePump = new WakePump({
     listPending: () => core.backgroundRuns.pendingWakes(),
-    markHandled: (runId, kinds) => core.backgroundRuns.markWakesHandled(runId, kinds),
+    markHandled: (runId, wakes) => core.backgroundRuns.markWakesHandled(runId, wakes),
     onTurnStarted: (step) => {
       for (const consumer of wakeTurnConsumers) consumer({ phase: "started", step });
     },
