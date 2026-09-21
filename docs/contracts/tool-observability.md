@@ -7,10 +7,12 @@ arguments or drowning in implementation noise?
 - Tool activity is emitted by the headless core as structured lifecycle events;
   CLI, TUI, JSON, and external frontends only render or transport those events.
 - A long-running role reports semantic progress such as `Read`, `Search`, `Edit`,
-  `Run`, `Web`, and `Inspect image`, including completion or failure. A heartbeat
+  `Run`, `Web`, `Inspect image`, and `Skill`, including completion or failure. A heartbeat
   remains the fallback when no new activity is available.
 - Human output groups repeated activity into a compact, incrementally updated summary. It does not print every
   low-level event or force the user to infer that the process is still alive.
+- 2026-09-21 (issue #569): A `load_skill` activity is classified as `Skill`, and
+  its projected skill id remains the renderer subject, so human output reads `Skill <skill-id>`.
 - Machine mode exposes a stable event schema and keeps final-result stdout unpolluted. Consumers can correlate
   events with the role, run, turn, tool call, and parent operation without parsing prose.
 - 2026-09-16: Event projections are bounded, and they name the SUBJECT a tool is acting on: the path read

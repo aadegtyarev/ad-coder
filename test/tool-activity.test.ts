@@ -345,7 +345,10 @@ describe("tool activity core", () => {
       record.type === "tool_activity" ? [record] : [],
     );
     expect(lifecycle.length).toBe(3);
-    for (const record of lifecycle) expect(record.projection?.skillId).toBe("delivery-calibration");
+    for (const record of lifecycle) {
+      expect(record.activity).toBe("Skill");
+      expect(record.projection?.skillId).toBe("delivery-calibration");
+    }
   });
 
   test("an unparseable or missing load_skill target is an explicit unknown, never silent", () => {
@@ -571,21 +574,21 @@ describe("tool activity renderer", () => {
     expect(rendered).not.toMatch(/^\d{2}:\d{2}:\d{2}\s+activity(\s|$)/m);
   });
 
-  test("a load_skill line names the skill it loaded, not an anonymous Read", () => {
+  test("a load_skill line renders the Skill signature with its skill id", () => {
     const output = new MemoryWritable();
     const renderer = new ToolActivityRenderer(output, "human", { groupingRefreshMs: 0 });
     renderer.consume(
       lifecycleEvent({
-        activity: "Read" as const,
+        activity: "Skill" as const,
         toolName: "load_skill",
         projection: { skillId: "delivery-calibration" },
         lifecycle: "completed",
       }),
     );
     renderer.close();
-    // The one thing an operator asks about a load is WHICH skill; a subjectless
-    // line is how four identical anonymous loads hid in plain sight before.
-    expect(output.text()).toContain("delivery-calibration");
+    const rendered = output.text();
+    expect(rendered).toMatch(/Skill\s+delivery-calibration/);
+    expect(rendered).not.toMatch(/Read\s+delivery-calibration/);
   });
 
   test("reports renderer backpressure loss as valid JSON instead of prose", () => {

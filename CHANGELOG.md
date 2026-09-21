@@ -14,7 +14,7 @@ enforces that dated release headings go in non-increasing date order
 ## [0.167.0] - 2026-09-21
 
 ### Changed
-- Stub heading staked by the coordinator; the lane replaces this line with the real entry.
+- **Skill loads now render as `Skill <skill-id>` in tool activity (issue #569).**
 
 ## [0.164.0] - 2026-09-21
 
