@@ -64,9 +64,18 @@ export interface VerdictIssue {
 }
 
 export interface RemovedTestBehavior {
+  /** Exact identity from the machine-collected removed-test inventory. */
+  removedTestId: string;
   behavior: string;
   fate: "restored" | "moved";
   destination: string;
+}
+
+export interface RemovedTestInventoryEntry {
+  removedTestId: string;
+  path: string;
+  line: number;
+  text: string;
 }
 
 export interface ReviewCoverage {

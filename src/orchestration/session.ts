@@ -66,6 +66,7 @@ import type { VerdictCapture } from "./verdict";
 import {
   buildSubmitVerdictTool,
   formatReviewerInstruction,
+  inventoryRemovedTests,
   REVIEW_SUBMISSION_ATTEMPTS,
   reviewRetryTask,
 } from "./verdict";
@@ -1586,6 +1587,9 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       coderMetrics?.diffBytes ?? 0,
       changed.diff?.untrackedMeasuredBytes ?? 0,
     );
+    const removedTestInventory = changed.diff
+      ? inventoryRemovedTests(changed.diff.text)
+      : undefined;
     const decision = selectPipelineContext({
       mode: config.pipelineContext,
       round,
@@ -1656,6 +1660,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
         attemptRunId,
         state.surfaceAnalysis,
         state.verdicts.flatMap((previous) => previous.issues),
+        removedTestInventory,
       );
       const turn = await runWorkflowTurn(
         config.roles.reviewer,

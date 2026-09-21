@@ -1339,9 +1339,11 @@ test("a changes_requested-settled run stamps verdict:changes_requested (issue #3
     issues: [
       {
         severity: "major",
+        findingId: "fix-x",
         what: "fix X",
         location: "src/example.ts:1",
         closureCriterion: "the focused regression test passes",
+        resolution: "remains",
       },
     ],
     summary: "needs work",
@@ -2330,7 +2332,15 @@ test("settled run with no escalation pauses with a deferred decomposition decisi
     verdicts: [
       {
         status: "changes_requested",
-        issues: [{ severity: "blocker", what: "must fix" }],
+        issues: [
+          {
+            severity: "blocker",
+            findingId: "must-fix",
+            what: "must fix",
+            location: "src/example.ts:1",
+            closureCriterion: "the focused regression test passes",
+          },
+        ],
         summary: "block",
       },
     ],

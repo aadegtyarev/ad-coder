@@ -4,6 +4,7 @@ import { defineTool } from "../runner/tool";
 import type {
   IssueSeverity,
   RemovedTestBehavior,
+  RemovedTestInventoryEntry,
   SurfaceAnalysis,
   Verdict,
   VerdictIssue,
@@ -94,6 +95,37 @@ const VERDICT_STATUSES: readonly VerdictStatus[] = [
 ];
 const ISSUE_SEVERITIES: readonly IssueSeverity[] = ["blocker", "major", "minor"];
 
+/** Inventory observable removed test assertions from a bounded unified diff. */
+export function inventoryRemovedTests(diff: string): RemovedTestInventoryEntry[] {
+  const entries: RemovedTestInventoryEntry[] = [];
+  let path = "";
+  let oldLine = 0;
+  for (const line of diff.split("\n")) {
+    if (line.startsWith("diff --git a/")) {
+      path = line.slice("diff --git a/".length).split(" b/")[0] ?? "";
+      continue;
+    }
+    const hunk = line.match(/^@@ -(\d+)/);
+    if (hunk) {
+      oldLine = Number(hunk[1]);
+      continue;
+    }
+    if (
+      line.startsWith("-") &&
+      !line.startsWith("---") &&
+      /(?:^|\/)test(?:\/|[^/]*\.test\.)[^/]*\.(?:ts|tsx|js|jsx)$/.test(path)
+    ) {
+      const text = line.slice(1);
+      if (text.trim() !== "")
+        entries.push({ removedTestId: `${path}:${oldLine}`, path, line: oldLine, text });
+      oldLine += 1;
+    } else if (!line.startsWith("+")) {
+      if (line !== "" && !line.startsWith("\\")) oldLine += 1;
+    }
+  }
+  return entries;
+}
+
 /** One bounded mapping shared by the TypeScript shape, schema descriptions and validator. */
 export const VERDICT_ISSUE_FIELDS = {
   what: 2000,
@@ -157,6 +189,7 @@ export function parseVerdict(
   detail: string,
   expected?: SurfaceAnalysis,
   priorFindings: readonly VerdictIssue[] = [],
+  removedTestInventory?: readonly RemovedTestInventoryEntry[],
 ): Verdict {
   const bad = (message: string): never => {
     throw new OrchestrationError("malformed_verdict", detail, message);
@@ -179,6 +212,7 @@ export function parseVerdict(
   if (rawIssues.length > VERDICT_ISSUE_FIELDS.maxIssues)
     return bad(`verdict.issues exceeds the maximum of ${VERDICT_ISSUE_FIELDS.maxIssues} findings`);
   let issueBytes = 0;
+  const seenFindingIds = new Set<string>();
   const issues: VerdictIssue[] = rawIssues.map((entry, index) => {
     if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
       return bad(`verdict.issues[${index}] must be an object`);
@@ -242,8 +276,15 @@ export function parseVerdict(
             ["closed", "remains", "new"].includes(issue.resolution)
           ? (issue.resolution as "closed" | "remains" | "new")
           : bad(`verdict.issues[${index}].resolution must be closed, remains, or new`);
+    if (needsAddress && findingId === undefined)
+      return bad(`verdict.issues[${index}].findingId is required for blocker and major findings`);
     if (resolution === "closed" && evidence === undefined)
       return bad(`verdict.issues[${index}].evidence is required when resolution is closed`);
+    if (findingId !== undefined) {
+      if (seenFindingIds.has(findingId))
+        return bad(`verdict.issues[${index}].findingId must be unique within the verdict`);
+      seenFindingIds.add(findingId);
+    }
     issueBytes += Buffer.byteLength(
       JSON.stringify({ what, location, closureCriterion, findingId, resolution, evidence }),
       "utf8",
@@ -270,31 +311,40 @@ export function parseVerdict(
       'verdict.issues must name at least one REMAINING defect when verdict.status is "changes_requested" (an empty list means nothing must change: resolved findings belong in verdict.summary, and "approved" is the verdict with an empty verdict.issues); resubmit the corrected verdict',
     );
 
-  if (priorFindings.some((finding) => finding.findingId !== undefined)) {
-    const priorIds = new Set(
-      priorFindings
-        .filter((finding) => finding.findingId !== undefined)
-        .map((finding) => finding.findingId),
-    );
+  // Minor findings are intentionally not identity-accounted: their contract does
+  // not require a findingId, so carrying one into the next round must not make a
+  // valid round-1 verdict impossible to resolve. Blocker and major findings remain
+  // identity-accounted and therefore retain the stable-ID requirement.
+  const carriedFindings = priorFindings.filter(
+    (finding) => finding.severity === "blocker" || finding.severity === "major",
+  );
+  if (carriedFindings.length > 0) {
+    const priorIds = new Set(carriedFindings.map((finding) => finding.findingId));
+    if (priorIds.has(undefined)) return bad("prior findings must all have findingId");
+    const carriedIds = new Set(carriedFindings.map((finding) => finding.findingId as string));
     const resolvedIds = new Set(
-      issues.filter((issue) => issue.resolution !== "new").map((issue) => issue.findingId),
+      issues
+        .filter(
+          (issue) =>
+            issue.resolution === "closed" || issue.resolution === "remains",
+        )
+        .map((issue) => issue.findingId),
     );
-    for (const id of priorIds) {
+    for (const id of carriedIds) {
       if (!resolvedIds.has(id))
         return bad(
           `verdict.issues must account for carried findingId ${id} as closed with evidence or remains; resubmit it instead of silently dropping it`,
         );
     }
     for (const issue of issues) {
-      if (issue.resolution === undefined)
+      const carriesPriorFinding =
+        issue.findingId !== undefined && carriedIds.has(issue.findingId);
+      if (issue.severity === "minor" && !carriesPriorFinding) continue;
+      if (issue.findingId === undefined || issue.resolution === undefined)
         return bad(
           `verdict.issues findingId ${issue.findingId ?? "<missing>"} must declare resolution`,
         );
-      if (
-        issue.resolution === "new" &&
-        issue.findingId !== undefined &&
-        priorIds.has(issue.findingId)
-      )
+      if (issue.resolution === "new" && carriesPriorFinding)
         return bad(`verdict.issues findingId ${issue.findingId} cannot be new when it is carried`);
     }
   }
@@ -369,6 +419,9 @@ export function parseVerdict(
       if (typeof entry !== "object" || entry === null || Array.isArray(entry))
         return bad(`verdict.removedTests[${index}] must be an object`);
       const item = entry as Record<string, unknown>;
+      const removedTestId = bounded("removedTestId", item.removedTestId, 200, (message) =>
+        bad(message.replace("issues[]", `removedTests[${index}]`)),
+      );
       const behavior = bounded("behavior", item.behavior, 1200, (message) =>
         bad(message.replace("issues[]", `removedTests[${index}]`)),
       );
@@ -378,11 +431,27 @@ export function parseVerdict(
       if (item.fate !== "restored" && item.fate !== "moved")
         return bad(`verdict.removedTests[${index}].fate must be restored or moved`);
       return {
+        removedTestId,
         behavior: redactFinding(behavior),
         destination: redactFinding(destination),
         fate: item.fate,
       };
     });
+  }
+  if (removedTestInventory !== undefined) {
+    if (removedTestInventory.length > 0 && removedTests === undefined)
+      return bad("verdict.removedTests is required: account for every removed test behavior");
+    const expectedIds = new Set(removedTestInventory.map((entry) => entry.removedTestId));
+    const actualIds = new Set((removedTests ?? []).map((entry) => entry.removedTestId));
+    if (
+      removedTests !== undefined &&
+      (removedTests.length !== expectedIds.size ||
+        actualIds.size !== expectedIds.size ||
+        [...expectedIds].some((id) => !actualIds.has(id)))
+    )
+      return bad(
+        "verdict.removedTests must account for every machine-inventoried removed test behavior",
+      );
   }
   return {
     status: status as VerdictStatus,
@@ -416,6 +485,7 @@ export function buildSubmitVerdictTool(
   detail: string,
   expected?: SurfaceAnalysis,
   priorFindings: readonly VerdictIssue[] = [],
+  removedTestInventory?: readonly RemovedTestInventoryEntry[],
 ): Tool {
   return defineTool({
     name: SUBMIT_VERDICT_TOOL_NAME,
@@ -472,7 +542,7 @@ export function buildSubmitVerdictTool(
             }),
           ),
           findingId: Type.Optional(
-            Type.String({ description: "stable id when resolving a carried finding" }),
+            Type.String({ description: "stable id; required for every blocker and major finding" }),
           ),
           resolution: Type.Optional(Type.String({ description: "closed, remains, or new" })),
           evidence: Type.Optional(
@@ -505,6 +575,9 @@ export function buildSubmitVerdictTool(
       removedTests: Type.Optional(
         Type.Array(
           Type.Object({
+            removedTestId: Type.Optional(
+              Type.String({ description: "id from the machine diff inventory" }),
+            ),
             behavior: Type.Optional(Type.String()),
             fate: Type.Optional(Type.String({ description: "restored or moved" })),
             destination: Type.Optional(Type.String()),
@@ -542,7 +615,13 @@ export function buildSubmitVerdictTool(
         // capture, so the pipeline reads the final submission of the round.
         // `delete` (not `= undefined`) clears the sibling under
         // exactOptionalPropertyTypes, where the field is not typed `| undefined`.
-        capture.verdict = parseVerdict(params, detail, expected, priorFindings);
+        capture.verdict = parseVerdict(
+          params,
+          detail,
+          expected,
+          priorFindings,
+          removedTestInventory,
+        );
         delete capture.error;
         return { content: [{ type: "text", text: "verdict recorded" }], details: undefined };
       } catch (error) {
@@ -592,8 +671,8 @@ export function formatReviewerInstruction(expected?: SurfaceAnalysis): string {
         ]),
     'Use "approved" only when no further changes are required; otherwise "changes_requested" with each required change as an issue.',
     "Every blocker/major issue must be a reproducible defect with a bounded location and objective closureCriterion; stale review stamps, review artifacts, round bookkeeping, and freshness are process artifacts and belong in summary, never in issues.",
-    "For every carried finding, report resolution closed (with evidence), remains, or new, using its findingId; do not silently drop findings.",
-    "If tests are removed, submit removedTests entries: each behavior must be restored or have a concrete new coverage destination; an unlisted removal is not accounted for.",
+    "Every blocker/major finding requires a stable findingId on the first submission. For every carried finding, report closed (with evidence), remains, or new using its findingId; carried identities may not be silently dropped or relabeled.",
+    "If tests are removed, submit removedTests entries with each machine-inventoried removedTestId: each behavior must be restored or have a concrete new coverage destination; an unlisted removal is refused.",
     'Issues name only defects that REMAIN; anything you verified and resolved belongs in the summary, and "approved" is exactly the verdict whose issues list is empty.',
   ].join("\n");
 }
