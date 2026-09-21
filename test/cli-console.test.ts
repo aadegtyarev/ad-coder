@@ -250,8 +250,10 @@ test("renders a durable wake through the real orchestrator and formatted console
   const result = await running;
   expect(result.reason).toBe("exit");
   expect(error.text()).toContain("ad-coder: wake turn started (wake:1)");
-  expect(output.text()).toContain("settled wake result");
-  expect(output.text()).toContain("ad-coder> ");
+  const rendered = output.text();
+  expect(rendered).toContain("settled wake result");
+  expect(rendered).toContain("ad-coder> ");
+  expect(rendered).not.toContain("\u001b");
   expect(sessionWithRuns.backgroundRuns.pendingWakes()).toEqual([]);
 });
 
