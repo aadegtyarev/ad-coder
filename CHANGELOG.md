@@ -11,6 +11,11 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.174.0] - 2026-09-21
+
+### Added
+- **Delivery discipline procedure (issue #568).** Orchestrators, coders, and reviewers now share an event-triggered delivery procedure for rebases, version claims, review stamps, force-with-lease pushes, merge choice, and red CI recovery.
+
 ## [0.173.0] - 2026-09-21
 
 ### Added
