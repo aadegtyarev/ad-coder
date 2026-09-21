@@ -1628,6 +1628,35 @@ test("operations exposes all LDO actions as one-result JSON commands", () => {
   expect(invalid.stderr).not.toContain("secret payload");
 });
 
+test("project-store config accepts default lock retry policy in the CLI", () => {
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-lock-retry-cli-"));
+  const config = path.join(target, "config.json");
+  const run = () =>
+    runCli([
+      "operations",
+      "control-list",
+      "--target-dir",
+      target,
+      "--project-store-config",
+      config,
+      "--json",
+    ]);
+
+  fs.writeFileSync(config, JSON.stringify({ lockRetry: {} }), { mode: 0o600 });
+  expect(run().code).toBe(0);
+
+  fs.writeFileSync(config, JSON.stringify({ lockRetry: { delaysMs: [] } }), { mode: 0o600 });
+  const empty = run();
+  expect(empty.code).toBe(2);
+  expect(empty.stderr).toContain("lockRetry.delaysMs");
+
+  fs.writeFileSync(config, JSON.stringify({ lockRetry: { unexpected: true } }), { mode: 0o600 });
+  expect(run().code).toBe(2);
+
+  fs.writeFileSync(config, "{ malformed", { mode: 0o600 });
+  expect(run().code).toBe(2);
+});
+
 test("operations validates retry policy and emits stage metrics in control reports", () => {
   const target = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-control-cli-"));
   const config = path.join(target, "config.json");

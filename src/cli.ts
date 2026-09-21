@@ -1131,11 +1131,12 @@ function parseProjectStoreConfig(value: string | undefined): ProjectStoreConfig 
       fail("--project-store-config contains an unknown lockRetry setting");
     const delays = lockObject.delaysMs;
     if (
-      !Array.isArray(delays) ||
-      delays.length === 0 ||
-      delays.some(
-        (delay) => typeof delay !== "number" || !Number.isSafeInteger(delay) || delay <= 0,
-      )
+      delays !== undefined &&
+      (!Array.isArray(delays) ||
+        delays.length === 0 ||
+        delays.some(
+          (delay) => typeof delay !== "number" || !Number.isSafeInteger(delay) || delay <= 0,
+        ))
     )
       fail("invalid --project-store-config setting: lockRetry.delaysMs");
   }

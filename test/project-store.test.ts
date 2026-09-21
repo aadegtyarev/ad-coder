@@ -284,6 +284,12 @@ describe("ProjectStore", () => {
     expect(fs.existsSync(lock)).toBe(false);
   });
 
+  test("accepts an empty lock retry policy as the default policy", () => {
+    expect(new ProjectStore(target(), { lockRetry: {} }).lockRetryDelaysMs).toEqual([
+      10, 20, 40, 80,
+    ]);
+  });
+
   test("rejects invalid lock retry policy", () => {
     expect(() => new ProjectStore(target(), { lockRetry: { delaysMs: [] } })).toThrow(
       new ProjectStoreError(
