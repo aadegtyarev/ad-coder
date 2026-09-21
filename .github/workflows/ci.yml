@@ -48,8 +48,8 @@ jobs:
       # to a head-sha checkout without re-deciding the property above.
       # The fallback reads the stamp's parent and the merge-base. The default
       # PR merge ref is retained, but checkout's shallow history may not contain
-      # them; deepen the existing checkout immediately before this last step.
-      # A bounded deepen avoids an unbounded clone while allowing ordinary PR
-      # stamp ancestry; the script fails loudly if more history is still needed.
-      - run: git fetch --deepen=50 origin "$GITHUB_REF" main
+      # them; fetch the complete history immediately before this last step.
+      # This transfers the full Git history, but does not change the checked-out
+      # merge ref or tree, so the digest still certifies the tree that would land.
+      - run: git fetch --unshallow origin "$GITHUB_REF" main
       - run: bun run stamp:check || bun run scripts/check-stamp-fixup.ts

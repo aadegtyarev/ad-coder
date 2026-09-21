@@ -189,18 +189,18 @@ test("a shallow checkout diagnoses missing stamp ancestry, then passes after CI 
     /history unavailable in this checkout: parent revision [0-9a-f]+\^/,
   );
 
-  git(shallow, ["fetch", "--deepen=2", "origin", "main"]);
+  git(shallow, ["fetch", "--unshallow", "origin", "main"]);
   expect(() => checkRequiredHistory(shallow)).not.toThrow();
   fs.rmSync(source, { recursive: true, force: true });
   fs.rmSync(shallow, { recursive: true, force: true });
 });
 
-test("CI deepens history immediately before the unchanged merge-ref stamp fallback", () => {
+test("CI fetches full history immediately before the unchanged merge-ref stamp fallback", () => {
   const ci = fs.readFileSync(
     path.join(import.meta.dir, "..", ".github", "workflows", "ci.yml"),
     "utf8",
   );
-  const fetch = ci.indexOf('git fetch --deepen=50 origin "$GITHUB_REF" main');
+  const fetch = ci.indexOf('git fetch --unshallow origin "$GITHUB_REF" main');
   const fallback = ci.indexOf("- run: bun run stamp:check || bun run scripts/check-stamp-fixup.ts");
   expect(fetch).toBeGreaterThan(-1);
   expect(fetch).toBeLessThan(fallback);

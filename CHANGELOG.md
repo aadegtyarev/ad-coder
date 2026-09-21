@@ -44,7 +44,7 @@ enforces that dated release headings go in non-increasing date order
 ## [0.169.0] - 2026-09-21
 
 ### Fixed
-- **The pre-merge stamp fixup now works from GitHub's shallow PR merge checkout (issue #567).** CI deepens the existing merge-ref checkout before the final stamp step, while missing ancestry is reported with the required revision instead of a raw Git error.
+- **The pre-merge stamp fixup now works from GitHub's shallow PR merge checkout (issue #567).** CI fetches the full Git history for the existing merge-ref checkout before the final stamp step, while missing ancestry is reported with the required revision instead of a raw Git error.
 
 ## [0.167.0] - 2026-09-21
 
