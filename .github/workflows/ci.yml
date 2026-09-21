@@ -46,16 +46,24 @@ jobs:
       # excludes `stamp:check` (pinned by test/pipeline-gates.test.ts) because
       # only runPipeline's settle path writes stamps. Nobody "fixes" this step
       # to a head-sha checkout without re-deciding the property above.
-      # The fallback reads the stamp's parent and the merge-base. The default
-      # PR merge ref is retained, but checkout's shallow history may not contain
-      # them; fetch the complete history immediately before this last step.
-      # These fetches transfer the full Git history, but do not change the
-      # checked-out ref or tree, so the digest still certifies that checkout.
-      # Push checkouts also start at depth 1; install main under its explicit
-      # remote-tracking name before the fallback reads it.
-      - if: github.event_name == 'push'
-        run: git fetch --unshallow origin "+refs/heads/main:refs/remotes/origin/main"
-      - if: github.event_name == 'pull_request'
-        run: git fetch --unshallow origin "+refs/pull/${{ github.event.pull_request.number }}/merge:refs/remotes/pull/${{ github.event.pull_request.number }}/merge"
-      - run: git fetch origin "+refs/heads/main:refs/remotes/origin/main"
-      - run: bun run stamp:check || bun run scripts/check-stamp-fixup.ts
+      # The normal stamp check is deliberately first. Only its failure pays the
+      # full-history fallback cost: the fallback reads the stamp's parent and
+      # merge-base, while these fetches leave the checked-out ref and tree alone.
+      # Push checkouts install main under its explicit remote-tracking name;
+      # PR checkouts retain the default merge ref and also install origin/main.
+      - run: |
+          if bun run stamp:check; then
+            exit 0
+          fi
+
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch --unshallow origin "+refs/pull/${{ github.event.pull_request.number }}/merge:refs/remotes/pull/${{ github.event.pull_request.number }}/merge"
+            git fetch origin "+refs/heads/main:refs/remotes/origin/main"
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            git fetch --unshallow origin "+refs/heads/main:refs/remotes/origin/main"
+          else
+            echo "unsupported event for stamp history fallback: ${{ github.event_name }}" >&2
+            exit 1
+          fi
+
+          bun run scripts/check-stamp-fixup.ts

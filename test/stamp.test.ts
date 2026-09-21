@@ -298,17 +298,19 @@ test("CI installs origin/main when preparing a detached shallow merge-ref checko
       "utf8",
     );
     const githubPullNumber = "$" + "{{ github.event.pull_request.number }}";
+    const githubEvent = "$" + "{{ github.event_name }}";
     const unshallow = ci.indexOf(
       `git fetch --unshallow origin "+refs/pull/${githubPullNumber}/merge:refs/remotes/pull/${githubPullNumber}/merge"`,
     );
     const refspec = ci.indexOf('git fetch origin "+refs/heads/main:refs/remotes/origin/main"');
-    const fallback = ci.indexOf(
-      "- run: bun run stamp:check || bun run scripts/check-stamp-fixup.ts",
-    );
-    expect(unshallow).toBeGreaterThan(-1);
+    const normalCheck = ci.indexOf("if bun run stamp:check; then");
+    const fallback = ci.indexOf("bun run scripts/check-stamp-fixup.ts", normalCheck);
+    expect(normalCheck).toBeGreaterThan(-1);
+    expect(normalCheck).toBeLessThan(unshallow);
     expect(unshallow).toBeLessThan(refspec);
     expect(refspec).toBeLessThan(fallback);
-    expect(ci).toContain("PR merge ref is retained");
+    expect(ci).toContain(`if [ "${githubEvent}" = "pull_request" ]`);
+    expect(ci).toContain("PR checkouts retain the default merge ref");
   } finally {
     fs.rmSync(source, { recursive: true, force: true });
     fs.rmSync(bare, { recursive: true, force: true });
@@ -355,19 +357,21 @@ test("CI prepares a depth-one detached push checkout with full main history", ()
       path.join(import.meta.dir, "..", ".github", "workflows", "ci.yml"),
       "utf8",
     );
-    const pushStep = ci.indexOf("- if: github.event_name == 'push'");
+    const githubEvent = "$" + "{{ github.event_name }}";
+    const pushCondition = ci.indexOf(`elif [ "${githubEvent}" = "push" ]`);
     const pushRefspec = ci.indexOf(
       'git fetch --unshallow origin "+refs/heads/main:refs/remotes/origin/main"',
-      pushStep,
+      pushCondition,
     );
-    const pullStep = ci.indexOf("- if: github.event_name == 'pull_request'");
-    const fallback = ci.indexOf(
-      "- run: bun run stamp:check || bun run scripts/check-stamp-fixup.ts",
-    );
-    expect(pushStep).toBeGreaterThan(-1);
-    expect(pushStep).toBeLessThan(pushRefspec);
-    expect(pushRefspec).toBeLessThan(pullStep);
-    expect(pullStep).toBeLessThan(fallback);
+    const pullCondition = ci.indexOf(`if [ "${githubEvent}" = "pull_request" ]`);
+    const normalCheck = ci.indexOf("if bun run stamp:check; then");
+    const fallback = ci.indexOf("bun run scripts/check-stamp-fixup.ts", normalCheck);
+    expect(pushCondition).toBeGreaterThan(-1);
+    expect(pushCondition).toBeLessThan(pushRefspec);
+    expect(pullCondition).toBeGreaterThan(-1);
+    expect(normalCheck).toBeGreaterThan(-1);
+    expect(normalCheck).toBeLessThan(pushRefspec);
+    expect(pushRefspec).toBeLessThan(fallback);
   } finally {
     fs.rmSync(source, { recursive: true, force: true });
     fs.rmSync(bare, { recursive: true, force: true });

@@ -490,12 +490,12 @@ test("ci.yml declares the pre-merge stamp gate exactly once, as the last step (i
     path.join(import.meta.dir, "..", ".github", "workflows", "ci.yml"),
     "utf8",
   );
-  // Exactly one step line, and the command appears nowhere else: the comment
-  // above the step names the gate as `stamp:check`, never the full command.
-  expect(ci.split("- run: bun run stamp:check")).toHaveLength(2);
+  // Exactly one shell invocation: the command appears in the conditional, not
+  // in comments or a second workflow step.
+  expect(ci.split("if bun run stamp:check; then")).toHaveLength(2);
   expect(ci.split("bun run stamp:check")).toHaveLength(2);
   // The pre-merge gate runs LAST, after the artifact smoke (issue #295).
-  expect(ci.indexOf("- run: bun run stamp:check")).toBeGreaterThan(
+  expect(ci.indexOf("if bun run stamp:check; then")).toBeGreaterThan(
     ci.indexOf("- run: bun run smoke:artifact"),
   );
 });
