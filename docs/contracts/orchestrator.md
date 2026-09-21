@@ -225,9 +225,12 @@ K6.1. Raising a ceiling is reconnaissance by fire: one bounded step, a failure
 branch chosen in advance, the learned number remembered.
 K6.2. The threshold for a silent raise is a **project setting** (K10), `+50%` by
 default **from the value declared at intake** (K2.1) -- the base is pinned rather
-than drifting upward with every raise. **Any enabled ceiling of a stage and of a
-run** within the threshold is raised silently. The size of the step comes from the
-measurement record rather than from a single multiplier for every ceiling
+than drifting upward with every raise. **A raise names one role and one reason and
+moves the exhausted ceiling only** -- the stage ceiling that the pause reported, or
+the run's own ceiling when that is the one exhausted -- because raising every
+ceiling when one was hit discards the evidence the pause produced
+(`docs/contracts/operator-flow.md`, 2026-09-17, #208). The size of the step comes
+from the measurement record rather than from a single multiplier for every ceiling
 (`docs/contracts/stage-limit-calibration.md`: duration and turns x1.5, input x1.6,
 cost unmoved). Zero is a **disabled** limit (`docs/contracts/config.md`): it has no
 arithmetic, and a silent raise may not enable what the operator disabled. **The
