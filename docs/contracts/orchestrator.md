@@ -470,8 +470,14 @@ the mode `manual` (K4.1); the intake mode clarification on (K4.3);
 `silentRaiseFactor` `+50%` (K6.2); `maxContinuations` `3` (K3.4); `waitTimeoutMs`
 `900000` (K7.7); the stamp requirement `review.require-stamp` `auto` (K8.9); the
 "merge green pull requests" flag on (K9.1.5); the "file tickets" flag on
-(K9.1.6); the "own hands beyond the machine bound" flag off (K9.1.8); and the
-delivery surface, whose default is named in K12.
+(K9.1.6); the "own hands beyond the machine bound" flag off (K9.1.8); the
+delivery surface, whose default is named in K12; and the numeric ceilings of K0 --
+`maxDurationMs`, `maxModelTurns`, `maxToolTurns`, `maxInputTokens` and `maxCostUsd`
+-- each `0`, which `docs/contracts/config.md`'s 2026-09-12 entry fixes as "Numeric
+resource limits default to `0`; `0` disables and only a positive value enables
+them"; the code carries the same five names, the same default
+(`DEFAULT_STAGE_LIMITS`, `src/orchestration/stage-limits.ts`) and one launch
+parameter each (`src/cli.ts`).
 K10.6.1. An authority of K9.1 that names no setting -- dispatching inside the
 budget, retrying a failed step, reading an artefact -- is not independently
 switchable: it is what taking a task grants, and K9.0's switchability is
@@ -485,12 +491,13 @@ else yet: `silentRaiseFactor` (K6.2), `maxContinuations` (K3.4) and
 not a description of a surface a reader could go and read: each is the name under
 which the behaviour its clause requires must become configurable, with the default
 above. Their absence from the code is an audit finding. Of the remaining settings
-of K10.6, two name surfaces the code carries today -- the mode (`RunMode`,
-`src/orchestration/control-plane.ts`) and `review.require-stamp`
-(`src/config/validate.ts`) -- while the intake clarification (K4.3) and the flags
-of K9.1.5, K9.1.6 and K9.1.8 are requirements in the same sense as the three names
-above: the code does not carry them yet, and their absence is likewise an audit
-finding rather than a reason to read the clause as descriptive.
+of K10.6, the surfaces the code carries today are the mode (`RunMode`,
+`src/orchestration/control-plane.ts`), `review.require-stamp`
+(`src/config/validate.ts`) and the five numeric ceilings (`DEFAULT_STAGE_LIMITS`,
+`src/orchestration/stage-limits.ts`) -- while the intake clarification (K4.3) and
+the flags of K9.1.5, K9.1.6 and K9.1.8 are requirements in the same sense as the
+three names above: the code does not carry them yet, and their absence is likewise
+an audit finding rather than a reason to read the clause as descriptive.
 
 ## K11. Contract and memory discipline
 
