@@ -195,6 +195,27 @@ describe("ProjectStore", () => {
     expect((await store.cleanup("runs")).removed).toEqual([]);
   });
 
+  test("a corrupt managed state file is a typed store error, not a raw parse crash", () => {
+    const store = new ProjectStore(target());
+    const statePath = path.join(store.layout.runs, "corrupt.json");
+    store.writeVersionedJson(statePath, { ok: true });
+    fs.writeFileSync(statePath, "{corrupted");
+    try {
+      store.readVersionedJson(statePath);
+      expect.unreachable();
+    } catch (error) {
+      // A raw SyntaxError escaped every handler that keys on ProjectStoreError:
+      // `runs stop` reported a corrupt run record as a crash instead of a
+      // refusal (issue #479). The store owns the read, so the read types it.
+      expect(error).toBeInstanceOf(ProjectStoreError);
+      expect(error).toMatchObject({ code: "corrupt_state", path: statePath });
+      // The parser's message embeds a content snippet; the typed message must
+      // not carry file contents.
+      expect((error as ProjectStoreError).message).toBe("managed state is not parseable JSON");
+      expect((error as ProjectStoreError).message).not.toContain("corrupted");
+    }
+  });
+
   test("positive cleanup removes only the oldest managed directories", async () => {
     const root = target();
     const store = new ProjectStore(root, { retention: { runs: 1 } });

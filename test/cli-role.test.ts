@@ -17,6 +17,11 @@ import {
 } from "../src/cli";
 import { MemoryLedgerSink } from "../src/ledger/ledger";
 import { PLANNER_SUBMISSION_RESTART, plannerRetryTask } from "../src/orchestration/plan";
+import {
+  type RunProcessIdentity,
+  stopRequestPath,
+  writeRunStopRequest,
+} from "../src/orchestration/run-stop";
 import { StageLimitError } from "../src/orchestration/stage-limits";
 import {
   REVIEW_SUBMISSION_RESTART,
@@ -160,6 +165,191 @@ test("an interrupted standalone role persists a resumable pause and releases its
   });
   expect(resumed.text).toContain("resumed after interruption");
   expect(store.readVersionedJson<{ status: string }>(checkpointPath).value.status).toBe("complete");
+});
+
+test("a started standalone run records its own process identity in the checkpoint", async () => {
+  const { faux, models, model, role } = fixture();
+  faux.setResponses([fauxAssistantMessage("done")]);
+  const runId = `process-identity-${crypto.randomUUID()}`;
+
+  await runRoleStandalone({
+    role,
+    model,
+    models,
+    targetDir,
+    task: "review the change",
+    runId,
+  });
+
+  const store = new ProjectStore(targetDir);
+  const checkpointPath = path.join(store.layout.runs, `standalone-${runId}.json`);
+  const identity = store.readVersionedJson<{ process?: RunProcessIdentity }>(checkpointPath).value
+    .process;
+  // Issue #479: the run's own start writes the pid, the /proc start time that
+  // pins it against reuse, and the process group. The pid is THIS process's
+  // because runRoleStandalone records itself, wherever it runs.
+  expect(identity?.pid).toBe(process.pid);
+  expect(typeof identity?.startTime).toBe("string");
+  expect(typeof identity?.groupId).toBe("number");
+});
+
+test("resuming a standalone run re-records the identity of the process that resumed", async () => {
+  const { faux, models, model, role } = fixture();
+  const runId = `resume-identity-${crypto.randomUUID()}`;
+  const task = "review the change";
+  const abortController = new AbortController();
+  abortController.abort();
+  await expect(
+    runRoleStandalone({
+      role,
+      model,
+      models,
+      targetDir,
+      task,
+      runId,
+      abortSignal: abortController.signal,
+    }),
+  ).rejects.toBeInstanceOf(RunInterruptedError);
+
+  const store = new ProjectStore(targetDir);
+  const checkpointPath = path.join(store.layout.runs, `standalone-${runId}.json`);
+  // Stand in for the dead predecessor's identity: a resume must OVERWRITE it
+  // with its own pid, or `runs stop` would aim at a pid that no longer runs.
+  const stale = store.readVersionedJson<{ process?: RunProcessIdentity }>(checkpointPath);
+  store.writeVersionedJson(
+    checkpointPath,
+    { ...stale.value, process: { pid: 999_999_999, startTime: "1", groupId: 999_999_999 } },
+    stale.version,
+  );
+
+  faux.setResponses([fauxAssistantMessage("took over")]);
+  await runRoleStandalone({
+    role,
+    model,
+    models,
+    targetDir,
+    task,
+    runId,
+    resumeExisting: true,
+  });
+  expect(
+    store.readVersionedJson<{ process?: RunProcessIdentity }>(checkpointPath).value.process?.pid,
+  ).toBe(process.pid);
+});
+
+test("an external stop's pause names the signal and the stop request, and consumes the witness", async () => {
+  const { models, model, role } = fixture();
+  const runId = `stop-requested-${crypto.randomUUID()}`;
+  const abortController = new AbortController();
+  abortController.abort();
+
+  // The stopper writes the witness BEFORE it signals (issue #479); here the
+  // write precedes the run entirely, the same fact the stop path guarantees.
+  const store = new ProjectStore(targetDir);
+  const request = writeRunStopRequest(store, runId, "SIGTERM");
+
+  await expect(
+    runRoleStandalone({
+      role,
+      model,
+      models,
+      targetDir,
+      task: "review the change",
+      runId,
+      abortSignal: abortController.signal,
+      interruptSignal: () => "SIGTERM",
+    }),
+  ).rejects.toBeInstanceOf(RunInterruptedError);
+
+  const checkpoint = store.readVersionedJson<{
+    status: string;
+    pause?: {
+      code: string;
+      signal?: string;
+      stopRequest?: { requestedAt: number; requesterPid: number };
+    };
+  }>(path.join(store.layout.runs, `standalone-${runId}.json`)).value;
+  expect(checkpoint.status).toBe("paused");
+  expect(checkpoint.pause).toMatchObject({
+    code: "interrupted",
+    signal: "SIGTERM",
+    stopRequest: { requestedAt: request.requestedAt, requesterPid: request.requesterPid },
+  });
+  // The witness is consumed by the pause that recorded it: a stale request
+  // must not brand a later unrelated interruption of the same runId.
+  expect(fs.existsSync(stopRequestPath(store, runId))).toBe(false);
+});
+
+test("an interruption without a stop request records the signal alone", async () => {
+  const { models, model, role } = fixture();
+  const runId = `signal-only-${crypto.randomUUID()}`;
+  const abortController = new AbortController();
+  abortController.abort();
+
+  await expect(
+    runRoleStandalone({
+      role,
+      model,
+      models,
+      targetDir,
+      task: "review the change",
+      runId,
+      abortSignal: abortController.signal,
+      interruptSignal: () => "SIGINT",
+    }),
+  ).rejects.toBeInstanceOf(RunInterruptedError);
+
+  const checkpoint = store_read(targetDir, runId);
+  expect(checkpoint.status).toBe("paused");
+  expect(checkpoint.pause).toEqual({ code: "interrupted", signal: "SIGINT" });
+});
+
+/** A paused checkpoint's pause, read through the store. */
+function store_read(
+  target: string,
+  runId: string,
+): {
+  status: string;
+  pause?: Record<string, unknown>;
+} {
+  const store = new ProjectStore(target);
+  return store.readVersionedJson<{
+    status: string;
+    pause?: Record<string, unknown>;
+  }>(path.join(store.layout.runs, `standalone-${runId}.json`)).value;
+}
+
+test("a stage-limit pause carries neither a signal nor a stop request", async () => {
+  const { faux, models, model, role } = fixture();
+  const response = {
+    ...fauxAssistantMessage("too expensive"),
+    usage: { ...fauxAssistantMessage("too expensive").usage },
+  };
+  response.usage.input = 2;
+  faux.setResponses([response]);
+  const runId = `stage-limit-pause-${crypto.randomUUID()}`;
+
+  await expect(
+    runRoleStandalone({
+      role,
+      model,
+      models,
+      targetDir,
+      task: "review the change",
+      runId,
+      ledgerSink: new MemoryLedgerSink(),
+      stageLimits: { maxInputTokens: 1 },
+    }),
+  ).rejects.toBeInstanceOf(StageLimitError);
+
+  const checkpoint = store_read(targetDir, runId);
+  expect(checkpoint.status).toBe("paused");
+  // The distinct fact (issue #479): a limit pause is nobody's signal and no
+  // stop asked for it -- exactly what "killed" and "fell over" must not
+  // collapse into.
+  expect(checkpoint.pause).toMatchObject({ code: "stage_limit" });
+  expect(checkpoint.pause).not.toHaveProperty("signal");
+  expect(checkpoint.pause).not.toHaveProperty("stopRequest");
 });
 
 test("standalone role resumes the same durable run only after its exhausted budget changes", async () => {

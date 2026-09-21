@@ -95,6 +95,25 @@ cannot.
   completion reports the pause -- it cannot raise a ceiling it never hears
   about.
 
+- 2026-09-20 (issue #479): A pause names WHICH signal ended the run and whether
+  anything asked for it. The record a run's own process writes when a signal
+  ends it (the standalone role checkpoint) carries the signal
+  (`pause.signal`) and, when a `runs stop` request asked for the stop, that
+  request (`pause.stopRequest`, read from the stopper's witness file and
+  consumed by the write) -- because an externally stopped run is not the same
+  fact as the run's own failure, and durable state is the only place that
+  distinction survives the process. The victim cannot always write it: a
+  process that dies before reaching the write leaves `status: "running"` and
+  `pause: null` with no diagnostic at all (measured 2026-09-20, on an
+  orchestrator's own delegate), and in exactly that case the stop-request
+  record the stopper wrote BEFORE its first signal
+  (`<target>/.ad-coder/runs/stop-<runId>.json`) is the only witness that this
+  was a stop and not a fall-over. The same record's absence is not a crash
+  and not a verdict on the run's health: it says "nothing asked this run to
+  stop", and a closeout that finds no witness reports that, not an error. A
+  stage-limit pause carries neither a signal nor a stop request: a limit is
+  nobody's signal.
+
 - 2026-09-17 (issue #208): A stage that exhausts a ceiling on progressing work
   is resumed at a LARGER ceiling, by the orchestrator, without the operator.
   The coordinator refuses a resume at an unchanged number, so the raise is not

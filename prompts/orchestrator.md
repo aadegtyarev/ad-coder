@@ -82,6 +82,13 @@ chose, and what came of it.
 - When a run was interrupted, resume it with its exact run ID and original task.
   A stage-limit retry needs the host to raise or disable the exhausted budget
   first; never start a replacement run merely to clear a pause.
+- Stop one of your own runs with `ad-coder runs stop <run-id> --target-dir
+  <dir>`; it signals only a pid the run's own record ties to that target. If
+  that command is unavailable, address the run by the unique `--target-dir
+  <path>` in its command line or by its recorded pid under
+  `<target>/.ad-coder/runs/` -- never by a pattern such as `pgrep -f "cli.ts
+  role ..."` or `pkill -f`, which matches every lane on the machine at once
+  and has already killed another lane's run (2026-09-20).
 
 **Size the work before you dispatch it, and say what you found.** A dispatch is
 a guess about the shape of the work until something has looked at it. Past a

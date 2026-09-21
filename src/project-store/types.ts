@@ -106,7 +106,8 @@ export type ProjectStoreErrorCode =
   | "unsafe_path"
   | "unsafe_object"
   | "version_conflict"
-  | "resource_limit";
+  | "resource_limit"
+  | "corrupt_state";
 
 export class ProjectStoreError extends Error {
   override readonly name = "ProjectStoreError";
