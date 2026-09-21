@@ -2897,19 +2897,42 @@ test("research_required accepts canonical contract IDs and evidence at plan subm
   });
 });
 
-test("planner surfaces reject text-only plans and preserve the submit_plan boundary", () => {
-  const roleText = fs
-    .readFileSync(path.join(import.meta.dir, "..", "prompts", "planner.md"), "utf8")
-    .replace(/\s+/g, " ");
+test("planner prose and JSON text boundaries match both actual prompt surfaces", () => {
+  const roleText = fs.readFileSync(
+    path.join(import.meta.dir, "..", "prompts", "planner.md"),
+    "utf8",
+  );
   const stageInstruction = formatPlannerInstruction();
+  const planText = JSON.stringify(
+    governedPlan({ complexity: "medium", securitySurface: "low", summary: "text plan" }),
+  );
+  const ruleStart = roleText.indexOf("- `submit_plan` is the structured submission.");
+  const ruleEnd = roleText.indexOf("\n\nSo write the plan out.", ruleStart);
+  expect(ruleStart).toBeGreaterThanOrEqual(0);
+  expect(ruleEnd).toBeGreaterThan(ruleStart);
+  expect(roleText.slice(ruleStart, ruleEnd).split("\n")).toHaveLength(1);
 
   for (const text of [roleText, stageInstruction]) {
-    expect(text).toContain("Text without a");
-    expect(text).toContain("tool call is not a submission");
-    expect(text).toContain("the turn is rejected and the plan is lost");
-    expect(text).toContain("Only the");
-    expect(text).toContain("tool call records and submits the plan");
+    const normalized = text.replaceAll("`", "").replace(/\s+/g, " ");
+    expect(normalized).toContain(`${SUBMIT_PLAN_TOOL_NAME} is the structured submission`);
+    expect(normalized).toContain(`without a ${SUBMIT_PLAN_TOOL_NAME} tool call`);
+    expect(normalized).toContain("rejected as plan_not_json");
+    expect(normalized).toContain("the plan is lost");
+    expect(normalized).toContain("one complete JSON object");
+    expect(normalized).toContain("documented shape");
   }
+
+  let proseError: unknown;
+  try {
+    parsePlanText("I could not make a plan.", "run-id");
+  } catch (error) {
+    proseError = error;
+  }
+  expect(proseError).toMatchObject({ code: "plan_not_json" });
+  expect(parsePlanText(planText, "run-id")).toMatchObject({
+    complexity: "medium",
+    summary: "text plan",
+  });
 });
 
 test("planner instruction exposes canonical IDs accepted by validation", () => {

@@ -19,9 +19,7 @@ Your plan reaches the next stage through **two** channels, and both matter:
   acceptance criteria. The implementing stage receives that text. A turn that
   submits the structured call and says nothing in text hands the next stage an
   empty plan.
-- Text without a `submit_plan` tool call is not a submission: the turn is
-  rejected and the plan is lost. Only the `submit_plan` tool call records and
-  submits the plan.
+- `submit_plan` is the structured submission. Prose without a `submit_plan` tool call is rejected as `plan_not_json` and the plan is lost; one complete JSON object in the documented shape is accepted as text.
 
 So write the plan out. Then call `submit_plan`, and stop — no narration after a
 successful call.

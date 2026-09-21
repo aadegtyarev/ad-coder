@@ -4,17 +4,17 @@ All notable changes to ad-coder are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project aims at
 [Semantic Versioning](https://semver.org/).
 
-## [0.164.0] - 2026-09-21
-
-### Fixed
-- **Planner text-only turns are explicitly rejected (issue #554).** Only a `submit_plan` tool call records and submits a plan.
-
 Release and contract dates are the operator's LOCAL calendar day -- the day the
 release shipped, in the operator's own timezone. Never date an entry by
 `date -u`; on an evening after 20:00 local (UTC+04) that is one day behind and
 makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
+
+## [0.175.0] - 2026-09-21
+
+### Fixed
+- **Planner handoffs now name the consequence of missing `submit_plan` (issue #554).** Prose without the structured submission is rejected as `plan_not_json` and the plan is lost; one complete JSON object in the documented shape is accepted as text.
 
 ## [0.174.0] - 2026-09-21
 
@@ -43,8 +43,8 @@ enforces that dated release headings go in non-increasing date order
 
 ## [0.167.0] - 2026-09-21
 
-### Changed
-- **Skill loads now render as `Skill <skill-id>` in tool activity (issue #569).**
+### Fixed
+- **Planner handoffs now name the consequence of missing `submit_plan` (issue #554).** Prose without the structured submission is rejected as `plan_not_json` and the plan is lost; one complete JSON object in the documented shape is accepted as text.
 
 ## [0.164.0] - 2026-09-21
 
