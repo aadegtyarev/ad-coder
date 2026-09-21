@@ -1,5 +1,10 @@
 # UI responsiveness contract
 
+- 2026-09-21 (issue #547): background wake turns are serialized with foreground
+  console output. The owning formatted console shows their start and settled
+  result, then restores its prompt without allowing a busy line or notice to
+  corrupt the interactive output.
+
 Rules for every interactive ad-coder front. A violation is always blocking.
 
 - `ui-responsiveness:input-control` — Model calls, tools, subprocesses, workflow

@@ -1,3 +1,4 @@
+import type { ConversationTurnResult } from "../conversation/conversation";
 import { PROVIDER_ERROR_CODE_BOUND } from "../runner/errors";
 import type { PendingWake, WakeKind } from "./background-runs";
 import { RESUME_PIPELINE_DETAIL } from "./background-runs";
@@ -91,7 +92,10 @@ function drainErrorLine(error: unknown): string {
 export interface WakePumpDeps {
   listPending: () => PendingWake[];
   markHandled: (runId: string, kinds: readonly WakeKind[]) => void;
-  runTurn: (prompt: string, step: string) => Promise<void>;
+  runTurn: (prompt: string, step: string) => Promise<ConversationTurnResult | undefined>;
+  /** Optional front projection hooks; failures never affect wake durability. */
+  onTurnStarted?: (step: string) => void;
+  onTurnSettled?: (result: ConversationTurnResult) => void;
   maxWakesPerTurn?: number;
   /** True while a front / wake turn is running; the pump must defer, never race it. */
   turnActive?: () => boolean;
@@ -173,7 +177,21 @@ export class WakePump {
       const batch = pending.slice(0, this.maxWakesPerTurn);
       const step = `wake:${++this.turnCounter}`;
       try {
-        await this.deps.runTurn(buildWakeTurnPrompt(batch), step);
+        try {
+          this.deps.onTurnStarted?.(step);
+        } catch (error) {
+          console.error(
+            `ad-coder: wake start projection failed (${step}); code=${safeErrorCode(error)}`,
+          );
+        }
+        const result = await this.deps.runTurn(buildWakeTurnPrompt(batch), step);
+        try {
+          if (result !== undefined) this.deps.onTurnSettled?.(result);
+        } catch (error) {
+          console.error(
+            `ad-coder: wake result projection failed (${step}); code=${safeErrorCode(error)}`,
+          );
+        }
       } catch (error) {
         // A racing failure (e.g. `conversation step already active`) must not
         // escape through `void this.drain()` as an unhandled rejection, and must

@@ -776,6 +776,30 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
     );
     reason = "turn_failed";
   };
+  // Wake callbacks arrive outside the input lane. Serialize their projection
+  // with foreground output so a settled wake cannot split a busy line or notice.
+  let wakeRenderQueue = Promise.resolve();
+  const queueWakeRender = (
+    event:
+      | { phase: "started"; step: string }
+      | { phase: "settled"; result: ConversationTurnResult },
+  ): void => {
+    if (mode !== "formatted") return;
+    wakeRenderQueue = wakeRenderQueue
+      .then(() => {
+        if (event.phase === "started") {
+          params.error.write(`ad-coder: wake turn started (${event.step})\n`);
+        } else {
+          const result = sanitizeTurn(event.result);
+          completedTurns++;
+          params.output.write(renderFormatted(result));
+          params.output.write("ad-coder> ");
+        }
+      })
+      .catch(() => {
+        params.error.write("ad-coder: wake result projection failed\n");
+      });
+  };
   const handleLine = async (
     rawLine: string,
     lane: { prompt?: number; control?: number; source?: string } = {},
@@ -1371,7 +1395,9 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
   };
 
   let unsubscribeBackground: (() => void) | undefined;
+  let unsubscribeWakeTurns: (() => void) | undefined;
   try {
+    unsubscribeWakeTurns = params.session.subscribeWakeTurns?.(queueWakeRender);
     unsubscribeBackground = params.session.subscribeBackgroundRuns?.((notice) => {
       params.error.write(renderBackgroundNotice(notice, mode));
     });
@@ -1531,7 +1557,9 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
     reason = "input_failed";
   } finally {
     if (escapeTimer !== undefined) clearTimeout(escapeTimer);
+    unsubscribeWakeTurns?.();
     unsubscribeBackground?.();
+    await wakeRenderQueue;
     try {
       await params.session.close();
     } catch {

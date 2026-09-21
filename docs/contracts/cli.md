@@ -1,5 +1,11 @@
 # CLI contract
 
+- 2026-09-21 (issue #547): an interactive formatted console projects a wake turn
+  owned by its session as `wake turn started`, then renders its sanitized settled
+  result with the same foreground renderer and restores `ad-coder> `. JSON and
+  role/drive fronts do not receive these extra console lines; the wake pump
+  remains headless and retains an unhandled notice when the turn fails.
+
 Rules for ad-coder's command-line front. A violation is always blocking.
 
 - 2026-09-11: The CLI is a THIN front over the programmatic core (see

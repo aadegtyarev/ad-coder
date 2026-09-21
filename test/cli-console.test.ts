@@ -4,6 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { PassThrough, Readable, Writable } from "node:stream";
+import type { CredentialStore } from "@earendil-works/pi-ai";
 import { createModels, fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 import { DEFAULT_CONSOLE_MAX_RETRY_ATTEMPTS, runConsole } from "../src/cli/console";
 import {
@@ -41,6 +42,8 @@ import {
   BackgroundRunManager,
   type BackgroundRunNotice,
 } from "../src/orchestration/background-runs";
+import { startOrchestrator } from "../src/orchestration/orchestrator";
+import { PipelinePauseError } from "../src/orchestration/types";
 import { ProjectStoreError } from "../src/project-store/types";
 import { defineRole, type Role } from "../src/role";
 import {
@@ -50,6 +53,10 @@ import {
   ProviderRejectionError,
 } from "../src/runner/errors";
 import { SessionLimitError } from "../src/session-limits";
+import {
+  BUILT_IN_PIPELINE_WORKFLOW,
+  BUILT_IN_PIPELINE_WORKFLOW_NAME,
+} from "../src/workflows/builtin-pipeline";
 
 class Capture extends Writable {
   chunks: string[] = [];
@@ -177,6 +184,77 @@ test("keeps one session across ordered turns, ignores blanks, and closes once on
   expect(error.text()).toBe(
     "ad-coder: console turn started (0s)\nad-coder: console turn started (0s)\n",
   );
+});
+
+test("renders a durable wake through the real orchestrator and formatted console", async () => {
+  const targetDir = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-console-wake-")),
+  );
+  const input = new PassThrough();
+  const output = new Capture();
+  const error = new Capture();
+  const credentials: CredentialStore = {
+    read: async () => ({ type: "oauth", access: "test", refresh: "test", expires: 0 }),
+    list: async () => [],
+    modify: async (_providerId, fn) => fn(undefined),
+    delete: async () => {},
+  };
+  const session = await startOrchestrator({
+    targetDir,
+    env: () => undefined,
+    warn: () => {},
+    credentials,
+    workflowModules: [BUILT_IN_PIPELINE_WORKFLOW],
+    enabledWorkflows: [BUILT_IN_PIPELINE_WORKFLOW_NAME],
+    backgroundOwnerId: "console-wake-owner",
+    backgroundRunExecutor: async (_task, runId) => {
+      throw new PipelinePauseError(
+        runId,
+        {
+          phase: "plan",
+          code: "stage_limit",
+          action: "increase or disable the duration stage limit, then resume explicitly",
+          limitReason: "duration",
+          limit: 1,
+        },
+        { steps: 1, totalCost: 0.01 },
+      );
+    },
+    startConversation: async () => ({
+      runId: "console-wake-session",
+      ledgerPath: undefined,
+      step: async (_prompt, opts) => ({
+        runId: "console-wake-session",
+        step: opts?.step ?? "turn:1",
+        status: "ok",
+        assistantText: "settled\u001b[31m wake result",
+        toolCalls: [],
+        droppedRecords: 0,
+      }),
+      close: async () => {},
+      whenSettled: () => Promise.resolve(),
+    }),
+  });
+  const sessionWithRuns = session as typeof session & { backgroundRuns: BackgroundRunManager };
+  const running = runConsole({ session, input, output, error, mode: "formatted" });
+  const { runId } = sessionWithRuns.backgroundRuns.start("durable console wake");
+  await sessionWithRuns.backgroundRuns.wait(runId);
+  for (
+    let attempt = 0;
+    attempt < 200 && !output.text().includes("settled wake result");
+    attempt++
+  ) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 5));
+  }
+  input.end("/exit\n");
+  const result = await running;
+  expect(result.reason).toBe("exit");
+  expect(error.text()).toContain("ad-coder: wake turn started (wake:1)");
+  const rendered = output.text();
+  expect(rendered).toContain("settled wake result");
+  expect(rendered).toContain("ad-coder> ");
+  expect(rendered).not.toContain("\u001b");
+  expect(sessionWithRuns.backgroundRuns.pendingWakes()).toEqual([]);
 });
 
 test("a piped brief is read whole and dispatched as ONE turn, never as one turn per line", async () => {
