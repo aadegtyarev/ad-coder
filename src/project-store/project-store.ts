@@ -593,7 +593,16 @@ export class ProjectStore {
         if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
         const owner = this.readVersionedLock(path.join(coordinationPath, "owner"));
         if (owner !== undefined && !this.isVersionedLockHolderAlive(owner)) {
-          fs.rmSync(coordinationPath, { recursive: true, force: true });
+          const current = this.readVersionedLock(path.join(coordinationPath, "owner"));
+          if (current?.token !== owner.token) continue;
+          const quarantine = `${coordinationPath}.reclaim-${owner.token}`;
+          try {
+            fs.renameSync(coordinationPath, quarantine);
+          } catch (renameError) {
+            if ((renameError as NodeJS.ErrnoException).code === "ENOENT") continue;
+            throw renameError;
+          }
+          fs.rmSync(quarantine, { recursive: true, force: true });
           continue;
         }
         const delay = this.lockRetryDelaysMs[attempt];
@@ -854,6 +863,8 @@ export class ProjectStore {
         "lockRetry",
         "lockRetry must contain only the delaysMs setting",
       );
+    if (Object.hasOwn(config, "delaysMs"))
+      this.validateLockRetry((config as { delaysMs: readonly number[] }).delaysMs);
   }
 
   private validateLockRetry(delays: readonly number[]): void {
