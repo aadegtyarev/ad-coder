@@ -73,6 +73,16 @@ test("fixed bindings require a selected session and malformed ids fail closed", 
   );
 });
 
+test("parser rejects every unknown root key, including paths and credentials", () => {
+  const invalidRootKeys = ["targetDir", "botToken", "apiKey", "accessToken"];
+
+  for (const key of invalidRootKeys) {
+    expect(() =>
+      parseTelegramRoomBindings({ version: 1, bindings: {}, [key]: "secret-value" }),
+    ).toThrow(TelegramRoomBindingError);
+  }
+});
+
 test("parser and serializer reject non-plain JSON records", () => {
   const valid = { version: 1, bindings: {} };
   const decorated = (value: object): unknown => Object.assign(value, valid);

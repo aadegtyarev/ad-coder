@@ -129,6 +129,8 @@ function assertRecord(value: unknown): TelegramRoomBindingRecord {
 export function parseTelegramRoomBindings(value: unknown): TelegramRoomBindingsDocument {
   if (!isPlainRecord(value) || value.version !== TELEGRAM_ROOM_BINDINGS_VERSION)
     throw new TelegramRoomBindingError("invalid_binding");
+  if (Object.keys(value).some((key) => key !== "version" && key !== "bindings"))
+    throw new TelegramRoomBindingError("invalid_binding");
   if (!isPlainRecord(value.bindings)) throw new TelegramRoomBindingError("invalid_binding");
   const bindings: Record<string, TelegramRoomBindingRecord> = Object.create(null) as Record<
     string,
