@@ -41,6 +41,11 @@ enforces that dated release headings go in non-increasing date order
   pull requests, filing tickets, the ceiling-raise threshold, the readiness
   evidence set and the delivery surface itself are all settings.
 
+## [0.169.0] - 2026-09-21
+
+### Changed
+- Stub heading staked by the coordinator; the lane replaces this line with the real entry.
+
 ## [0.167.0] - 2026-09-21
 
 ### Changed
