@@ -1,10 +1,5 @@
 # Changelog
 
-## [0.173.0] - 2026-09-21
-
-- Add the console-only `report_status` orchestrator tool for immediate bounded
-  progress activity without ending the continuing turn.
-
 All notable changes to ad-coder are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project aims at
 [Semantic Versioning](https://semver.org/).
@@ -15,6 +10,13 @@ release shipped, in the operator's own timezone. Never date an entry by
 makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
+
+## [0.173.0] - 2026-09-21
+
+### Added
+- **The console-only `report_status` orchestrator tool (issue #573).** It
+  provides immediate bounded progress activity without ending the continuing
+  turn.
 
 ## [0.172.0] - 2026-09-21
 
