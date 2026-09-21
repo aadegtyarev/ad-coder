@@ -171,18 +171,21 @@ function stampFixture() {
 test("version fixup compares only branch paths and the narrow version definition", () => {
   const base = {
     "package.json": '{\n  "name": "ad-coder",\n  "version": "0.160.0"\n}\n',
-    "CHANGELOG.md": "## [0.160.0] - 2026-09-20\n\n- reviewed\n",
+    "CHANGELOG.md":
+      "## [0.160.0] - 2026-09-20\n\n- reviewed\n\n## [0.159.0] - 2026-09-19\n\n- historical\n",
   };
   const current = {
     ...base,
     "package.json": '{\n  "name": "ad-coder",\n  "version": "0.161.0"\n}\n',
-    "CHANGELOG.md": "## [0.161.0] - 2026-09-20\n\n- reviewed\n",
+    "CHANGELOG.md":
+      "## [0.161.0] - 2026-09-20\n\n- reviewed\n\n## [0.159.0] - 2026-09-19\n\n- historical\n",
   };
+  const mainChangelog = "## [0.159.0] - 2026-09-19\n\n- historical\n";
   expect(
     compareVersionFixup({
       reviewed: base,
       current,
-      mainChangelog: base["CHANGELOG.md"],
+      mainChangelog,
       branchPaths: ["package.json", "CHANGELOG.md"],
       stampApproved: true,
       stampMatchesReviewed: true,
@@ -192,7 +195,7 @@ test("version fixup compares only branch paths and the narrow version definition
     compareVersionFixup({
       reviewed: base,
       current: { ...current, "src/code.ts": "changed\n" },
-      mainChangelog: base["CHANGELOG.md"],
+      mainChangelog,
       branchPaths: ["package.json", "CHANGELOG.md", "src/code.ts"],
       stampApproved: true,
       stampMatchesReviewed: true,
@@ -205,7 +208,7 @@ test("version fixup compares only branch paths and the narrow version definition
         ...current,
         "package.json": '{\n  "name": "changed",\n  "version": "0.161.0"\n}\n',
       },
-      mainChangelog: base["CHANGELOG.md"],
+      mainChangelog,
       branchPaths: ["package.json", "CHANGELOG.md"],
       stampApproved: true,
       stampMatchesReviewed: true,
@@ -213,13 +216,30 @@ test("version fixup compares only branch paths and the narrow version definition
   ).toBe(false);
 });
 
-test("version fixup permits the exact mechanical union of main changelog blocks", () => {
+test("version fixup rejects a historical heading when reviewed changelog has no branch block", () => {
+  const main =
+    "## [0.161.0] - 2026-09-20\n\n- current\n\n## [0.160.0] - 2026-09-19\n\n- historical\n";
+  const current = main.replace("[0.161.0]", "[9.9.9]");
+  expect(
+    compareVersionFixup({
+      reviewed: { "CHANGELOG.md": main },
+      current: { "CHANGELOG.md": current },
+      mainChangelog: main,
+      branchPaths: ["CHANGELOG.md"],
+      stampApproved: true,
+      stampMatchesReviewed: true,
+    }).ok,
+  ).toBe(false);
+});
+
+test("version fixup permits a branch heading change and exact main changelog union", () => {
   const branch = "## [0.161.0] - 2026-09-20\n\n- branch\n";
+  const updatedBranch = "## [0.162.0] - 2026-09-20\n\n- branch\n";
   const main = "## [0.160.0] - 2026-09-19\n\n- main\n";
   expect(
     compareVersionFixup({
       reviewed: { "CHANGELOG.md": branch },
-      current: { "CHANGELOG.md": `${branch}\n${main}` },
+      current: { "CHANGELOG.md": `${updatedBranch}\n${main}` },
       mainChangelog: main,
       branchPaths: ["CHANGELOG.md"],
       stampApproved: true,

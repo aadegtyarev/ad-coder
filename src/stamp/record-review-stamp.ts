@@ -312,12 +312,10 @@ function onlyChangelogFixup(before: string, after: string, main: string): boolea
   const afterParsed = parse(after);
   const mainParsed = parse(main);
   if (beforeParsed.prefix.join("\n") !== afterParsed.prefix.join("\n")) return false;
-  const branchIndex = Math.max(
-    0,
-    beforeParsed.blocks.findIndex(
-      (block) => !mainParsed.blocks.some((candidate) => candidate.join("\n") === block.join("\n")),
-    ),
+  const branchIndex = beforeParsed.blocks.findIndex(
+    (block) => !mainParsed.blocks.some((candidate) => candidate.join("\n") === block.join("\n")),
   );
+  if (branchIndex < 0) return false;
   const branchBlock = beforeParsed.blocks[branchIndex];
   if (branchBlock === undefined) return false;
   const beforeBlocks = removeMainBlocks(
