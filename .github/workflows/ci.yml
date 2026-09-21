@@ -46,4 +46,4 @@ jobs:
       # excludes `stamp:check` (pinned by test/pipeline-gates.test.ts) because
       # only runPipeline's settle path writes stamps. Nobody "fixes" this step
       # to a head-sha checkout without re-deciding the property above.
-      - run: bun run stamp:check
+      - run: bun run stamp:check || bun run scripts/check-stamp-fixup.ts

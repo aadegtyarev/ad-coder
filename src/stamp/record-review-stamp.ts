@@ -234,6 +234,118 @@ function safeBase(repoRoot: string): string {
   return name === "" || /\r|\n| /.test(name) ? "-" : name;
 }
 
+export interface VersionFixupComparison {
+  reviewed: Record<string, string>;
+  current: Record<string, string>;
+  mainChangelog: string;
+  branchPaths: readonly string[];
+  stampApproved: boolean;
+  stampMatchesReviewed: boolean;
+}
+
+/**
+ * CI-only escape hatch for a stale approved stamp after a mechanical version
+ * fixup. The normal stamp gate remains strict; this comparison is deliberately
+ * byte-oriented and scoped to the branch paths supplied by CI.
+ */
+export function compareVersionFixup(input: VersionFixupComparison): {
+  ok: boolean;
+  reason?: string;
+} {
+  if (!input.stampApproved || !input.stampMatchesReviewed)
+    return { ok: false, reason: "the latest stamp is not an approved stamp for the reviewed tree" };
+  const paths = new Set(input.branchPaths);
+  if (paths.size === 0) return { ok: false, reason: "CI branch scope is empty" };
+  for (const file of new Set([...Object.keys(input.reviewed), ...Object.keys(input.current)])) {
+    if (!paths.has(file)) continue;
+    if (file === "docs/reviews/stamps.log") continue;
+    const before = input.reviewed[file] ?? "";
+    const after = input.current[file] ?? "";
+    if (before === after) continue;
+    if (file === "package.json") {
+      if (!onlyPackageVersionChanged(before, after))
+        return { ok: false, reason: "package.json changed outside its JSON version value" };
+      continue;
+    }
+    if (file === "CHANGELOG.md") {
+      if (!onlyChangelogFixup(before, after, input.mainChangelog))
+        return {
+          ok: false,
+          reason: "CHANGELOG.md changed outside its release heading and main-block union",
+        };
+      continue;
+    }
+    return { ok: false, reason: `${file} changed after the approved review` };
+  }
+  return { ok: true };
+}
+
+function onlyPackageVersionChanged(before: string, after: string): boolean {
+  const pattern = /("version"\s*:\s*)"[^"\r\n]+"/g;
+  const beforeMatches = [...before.matchAll(pattern)];
+  const afterMatches = [...after.matchAll(pattern)];
+  if (beforeMatches.length !== 1 || afterMatches.length !== 1) return false;
+  const normalize = (text: string) => text.replace(pattern, '$1"<version>"');
+  return normalize(before) === normalize(after);
+}
+
+function onlyChangelogFixup(before: string, after: string, main: string): boolean {
+  const heading = /^## \[(\d+\.\d+\.\d+)\] - (\d{4}-\d{2}-\d{2})$/;
+  const parse = (text: string): { prefix: string[]; blocks: string[][] } => {
+    const lines = text.split("\n");
+    const starts = lines.flatMap((line, index) => (heading.test(line) ? [index] : []));
+    return {
+      prefix: lines.slice(0, starts[0] ?? lines.length),
+      blocks: starts.map((start, index) => lines.slice(start, starts[index + 1] ?? lines.length)),
+    };
+  };
+  const removeMainBlocks = (blocks: string[][], mainBlocks: string[][]): string[][] => {
+    const remaining = [...mainBlocks];
+    return blocks.filter((block) => {
+      const index = remaining.findIndex((candidate) => candidate.join("\n") === block.join("\n"));
+      if (index < 0) return true;
+      remaining.splice(index, 1);
+      return false;
+    });
+  };
+  const beforeParsed = parse(before);
+  const afterParsed = parse(after);
+  const mainParsed = parse(main);
+  if (beforeParsed.prefix.join("\n") !== afterParsed.prefix.join("\n")) return false;
+  const branchIndex = beforeParsed.blocks.findIndex(
+    (block) => !mainParsed.blocks.some((candidate) => candidate.join("\n") === block.join("\n")),
+  );
+  if (branchIndex < 0) return false;
+  const branchBlock = beforeParsed.blocks[branchIndex];
+  if (branchBlock === undefined) return false;
+  const beforeBlocks = removeMainBlocks(
+    beforeParsed.blocks.filter((_, index) => index !== branchIndex),
+    mainParsed.blocks,
+  );
+  const afterBlocks = removeMainBlocks(afterParsed.blocks, mainParsed.blocks);
+  beforeBlocks.unshift(branchBlock);
+  if (beforeBlocks.length !== afterBlocks.length) return false;
+  let headingChanged = false;
+  for (let blockIndex = 0; blockIndex < beforeBlocks.length; blockIndex++) {
+    const oldBlock = beforeBlocks[blockIndex];
+    const newBlock = afterBlocks[blockIndex];
+    if (oldBlock === undefined || newBlock === undefined) return false;
+    if (oldBlock.length !== newBlock.length) return false;
+    for (let lineIndex = 0; lineIndex < oldBlock.length; lineIndex++) {
+      const oldLine = oldBlock[lineIndex];
+      const newLine = newBlock[lineIndex];
+      if (oldLine === undefined || newLine === undefined) return false;
+      if (oldLine === newLine) continue;
+      if (blockIndex !== 0 || lineIndex !== 0 || headingChanged) return false;
+      const oldMatch = oldLine.match(heading);
+      const newMatch = newLine.match(heading);
+      if (oldMatch === null || newMatch === null || oldMatch[2] !== newMatch[2]) return false;
+      headingChanged = true;
+    }
+  }
+  return true;
+}
+
 /** The gate's check: the newest stamp must be well-formed and fresh. */
 export function checkReviewStamps(
   repoRoot: string,

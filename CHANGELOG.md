@@ -18,6 +18,11 @@ enforces that dated release headings go in non-increasing date order
   without a next tool call ends the turn; continued work must call the next tool
   inline or use `start_pipeline` so its notices wake a later turn.
 
+## [0.161.0] - 2026-09-21
+
+### Fixed
+- **Version-only fixups no longer require a second review round (issue #552).** CI compares the reviewed tree with the pushed tree only across this branch's paths and permits only the package version, release heading, and mechanical CHANGELOG union to change.
+
 ## [0.160.0] - 2026-09-21
 
 ### Fixed
