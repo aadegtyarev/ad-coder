@@ -11,6 +11,19 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.172.0] - 2026-09-21
+
+### Added
+- **The orchestrator contract lands as a normative document
+  (`docs/contracts/orchestrator.md`).** It states what an orchestrator owes a task
+  -- states, intake, turn and continuation, mode, the priced paths of delegation,
+  ceilings and raises, waiting and waking, truthfulness and evidence, authority,
+  settings, contract discipline -- and numbers every clause (`K0`-`K12`) so an
+  audit and a ticket can cite the rule they touch. Policy a project may want to
+  change is written as a required default rather than as a constant: merging green
+  pull requests, filing tickets, the ceiling-raise threshold, the readiness
+  evidence set and the delivery surface itself are all settings.
+
 ## [0.167.0] - 2026-09-21
 
 ### Changed
