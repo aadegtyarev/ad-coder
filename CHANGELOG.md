@@ -11,6 +11,11 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.176.0] - 2026-09-21
+
+### Fixed
+- **The pre-merge stamp fixup now works from GitHub's shallow PR merge checkout (issue #567).** CI fetches the full Git history for the existing merge-ref checkout before the final stamp step, while missing ancestry is reported with the required revision instead of a raw Git error.
+
 ## [0.175.0] - 2026-09-21
 
 ### Fixed
@@ -40,11 +45,6 @@ enforces that dated release headings go in non-increasing date order
   change is written as a required default rather than as a constant: merging green
   pull requests, filing tickets, the ceiling-raise threshold, the readiness
   evidence set and the delivery surface itself are all settings.
-
-## [0.169.0] - 2026-09-21
-
-### Fixed
-- **The pre-merge stamp fixup now works from GitHub's shallow PR merge checkout (issue #567).** CI fetches the full Git history for the existing merge-ref checkout before the final stamp step, while missing ancestry is reported with the required revision instead of a raw Git error.
 
 ## [0.167.0] - 2026-09-21
 
