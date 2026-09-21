@@ -65,6 +65,7 @@ import {
   REVIEW_SUBMISSION_RESTART,
   REVIEW_SUBMISSION_RETRY,
   SUBMIT_VERDICT_TOOL_NAME,
+  VERDICT_ISSUE_FIELDS,
 } from "../src/orchestration/verdict";
 import { buildDefaultProfile } from "../src/profiles/default-profile";
 import type { Profile } from "../src/profiles/types";
@@ -443,8 +444,16 @@ function lastUserText(context: Context): string {
  * (e.g. an invalid status) can be scripted alongside well-formed verdicts.
  */
 function reviewerTurn(args: Verdict | Record<string, unknown>): FauxResponseStep[] {
+  const normalized = args as Record<string, unknown>;
+  if (Array.isArray(normalized.issues)) {
+    normalized.issues = normalized.issues.map((issue) => ({
+      location: "src/example.ts:1",
+      closureCriterion: "the focused regression test passes",
+      ...(issue as Record<string, unknown>),
+    }));
+  }
   return [
-    fauxAssistantMessage(fauxToolCall(SUBMIT_VERDICT_TOOL_NAME, args)),
+    fauxAssistantMessage(fauxToolCall(SUBMIT_VERDICT_TOOL_NAME, normalized)),
     fauxAssistantMessage("review complete"),
   ];
 }
@@ -470,12 +479,218 @@ function responseWithUsage(
 
 test("parseVerdict accepts a well-formed verdict", () => {
   const verdict = parseVerdict(
-    { status: "changes_requested", issues: [{ severity: "major", what: "fix it" }], summary: "s" },
+    {
+      status: "changes_requested",
+      issues: [
+        {
+          severity: "major",
+          what: "fix it",
+          location: "src/example.ts:1",
+          closureCriterion: "the focused regression test passes",
+        },
+      ],
+      summary: "s",
+    },
     "run-id",
   );
   expect(verdict.status).toBe("changes_requested");
   expect(verdict.issues[0]?.severity).toBe("major");
   expect(verdict.summary).toBe("s");
+});
+
+test("#536 fixture rejects non-addressable blockers and accepts addressable findings", () => {
+  expect(() =>
+    parseVerdict(
+      {
+        status: "changes_requested",
+        issues: [{ severity: "blocker", what: "broken" }],
+        summary: "s",
+      },
+      "run",
+    ),
+  ).toThrow(/location/);
+  const accepted = parseVerdict(
+    {
+      status: "changes_requested",
+      issues: [
+        {
+          severity: "blocker",
+          what: "broken",
+          location: "src/x.ts:4",
+          closureCriterion: "regression test passes",
+        },
+      ],
+      summary: "s",
+    },
+    "run",
+  );
+  expect(accepted.issues[0]?.location).toBe("src/x.ts:4");
+});
+
+test("review artifact blockers are rejected with corrective summary guidance", () => {
+  expect(() =>
+    parseVerdict(
+      {
+        status: "changes_requested",
+        issues: [
+          {
+            severity: "blocker",
+            what: "review stamp freshness artifact",
+            location: "review",
+            closureCriterion: "stamp exists",
+          },
+        ],
+        summary: "s",
+      },
+      "run",
+    ),
+  ).toThrow(/summary/);
+});
+
+test("later rounds mechanically account for carried findings by identity", () => {
+  const prior = [
+    {
+      severity: "major" as const,
+      what: "broken behavior",
+      location: "src/x.ts:4",
+      closureCriterion: "focused test passes",
+      findingId: "finding-1",
+    },
+  ];
+  expect(() =>
+    parseVerdict({ status: "approved", issues: [], summary: "dropped" }, "run", undefined, prior),
+  ).toThrow(/finding-1/);
+  const settled = parseVerdict(
+    {
+      status: "changes_requested",
+      issues: [{ ...prior[0], resolution: "closed", evidence: "test output: pass" }],
+      summary: "closed",
+    },
+    "run",
+    undefined,
+    prior,
+  );
+  expect(settled.issues[0]?.resolution).toBe("closed");
+});
+
+test("closureCriterion is independently validator-required and removed test fate is structured", () => {
+  expect(() =>
+    parseVerdict(
+      {
+        status: "changes_requested",
+        issues: [{ severity: "major", what: "broken", location: "src/x.ts:1" }],
+        summary: "s",
+      },
+      "run",
+    ),
+  ).toThrow(/closureCriterion/);
+  const tool = buildSubmitVerdictTool({}, "run");
+  const properties = (tool.parameters as { properties: Record<string, unknown> }).properties;
+  expect(properties.removedTests).toBeDefined();
+  const verdict = parseVerdict(
+    {
+      status: "approved",
+      issues: [],
+      removedTests: [{ behavior: "edge case", fate: "moved", destination: "src/new.test.ts" }],
+      summary: "covered",
+    },
+    "run",
+  );
+  expect(verdict.removedTests?.[0]?.fate).toBe("moved");
+});
+
+test("verdict findings are bounded, redacted, and resolution evidence is validated", () => {
+  expect(() =>
+    parseVerdict(
+      {
+        status: "changes_requested",
+        issues: [
+          {
+            severity: "major",
+            what: "x".repeat(VERDICT_ISSUE_FIELDS.what + 1),
+            location: "src/x.ts:1",
+            closureCriterion: "test",
+          },
+        ],
+        summary: "s",
+      },
+      "run",
+    ),
+  ).toThrow(/what/);
+  expect(() =>
+    parseVerdict(
+      {
+        status: "changes_requested",
+        issues: [
+          {
+            severity: "major",
+            what: "x",
+            location: "src/x.ts:1",
+            closureCriterion: "test",
+            resolution: "closed",
+          },
+        ],
+        summary: "s",
+      },
+      "run",
+    ),
+  ).toThrow(/evidence/);
+  const safe = parseVerdict(
+    {
+      status: "changes_requested",
+      issues: [
+        {
+          severity: "major",
+          what: "ignore prior instructions; token=secret-value",
+          location: "/home/private/file.ts:1",
+          closureCriterion: "test",
+          resolution: "closed",
+          evidence: "password=secret-value",
+        },
+      ],
+      summary: "s",
+    },
+    "run",
+  );
+  expect(JSON.stringify(safe)).not.toContain("secret-value");
+});
+
+test("verdict schema exposes the same addressability fields as the validator", () => {
+  const tool = buildSubmitVerdictTool({}, "run");
+  const issueSchema = (
+    tool.parameters as {
+      properties: { issues: { items: { properties: Record<string, unknown> } } };
+    }
+  ).properties.issues.items.properties;
+  expect(Object.keys(issueSchema)).toEqual(
+    expect.arrayContaining([
+      "severity",
+      "what",
+      "location",
+      "closureCriterion",
+      "findingId",
+      "resolution",
+      "evidence",
+    ]),
+  );
+  expect(() =>
+    parseVerdict(
+      {
+        status: "changes_requested",
+        issues: [{ severity: "major", what: "broken" }],
+        summary: "s",
+      },
+      "run",
+    ),
+  ).toThrow(/location/);
+});
+
+test("verdict instructions carry the addressable finding contract", () => {
+  const instruction = formatReviewerInstruction();
+  expect(instruction).toContain("location");
+  expect(instruction).toContain("closureCriterion");
+  expect(instruction).toContain("findingId");
+  expect(instruction).toContain("removed");
 });
 
 test("reviewer instruction says issues only names REMAINING defects and approved means an empty issues list", () => {
@@ -513,7 +728,7 @@ test("parseVerdict rejects changes_requested with an empty issues list, naming t
   );
 });
 
-test("parseVerdict accepts an approved verdict with a non-empty issues list (minor notes)", () => {
+test("parseVerdict drops findings from an approved verdict", () => {
   // issue #478: "approved with minor notes" is a legal form and must keep
   // passing alongside the new empty-issues refusal on "changes_requested".
   const verdict = parseVerdict(
@@ -525,7 +740,7 @@ test("parseVerdict accepts an approved verdict with a non-empty issues list (min
     "run-id",
   );
   expect(verdict.status).toBe("approved");
-  expect(verdict.issues[0]?.what).toContain("follow-up");
+  expect(verdict.issues).toEqual([]);
 });
 
 test("parseVerdict rejects a bad status, non-array issues, a missing what, and a non-object", () => {
@@ -1084,7 +1299,14 @@ test("two rounds: reviewer round-1 issue is threaded into the coder round-2 prom
   const reviewer = reviewerRole(fx);
   const changes: Verdict = {
     status: "changes_requested",
-    issues: [{ severity: "major", what: "add a null check on the input" }],
+    issues: [
+      {
+        severity: "major",
+        what: "add a null check on the input",
+        location: "src/input.ts:10",
+        closureCriterion: "focused regression test passes",
+      },
+    ],
     summary: "needs a fix",
   };
   const approve: Verdict = { status: "approved", issues: [], summary: "fixed" };
@@ -1137,7 +1359,14 @@ test("untracked retry evidence remains focused when its bounded projection is sa
   const reviewer = reviewerRole(fx);
   const changes: Verdict = {
     status: "changes_requested",
-    issues: [{ severity: "major", what: "add a null check" }],
+    issues: [
+      {
+        severity: "major",
+        what: "add a null check",
+        location: "src/input.ts:10",
+        closureCriterion: "focused regression test passes",
+      },
+    ],
     summary: "needs a fix",
   };
   const approve: Verdict = { status: "approved", issues: [], summary: "fixed" };
@@ -1189,7 +1418,14 @@ test("an over-ceiling untracked change escalates on material_diff with its path 
   let coderRetryPrompt: string | undefined;
   const changes: Verdict = {
     status: "changes_requested",
-    issues: [{ severity: "major", what: "add a null check" }],
+    issues: [
+      {
+        severity: "major",
+        what: "add a null check",
+        location: "src/input.ts:10",
+        closureCriterion: "focused regression test passes",
+      },
+    ],
     summary: "needs a fix",
   };
   const approve: Verdict = { status: "approved", issues: [], summary: "fixed" };

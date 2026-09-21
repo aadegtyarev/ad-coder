@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.152.0] - 2026-09-21
+
+- Make review findings addressable and reproducible, carry bounded prior-round findings safely, and require explicit coverage fate for removed tests.
+
 All notable changes to ad-coder are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project aims at
 [Semantic Versioning](https://semver.org/).

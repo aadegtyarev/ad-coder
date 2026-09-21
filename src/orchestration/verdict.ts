@@ -1,7 +1,14 @@
 import { Type } from "@earendil-works/pi-ai";
 import type { Tool } from "../runner/tool";
 import { defineTool } from "../runner/tool";
-import type { IssueSeverity, SurfaceAnalysis, Verdict, VerdictIssue, VerdictStatus } from "./types";
+import type {
+  IssueSeverity,
+  RemovedTestBehavior,
+  SurfaceAnalysis,
+  Verdict,
+  VerdictIssue,
+  VerdictStatus,
+} from "./types";
 import { OrchestrationError } from "./types";
 
 /** The tool name the reviewer calls to submit its verdict. */
@@ -87,6 +94,37 @@ const VERDICT_STATUSES: readonly VerdictStatus[] = [
 ];
 const ISSUE_SEVERITIES: readonly IssueSeverity[] = ["blocker", "major", "minor"];
 
+/** One bounded mapping shared by the TypeScript shape, schema descriptions and validator. */
+export const VERDICT_ISSUE_FIELDS = {
+  what: 2000,
+  location: 400,
+  closureCriterion: 1200,
+  findingId: 120,
+  evidence: 1600,
+  maxIssues: 40,
+  maxAggregateBytes: 100_000,
+  summary: 4000,
+} as const;
+const ARTIFACT_ONLY =
+  /(?:review\s*(?:-\s*)?(?:artifact|stamp)|review|round|stamp|freshness|accounting|process)\s+(?:artifact|metadata|bookkeeping|stamp|freshness)|(?:stale|outdated)\s+(?:review\s*)?stamp/i;
+const hasText = (value: unknown): value is string =>
+  typeof value === "string" && value.trim() !== "";
+const redactFinding = (value: string): string =>
+  value
+    .replace(/(?:bearer|token|password|secret|api[_ -]?key)\s*[:=]\s*\S+/gi, "[REDACTED]")
+    .replace(/(?:^|\s)(?:\/home\/|\/Users\/|[A-Za-z]:\\)[^\s]*/g, " [REDACTED_PATH]");
+function bounded(
+  field: string,
+  value: unknown,
+  max: number,
+  bad: (message: string) => never,
+): string {
+  if (!hasText(value)) return bad(`verdict.issues[].${field} must be a non-empty string`);
+  if (Buffer.byteLength(value, "utf8") > max)
+    return bad(`verdict.issues[].${field} exceeds ${max} bytes`);
+  return value;
+}
+
 /**
  * A per-reviewer-round holder the `submit_verdict` tool writes into and the
  * pipeline reads after the turn. Exactly one of `verdict`/`error` is set once
@@ -114,7 +152,12 @@ export interface VerdictCapture {
  * `detail` is a path-safe token (the reviewer runId) carried onto the error's
  * `detail` field; it is NEVER content and never the verdict body.
  */
-export function parseVerdict(value: unknown, detail: string, expected?: SurfaceAnalysis): Verdict {
+export function parseVerdict(
+  value: unknown,
+  detail: string,
+  expected?: SurfaceAnalysis,
+  priorFindings: readonly VerdictIssue[] = [],
+): Verdict {
   const bad = (message: string): never => {
     throw new OrchestrationError("malformed_verdict", detail, message);
   };
@@ -133,6 +176,9 @@ export function parseVerdict(value: unknown, detail: string, expected?: SurfaceA
   if (!Array.isArray(rawIssues)) {
     return bad("verdict.issues must be an array");
   }
+  if (rawIssues.length > VERDICT_ISSUE_FIELDS.maxIssues)
+    return bad(`verdict.issues exceeds the maximum of ${VERDICT_ISSUE_FIELDS.maxIssues} findings`);
+  let issueBytes = 0;
   const issues: VerdictIssue[] = rawIssues.map((entry, index) => {
     if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
       return bad(`verdict.issues[${index}] must be an object`);
@@ -142,10 +188,77 @@ export function parseVerdict(value: unknown, detail: string, expected?: SurfaceA
     if (typeof severity !== "string" || !ISSUE_SEVERITIES.includes(severity as IssueSeverity)) {
       return bad(`verdict.issues[${index}].severity must be one of ${ISSUE_SEVERITIES.join(", ")}`);
     }
-    if (typeof issue.what !== "string") {
-      return bad(`verdict.issues[${index}].what must be a string`);
-    }
-    return { severity: severity as IssueSeverity, what: issue.what };
+    const what = redactFinding(
+      bounded(`what`, issue.what, VERDICT_ISSUE_FIELDS.what, (message) =>
+        bad(message.replace("issues[]", `issues[${index}]`)),
+      ),
+    );
+    const needsAddress = severity === "blocker" || severity === "major";
+    const location = needsAddress
+      ? redactFinding(
+          bounded("location", issue.location, VERDICT_ISSUE_FIELDS.location, (message) =>
+            bad(message.replace("issues[]", `issues[${index}]`)),
+          ),
+        )
+      : typeof issue.location === "string"
+        ? redactFinding(issue.location)
+        : "summary";
+    const closureCriterion = needsAddress
+      ? redactFinding(
+          bounded(
+            "closureCriterion",
+            issue.closureCriterion,
+            VERDICT_ISSUE_FIELDS.closureCriterion,
+            (message) => bad(message.replace("issues[]", `issues[${index}]`)),
+          ),
+        )
+      : typeof issue.closureCriterion === "string"
+        ? redactFinding(issue.closureCriterion)
+        : "reviewer-specified";
+    if (needsAddress && ARTIFACT_ONLY.test(what))
+      return bad(
+        `verdict.issues[${index}] review-artifact-only complaints belong in verdict.summary, not ${severity}; resubmit it in summary`,
+      );
+    const findingId =
+      issue.findingId === undefined
+        ? undefined
+        : redactFinding(
+            bounded("findingId", issue.findingId, VERDICT_ISSUE_FIELDS.findingId, (message) =>
+              bad(message.replace("issues[]", `issues[${index}]`)),
+            ),
+          );
+    const evidence =
+      issue.evidence === undefined
+        ? undefined
+        : redactFinding(
+            bounded("evidence", issue.evidence, VERDICT_ISSUE_FIELDS.evidence, (message) =>
+              bad(message.replace("issues[]", `issues[${index}]`)),
+            ),
+          );
+    const resolution =
+      issue.resolution === undefined
+        ? undefined
+        : typeof issue.resolution === "string" &&
+            ["closed", "remains", "new"].includes(issue.resolution)
+          ? (issue.resolution as "closed" | "remains" | "new")
+          : bad(`verdict.issues[${index}].resolution must be closed, remains, or new`);
+    if (resolution === "closed" && evidence === undefined)
+      return bad(`verdict.issues[${index}].evidence is required when resolution is closed`);
+    issueBytes += Buffer.byteLength(
+      JSON.stringify({ what, location, closureCriterion, findingId, resolution, evidence }),
+      "utf8",
+    );
+    if (issueBytes > VERDICT_ISSUE_FIELDS.maxAggregateBytes)
+      return bad(`verdict.issues exceeds ${VERDICT_ISSUE_FIELDS.maxAggregateBytes} bytes`);
+    return {
+      severity: severity as IssueSeverity,
+      what,
+      location,
+      closureCriterion,
+      ...(findingId !== undefined && { findingId }),
+      ...(resolution !== undefined && { resolution }),
+      ...(evidence !== undefined && { evidence }),
+    };
   });
 
   // issue #478: "changes_requested" with an empty issues list is not a
@@ -157,9 +270,40 @@ export function parseVerdict(value: unknown, detail: string, expected?: SurfaceA
       'verdict.issues must name at least one REMAINING defect when verdict.status is "changes_requested" (an empty list means nothing must change: resolved findings belong in verdict.summary, and "approved" is the verdict with an empty verdict.issues); resubmit the corrected verdict',
     );
 
+  if (priorFindings.some((finding) => finding.findingId !== undefined)) {
+    const priorIds = new Set(
+      priorFindings
+        .filter((finding) => finding.findingId !== undefined)
+        .map((finding) => finding.findingId),
+    );
+    const resolvedIds = new Set(
+      issues.filter((issue) => issue.resolution !== "new").map((issue) => issue.findingId),
+    );
+    for (const id of priorIds) {
+      if (!resolvedIds.has(id))
+        return bad(
+          `verdict.issues must account for carried findingId ${id} as closed with evidence or remains; resubmit it instead of silently dropping it`,
+        );
+    }
+    for (const issue of issues) {
+      if (issue.resolution === undefined)
+        return bad(
+          `verdict.issues findingId ${issue.findingId ?? "<missing>"} must declare resolution`,
+        );
+      if (
+        issue.resolution === "new" &&
+        issue.findingId !== undefined &&
+        priorIds.has(issue.findingId)
+      )
+        return bad(`verdict.issues findingId ${issue.findingId} cannot be new when it is carried`);
+    }
+  }
+
   if (typeof record.summary !== "string") {
     return bad("verdict.summary must be a string");
   }
+  if (Buffer.byteLength(record.summary, "utf8") > VERDICT_ISSUE_FIELDS.summary)
+    return bad(`verdict.summary exceeds ${VERDICT_ISSUE_FIELDS.summary} bytes`);
   let coverage: Verdict["coverage"];
   const applicable = expected?.coverage.filter(({ status }) => status === "covered") ?? [];
   if (applicable.length > 0) {
@@ -218,11 +362,36 @@ export function parseVerdict(value: unknown, detail: string, expected?: SurfaceA
     }
   }
 
+  let removedTests: RemovedTestBehavior[] | undefined;
+  if (record.removedTests !== undefined) {
+    if (!Array.isArray(record.removedTests)) return bad("verdict.removedTests must be an array");
+    removedTests = record.removedTests.map((entry, index) => {
+      if (typeof entry !== "object" || entry === null || Array.isArray(entry))
+        return bad(`verdict.removedTests[${index}] must be an object`);
+      const item = entry as Record<string, unknown>;
+      const behavior = bounded("behavior", item.behavior, 1200, (message) =>
+        bad(message.replace("issues[]", `removedTests[${index}]`)),
+      );
+      const destination = bounded("destination", item.destination, 400, (message) =>
+        bad(message.replace("issues[]", `removedTests[${index}]`)),
+      );
+      if (item.fate !== "restored" && item.fate !== "moved")
+        return bad(`verdict.removedTests[${index}].fate must be restored or moved`);
+      return {
+        behavior: redactFinding(behavior),
+        destination: redactFinding(destination),
+        fate: item.fate,
+      };
+    });
+  }
   return {
     status: status as VerdictStatus,
-    issues,
-    summary: record.summary,
+    // Approved rounds are terminal and must not carry review findings into state,
+    // durable records, or the next coder handoff.
+    issues: status === "approved" ? [] : issues,
+    summary: redactFinding(record.summary),
     ...(coverage && { coverage }),
+    ...(removedTests && { removedTests }),
   };
 }
 
@@ -246,6 +415,7 @@ export function buildSubmitVerdictTool(
   capture: VerdictCapture,
   detail: string,
   expected?: SurfaceAnalysis,
+  priorFindings: readonly VerdictIssue[] = [],
 ): Tool {
   return defineTool({
     name: SUBMIT_VERDICT_TOOL_NAME,
@@ -288,7 +458,25 @@ export function buildSubmitVerdictTool(
             }),
           ),
           what: Type.Optional(
-            Type.String({ description: "the issue itself; required for every issue" }),
+            Type.String({ description: "the bounded issue itself; required for every issue" }),
+          ),
+          location: Type.Optional(
+            Type.String({
+              description:
+                "required for blocker/major: relative file:line or scenario/fixture address",
+            }),
+          ),
+          closureCriterion: Type.Optional(
+            Type.String({
+              description: "required for blocker/major: objective observation proving closure",
+            }),
+          ),
+          findingId: Type.Optional(
+            Type.String({ description: "stable id when resolving a carried finding" }),
+          ),
+          resolution: Type.Optional(Type.String({ description: "closed, remains, or new" })),
+          evidence: Type.Optional(
+            Type.String({ description: "bounded evidence required for closed findings" }),
           ),
         }),
         {
@@ -314,6 +502,16 @@ export function buildSubmitVerdictTool(
       summary: Type.String({
         description: "REQUIRED. a short summary of the review",
       }),
+      removedTests: Type.Optional(
+        Type.Array(
+          Type.Object({
+            behavior: Type.Optional(Type.String()),
+            fate: Type.Optional(Type.String({ description: "restored or moved" })),
+            destination: Type.Optional(Type.String()),
+          }),
+          { description: "machine-visible fate for each removed test behavior" },
+        ),
+      ),
       coverage: Type.Optional(
         Type.Array(
           Type.Object({
@@ -344,7 +542,7 @@ export function buildSubmitVerdictTool(
         // capture, so the pipeline reads the final submission of the round.
         // `delete` (not `= undefined`) clears the sibling under
         // exactOptionalPropertyTypes, where the field is not typed `| undefined`.
-        capture.verdict = parseVerdict(params, detail, expected);
+        capture.verdict = parseVerdict(params, detail, expected, priorFindings);
         delete capture.error;
         return { content: [{ type: "text", text: "verdict recorded" }], details: undefined };
       } catch (error) {
@@ -380,8 +578,8 @@ export function formatReviewerInstruction(expected?: SurfaceAnalysis): string {
     // reached the ceiling with nothing submitted.
     "Every field in that shape is required on the FIRST call -- `status`, `issues` and `summary`, plus `coverage` whenever it appears below. A submission that omits one is refused, and the corrected resubmission is paid from the same round budget.",
     applicable.length === 0
-      ? '{ "status": "approved" | "changes_requested", "issues": [ { "severity": "blocker" | "major" | "minor", "what": "<one issue>" } ], "summary": "<short summary>" }'
-      : '{ "status": "approved" | "changes_requested", "issues": [ { "severity": "blocker" | "major" | "minor", "what": "<one issue>" } ], "summary": "<short summary>", "coverage": [{"surfaceId":"<id>","contractIds":["<id>"],"evidence":["<verification>"]}] }',
+      ? '{ "status": "approved" | "changes_requested", "issues": [ { "severity": "blocker" | "major" | "minor", "what": "<one issue>", "location": "<file:line or scenario>", "closureCriterion": "<objective closure test>" } ], "summary": "<short summary>" }'
+      : '{ "status": "approved" | "changes_requested", "issues": [ { "severity": "blocker" | "major" | "minor", "what": "<one issue>", "location": "<file:line or scenario>", "closureCriterion": "<objective closure test>" } ], "summary": "<short summary>", "coverage": [{"surfaceId":"<id>","contractIds":["<id>"],"evidence":["<verification>"]}] }',
     ...(applicable.length === 0
       ? []
       : [
@@ -393,6 +591,9 @@ export function formatReviewerInstruction(expected?: SurfaceAnalysis): string {
           )}.`,
         ]),
     'Use "approved" only when no further changes are required; otherwise "changes_requested" with each required change as an issue.',
+    "Every blocker/major issue must be a reproducible defect with a bounded location and objective closureCriterion; stale review stamps, review artifacts, round bookkeeping, and freshness are process artifacts and belong in summary, never in issues.",
+    "For every carried finding, report resolution closed (with evidence), remains, or new, using its findingId; do not silently drop findings.",
+    "If tests are removed, submit removedTests entries: each behavior must be restored or have a concrete new coverage destination; an unlisted removal is not accounted for.",
     'Issues name only defects that REMAIN; anything you verified and resolved belongs in the summary, and "approved" is exactly the verdict whose issues list is empty.',
   ].join("\n");
 }
