@@ -29,10 +29,10 @@ unbounded prompt directory.
   instructions still reach a prompt only through an explicit load or a pin,
   never silently.
 - Built-in `architecture-recon`, `task-slicing`, `acceptance-review`,
-  `delivery-calibration`, `repository-navigation`, `role-selection`,
-  `documentation-writing`, `change-implementation`, `change-verification`,
-  `threat-modelling`, `external-research`, `tracker-work` and
-  `overload-response` are the shipped skills.
+  `delivery-calibration`, `delivery-discipline`, `repository-navigation`,
+  `role-selection`, `documentation-writing`, `change-implementation`,
+  `change-verification`, `threat-modelling`, `external-research`,
+  `tracker-work` and `overload-response` are the shipped skills.
 - 2026-09-16: A skill carries what a role prompt has no room for: the specific
   technique, the failure it prevents, and the rule for stopping. A skill that
   restates its role prompt in one sentence costs a load and teaches nothing --

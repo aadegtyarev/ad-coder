@@ -148,6 +148,27 @@ test("loads shipped skills with a content digest", () => {
   });
 });
 
+test("delivery discipline is shared by all delivery roles and carries the full recovery loop", () => {
+  const skill = resolveSkills(["delivery-discipline"])[0];
+  expect(skill).toMatchObject({
+    id: "delivery-discipline",
+    version: "1",
+    source: "builtin",
+    roles: ["orchestrator", "coder", "reviewer"],
+  });
+  if (skill === undefined) throw new Error("missing built-in skill");
+  expect(skill.instructions).toContain("read `AGENTS.md`");
+  expect(skill.instructions).toContain("rebase the branch onto it");
+  expect(skill.instructions).toContain("fresh review round");
+  expect(skill.instructions).toContain("bun run check:version");
+  expect(skill.instructions).toContain("refs/heads/*");
+  expect(skill.instructions).toContain("refs/remotes/origin/*");
+  expect(skill.instructions).toContain("git push --force-with-lease");
+  expect(skill.instructions).toContain("squash merge");
+  expect(skill.instructions).toContain("stamp:check");
+  expect(skill.instructions).toContain("red CI");
+});
+
 test("role-selection prices the middle rung instead of selling it as free (#527)", () => {
   const skill = resolveSkills(["role-selection"])[0];
   if (skill === undefined) throw new Error("missing built-in skill");
