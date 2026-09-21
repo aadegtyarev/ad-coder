@@ -11,6 +11,11 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.176.0] - 2026-09-21
+
+### Added
+- **Telegram room-binding API.** The library now exports a versioned, secret-free room-binding schema and strict parser/serializer, an in-memory store for switchable and fixed rooms, and typed actionable errors for binding failures.
+
 ## [0.175.0] - 2026-09-21
 
 ### Fixed
