@@ -15,9 +15,10 @@ enforces that dated release headings go in non-increasing date order
 
 ### Fixed
 - **Versioned managed-state writes recover safely from lock contention (issue #542).**
-  Writes now retry briefly while a lock holder is live, refuse with the existing
-  typed conflict when contention remains, and reclaim only a lock whose recorded
-  process start-time witness proves its holder is gone or its pid was reused.
+  Direct and mutating writes share the versioned lock protocol, with validated
+  configurable bounded retries. Contention keeps the existing typed conflict;
+  stale locks are reclaimed only through ownership-safe quarantine after process
+  start-time evidence proves the holder is gone or its pid was reused.
 
 ## [0.158.0] - 2026-09-21
 

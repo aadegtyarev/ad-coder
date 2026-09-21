@@ -361,6 +361,17 @@ Rules the operator declared for ad-coder. A violation is always blocking.
   `inventories.json` is ignored and resolution exits 0; there is no migration
   or error.
 
+## Project-store lock retry policy (issue #542)
+
+`ProjectStoreConfig.lockRetry.delaysMs` is an optional non-empty array of positive
+safe integer millisecond delays. The default is `[10, 20, 40, 80]`: acquisition
+is attempted immediately, then retried after each listed delay (five attempts
+maximum). A live holder that remains after the bounded schedule produces the
+existing typed `version_conflict` error (`managed state is locked`). Dead holders
+are reclaimed without waiting. The same shape is accepted by
+`--project-store-config`; unknown keys, empty arrays, zero, negative, fractional,
+unsafe, or non-numeric values are rejected before lock acquisition.
+
 ## Sources
 
 The 2026-09-11 rules implement “good out of the box, everything overridable.”

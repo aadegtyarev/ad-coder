@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -134,7 +135,7 @@ describe("ProjectStore", () => {
     const lock = `${file}.lock`;
     fs.writeFileSync(
       lock,
-      `${JSON.stringify({ pid: holder.process.pid, startTime: holder.startTime })}\n`,
+      `${JSON.stringify({ pid: holder.process.pid, startTime: holder.startTime, token: crypto.randomUUID() })}\n`,
       {
         mode: 0o600,
       },
@@ -153,6 +154,74 @@ describe("ProjectStore", () => {
     }
   });
 
+  test("direct writer uses the bounded versioned-lock protocol", async () => {
+    const root = target();
+    const store = new ProjectStore(root, { lockRetry: { delaysMs: [1, 1] } });
+    const file = path.join(store.layout.runs, "direct_lock.json");
+    store.writeVersionedJson(file, { ready: true });
+    const holder = await childHoldingLock();
+    const lock = `${file}.lock`;
+    fs.writeFileSync(
+      lock,
+      `${JSON.stringify({ pid: holder.process.pid, startTime: holder.startTime, token: crypto.randomUUID() })}\n`,
+      { mode: 0o600 },
+    );
+    try {
+      expect(() => store.writeVersionedJson(file, { blocked: true })).toThrow(
+        new ProjectStoreError("version_conflict", lock, "managed state is locked"),
+      );
+    } finally {
+      holder.process.kill();
+      await holder.process.exited;
+      fs.rmSync(lock, { force: true });
+    }
+  });
+
+  test("stale reclamation cannot remove a rival lock installed after inspection", () => {
+    const root = target();
+    const store = new ProjectStore(root, { lockRetry: { delaysMs: [1] } });
+    const file = path.join(store.layout.runs, "contender_race.json");
+    store.writeVersionedJson(file, { before: true });
+    const lock = `${file}.lock`;
+    const staleToken = crypto.randomUUID();
+    fs.writeFileSync(
+      lock,
+      `${JSON.stringify({ pid: 999999, startTime: "1", token: staleToken })}\n`,
+      { mode: 0o600 },
+    );
+    const rivalToken = crypto.randomUUID();
+    (store as unknown as { versionedLockHook: (phase: string) => void }).versionedLockHook = () => {
+      fs.unlinkSync(lock);
+      fs.writeFileSync(
+        lock,
+        `${JSON.stringify({ pid: process.pid, startTime: processStartTime(process.pid), token: rivalToken })}\n`,
+        { mode: 0o600 },
+      );
+    };
+    expect(() => store.writeVersionedJson(file, { after: true })).toThrow(
+      new ProjectStoreError("version_conflict", lock, "managed state is locked"),
+    );
+    expect(JSON.parse(fs.readFileSync(lock, "utf8"))).toMatchObject({ token: rivalToken });
+  });
+
+  test("direct writer reclaims a dead holder", async () => {
+    const root = target();
+    const store = new ProjectStore(root);
+    const file = path.join(store.layout.runs, "direct_dead_lock.json");
+    store.writeVersionedJson(file, { before: true });
+    const holder = await childHoldingLock();
+    const lock = `${file}.lock`;
+    fs.writeFileSync(
+      lock,
+      `${JSON.stringify({ pid: holder.process.pid, startTime: holder.startTime, token: crypto.randomUUID() })}\n`,
+      { mode: 0o600 },
+    );
+    holder.process.kill();
+    await holder.process.exited;
+    expect(store.writeVersionedJson(file, { after: true }).value).toEqual({ after: true });
+    expect(fs.existsSync(lock)).toBe(false);
+  });
+
   test("takes over a versioned-state lock after its holder dies", async () => {
     const root = target();
     const store = new ProjectStore(root);
@@ -162,7 +231,7 @@ describe("ProjectStore", () => {
     const lock = `${file}.lock`;
     fs.writeFileSync(
       lock,
-      `${JSON.stringify({ pid: holder.process.pid, startTime: holder.startTime })}\n`,
+      `${JSON.stringify({ pid: holder.process.pid, startTime: holder.startTime, token: crypto.randomUUID() })}\n`,
       {
         mode: 0o600,
       },
@@ -181,19 +250,60 @@ describe("ProjectStore", () => {
     expect(fs.existsSync(lock)).toBe(false);
   });
 
+  test("direct writer uses the lock start-time witness when a pid is reused", () => {
+    const root = target();
+    const store = new ProjectStore(root);
+    const file = path.join(store.layout.runs, "direct_reused_pid.json");
+    store.writeVersionedJson(file, { ready: true });
+    const lock = `${file}.lock`;
+    fs.writeFileSync(
+      lock,
+      `${JSON.stringify({ pid: process.pid, startTime: "0", token: crypto.randomUUID() })}\n`,
+      { mode: 0o600 },
+    );
+    expect(store.writeVersionedJson(file, { recovered: true }).value).toEqual({ recovered: true });
+    expect(fs.existsSync(lock)).toBe(false);
+  });
+
   test("uses the lock start-time witness when a pid is reused", () => {
     const root = target();
     const store = new ProjectStore(root);
     const file = path.join(store.layout.runs, "reused_pid.json");
     store.mutateVersionedJson(file, () => ({ ready: true }));
     const lock = `${file}.lock`;
-    fs.writeFileSync(lock, `${JSON.stringify({ pid: process.pid, startTime: "0" })}\n`, {
-      mode: 0o600,
-    });
+    fs.writeFileSync(
+      lock,
+      `${JSON.stringify({ pid: process.pid, startTime: "0", token: crypto.randomUUID() })}\n`,
+      {
+        mode: 0o600,
+      },
+    );
     expect(store.mutateVersionedJson(file, () => ({ recovered: true })).value).toEqual({
       recovered: true,
     });
     expect(fs.existsSync(lock)).toBe(false);
+  });
+
+  test("rejects invalid lock retry policy", () => {
+    expect(() => new ProjectStore(target(), { lockRetry: { delaysMs: [] } })).toThrow(
+      new ProjectStoreError(
+        "invalid_config",
+        "lockRetry.delaysMs",
+        "lock retry delays must be a non-empty array of positive safe integers",
+      ),
+    );
+    expect(() => new ProjectStore(target(), { lockRetry: { delaysMs: [0] } })).toThrow(
+      ProjectStoreError,
+    );
+    expect(new ProjectStore(target(), { lockRetry: { delaysMs: [1] } }).lockRetryDelaysMs).toEqual([
+      1,
+    ]);
+    expect(
+      () =>
+        new ProjectStore(target(), {
+          lockRetry: { delaysMs: [1], unknown: true } as never,
+        }),
+    ).toThrow(ProjectStoreError);
   });
 
   test("recovers a stale session lease but never steals a live one", async () => {

@@ -1085,7 +1085,7 @@ function parseProjectStoreConfig(value: string | undefined): ProjectStoreConfig 
     fail("--project-store-config must contain a JSON object");
   }
   const object = parsed as Record<string, unknown>;
-  const allowedTop = new Set(["retention", "byteLimits", "projectOperations"]);
+  const allowedTop = new Set(["retention", "byteLimits", "lockRetry", "projectOperations"]);
   if (Object.keys(object).some((key) => !allowedTop.has(key))) {
     fail("--project-store-config contains an unknown setting");
   }
@@ -1121,6 +1121,23 @@ function parseProjectStoreConfig(value: string | undefined): ProjectStoreConfig 
         fail(`invalid --project-store-config setting: ${groupName}.${key}`);
       }
     }
+  }
+  const lockRetry = object.lockRetry;
+  if (lockRetry !== undefined) {
+    if (typeof lockRetry !== "object" || lockRetry === null || Array.isArray(lockRetry))
+      fail("--project-store-config lockRetry must be an object");
+    const lockObject = lockRetry as Record<string, unknown>;
+    if (Object.keys(lockObject).some((key) => key !== "delaysMs"))
+      fail("--project-store-config contains an unknown lockRetry setting");
+    const delays = lockObject.delaysMs;
+    if (
+      !Array.isArray(delays) ||
+      delays.length === 0 ||
+      delays.some(
+        (delay) => typeof delay !== "number" || !Number.isSafeInteger(delay) || delay <= 0,
+      )
+    )
+      fail("invalid --project-store-config setting: lockRetry.delaysMs");
   }
   const operations = object.projectOperations;
   if (operations !== undefined) {

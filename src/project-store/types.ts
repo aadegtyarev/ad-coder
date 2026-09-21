@@ -24,9 +24,16 @@ export interface ProjectStoreByteLimits {
   jsonlRecord: number;
 }
 
+export interface ProjectStoreLockRetryConfig {
+  /** Milliseconds to wait after each failed acquisition, in order. */
+  delaysMs?: readonly number[];
+}
+
 export interface ProjectStoreConfig {
   retention?: Partial<ProjectStoreRetention>;
   byteLimits?: Partial<ProjectStoreByteLimits>;
+  /** Bounded policy for live versioned-state lock contention. */
+  lockRetry?: ProjectStoreLockRetryConfig;
   projectOperations?: ProjectOperationsConfig;
 }
 
