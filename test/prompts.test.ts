@@ -203,8 +203,9 @@ test("the orchestrator prompt makes an inline turn's terminal report explicit (i
   const prompt = flat(resolvePrompt("orchestrator"));
   expect(prompt).toContain("A textual report with no next tool call terminates the turn");
   expect(prompt).toContain(
-    "if you intend to continue inline work, make the next call in the same turn",
+    "if you intend to continue inline work, use `report_status` and then make the next call in the same turn",
   );
+  expect(prompt).toContain("`report_status` immediately shows a one-line progress status");
   expect(prompt).toContain("Work requiring continuation after a report must use `start_pipeline`");
   expect(prompt).toContain("its notices wake a later turn");
 });
