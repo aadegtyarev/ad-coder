@@ -1,0 +1,40 @@
+[
+  "ad-coder: ledger=/tmp/run/ledger.jsonl",
+  {
+    "type": "progress",
+    "event": "started",
+    "stage": "console-turn",
+    "elapsedSeconds": 0
+  },
+  {
+    "schemaVersion": 1,
+    "type": "tool_activity",
+    "sequence": 1,
+    "timestamp": "2026-09-21T10:00:00.000Z",
+    "lifecycle": "completed",
+    "activity": "Read",
+    "role": "reviewer",
+    "runId": "run-568-fail",
+    "operationId": "op-568-fail",
+    "turnId": "turn-a1",
+    "toolCallId": "call-1",
+    "parentOperation": "console",
+    "toolName": "read",
+    "droppedCount": 0,
+    "projection": {
+      "path": "docs/contracts/quality.md"
+    }
+  },
+  {
+    "type": "progress",
+    "event": "started",
+    "stage": "console-turn",
+    "elapsedSeconds": 2
+  },
+  {
+    "type": "progress",
+    "event": "started",
+    "stage": "console-turn",
+    "elapsedSeconds": 3
+  }
+]

@@ -1,0 +1,138 @@
+[
+  "ad-coder: ledger=/tmp/run/ledger.jsonl",
+  {
+    "type": "progress",
+    "event": "started",
+    "stage": "console-turn",
+    "elapsedSeconds": 0
+  },
+  {
+    "schemaVersion": 1,
+    "type": "tool_activity",
+    "sequence": 1,
+    "timestamp": "2026-09-21T10:00:00.000Z",
+    "lifecycle": "requested",
+    "activity": "Read",
+    "role": "reviewer",
+    "runId": "run-568-alt",
+    "operationId": "op-568-alt",
+    "turnId": "turn-a1",
+    "toolCallId": "call-alt-1",
+    "parentOperation": "console",
+    "toolName": "load_skill",
+    "droppedCount": 0,
+    "projection": {
+      "skillId": "delivery-discipline@1"
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "type": "tool_activity",
+    "sequence": 2,
+    "timestamp": "2026-09-21T10:00:00.000Z",
+    "lifecycle": "completed",
+    "activity": "Read",
+    "role": "reviewer",
+    "runId": "run-568-alt",
+    "operationId": "op-568-alt",
+    "turnId": "turn-a1",
+    "toolCallId": "call-alt-1",
+    "parentOperation": "console",
+    "toolName": "load_skill",
+    "droppedCount": 0,
+    "durationMs": 40,
+    "projection": {
+      "skillId": "delivery-discipline@1"
+    }
+  },
+  {
+    "type": "progress",
+    "event": "started",
+    "stage": "console-turn",
+    "elapsedSeconds": 2
+  },
+  {
+    "schemaVersion": 1,
+    "type": "tool_activity",
+    "sequence": 3,
+    "timestamp": "2026-09-21T10:00:02.000Z",
+    "lifecycle": "requested",
+    "activity": "Read",
+    "role": "reviewer",
+    "runId": "run-568-alt",
+    "operationId": "op-568-alt",
+    "turnId": "turn-a2",
+    "toolCallId": "call-alt-2",
+    "parentOperation": "console",
+    "toolName": "load_skill",
+    "droppedCount": 0,
+    "projection": {
+      "skillId": "task-slicing"
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "type": "tool_activity",
+    "sequence": 4,
+    "timestamp": "2026-09-21T10:00:02.000Z",
+    "lifecycle": "completed",
+    "activity": "Read",
+    "role": "reviewer",
+    "runId": "run-568-alt",
+    "operationId": "op-568-alt",
+    "turnId": "turn-a2",
+    "toolCallId": "call-alt-2",
+    "parentOperation": "console",
+    "toolName": "load_skill",
+    "droppedCount": 0,
+    "durationMs": 40,
+    "projection": {
+      "skillId": "task-slicing"
+    }
+  },
+  {
+    "type": "progress",
+    "event": "started",
+    "stage": "console-turn",
+    "elapsedSeconds": 4
+  },
+  {
+    "schemaVersion": 1,
+    "type": "tool_activity",
+    "sequence": 5,
+    "timestamp": "2026-09-21T10:00:04.000Z",
+    "lifecycle": "requested",
+    "activity": "Read",
+    "role": "reviewer",
+    "runId": "run-568-alt",
+    "operationId": "op-568-alt",
+    "turnId": "turn-a3",
+    "toolCallId": "call-alt-3",
+    "parentOperation": "console",
+    "toolName": "load_skill",
+    "droppedCount": 0,
+    "projection": {
+      "skillId": "overload-response"
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "type": "tool_activity",
+    "sequence": 6,
+    "timestamp": "2026-09-21T10:00:04.000Z",
+    "lifecycle": "completed",
+    "activity": "Read",
+    "role": "reviewer",
+    "runId": "run-568-alt",
+    "operationId": "op-568-alt",
+    "turnId": "turn-a3",
+    "toolCallId": "call-alt-3",
+    "parentOperation": "console",
+    "toolName": "load_skill",
+    "droppedCount": 0,
+    "durationMs": 40,
+    "projection": {
+      "skillId": "overload-response"
+    }
+  }
+]

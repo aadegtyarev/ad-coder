@@ -1,0 +1,6 @@
+{
+  "id": "delivery-discipline",
+  "version": "1",
+  "description": "Delivery procedure. Use when a delivery event needs the next safe operation. Phrases: 'merge PR', 'conflict', 'rebase', 'stamp', 'version', 'release', 'force push', 'CI red'.",
+  "roles": ["orchestrator", "coder", "reviewer"]
+}

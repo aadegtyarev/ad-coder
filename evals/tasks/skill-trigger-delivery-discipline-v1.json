@@ -1,0 +1,31 @@
+{
+  "id": "skill-trigger-delivery-discipline-v1",
+  "role": "reviewer",
+  "complexity": "trivial",
+  "mode": "manual-workflow",
+  "purpose": "smoke",
+  "prompt": "The merge PR is blocked by red CI after a rebase. Give the delivery recovery procedure: what happens to the review and stamp, and how should a rewritten branch be pushed? Do not run commands or start any workflow in this turn.",
+  "checks": [
+    { "id": "activity-captured", "weight": 2 },
+    { "id": "target-prompt-loads-skill", "weight": 3 },
+    { "id": "non-target-prompts-do-not-load-skill", "weight": 4 },
+    { "id": "load-skill-calls-attributable", "weight": 2 }
+  ],
+  "scorerInput": "activity",
+  "scorer": "skill-trigger.ts",
+  "prompts": [
+    "The merge PR is blocked by red CI after a rebase. Give the delivery recovery procedure: what happens to the review and stamp, and how should a rewritten branch be pushed? Do not run commands or start any workflow in this turn.",
+    "Review this change for hidden regressions and report only concrete findings with closure criteria. Do not start any workflow in this turn.",
+    "The implementation is too broad for one run. Split it into independently shippable slices and state the first slice only. Do not start any workflow in this turn."
+  ],
+  "skillTrigger": {
+    "skill": "delivery-discipline",
+    "targetPromptIndex": 0,
+    "nonTargetPromptIndexes": [1, 2]
+  },
+  "source": {
+    "url": "original",
+    "license": "n/a",
+    "note": "On-demand trigger/no-trigger probes for issue #568: the target names merge PR, red CI, and rebase delivery recovery; non-targets exercise review and task-slicing procedures."
+  }
+}

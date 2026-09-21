@@ -1,0 +1,59 @@
+[
+  "ad-coder: ledger=/tmp/run/ledger.jsonl",
+  {
+    "type": "progress",
+    "event": "started",
+    "stage": "console-turn",
+    "elapsedSeconds": 0
+  },
+  {
+    "schemaVersion": 1,
+    "type": "tool_activity",
+    "sequence": 1,
+    "timestamp": "2026-09-21T10:00:00.000Z",
+    "lifecycle": "requested",
+    "activity": "Read",
+    "role": "reviewer",
+    "runId": "run-568",
+    "operationId": "op-568",
+    "turnId": "turn-a1",
+    "toolCallId": "call-1",
+    "parentOperation": "console",
+    "toolName": "load_skill",
+    "droppedCount": 0,
+    "projection": {
+      "skillId": "delivery-discipline"
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "type": "tool_activity",
+    "sequence": 2,
+    "timestamp": "2026-09-21T10:00:00.000Z",
+    "lifecycle": "completed",
+    "activity": "Read",
+    "role": "reviewer",
+    "runId": "run-568",
+    "operationId": "op-568",
+    "turnId": "turn-a1",
+    "toolCallId": "call-1",
+    "parentOperation": "console",
+    "droppedCount": 0,
+    "durationMs": 40,
+    "projection": {
+      "skillId": "delivery-discipline"
+    }
+  },
+  {
+    "type": "progress",
+    "event": "started",
+    "stage": "console-turn",
+    "elapsedSeconds": 2
+  },
+  {
+    "type": "progress",
+    "event": "started",
+    "stage": "console-turn",
+    "elapsedSeconds": 3
+  }
+]

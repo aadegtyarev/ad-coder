@@ -31,6 +31,7 @@
     "tasks/reviewer-idempotency-race.json",
     "tasks/auditor-retry-cap-reconciliation.json",
     "tasks/skill-trigger-delivery-calibration-v1.json",
+    "tasks/skill-trigger-delivery-discipline-v1.json",
     "tasks/skill-trigger-task-slicing-v1.json",
     "tasks/skill-trigger-role-selection-v1.json",
     "tasks/skill-trigger-overload-response-v1.json"
