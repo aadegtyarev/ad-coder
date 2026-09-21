@@ -11,6 +11,11 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.167.0] - 2026-09-21
+
+### Changed
+- **Skill loads now render as `Skill <skill-id>` in tool activity (issue #569).**
+
 ## [0.164.0] - 2026-09-21
 
 ### Fixed

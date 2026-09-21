@@ -15,6 +15,7 @@ export type ToolActivityKind =
   | "Run"
   | "Web"
   | "Inspect image"
+  | "Skill"
   | "Tool";
 
 /**
@@ -279,7 +280,7 @@ const KNOWN_TOOLS: Readonly<Record<string, { activity: ToolActivityKind; publicN
   control_decisions: { activity: "Tool", publicName: "control_decisions" },
   control_decision_request: { activity: "Tool", publicName: "control_decision_request" },
   control_run_until: { activity: "Tool", publicName: "control_run_until" },
-  load_skill: { activity: "Read", publicName: "load_skill" },
+  load_skill: { activity: "Skill", publicName: "load_skill" },
 };
 
 /**
@@ -506,6 +507,7 @@ const TOOL_ACTIVITY_KINDS = new Set<ToolActivityKind>([
   "Run",
   "Web",
   "Inspect image",
+  "Skill",
   "Tool",
 ]);
 
