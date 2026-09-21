@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { checkRequiredHistory } from "../scripts/check-stamp-fixup";
 import type { LedgerRecord } from "../src/ledger/types";
 import { stampBodyCheckErrors, stampDeliveryText } from "../src/stamp/cli";
 import {
@@ -166,6 +167,53 @@ function stampFixture() {
     runIds: ["run-1"],
     findingsRef: "docs/reviews/stamps.log",
   };
+}
+
+test("a shallow checkout diagnoses missing stamp ancestry, then passes after CI deepens it", () => {
+  const source = gitRepo();
+  fs.writeFileSync(
+    path.join(source, "ad-coder.stamps.json"),
+    JSON.stringify({ file: "stamps.log" }),
+  );
+  fs.writeFileSync(path.join(source, "stamps.log"), "initial\n");
+  addAll(source);
+  commit(source, "base");
+  fs.appendFileSync(path.join(source, "stamps.log"), "latest\n");
+  addAll(source);
+  commit(source, "stamp");
+  git(source, ["branch", "-M", "main"]);
+
+  const shallow = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-shallow-")));
+  git(shallow, ["clone", "--depth=1", `file://${source}`, "."]);
+  expect(() => checkRequiredHistory(shallow)).toThrow(
+    /history unavailable in this checkout: parent revision [0-9a-f]+\^/,
+  );
+
+  git(shallow, ["fetch", "--deepen=2", "origin", "main"]);
+  expect(() => checkRequiredHistory(shallow)).not.toThrow();
+  fs.rmSync(source, { recursive: true, force: true });
+  fs.rmSync(shallow, { recursive: true, force: true });
+});
+
+test("CI deepens history immediately before the unchanged merge-ref stamp fallback", () => {
+  const ci = fs.readFileSync(
+    path.join(import.meta.dir, "..", ".github", "workflows", "ci.yml"),
+    "utf8",
+  );
+  const fetch = ci.indexOf('git fetch --deepen=50 origin "$GITHUB_REF" main');
+  const fallback = ci.indexOf("- run: bun run stamp:check || bun run scripts/check-stamp-fixup.ts");
+  expect(fetch).toBeGreaterThan(-1);
+  expect(fetch).toBeLessThan(fallback);
+  expect(ci).toContain("PR merge ref is retained");
+});
+
+function git(root: string, args: string[]): void {
+  const result = Bun.spawnSync(["git", ...args], { cwd: root, stdout: "pipe", stderr: "pipe" });
+  if (result.exitCode !== 0) throw new Error(result.stderr.toString());
+}
+
+function commit(root: string, message: string): void {
+  git(root, ["commit", "-qm", message]);
 }
 
 test("version fixup compares only branch paths and the narrow version definition", () => {
