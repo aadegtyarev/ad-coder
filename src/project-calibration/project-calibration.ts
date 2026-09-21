@@ -1,8 +1,14 @@
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import type { ModelsProfileFact } from "../config/to-registry";
 import { parseProfile } from "../profiles/validate";
-import { parseUserProfile, type UserProfile, UserProfileError } from "../user-profile";
+import {
+  type EconomicRecordKind,
+  parseUserProfile,
+  type UserProfile,
+  UserProfileError,
+} from "../user-profile";
 import type { ProjectCalibrationLimits, ProjectCalibrationSnapshot } from "./types";
 
 const FILE = "calibration.json";
@@ -30,11 +36,21 @@ export function projectCalibrationPath(targetDir: string) {
  * reaches, which is what the economics and capacity scoping below filters by.
  * Those pairs are derived by the config layer from the same walk the registry
  * resolves with (`modelsProfileSource`), never re-derived here.
+ *
+ * `facts` is the same walk one level finer (issue #540): the economic numbers
+ * the declared config already states for each of those pairs. A snapshot fills
+ * its `economics` from them for every scope the operator's own records say
+ * nothing about, so a committed snapshot carries prices a checkout can act on
+ * without importing anybody's profile -- and the operator states each number
+ * exactly once, in `models.yaml`, instead of hand-recording it into a second
+ * store. The type is the config layer's own (`ModelsProfileFact`), imported
+ * rather than restated, so the two ends cannot drift.
  */
 export type CalibrationSourceRef = {
   kind: "models-profile";
   name: string;
   providers: Array<{ id: string; models: string[] }>;
+  facts: ModelsProfileFact[];
 };
 
 export function createProjectCalibrationSnapshot(
@@ -81,6 +97,50 @@ export function createProjectCalibrationSnapshot(
       const key = `${record.provider}\0${record.model}\0${record.kind}\0${record.unit}`;
       const old = latest.get(key);
       if (!old || old.observedAt < record.observedAt) latest.set(key, record);
+    }
+  }
+  // THE DECLARED FILL (issue #540). A snapshot's economics used to have
+  // exactly one source: records the operator had hand-written into the private
+  // profile. A profile that states its prices in `models.yaml` and nowhere else
+  // -- the normal case under the YAML route, and the reason this was filed --
+  // produced a snapshot with an empty `economics`, leaving a checkout that had
+  // never imported that profile with no price facts at all.
+  //
+  // So the numbers the resolved config ALREADY carries are filled in here, per
+  // declared fact, under the same membership scope and the same limit as the
+  // operator's records. Two rules make that honest rather than merely fuller:
+  // a key the operator's own records already answer is never touched (an
+  // observation outranks our reading of a file, whatever its confidence), and
+  // a fact appears here only when the file declares it -- a cache price nobody
+  // wrote down is not invented as a zero.
+  const declaredOn = `${routing.observedOn}T00:00:00.000Z`;
+  for (const fact of ref.facts) {
+    if (!providerModels.has(`${fact.provider}\0${fact.model}`)) continue;
+    const declared: Array<[EconomicRecordKind, string, number | undefined]> = [
+      ["price", "usd_per_million_input", fact.input],
+      ["price", "usd_per_million_output", fact.output],
+      ["price", "usd_per_million_cached_input", fact.cacheRead],
+      ["price", "usd_per_million_cache_write", fact.cacheWrite],
+      ["context_limit", "tokens", fact.contextWindow],
+    ];
+    for (const [kind, unit, value] of declared) {
+      if (value === undefined) continue;
+      const key = `${fact.provider}\0${fact.model}\0${kind}\0${unit}`;
+      if (latest.has(key)) continue;
+      latest.set(key, {
+        id: `declared:${key}`,
+        observedAt: declaredOn,
+        provider: fact.provider,
+        model: fact.model,
+        kind,
+        value,
+        unit,
+        // The calibration itself derived this from the config the operator
+        // declared -- which is what the label says and all it claims: not a
+        // measurement of a provider, and not something a vendor published.
+        source: "project-calibration",
+        confidence: "estimated",
+      });
     }
   }
   const economics = [...latest.values()]

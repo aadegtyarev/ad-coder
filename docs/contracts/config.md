@@ -566,3 +566,32 @@ was shown, under the same overriding rules the banner already answers to.
   snapshot's `economics` or `subscriptionCapacityRanges` (the only reader is
   `resolveConfig`, which takes the `routing` field and the source name), so a
   project that carries none loses nothing else.
+- 2026-09-21 (issue #540): **a snapshot fills its `economics` from the config
+  the operator already declared, and its own records still win.** A snapshot's
+  economics used to have exactly one producer -- records hand-written into the
+  private user profile (`profile record`, `profile import-apply`) -- so a
+  profile that states its prices in `models.yaml` and nowhere else, which is
+  the normal case under the YAML route, produced a snapshot with an EMPTY
+  `economics`. That is exactly backwards: the numbers are declared, in the file
+  the run resolves against, and a checkout that never imported the operator's
+  profile is the audience a committed snapshot exists for. The facts now travel
+  with the calibration source itself: `modelsProfileSource` returns, alongside
+  the (provider, model) pairs it always did, a `ModelsProfileFact` per reachable
+  model -- input/output prices, plus `cacheRead`/`cacheWrite`/`contextWindow`
+  when the row declares them -- taken from the SAME projection the registry
+  dispatches with, never a second read of `models.yaml`. Two rules keep the fill
+  honest rather than merely fuller. A key the profile's own records already
+  answer is NEVER overwritten: `(provider, model, kind, unit)` is the identity
+  of a fact, and an observation outranks our reading of a file whatever its
+  confidence, so a hand-recorded price survives a later `models.yaml` edit and
+  says so. And a fact appears only when the file declares it: an absent cache
+  price is not invented as a zero -- the resolver settles it at zero to bill
+  with, while a snapshot states only what the operator wrote, which is the
+  difference between a number and a default. The derived facts are labelled
+  `source: "project-calibration"`, `confidence: "estimated"` and dated by the
+  calibration's own `observedOn`, so nothing in the snapshot claims a provider
+  measurement or a published catalogue. Scope and limit are unchanged: facts are
+  filtered by the same membership set and counted under the same
+  `maxEconomics`. The facts are a field of `CalibrationSourceRef`, not of the
+  snapshot file -- `models.yaml` stays the single place a price is stated and a
+  snapshot stays the derived artifact it always was.
