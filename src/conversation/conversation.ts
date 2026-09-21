@@ -259,6 +259,14 @@ export interface ConversationSession {
   toolActivitySnapshot?(): ToolActivitySnapshot;
   /** Optional content-free pipeline notices; subscribing never starts a model turn. */
   subscribeBackgroundRuns?(consumer: BackgroundRunNoticeConsumer): () => void;
+  /** Settled turns initiated by the wake pump, for the owning interactive front. */
+  subscribeWakeTurns?(
+    consumer: (
+      event:
+        | { phase: "started"; step: string }
+        | { phase: "settled"; result: ConversationTurnResult },
+    ) => void,
+  ): () => void;
   readonly runId: string;
   /** Absolute ledger path when the default file sink was used; undefined for a custom sink. */
   readonly ledgerPath: string | undefined;

@@ -4,7 +4,7 @@ import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/harness/env/node
 import { Type } from "@earendil-works/pi-ai";
 import type { DelegatedRoute, ResolvePipelineConfigOptions } from "../cli/resolve-config";
 import { resolveOrchestratorSeed, resolvePipelineConfig } from "../cli/resolve-config";
-import type { ConversationSession } from "../conversation/conversation";
+import type { ConversationSession, ConversationTurnResult } from "../conversation/conversation";
 import {
   startConversation as startConversationImpl,
   TurnInterruptedError,
@@ -2084,16 +2084,29 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
   // a front turn defers instead of racing `conversation step already active`,
   // and drains on the front turn's settle.
   let turnBusy = false;
+  const wakeTurnConsumers = new Set<
+    (
+      event:
+        | { phase: "started"; step: string }
+        | { phase: "settled"; result: ConversationTurnResult },
+    ) => void
+  >();
   const wakePump = new WakePump({
     listPending: () => core.backgroundRuns.pendingWakes(),
     markHandled: (runId, kinds) => core.backgroundRuns.markWakesHandled(runId, kinds),
+    onTurnStarted: (step) => {
+      for (const consumer of wakeTurnConsumers) consumer({ phase: "started", step });
+    },
     runTurn: async (prompt, step) => {
       turnBusy = true;
       try {
-        await conversation.step(prompt, { step });
+        return await conversation.step(prompt, { step });
       } finally {
         turnBusy = false;
       }
+    },
+    onTurnSettled: (result) => {
+      for (const consumer of wakeTurnConsumers) consumer({ phase: "settled", result });
     },
     turnActive: () => turnBusy,
     maxWakesPerTurn: core.backgroundRuns.backgroundLimits.maxWakesPerTurn,
@@ -2135,6 +2148,10 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
       }
     },
     subscribeBackgroundRuns: core.backgroundRuns.subscribe.bind(core.backgroundRuns),
+    subscribeWakeTurns: (consumer) => {
+      wakeTurnConsumers.add(consumer);
+      return () => wakeTurnConsumers.delete(consumer);
+    },
     backgroundRuns: core.backgroundRuns,
     ...(seed.costAnomalyDetector !== undefined && {
       costAnomalyDetector: seed.costAnomalyDetector,

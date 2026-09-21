@@ -179,6 +179,46 @@ test("keeps one session across ordered turns, ignores blanks, and closes once on
   );
 });
 
+test("renders an attached wake from start through sanitized settlement to a prompt", async () => {
+  const input = rawInput();
+  type WakeEvent = Parameters<NonNullable<ConversationSession["subscribeWakeTurns"]>>[0] extends (
+    event: infer Event,
+  ) => void
+    ? Event
+    : never;
+  let wakeConsumer: ((event: WakeEvent) => void) | undefined;
+  const session = fakeSession() as ConversationSession;
+  session.subscribeWakeTurns = (consumer) => {
+    wakeConsumer = consumer;
+    return () => {
+      wakeConsumer = undefined;
+    };
+  };
+  const output = new Capture();
+  const error = new Capture();
+  const running = runConsole({ session, input, output, error });
+  await Promise.resolve();
+  expect(wakeConsumer).toBeDefined();
+  wakeConsumer!({ phase: "started", step: "wake:1" });
+  wakeConsumer!({
+    phase: "settled",
+    result: {
+      runId: "wake-run",
+      step: "wake:1",
+      status: "ok",
+      assistantText: "settled\u001b[31m wake result",
+      toolCalls: [],
+      droppedRecords: 0,
+    },
+  });
+  input.write("/exit\n");
+  const result = await running;
+  expect(result.reason).toBe("exit");
+  expect(error.text()).toContain("ad-coder: wake turn started (wake:1)");
+  expect(output.text()).toContain("settled wake result");
+  expect(output.text()).toContain("ad-coder> ");
+});
+
 test("a piped brief is read whole and dispatched as ONE turn, never as one turn per line", async () => {
   const brief = [
     "Skills must behave identically in every user-facing command.",

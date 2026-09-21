@@ -11,6 +11,13 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.158.0] - 2026-09-21
+
+### Fixed
+- **Wake turns are visible in the owning console.** Background state notices now
+  show a wake start, the sanitized settled result, and a fresh prompt through
+  the normal foreground renderer; machine-oriented fronts remain unchanged.
+
 ## [0.156.0] - 2026-09-21
 
 - Require stable identities and explicit closure evidence for blocker/major findings across review rounds.
