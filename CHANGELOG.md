@@ -11,6 +11,11 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.161.0] - 2026-09-21
+
+### Fixed
+- **Version-only fixups no longer require a second review round (issue #552).** CI compares the reviewed tree with the pushed tree only across this branch's paths and permits only the package version, release heading, and mechanical CHANGELOG union to change.
+
 ## [0.160.0] - 2026-09-21
 
 ### Fixed
