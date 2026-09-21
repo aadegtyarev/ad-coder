@@ -587,6 +587,34 @@ test("(i) distinct windows of a kind survive a blind merge: a post-mark pause st
   await managerB.close();
 });
 
+test("a wake handled after resume cannot hide a re-paused lifecycle", async () => {
+  const targetDir = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-wake-repause-")),
+  );
+  const ownerId = crypto.randomUUID();
+  const manager = new BackgroundRunManager(
+    async (_task, runId) => {
+      throw new PipelinePauseError(runId, stageLimitPause(1), { steps: 1, totalCost: 0.01 });
+    },
+    {},
+    targetDir,
+    ownerId,
+  );
+  const { runId } = manager.start("repause during wake");
+  await manager.wait(runId);
+  const pump = new WakePump({
+    listPending: () => manager.pendingWakes(),
+    markHandled: (id, wakes) => manager.markWakesHandled(id, wakes),
+    runTurn: async () => {
+      manager.projectForegroundPause(runId, stageLimitPause(2), { steps: 2, totalCost: 0.02 });
+    },
+  });
+  await pump.startupScan();
+  expect(manager.status(runId).lifecycle).toBe("paused");
+  expect(manager.pendingWakes().filter((wake) => wake.runId === runId)).toHaveLength(1);
+  await manager.close();
+});
+
 test("(j) re-observing one coalesced window never double-counts it, and blind re-persists never inflate", async () => {
   const targetDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-wake-j-")));
   const ownerId = crypto.randomUUID();

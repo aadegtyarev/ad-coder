@@ -1,6 +1,6 @@
 import type { ConversationTurnResult } from "../conversation/conversation";
 import { PROVIDER_ERROR_CODE_BOUND } from "../runner/errors";
-import type { PendingWake, WakeKind } from "./background-runs";
+import type { PendingWake } from "./background-runs";
 import { RESUME_PIPELINE_DETAIL } from "./background-runs";
 
 /**
@@ -91,7 +91,7 @@ function drainErrorLine(error: unknown): string {
 
 export interface WakePumpDeps {
   listPending: () => PendingWake[];
-  markHandled: (runId: string, kinds: readonly WakeKind[]) => void;
+  markHandled: (runId: string, wakes: readonly PendingWake[]) => void;
   runTurn: (prompt: string, step: string) => Promise<ConversationTurnResult | undefined>;
   /** Optional front projection hooks; failures never affect wake durability. */
   onTurnStarted?: (step: string) => void;
@@ -156,6 +156,7 @@ export class WakePump {
     if (this.inFlight) return;
     this.inFlight = true;
     let succeeded = false;
+    let reschedule = false;
     // Reading durable wake state (`listPending` -> `pendingWakes` -> `refresh`)
     // is typed, but this method is entered through `void this.drain()` with
     // nothing above it to catch (issue #430): a `state_unavailable` failure
@@ -205,7 +206,19 @@ export class WakePump {
       // Mark handled only after the turn resolves, so a failed turn leaves the
       // wakes unhandled for the next drain.
       try {
-        for (const wake of batch) this.deps.markHandled(wake.runId, [wake.kind]);
+        const byRun = new Map<string, PendingWake[]>();
+        for (const wake of batch) byRun.set(wake.runId, [...(byRun.get(wake.runId) ?? []), wake]);
+        for (const [runId, wakes] of byRun) this.deps.markHandled(runId, wakes);
+        const sameWindow = (left: PendingWake, right: PendingWake): boolean =>
+          left.runId === right.runId &&
+          left.kind === right.kind &&
+          left.firstAt === right.firstAt &&
+          left.lastAt === right.lastAt &&
+          left.count === right.count;
+        const after = this.deps.listPending();
+        reschedule = pending
+          .filter((wake) => !batch.some((drained) => sameWindow(wake, drained)))
+          .some((wake) => after.some((current) => sameWindow(current, wake)));
       } catch (error) {
         // Marking handled touches the same durable state; a failure here leaves
         // the batch to the next nudge, exactly like a failed turn.
@@ -222,7 +235,7 @@ export class WakePump {
       // contained the same way as the initial one.
       let remaining = false;
       try {
-        remaining = succeeded && this.deps.listPending().length > 0;
+        remaining = succeeded && reschedule;
       } catch (error) {
         console.error(`ad-coder: wake state unavailable; ${drainErrorLine(error)}`);
       }
