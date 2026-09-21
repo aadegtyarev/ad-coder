@@ -345,7 +345,6 @@ test("CI prepares a depth-one detached push checkout with full main history", ()
     expect(() => checkRequiredHistory(shallow)).toThrow(/history unavailable/);
 
     git(shallow, ["fetch", "--unshallow", "origin", "+refs/heads/main:refs/remotes/origin/main"]);
-    git(shallow, ["fetch", "origin", "+refs/heads/main:refs/remotes/origin/main"]);
     expect(() => checkRequiredHistory(shallow)).not.toThrow();
     expect(gitOutput(shallow, ["rev-parse", "HEAD"])).toBe(checkedOutHead);
     expect(gitOutput(shallow, ["rev-parse", "HEAD^{tree}"])).toBe(checkedOutTree);
