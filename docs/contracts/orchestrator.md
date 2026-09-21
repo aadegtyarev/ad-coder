@@ -48,10 +48,16 @@ setting here is a REQUIRED default (K10.6), not a constant.
 - **Ceiling** -- a numeric limit: `maxDurationMs`, `maxModelTurns`,
   `maxToolTurns`, `maxInputTokens`, `maxCostUsd`, and the task's own budget.
 - **Mode** -- `manual` / `auto` (K4), a field of the code (`RunMode`,
-  `src/orchestration/control-plane.ts`). The word is taken: in
-  `docs/contracts/operation-modes.md` "mode" names the **execution world** (roles
-  only, roles plus modules, direct editing). This contract uses "mode" for the
-  `manual`/`auto` axis alone, and calls the execution world the **surface**.
+  `src/orchestration/control-plane.ts`). The word carries two meanings in the
+  project's older text, and both are in `docs/contracts/operation-modes.md`: its
+  2026-09-12 entries use `manual` and `auto` as modes, and its 2026-09-17 entry
+  calls the **execution world** a mode as well ("which mode the session is in --
+  roles only, roles plus the enabled workflow modules, or direct editing"). This
+  contract uses "mode" for the `manual`/`auto` axis alone and calls the execution
+  world the **surface**; an older sentence that says "mode" for the execution
+  world is read as the surface, and the difference is stated here rather than
+  left for a reader to guess at. This is a naming discipline, not a claim that
+  the older contract used the word only one way.
 - **Mandate** -- a recorded ground for acting without asking: an operator command,
   mode `auto`, a default-on flag.
 - **Task shape** -- the class of size and complexity that learned ceilings are
@@ -310,26 +316,31 @@ declared policy of the project**. Its carriers are the project's quality contrac
 (what CI is composed from) and the `review.require-stamp` setting (`settings.yaml`
 under `review`; the resolved configuration field is `requireStamp`, the values are
 `auto`/`on`/`off`); the orchestrator must obtain exactly what the project declared
-and name what it obtained. A project may declare that no stamp is required: the
-value exists in the code (`src/stamp/record-review-stamp.ts`), and a run that acts
-under it says which declaration it acted under rather than passing the absence off
-as an oversight. What this contract cannot do is declare away a rule the project
-itself has not amended: **in THIS project the `off` value is not yet exercisable**,
-because the still-governing quality contract states the pre-merge stamp rule
-unconditionally -- `bun run stamp:check` is the pre-merge gate, no stamp means no
-merge, and it names no setting exception (`docs/contracts/quality.md`,
-2026-09-17, #239/#240). The value is implemented; the text has not been amended to
-admit it, and until a reviewed edit of `quality.md` makes that amendment -- it is
-owed exactly as the mark of K7.3 is owed to `operator-flow.md` -- this project's
-policy is `auto` and the stamp is owed. This project's default is three pieces of
+and name what it obtained. What the value MEANS is fixed where the setting is
+defined (`docs/contracts/config.md`, 2026-09-19): `on` writes and requires a stamp
+with or without the marker file, `off` writes nothing and passes the gate, and
+`auto` keeps the marker-governed behaviour -- resolved once and threaded to both
+the settle writer and the gate so the two can never disagree. The code carries
+exactly that (`src/config/validate.ts`, `src/stamp/record-review-stamp.ts`), so a
+project that declares the stamp away is exercised, not aspirational, and a run
+that acts under that declaration names it rather than passing the absence off as
+an oversight. One tension is named here rather than hidden: the quality contract's
+earlier entry states the pre-merge rule unconditionally -- `bun run stamp:check`
+is the pre-merge gate, and its list of blocking failures (`no stamp`, a malformed
+newest stamp, a `changes_requested` verdict, a stale digest) names no setting
+exception anywhere (`docs/contracts/quality.md`, 2026-09-17, #239/#240). This
+contract does not silently privilege one of the two rules: the setting's meaning
+is the LATER dated ruling (2026-09-19 against 2026-09-17, which is how this
+project answers "which rule is newer"), so under `off` the stamp is not owed and
+the gate passes, and `quality.md` owes the amendment that names the exception --
+an edit to that file, reviewed like any other, exactly as the mark of K7.3 is owed
+to `operator-flow.md`. This project's default is three pieces of
 evidence: (a) **the project's own gates** on the frozen
 tree -- never dispensable; (b) **a fresh review stamp** on that same tree -- the
 stamp covers the whole tree, so a tree that changed after approval (a rebase
 included) is red again and the approval is obtained anew; this is the evidence the
-`review.require-stamp` setting governs, and where a project has lawfully declared
-the stamp away -- by amending the text that states the rule, not by setting a
-value against it -- it is then not owed, and the run names the declaration it
-acted under; (c) CI, when it is available. If CI is objectively
+`review.require-stamp` setting governs, and under `off` it is not owed, and the
+run names the declaration it acted under; (c) CI, when it is available. If CI is objectively
 unavailable (not configured in the project, limits spent), the merge is allowed
 **without it**. What unavailability never cancels is the evidence the declared
 policy still requires -- under the default policy, gates and stamp. The
@@ -489,6 +500,8 @@ its polling sentence still to be marked superseded by a reviewed edit (K7.3); an
 `docs/ROADMAP.md` for the wait instrument (#563) as a design decision still open.
 Two amendments are owed to other files, and both are edits to those files rather
 than statements this contract can make for them: the supersession mark in
-`operator-flow.md` (K7.3) and the amendment of `quality.md`'s unconditional
-pre-merge stamp rule, which is what keeps `review.require-stamp: off` inert here
-(K8.9).
+`operator-flow.md` (K7.3) and the exception the `review.require-stamp` setting
+needs named in `quality.md`'s pre-merge list, whose absence is what leaves the
+older sentence reading as if the setting did not exist (K8.9). Until the second is
+made, the setting's own definition in `config.md` (2026-09-19) is the later dated
+rule and governs the value's meaning.
