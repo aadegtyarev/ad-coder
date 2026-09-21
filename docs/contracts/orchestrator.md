@@ -284,8 +284,8 @@ K8.1. A claim about a run is backed by an artefact (a path, a run id, a line).
 Without an artefact it is a hypothesis -- and is called one.
 K8.2. A verdict is never written in advance: a report line comes from the verdict
 or the metric, and otherwise says PENDING.
-K8.3. A refusal and an abort are reported with the output, not a paraphrase; "I did
-not check" is said plainly.
+K8.3. A refusal and an abort are reported with the output, not a paraphrase; a
+check that did not happen is said plainly as not checked.
 K8.4. A defect is not declared from one observation: a provider or infrastructure
 failure needs a second process or a second measurement.
 K8.5. A green check is read from the step list, not from the badge.
@@ -295,8 +295,8 @@ coordinator's metrics and the process tree; the record lags in both directions.
 K8.8. **A cost report is mandatory at the end of a task.** It names: the ledger sum
 across every run and round of that task; what it was made of (stages, roles, the
 number of rounds); how much of the agreed budget remains; which ceilings the task
-required (K6.8). The number names its source honestly: it is our price table x
-tokens, not the provider's bill (the provider's bill is its own entity,
+required (K6.8). The number names its source honestly: it is the project's own
+price table x tokens, not the provider's bill (the provider's bill is its own entity,
 `docs/contracts/cost-anomaly.md`), so a divergence from provider billing is
 possible and is stated. A failed task reports the same way -- what the failure
 cost. Form: the numbers go into the **standard pull-request signature block**,
@@ -307,17 +307,29 @@ composition) is prose beside the block or a separate task report. When there is 
 pull request at all, the report stands on its own, and K8.8 does not weaken.
 K8.9. The set of readiness evidence is **not a constant of this contract but a
 declared policy of the project**. Its carriers are the project's quality contract
-(what CI is composed from) and the `review.requireStamp` setting (`settings.yaml`:
+(what CI is composed from) and the `review.require-stamp` setting (`settings.yaml`
+under `review`; the resolved configuration field is `requireStamp`, the values are
 `auto`/`on`/`off`); the orchestrator must obtain exactly what the project declared
-and name what it obtained -- **including a declared policy that requires no
-stamp**, which is a lawful declaration and not a defect of the run. This project's
-default is three pieces of evidence: (a) **the project's own gates** on the frozen
+and name what it obtained. A project may declare that no stamp is required: the
+value exists in the code (`src/stamp/record-review-stamp.ts`), and a run that acts
+under it says which declaration it acted under rather than passing the absence off
+as an oversight. What this contract cannot do is declare away a rule the project
+itself has not amended: **in THIS project the `off` value is not yet exercisable**,
+because the still-governing quality contract states the pre-merge stamp rule
+unconditionally -- `bun run stamp:check` is the pre-merge gate, no stamp means no
+merge, and it names no setting exception (`docs/contracts/quality.md`,
+2026-09-17, #239/#240). The value is implemented; the text has not been amended to
+admit it, and until a reviewed edit of `quality.md` makes that amendment -- it is
+owed exactly as the mark of K7.3 is owed to `operator-flow.md` -- this project's
+policy is `auto` and the stamp is owed. This project's default is three pieces of
+evidence: (a) **the project's own gates** on the frozen
 tree -- never dispensable; (b) **a fresh review stamp** on that same tree -- the
 stamp covers the whole tree, so a tree that changed after approval (a rebase
 included) is red again and the approval is obtained anew; this is the evidence the
-`review.requireStamp` setting governs, and with that setting at `off` the project
-has declared the stamp away, so it is then not owed and the run says which
-declaration it acted under; (c) CI, when it is available. If CI is objectively
+`review.require-stamp` setting governs, and where a project has lawfully declared
+the stamp away -- by amending the text that states the rule, not by setting a
+value against it -- it is then not owed, and the run names the declaration it
+acted under; (c) CI, when it is available. If CI is objectively
 unavailable (not configured in the project, limits spent), the merge is allowed
 **without it**. What unavailability never cancels is the evidence the declared
 policy still requires -- under the default policy, gates and stamp. The
@@ -347,13 +359,15 @@ the tree moved), and the CI run resumes on the first push.
 
 K9.0. The K9.1 section is not a constant of the contract but a **default of the
 project's settings** (K10). A project may switch off or widen the autonomy inside
-that section -- "like the 50% ceiling", it is a setting of its own. K9.2 is not
-cancelled by a setting from below, and K9.3 even less so: no project setting moves
-an item from K9.3 into K9.1.
+that section **through the settings K10.6 names** -- "like the 50% ceiling", that
+is a setting of its own, and K10.6.1 says what an item without such a setting is.
+K9.2 is not cancelled by a setting from below, and K9.3 even less so: no project
+setting moves an item from K9.3 into K9.1.
 
-**K9.1. On its own** (each item is a flag or a number in the project's settings;
-a flag's default is named where the item is listed, and the list of required
-defaults is K10.6):
+**K9.1. On its own** (the settings this section names are listed with their
+required defaults in K10.6, and a flag's default is named where the item appears;
+an item that names no setting is granted by this contract as part of taking a task
+at all, and is not independently switchable -- K10.6.1):
 K9.1.1. dispatch within the agreed budget;
 K9.1.2. silently raise a ceiling within the `silentRaiseFactor` threshold (K6.2);
 K9.1.3. lower the mode;
@@ -405,11 +419,19 @@ one -- in either direction -- is a deliberate act of the project, named as such
 K10.6. **Every setting this contract names carries a required default**, because
 K10.2 makes an absent setting mean its default; a setting whose default is missing
 is a defect OF THIS CONTRACT, not a free choice for the implementer. The set:
+the mode `manual` (K4.1); the intake mode clarification on (K4.3);
 `silentRaiseFactor` `+50%` (K6.2); `maxContinuations` `3` (K3.4); `waitTimeoutMs`
-`900000` (K7.7); the stamp requirement `review.requireStamp` `auto` (K8.9); the
+`900000` (K7.7); the stamp requirement `review.require-stamp` `auto` (K8.9); the
 "merge green pull requests" flag on (K9.1.5); the "file tickets" flag on
 (K9.1.6); the "own hands beyond the machine bound" flag off (K9.1.8); and the
 delivery surface, whose default is named in K12.
+K10.6.1. An authority of K9.1 that names no setting -- dispatching inside the
+budget, retrying a failed step, reading an artefact -- is not independently
+switchable: it is what taking a task grants, and K9.0's switchability is
+expressed through the settings listed above. A project that wants such an item
+switchable is owed a setting that names it here **with its default**; until that
+setting exists the item is not a switch, and an implementer who invents one has
+invented a setting this contract does not carry.
 
 ## K11. Contract and memory discipline
 
@@ -438,7 +460,7 @@ should say so rather than present its improvisation as the project's rule.
   whether a green one is merged at once, whether a stamp is required -- is a
   REQUIRED project and profile setting, and this clause is honest about its state:
   the setting does not exist in the configuration surfaces yet.
-  `review.requireStamp` has a type, a default, a validator and a gate path; a
+  `review.require-stamp` has a type, a default, a validator and a gate path; a
   delivery-surface setting has none of the four, so the requirement stands
   unimplemented, and its absence is an audit finding (K11.1) rather than a
   described behaviour. Until it exists, this project's declared default is a
@@ -465,3 +487,8 @@ that does not exist yet (#116); `cost-anomaly.md` for the provider's bill as a
 separate entity; `operator-flow.md` for what a pause is and who reports it -- with
 its polling sentence still to be marked superseded by a reviewed edit (K7.3); and
 `docs/ROADMAP.md` for the wait instrument (#563) as a design decision still open.
+Two amendments are owed to other files, and both are edits to those files rather
+than statements this contract can make for them: the supersession mark in
+`operator-flow.md` (K7.3) and the amendment of `quality.md`'s unconditional
+pre-merge stamp rule, which is what keeps `review.require-stamp: off` inert here
+(K8.9).
