@@ -11,6 +11,20 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.155.0] - 2026-09-21
+
+### Fixed
+- **The changelog lists its releases newest first again.** The 0.154.0 entry
+  landed below 0.153.0, so the first release heading a reader met named a
+  version one behind `package.json` -- the one place a reader looks to answer
+  "which release is newest" answered it wrong. Both blocks are back in
+  descending order; nothing shipped changes.
+
+## [0.154.0] - 2026-09-21
+
+### Fixed
+- **A calibration snapshot fills its economics from the declared config (issue #540).** A snapshot's `economics` used to come only from records hand-written into the private user profile, so a `models.yaml` that declares its prices produced a snapshot with none: the config layer's own walk now hands the snapshot a fact per reachable model (input/output prices, plus cache prices and the context window when the row declares them), and the snapshot fills every scope the operator's records do not already answer. Existing records always win; an undeclared cache price is left absent rather than invented as a zero; filled facts are labelled `project-calibration`/`estimated` and dated by the calibration's `observedOn`.
+
 ## [0.153.0] - 2026-09-21
 
 ### Fixed
@@ -19,11 +33,6 @@ enforces that dated release headings go in non-increasing date order
   `run_not_found` detail naming the checked candidates; exit 1 is reserved for
   a positively identified pid that is already dead. Verified stops continue to
   check process identity, target directory, start time, and witness tokens.
-
-## [0.154.0] - 2026-09-21
-
-### Fixed
-- **A calibration snapshot fills its economics from the declared config (issue #540).** A snapshot's `economics` used to come only from records hand-written into the private user profile, so a `models.yaml` that declares its prices produced a snapshot with none: the config layer's own walk now hands the snapshot a fact per reachable model (input/output prices, plus cache prices and the context window when the row declares them), and the snapshot fills every scope the operator's records do not already answer. Existing records always win; an undeclared cache price is left absent rather than invented as a zero; filled facts are labelled `project-calibration`/`estimated` and dated by the calibration's `observedOn`.
 
 ## [0.151.0] - 2026-09-21
 
