@@ -229,6 +229,7 @@ export type {
 export {
   buildBuiltInPipelineTools,
   buildOrchestratorTools,
+  buildReportStatusTool,
   buildRunRoleTool,
   CANCEL_PIPELINE_TOOL_NAME,
   CHOOSE_TRANSITION_TOOL_NAME,
@@ -239,6 +240,7 @@ export {
   PIPELINE_EVENTS_TOOL_NAME,
   PIPELINE_RESULT_TOOL_NAME,
   PIPELINE_STATUS_TOOL_NAME,
+  REPORT_STATUS_TOOL_NAME,
   RESUME_PIPELINE_TOOL_NAME,
   RUN_PIPELINE_TOOL_NAME,
   RUN_ROLE_TOOL_NAME,

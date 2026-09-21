@@ -52,6 +52,7 @@ function subjectOf(projection: ToolActivityProjection | undefined): string {
     projection.command ??
     projection.url ??
     projection.query ??
+    projection.status ??
     projection.skillId ??
     "";
   if (subject === "") return "";

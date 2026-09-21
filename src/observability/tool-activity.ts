@@ -45,6 +45,8 @@ export interface ToolActivityProjection {
   url?: string;
   /** The search pattern or query, bounded. */
   query?: string;
+  /** One-line operator status reported by the orchestrator, bounded. */
+  status?: string;
   /** For an edit: lines added and removed, so a runaway rewrite is visible as it happens. */
   linesAdded?: number;
   linesRemoved?: number;
@@ -263,6 +265,7 @@ const KNOWN_TOOLS: Readonly<Record<string, { activity: ToolActivityKind; publicN
   run_step: { activity: "Tool", publicName: "run_step" },
   choose_transition: { activity: "Tool", publicName: "choose_transition" },
   show_cost: { activity: "Tool", publicName: "show_cost" },
+  report_status: { activity: "Tool", publicName: "report_status" },
   submit_plan: { activity: "Tool", publicName: "submit_plan" },
   submit_verdict: { activity: "Tool", publicName: "submit_verdict" },
   submit_follow_up: { activity: "Tool", publicName: "submit_follow_up" },
@@ -385,6 +388,8 @@ function boundProjection(
   if (url) out.url = redactInlineSecrets(url);
   const query = bound(projection.query);
   if (query) out.query = redactInlineSecrets(query);
+  const status = bound(projection.status);
+  if (status) out.status = redactInlineSecrets(status);
   const added = projection.linesAdded;
   if (added !== undefined && Number.isSafeInteger(added)) out.linesAdded = added;
   const removed = projection.linesRemoved;
@@ -461,6 +466,12 @@ export function projectToolArguments(
   if (url !== undefined && url !== "") projection.url = url;
   const query = bound(pickString(record, SUBJECT_KEYS.query ?? []));
   if (query !== undefined && query !== "") projection.query = query;
+  if (toolName === "report_status") {
+    const status = record.status;
+    if (typeof status === "string" && status.trim() !== "") {
+      projection.status = boundToolActivityText(status.trim(), maxBytes);
+    }
+  }
   // An edit's size, not its text: a rewrite ballooning from three lines to three
   // hundred is exactly what the operator is watching for.
   if (toolName === "read" || toolName === "read_project") {

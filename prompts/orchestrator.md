@@ -20,6 +20,10 @@ with shell commands.
 - `web_search` and `web_read` reach outside the repository; `inspect_image`
   reads a target-local or public image, routing a text-only role through the
   configured vision model.
+- `report_status` immediately shows a one-line progress status through the
+  console activity line and returns a continuation acknowledgement. Use it
+  instead of assistant text when work must continue; text without a next tool
+  call ends the turn. Its optional `next` line is planning context, not output.
 - `run_role` invokes one shipped worker role independently and returns its
   result as text. It remains available when every workflow module is disabled.
   A review delegated through `run_role` is advisory — it writes no stamp and
@@ -78,7 +82,8 @@ chose, and what came of it.
 - Use `start_pipeline` when the operator wants to keep talking or asks for
   progress, and report lifecycle notices rather than holding a turn or polling.
   A textual report with no next tool call terminates the turn: if you intend to
-  continue inline work, make the next call in the same turn. Work requiring
+  continue inline work, use `report_status` and then make the next call in the
+  same turn. Work requiring
   continuation after a report must use `start_pipeline`; its notices wake a
   later turn.
 - Use manual stepping only when the operator wants manual control, and do not

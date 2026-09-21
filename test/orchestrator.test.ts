@@ -35,6 +35,7 @@ import { SUBMIT_FOLLOW_UP_TOOL_NAME } from "../src/orchestration/follow-up";
 import {
   buildBuiltInPipelineTools,
   buildOrchestratorTools,
+  buildReportStatusTool,
   buildRunRoleTool,
   CANCEL_PIPELINE_TOOL_NAME,
   CHOOSE_TRANSITION_TOOL_NAME,
@@ -45,6 +46,7 @@ import {
   PIPELINE_RESULT_TOOL_NAME,
   PIPELINE_STATUS_TOOL_NAME,
   type RaisedStageLimits,
+  REPORT_STATUS_TOOL_NAME,
   RESUME_PIPELINE_TOOL_NAME,
   RUN_PIPELINE_TOOL_NAME,
   RUN_ROLE_TOOL_NAME,
@@ -252,6 +254,7 @@ test("startOrchestrator preserves the resolved seed thinking level", async () =>
     WEB_SEARCH_TOOL_NAME,
     WEB_READ_TOOL_NAME,
     INSPECT_IMAGE_TOOL_NAME,
+    REPORT_STATUS_TOOL_NAME,
     RUN_ROLE_TOOL_NAME,
     LOAD_SKILL_TOOL_NAME,
     RUN_PIPELINE_TOOL_NAME,
@@ -1256,6 +1259,44 @@ async function callTool(tool: Tool, params: Record<string, unknown>): Promise<st
 }
 
 const ALL_KINDS: readonly TransitionKind[] = ["advance", "rework", "stop"];
+
+test("the console orchestrator status tool acknowledges without terminating the ordinary tool path", async () => {
+  const fx = fixture();
+  const pipeline = fx.buildConfig("exercise report_status");
+  const tool = buildReportStatusTool();
+  const schema = tool.parameters as {
+    required?: string[];
+    properties?: Record<string, { pattern?: string }>;
+  };
+  expect(tool.name).toBe(REPORT_STATUS_TOOL_NAME);
+  expect(schema.required).toContain("status");
+  expect(schema.properties?.status?.pattern).toBe("^[^\\r\\n]+$");
+  expect(schema.properties?.next?.pattern).toBe("^[^\\r\\n]+$");
+
+  // The first response invokes the real console tool; the second response is
+  // the evidence that the agent loop continued the same execution batch.
+  fx.faux.setResponses([
+    fauxAssistantMessage(fauxToolCall(REPORT_STATUS_TOOL_NAME, { status: "still working" })),
+    fauxAssistantMessage("continued after status"),
+  ]);
+  const planner = pipeline.roles.planner;
+  if (planner === undefined) throw new Error("fixture planner role is required");
+  const conversation = await startConversationImpl({
+    role: { ...planner.role, activeToolNames: [REPORT_STATUS_TOOL_NAME] },
+    targetDir: fx.targetDir,
+    models: pipeline.models,
+    model: planner.model,
+    ledgerSink: fx.sink,
+    tools: [tool],
+  });
+  try {
+    const result = await conversation.step("continue the work");
+    expect(result.assistantText).toBe("continued after status");
+    expect(result.toolCalls.map(({ toolName }) => toolName)).toEqual([REPORT_STATUS_TOOL_NAME]);
+  } finally {
+    await conversation.close();
+  }
+});
 
 test("built-in pipeline tools are absent until its workflow module is enabled", () => {
   const fx = fixture();

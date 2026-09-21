@@ -104,6 +104,7 @@ export const PIPELINE_STATUS_TOOL_NAME = "pipeline_status";
 export const PIPELINE_EVENTS_TOOL_NAME = "pipeline_events";
 export const PIPELINE_RESULT_TOOL_NAME = "pipeline_result";
 export const CANCEL_PIPELINE_TOOL_NAME = "cancel_pipeline";
+export const REPORT_STATUS_TOOL_NAME = "report_status";
 
 export const DELEGATABLE_ROLE_NAMES = [
   "planner",
@@ -1069,6 +1070,39 @@ const TRIVIAL_EDIT_COVER_FRAMING = [
   "The task names the change (tool, file, +added/-removed lines) and the uncovered window as the guard reports them -- never file contents. Inspect the file's CURRENT content with the read tool before settling.",
 ].join("\n");
 
+/**
+ * Build the console-only progress tool. It returns normally so the agent loop's
+ * ordinary tool-call path continues with another model turn.
+ */
+export function buildReportStatusTool(): Tool {
+  return defineTool({
+    name: REPORT_STATUS_TOOL_NAME,
+    description:
+      "Report one line of continuing work to the operator immediately. Use this tool instead of assistant text when the turn must continue; assistant text without a next tool call ends the turn. The optional next line is planning context and is not displayed.",
+    label: "report status",
+    parameters: Type.Object({
+      status: Type.String({
+        minLength: 1,
+        pattern: "^[^\\r\\n]+$",
+        description: "Required one-line progress status.",
+      }),
+      next: Type.Optional(
+        Type.String({
+          minLength: 1,
+          pattern: "^[^\\r\\n]+$",
+          description: "Optional one-line description of the next action.",
+        }),
+      ),
+    }),
+    async execute() {
+      return {
+        content: [{ type: "text", text: "status acknowledged; continuing" }],
+        details: undefined,
+      };
+    },
+  });
+}
+
 /** Build general role delegation; unlike workflow tools this remains available with no module. */
 export function buildRunRoleTool(
   runRole: (
@@ -1966,6 +2000,7 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
     core,
     [
       ...(seed.pluginTools ?? []),
+      buildReportStatusTool(),
       delegatedRoleTool,
       // Same condition as the delegated roles: pinned skills are already in
       // the prompt, so the loader would have nothing left to fetch.

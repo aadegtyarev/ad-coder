@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.173.0] - 2026-09-21
+
+- Add the console-only `report_status` orchestrator tool for immediate bounded
+  progress activity without ending the continuing turn.
+
 All notable changes to ad-coder are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project aims at
 [Semantic Versioning](https://semver.org/).

@@ -376,6 +376,38 @@ describe("tool activity core", () => {
     expect(JSON.stringify(records)).toContain('"skillId":"unknown"');
   });
 
+  test("report_status renders bounded status as the existing Tool activity subject", () => {
+    const projected = projectToolArguments("report_status", { status: "working\nnext" }, 20);
+    expect(projected?.status).toBe("workingnext");
+    const long = projectToolArguments("report_status", { status: "x".repeat(200) }, 20);
+    expect(Buffer.byteLength(long?.status as string)).toBeLessThanOrEqual(20);
+
+    const channel = new ToolActivityChannel({ groupingRefreshMs: 0, projectionBytes: 20 });
+    const output = new MemoryWritable();
+    const renderer = new ToolActivityRenderer(output, "human", { groupingRefreshMs: 0 });
+    const fake = new FakeEvents();
+    attachToolActivity({
+      channel,
+      events: fake as unknown as Events,
+      targetDir: process.cwd(),
+      role: "orchestrator",
+      runId: "run-1",
+      step: "console",
+    });
+    channel.subscribe((record) => renderer.consume(record));
+    fake.emit("tool_start", {
+      runId: "operation",
+      turnId: "turn",
+      toolCallId: "status-call",
+      toolName: "report_status",
+      args: { status: "working on the bounded status" },
+    });
+    renderer.flush();
+    expect(output.text()).toContain("Tool  working on the bound");
+    expect(output.text()).not.toContain("next");
+    renderer.close();
+  });
+
   test("the skill id is bounded and cleaned like any identifier subject", () => {
     const long = projectToolArguments("load_skill", { id: "x".repeat(400) }, 160);
     expect(long?.skillId).toBeDefined();
