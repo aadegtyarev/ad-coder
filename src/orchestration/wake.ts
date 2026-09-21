@@ -216,9 +216,12 @@ export class WakePump {
           left.lastAt === right.lastAt &&
           left.count === right.count;
         const after = this.deps.listPending();
-        reschedule = pending
-          .filter((wake) => !batch.some((drained) => sameWindow(wake, drained)))
-          .some((wake) => after.some((current) => sameWindow(current, wake)));
+        // Compare the post-turn state to the drained batch, not to the
+        // pre-turn snapshot. A resume can record a fresh pause while the
+        // current turn is settling; that window must get its own later turn.
+        reschedule = after.some(
+          (current) => !batch.some((drained) => sameWindow(current, drained)),
+        );
       } catch (error) {
         // Marking handled touches the same durable state; a failure here leaves
         // the batch to the next nudge, exactly like a failed turn.

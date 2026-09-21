@@ -602,16 +602,24 @@ test("a wake handled after resume cannot hide a re-paused lifecycle", async () =
   );
   const { runId } = manager.start("repause during wake");
   await manager.wait(runId);
+  let wakeTurns = 0;
   const pump = new WakePump({
     listPending: () => manager.pendingWakes(),
     markHandled: (id, wakes) => manager.markWakesHandled(id, wakes),
     runTurn: async () => {
-      manager.projectForegroundPause(runId, stageLimitPause(2), { steps: 2, totalCost: 0.02 });
+      wakeTurns += 1;
+      if (wakeTurns === 1) {
+        manager.projectForegroundPause(runId, stageLimitPause(2), { steps: 2, totalCost: 0.02 });
+      }
     },
   });
   await pump.startupScan();
+  expect(wakeTurns).toBe(2);
+  // The re-pause was drained by the post-settle turn, with no external nudge.
   expect(manager.status(runId).lifecycle).toBe("paused");
-  expect(manager.pendingWakes().filter((wake) => wake.runId === runId)).toHaveLength(1);
+  expect(manager.pendingWakes().filter((wake) => wake.runId === runId)).toHaveLength(0);
+  await settle();
+  expect(wakeTurns).toBe(2);
   await manager.close();
 });
 
