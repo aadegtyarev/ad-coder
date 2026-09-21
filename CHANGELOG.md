@@ -48,6 +48,12 @@ enforces that dated release headings go in non-increasing date order
 
 ## [0.164.0] - 2026-09-21
 
+### Added
+- **Public Telegram room-binding API.** The library now exports a versioned,
+  secret-free room-binding schema and strict parser/serializer, an in-memory
+  store for switchable and fixed rooms, and typed actionable errors for binding
+  failures.
+
 ### Fixed
 - **Foreground pipeline resumes now publish their terminal run record (issue #545).**
   Resumed runs atomically project their completed steps, outcome, and metrics into
