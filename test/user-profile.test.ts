@@ -57,9 +57,58 @@ test("validates the complete inventory-free version-one schema", () => {
     JSON.stringify({ ...base(), economicRecords: [{ ...record, value: "2.5" }] }),
     JSON.stringify({ ...base(), economicRecords: [{ ...record, value: -1 }] }),
     JSON.stringify({ ...base(), economicRecords: [{ ...record, observedAt: "2026-09-13" }] }),
+    JSON.stringify({ ...base(), economicRecords: [{ ...record, confidence: "guess" }] }),
+    JSON.stringify({ ...base(), economicRecords: [{ ...record, source: "not-a-safe-source" }] }),
     JSON.stringify({ ...base(), calibratedRouting: [{ ...cell(), modelsProfile: "" }] }),
     JSON.stringify({ ...base(), calibratedRouting: [{ ...cell(), profile: { entries: "bad" } }] }),
+    JSON.stringify({ ...base(), calibratedRouting: [{ ...cell(), confidence: "guess" }] }),
+    JSON.stringify({
+      ...base(),
+      calibratedRouting: [{ ...cell(), observedOn: "2026-09-13T00:00:00Z" }],
+    }),
+    JSON.stringify({ ...base(), calibratedRouting: [{ ...cell(), source: "private-token" }] }),
+    JSON.stringify({ ...base(), calibratedRouting: [cell(), cell()] }),
+    JSON.stringify({ ...base(), economicRecords: [record, record] }),
+    JSON.stringify({
+      ...base(),
+      subscriptionCapacityRanges: [
+        {
+          provider: "p",
+          unit: "u",
+          lowerBound: 1,
+          upperBound: 2,
+          observedOn: "2026-09-13",
+          source: "https://example.test",
+          confidence: "measured",
+        },
+        {
+          provider: "p",
+          unit: "u",
+          lowerBound: 3,
+          upperBound: 4,
+          observedOn: "2026-09-14",
+          source: "https://example.test",
+          confidence: "measured",
+        },
+      ],
+    }),
     JSON.stringify({ ...base(), subscriptionCapacityRanges: [{ provider: "p" }] }),
+    JSON.stringify({
+      ...base(),
+      subscriptionCapacityRanges: [
+        {
+          provider: "p",
+          unit: "u",
+          lowerBound: 2,
+          upperBound: 1,
+          observedOn: "2026-09-13",
+          source: "https://example.test",
+          confidence: "measured",
+        },
+      ],
+    }),
+    JSON.stringify({ ...base(), subscriptionCapacityRanges: "bad" }),
+    JSON.stringify({ ...base(), calibratedRouting: [{ ...cell(), nested: true }] }),
     JSON.stringify({ ...base(), extra: true }),
   ])
     expect(() => parseUserProfileJson(invalid)).toThrow(UserProfileError);
@@ -124,9 +173,18 @@ test("appends economic history and rejects every history rewrite", async () => {
   await expect(
     profileStore.appendEconomicRecord({ ...second, id: "bad", value: Number.NaN }),
   ).rejects.toMatchObject({ code: "invalid_profile" });
-  await expect(
-    profileStore.write({ ...base(), economicRecords: [{ ...record, id: "price-2", value: 3 }] }),
-  ).rejects.toMatchObject({ code: "conflict" });
+  const rewrites: Array<{ records: UserProfile["economicRecords"]; code: string }> = [
+    { records: [], code: "conflict" },
+    { records: [second, record], code: "invalid_profile" },
+    { records: [{ ...record, value: 99 }, second], code: "conflict" },
+    { records: [record, { ...second, id: "price-3" }], code: "conflict" },
+  ];
+  for (const rewrite of rewrites)
+    await expect(
+      profileStore.write({ ...base(), economicRecords: rewrite.records }),
+    ).rejects.toMatchObject({
+      code: rewrite.code,
+    });
   expect((await profileStore.read()).economicRecords).toEqual([record, second]);
 });
 
@@ -300,33 +358,62 @@ test("rejects secret-bearing imports before publication in both modes", async ()
   }
 });
 
-test("serializes rejected malicious imports with a successful append", async () => {
-  for (const payload of [
-    { ...base(), inventories: [{ name: "attack" }] },
-    { ...base(), calibratedRouting: [{ ...cell(), inventory: "attack" }] },
-  ]) {
-    const { file, store: profileStore } = store();
-    await profileStore.write({ ...base(), economicRecords: [record] });
-    const rejected = profileStore.import(payload, "replace");
-    const appended = profileStore.appendEconomicRecord({
-      ...record,
-      id: "price-race",
-      value: 3,
-      previousId: record.id,
-    });
-    const results = await Promise.allSettled([rejected, appended]);
-    expect(results[0]).toMatchObject({
-      status: "rejected",
-      reason: { code: "invalid_profile" },
-    });
-    expect(results[1]).toMatchObject({ status: "fulfilled" });
-    const expected = {
-      ...base(),
-      economicRecords: [record, { ...record, id: "price-race", value: 3, previousId: record.id }],
-    };
-    expect(await profileStore.read()).toEqual(expected);
-    expect(fs.readFileSync(file, "utf8")).toBe(exportUserProfile(expected));
-  }
+test("rejected imports contend at the file lock while independent appends succeed", async () => {
+  const deferred = () => {
+    let resolve!: () => void;
+    const promise = new Promise<void>((done) => (resolve = done));
+    return { promise, resolve };
+  };
+  for (const mode of ["merge", "replace"] as const)
+    for (const payload of [
+      { ...base(), inventories: [{ name: "attack" }] },
+      { ...base(), calibratedRouting: [{ ...cell(), inventory: "attack" }] },
+    ]) {
+      class BlockingAppendStore extends FileUserProfileStore {
+        block = false;
+        entered = deferred();
+        release = deferred();
+        protected override async beforeCommit() {
+          if (!this.block) return;
+          this.entered.resolve();
+          await this.release.promise;
+        }
+      }
+      const { file } = store();
+      const appendStore = new BlockingAppendStore({ userHome: path.dirname(file), path: file });
+      const importStore = new FileUserProfileStore({ userHome: path.dirname(file), path: file });
+      await appendStore.write({ ...base(), economicRecords: [record] });
+      const before = fs.readFileSync(file);
+      appendStore.block = true;
+      const appendedRecord = {
+        ...record,
+        id: "price-race",
+        value: 3,
+        previousId: record.id,
+      };
+      const appended = appendStore.appendEconomicRecord(appendedRecord);
+      await appendStore.entered.promise;
+      // The rejected import is independent and must wait on the same filesystem
+      // lock, not merely on a private serial queue.
+      const rejected = importStore.import(payload, mode);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(fs.existsSync(`${file}.lock`)).toBe(true);
+      appendStore.release.resolve();
+      const results = await Promise.allSettled([rejected, appended]);
+      expect(results[0]).toMatchObject({
+        status: "rejected",
+        reason: { code: "invalid_profile" },
+      });
+      if (results[0].status === "rejected") {
+        expect(results[0].reason.message).toContain("models.yaml");
+      }
+      expect(results[1]).toMatchObject({ status: "fulfilled" });
+      const expected = { ...base(), economicRecords: [record, appendedRecord] };
+      expect(await appendStore.read()).toEqual(expected);
+      expect(await importStore.read()).toEqual(expected);
+      expect(fs.readFileSync(file, "utf8")).toBe(exportUserProfile(expected));
+      expect(before).not.toEqual(fs.readFileSync(file));
+    }
 });
 
 test("rejects secret-bearing imports in both modes without changing bytes", async () => {

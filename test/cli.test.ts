@@ -631,6 +631,64 @@ test("profile CLI previews and applies a portable import before exporting it", (
   }
 });
 
+test("profile CLI previews conflicts and rejects applying them", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-profile-cli-conflict-"));
+  try {
+    const profilePath = path.join(root, "private", "profile.json");
+    const localPath = path.join(root, "local.json");
+    const conflictPath = path.join(root, "conflict.json");
+    const routing = {
+      modelsProfile: "daily",
+      profile: { entries: [{ role: "coder", complexity: "medium", model: "gpt" }] },
+      observedOn: "2026-09-20",
+      source: "benchmark",
+      confidence: "measured",
+    };
+    const record = {
+      id: "price-1",
+      observedAt: "2026-09-13T00:00:00.000Z",
+      provider: "openai",
+      model: "gpt",
+      kind: "price",
+      value: 2.5,
+      unit: "USD/1M tokens",
+      source: "https://example.test/pricing",
+      confidence: "official",
+    };
+    const document = {
+      version: 1,
+      calibratedRouting: [routing],
+      economicRecords: [record],
+      subscriptionCapacityRanges: [],
+    };
+    fs.writeFileSync(localPath, JSON.stringify(document));
+    const seed = runCli([
+      "profile",
+      "import-apply",
+      "--input",
+      localPath,
+      "--mode",
+      "merge",
+      "--profile-path",
+      profilePath,
+    ]);
+    expect(seed.code).toBe(0);
+    fs.writeFileSync(
+      conflictPath,
+      JSON.stringify({ ...document, economicRecords: [{ ...record, value: 99 }] }),
+    );
+    const args = ["--input", conflictPath, "--mode", "merge", "--profile-path", profilePath];
+    const preview = runCli(["profile", "import-preview", ...args]);
+    expect(preview.code).toBe(0);
+    expect(JSON.parse(preview.stdout).conflicts).toContain("economicRecord:price-1");
+    const apply = runCli(["profile", "import-apply", ...args]);
+    expect(apply.code).toBe(1);
+    expect(JSON.parse(apply.stderr).error.code).toBe("conflict");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("profile CLI appends a server-reported credit balance observation", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-profile-credit-"));
   try {
