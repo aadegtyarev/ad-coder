@@ -532,17 +532,25 @@ export class BackgroundRunManager {
         }
         const attention = isOperatorAttention(error);
         entry.lifecycle = attention ? "operator_attention" : "failed";
+        // The outcome is built BEFORE the append publishes it (issue #534): the
+        // record invariant is `isTerminal(lifecycle) === (outcome !== undefined)`,
+        // so a failed lifecycle published while the outcome is still being
+        // assembled is a record no reader can parse. `load()` drops it silently
+        // and answers `not_found`; `refresh()` throws `state_unavailable`. Both
+        // were observed as flakes of `background status` in the same window.
+        // Every other terminal writer (completed, cancel, timeout, failLaunch)
+        // already orders outcome-then-append; this one now does too, and the
+        // trailing persist is gone because that single append carries both.
+        if (!attention)
+          entry.outcome = {
+            ...this.statusOf(entry),
+            lifecycle: "failed",
+            recovery: "inspect_events",
+          };
         this.append(entry, entry.lifecycle, {
           errorCode: attention ? "operator_attention" : "internal_failure",
           metrics: { ...entry.metrics },
         });
-        if (attention) return;
-        entry.outcome = {
-          ...this.statusOf(entry),
-          lifecycle: "failed",
-          recovery: "inspect_events",
-        };
-        this.persist(entry);
       })
       .finally(() => {
         entry.active = false;
