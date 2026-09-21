@@ -11,6 +11,14 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.159.0] - 2026-09-21
+
+### Fixed
+- **Versioned managed-state writes recover safely from lock contention (issue #542).**
+  Writes now retry briefly while a lock holder is live, refuse with the existing
+  typed conflict when contention remains, and reclaim only a lock whose recorded
+  process start-time witness proves its holder is gone or its pid was reused.
+
 ## [0.158.0] - 2026-09-21
 
 ### Fixed

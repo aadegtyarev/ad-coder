@@ -3,6 +3,12 @@
 For maintainers and reviewers, this contract answers: what may change without
 surprising existing users, and what evidence makes an installable release valid?
 
+- 2026-09-21: Versioned managed-state lock files carry the holder pid and its
+  process start-time witness. Readers must require that witness before reclaiming
+  a lock; pid alone is not evidence because pid reuse can identify another live
+  process. Live contention remains bounded and ends in the existing typed
+  `version_conflict` refusal.
+
 - Public surfaces include exported library symbols and types, CLI commands,
   options, exit behavior and machine JSON, configuration keys and defaults,
   persisted schemas, workflow/plugin interfaces, and documented installation

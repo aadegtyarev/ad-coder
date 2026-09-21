@@ -329,7 +329,7 @@ export class ProjectStore {
   ): VersionedState<T> {
     this.assertInside(destination);
     this.createPrivateDir(path.dirname(destination));
-    const release = this.acquireLock(`${destination}.lock`);
+    const release = this.acquireVersionedLock(`${destination}.lock`);
     try {
       let current: VersionedState<T> | undefined;
       try {
@@ -537,29 +537,111 @@ export class ProjectStore {
     }
   }
 
+  private acquireVersionedLock(lockPath: string): () => void {
+    this.assertDestination(lockPath);
+    const identity = this.processIdentity();
+    const retryDelays = [10, 20, 40, 80];
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return this.createLock(lockPath, identity);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        const holder = this.readVersionedLock(lockPath);
+        if (holder !== undefined && !this.isVersionedLockHolderAlive(holder)) {
+          try {
+            fs.unlinkSync(lockPath);
+          } catch (unlinkError) {
+            if ((unlinkError as NodeJS.ErrnoException).code !== "ENOENT") throw unlinkError;
+          }
+          continue;
+        }
+        const delay = retryDelays[attempt];
+        if (delay === undefined)
+          throw new ProjectStoreError("version_conflict", lockPath, "managed state is locked");
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay);
+      }
+    }
+  }
+
   private acquireLock(lockPath: string): () => void {
     this.assertDestination(lockPath);
-    let fd: number;
     try {
-      fd = fs.openSync(
-        lockPath,
-        fs.constants.O_WRONLY |
-          fs.constants.O_CREAT |
-          fs.constants.O_EXCL |
-          fs.constants.O_NOFOLLOW,
-        0o600,
-      );
-      fs.writeFileSync(fd, `${JSON.stringify({ pid: process.pid })}\n`);
-      fs.fsyncSync(fd);
+      return this.createLock(lockPath, { pid: process.pid });
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "EEXIST")
         throw new ProjectStoreError("version_conflict", lockPath, "managed state is locked");
       throw error;
     }
+  }
+
+  private createLock(lockPath: string, identity: { pid: number; startTime?: string }): () => void {
+    this.assertDestination(lockPath);
+    const fd = fs.openSync(
+      lockPath,
+      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW,
+      0o600,
+    );
+    fs.writeFileSync(fd, `${JSON.stringify(identity)}\n`);
+    fs.fsyncSync(fd);
     return () => {
       fs.closeSync(fd);
       fs.unlinkSync(lockPath);
     };
+  }
+
+  private processIdentity(): { pid: number; startTime: string } {
+    return { pid: process.pid, startTime: this.readProcessStartTime(process.pid) ?? "unavailable" };
+  }
+
+  private readVersionedLock(lockPath: string): { pid: number; startTime: string } | undefined {
+    try {
+      const value = JSON.parse(fs.readFileSync(lockPath, "utf8")) as Record<string, unknown>;
+      if (
+        !Number.isSafeInteger(value.pid) ||
+        (value.pid as number) <= 0 ||
+        typeof value.startTime !== "string" ||
+        (value.startTime !== "unavailable" && !/^\d{1,32}$/.test(value.startTime))
+      )
+        return undefined;
+      return { pid: value.pid as number, startTime: value.startTime };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT" || error instanceof SyntaxError)
+        return undefined;
+      throw error;
+    }
+  }
+
+  private isVersionedLockHolderAlive(holder: { pid: number; startTime: string }): boolean {
+    try {
+      process.kill(holder.pid, 0);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
+      return true;
+    }
+    const current = this.readProcessIdentity(holder.pid);
+    if (current === undefined || holder.startTime === "unavailable") return true;
+    if (current.state === "Z") return false;
+    return current.startTime === holder.startTime;
+  }
+
+  private readProcessStartTime(pid: number): string | undefined {
+    return this.readProcessIdentity(pid)?.startTime;
+  }
+
+  private readProcessIdentity(pid: number): { state: string; startTime: string } | undefined {
+    try {
+      const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+      const tail = stat
+        .slice(stat.lastIndexOf(")") + 2)
+        .trim()
+        .split(" ");
+      const [state = "", startTime] = [tail[0], tail[19]];
+      return state !== undefined && startTime !== undefined && /^\d{1,32}$/.test(startTime)
+        ? { state, startTime }
+        : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   private sessionLeasePath(id: string): string {
