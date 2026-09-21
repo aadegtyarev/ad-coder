@@ -7,6 +7,27 @@ import {
 
 const session = "sessabcdefabcdefabc";
 
+test("expected binding failures expose a safe typed actionable projection", () => {
+  const cases = [
+    ["invalid_binding", "correct the Telegram room binding data, then retry"],
+    ["already_bound", "use the existing binding or remove it before creating another"],
+    ["not_bound", "create the Telegram room binding before attaching or removing it"],
+    ["immutable", "remove the fixed binding before creating a replacement"],
+  ] as const;
+
+  for (const [code, nextAction] of cases) {
+    const error = new TelegramRoomBindingError(code);
+    expect(error.toProjection()).toEqual({
+      code,
+      message: error.message,
+      retryable: false,
+      nextAction,
+    });
+    expect(error.message).not.toContain("targetDir");
+    expect(error.message).not.toContain("session");
+  }
+});
+
 test("switchable rooms start unselected and can be attached", () => {
   const rooms = new TelegramRoomBindingStore();
   expect(rooms.create("personal:42", "switchable", null)).toEqual({

@@ -26,23 +26,63 @@ export interface TelegramRoomBindingRecord {
   readonly sessionId: string | null;
 }
 
-export class TelegramRoomBindingError extends Error {
-  override readonly name = "TelegramRoomBindingError";
-  constructor(readonly code: "invalid_binding" | "already_bound" | "not_bound" | "immutable") {
-    super(telegramRoomBindingErrorMessage(code));
-  }
+export type TelegramRoomBindingErrorCode =
+  | "invalid_binding"
+  | "already_bound"
+  | "not_bound"
+  | "immutable";
+
+const TELEGRAM_ROOM_BINDING_ERROR_DETAILS: Record<
+  TelegramRoomBindingErrorCode,
+  { readonly message: string; readonly nextAction: string }
+> = {
+  invalid_binding: {
+    message: "the Telegram room binding is invalid",
+    nextAction: "correct the Telegram room binding data, then retry",
+  },
+  already_bound: {
+    message: "the Telegram room is already bound",
+    nextAction: "use the existing binding or remove it before creating another",
+  },
+  not_bound: {
+    message: "the Telegram room has no binding",
+    nextAction: "create the Telegram room binding before attaching or removing it",
+  },
+  immutable: {
+    message: "a fixed Telegram room binding cannot be changed",
+    nextAction: "remove the fixed binding before creating a replacement",
+  },
+};
+
+/** A safe, machine-readable projection of an expected binding failure. */
+export interface TelegramRoomBindingErrorProjection {
+  readonly code: TelegramRoomBindingErrorCode;
+  readonly message: string;
+  readonly retryable: false;
+  readonly nextAction: string;
 }
 
-function telegramRoomBindingErrorMessage(code: TelegramRoomBindingError["code"]): string {
-  switch (code) {
-    case "invalid_binding":
-      return "the Telegram room binding is invalid";
-    case "already_bound":
-      return "the Telegram room is already bound";
-    case "not_bound":
-      return "the Telegram room has no binding";
-    case "immutable":
-      return "a fixed Telegram room binding cannot be changed";
+export class TelegramRoomBindingError extends Error implements TelegramRoomBindingErrorProjection {
+  override readonly name = "TelegramRoomBindingError";
+  readonly retryable = false as const;
+  override readonly message: string;
+  readonly nextAction: string;
+
+  constructor(readonly code: TelegramRoomBindingErrorCode) {
+    const details = TELEGRAM_ROOM_BINDING_ERROR_DETAILS[code];
+    super(details.message);
+    this.message = details.message;
+    this.nextAction = details.nextAction;
+  }
+
+  /** Return only the stable fields allowed across a public error boundary. */
+  toProjection(): TelegramRoomBindingErrorProjection {
+    return {
+      code: this.code,
+      message: this.message,
+      retryable: this.retryable,
+      nextAction: this.nextAction,
+    };
   }
 }
 

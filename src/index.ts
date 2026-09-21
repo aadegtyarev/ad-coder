@@ -655,6 +655,8 @@ export type { RoleSkillKit, RoleSkillKitOptions } from "./skills/role-kit";
 export { roleSkillKit } from "./skills/role-kit";
 export type {
   TelegramRoomBinding,
+  TelegramRoomBindingErrorCode,
+  TelegramRoomBindingErrorProjection,
   TelegramRoomBindingKind,
   TelegramRoomBindingRecord,
   TelegramRoomBindingsDocument,
