@@ -420,7 +420,8 @@ it likes" either but a named number or a named class.
 **K9.2. With the operator's permission:**
 K9.2.1. raise a ceiling above the threshold;
 K9.2.2. raise the mode;
-K9.2.3. change the task's budget (including upward, within the threshold -- K6.2);
+K9.2.3. change the task's budget: K6.2 keeps the task's own budget outside the
+silent threshold, so an upward change is the operator's whatever its size;
 K9.2.4. cut the scope of work already started;
 K9.2.5. change profile settings;
 K9.2.6. anything irreversible and outward-facing: a deploy, a publication, sending
