@@ -86,8 +86,11 @@ export class TelegramRoomBindingError extends Error implements TelegramRoomBindi
   }
 }
 
-const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
+const isPlainRecord = (value: unknown): value is Record<string, unknown> => {
+  if (typeof value !== "object" || value === null) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+};
 
 function assertRoomId(roomId: string): string {
   if (
@@ -141,7 +144,7 @@ export function parseTelegramRoomBindings(value: unknown): TelegramRoomBindingsD
 export function serializeTelegramRoomBindings(
   document: TelegramRoomBindingsDocument,
 ): TelegramRoomBindingsDocument {
-  return parseTelegramRoomBindings(JSON.parse(JSON.stringify(document)));
+  return parseTelegramRoomBindings(document);
 }
 
 const copy = (binding: TelegramRoomBinding): TelegramRoomBinding => ({ ...binding });
