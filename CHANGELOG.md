@@ -14,7 +14,10 @@ enforces that dated release headings go in non-increasing date order
 ## [0.177.0] - 2026-09-21
 
 ### Changed
-- Stub heading staked by the coordinator; the lane replaces this line with the real entry.
+- **Console `/cost` now reports cumulative session spend (issue #582).** The
+  amount is the provider-reported ledger total for the orchestrator session
+  root and its delegated/pipeline descendants, and includes the declared
+  `--max-session-cost-usd` cap when configured.
 
 ## [0.175.0] - 2026-09-21
 

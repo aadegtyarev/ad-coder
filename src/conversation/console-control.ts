@@ -92,6 +92,8 @@ export type ConsoleControlResult =
   | { type: "background_cancel"; run: unknown }
   | {
       type: "cost_status";
+      spentUsd?: number;
+      maxCostUsd?: number;
       blocked: readonly { provider: string; model: string; block: Readonly<CostAnomalyBlock> }[];
     }
   | {
@@ -110,6 +112,11 @@ export type ConsoleControlResult =
 export interface CostAnomalyControl {
   blocked(): Array<{ provider: string; model: string; block: Readonly<CostAnomalyBlock> }>;
   release(provider: string, model: string): Readonly<CostAnomalyBlock> | undefined;
+}
+
+/** The session's ledger-backed spend and its optional declared session cap. */
+export interface ConsoleCostControl {
+  status(): { spentUsd: number; maxCostUsd?: number };
 }
 
 export class ConsoleControlError extends Error {
@@ -402,6 +409,8 @@ export function executeConsoleControl(
     backgroundRuns?: BackgroundRunManager;
     /** The same detector the `cost` CLI command drives; the console only renders it. */
     costAnomaly?: CostAnomalyControl;
+    /** Ledger-backed total for the session root and all nested runs. */
+    costSession?: ConsoleCostControl;
     interrupt: () => Promise<boolean>;
     /** Must match a validated manager page limit; protects untrusted adapters too. */
     maxPageSize?: number;
@@ -450,8 +459,14 @@ export function executeConsoleControl(
       case "/cost": {
         requireArgs();
         const detector = costAnomalyFor(command, controls.costAnomaly);
-        if (args.length === 0)
-          return Promise.resolve({ type: "cost_status", blocked: detector.blocked() });
+        if (args.length === 0) {
+          const cost = controls.costSession?.status();
+          return Promise.resolve({
+            type: "cost_status",
+            ...(cost === undefined ? {} : cost),
+            blocked: detector.blocked(),
+          });
+        }
         if (args[0] !== "release") invalidArguments(command, "takes release as its only action");
         const scope = args[1];
         if (scope === undefined) invalidArguments(command, "requires a provider/model scope");

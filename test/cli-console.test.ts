@@ -42,7 +42,7 @@ import {
   BackgroundRunManager,
   type BackgroundRunNotice,
 } from "../src/orchestration/background-runs";
-import { startOrchestrator } from "../src/orchestration/orchestrator";
+import { RUN_ROLE_TOOL_NAME, startOrchestrator } from "../src/orchestration/orchestrator";
 import { PipelinePauseError } from "../src/orchestration/types";
 import { ProjectStoreError } from "../src/project-store/types";
 import { defineRole, type Role } from "../src/role";
@@ -52,6 +52,7 @@ import {
   ProviderQuotaError,
   ProviderRejectionError,
 } from "../src/runner/errors";
+import type { Tool } from "../src/runner/tool";
 import { SessionLimitError } from "../src/session-limits";
 import {
   BUILT_IN_PIPELINE_WORKFLOW,
@@ -3000,6 +3001,85 @@ test("/cost lists blocked scopes and /cost release accepts one price without lea
     model: "@preset/deepseekflash",
   });
   expect(detector.released).toEqual(["openrouter/@preset/deepseekflash"]);
+});
+
+test("/cost reports the real orchestrator root plus delegated ledger total", async () => {
+  const targetDir = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-cost-session-")),
+  );
+  const credentials: CredentialStore = {
+    read: async () => ({ type: "oauth", access: "test", refresh: "test", expires: 0 }),
+    list: async () => [],
+    modify: async (_providerId, fn) => fn(undefined),
+    delete: async () => {},
+  };
+  const row = (runId: string, role: string, cost: number): LedgerRecord => ({
+    ts: 1_757_000_000_000,
+    runId,
+    lane: "main",
+    role,
+    step: "turn:1",
+    provider: "faux",
+    model: "faux-1",
+    stopReason: "stop",
+    usage: {
+      input: 1,
+      output: 1,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 2,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: cost },
+    },
+  });
+  let outerTools: Tool[] = [];
+  const session = await startOrchestrator({
+    targetDir,
+    runId: "cost-session",
+    env: () => undefined,
+    warn: () => {},
+    credentials,
+    enabledWorkflows: [],
+    startConversation: async (config) => {
+      outerTools = config.tools ?? [];
+      config.ledgerSink?.write(row("cost-session", "orchestrator", 0.25));
+      return fakeSession();
+    },
+    startDelegatedConversation: async (config) => {
+      config.ledgerSink?.write(row("delegated-session", config.role.name, 0.5));
+      return fakeSession();
+    },
+  });
+
+  const runRole = outerTools.find(({ name }) => name === RUN_ROLE_TOOL_NAME);
+  expect(runRole).toBeDefined();
+  const execute = (runRole as Tool).execute as unknown as (
+    toolCallId: string,
+    params: Record<string, unknown>,
+  ) => Promise<unknown>;
+  await execute("cost-test", { role: "planner", task: "delegate this" });
+
+  const output = new Capture();
+  const costSession = (
+    session as typeof session & {
+      costSession: { status: () => { spentUsd: number; maxCostUsd?: number } };
+    }
+  ).costSession;
+  await runConsole({
+    session,
+    input: ttyFrom("/cost\n/exit\n"),
+    output,
+    error: new Capture(),
+    mode: "formatted",
+    costAnomaly: fakeCostAnomaly(),
+    costSession,
+  });
+  await session.close();
+
+  expect(costSession.status().spentUsd).toBe(0.75);
+  const text = output.text();
+  expect(text).toContain("session spent $0.750");
+  // A child-only implementation would show $0.500 and fail this assertion.
+  expect(text).not.toContain("session spent $0.500");
 });
 
 test("a formatted /cost renders the amounts, the overcharge, and the release command", async () => {

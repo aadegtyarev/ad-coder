@@ -3160,6 +3160,11 @@ async function consoleCommand(
   );
   const costAnomaly = (session as { costAnomalyDetector?: CostAnomalyDetector })
     .costAnomalyDetector;
+  const costSession = (
+    session as {
+      costSession?: { status: () => { spentUsd: number; maxCostUsd?: number } };
+    }
+  ).costSession;
   const result = await runConsole({
     session,
     input: process.stdin,
@@ -3178,6 +3183,7 @@ async function consoleCommand(
     // `/cost release` has to lift the block that refuses this session's turns,
     // and a front-built copy would only release its own in-memory duplicate.
     ...(costAnomaly === undefined ? {} : { costAnomaly }),
+    ...(costSession === undefined ? {} : { costSession }),
   });
   if (result.reason !== "eof" && result.reason !== "exit") process.exitCode = 1;
 }

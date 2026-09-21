@@ -1,5 +1,11 @@
 # CLI contract
 
+- 2026-09-21 (issue #582): `/cost` reports the cumulative provider-reported
+  ledger spend for the console's orchestrator root and all delegated or
+  pipeline descendant runs; it does not reprice tokens. When the machine-side
+  `--max-session-cost-usd` setting is positive, the formatted surface renders
+  `spent $X of $Y` and JSON carries both numeric values. Existing cost-anomaly
+  blocks and `/cost release` remain unchanged.
 - 2026-09-21 (issue #547): an interactive formatted console projects a wake turn
   owned by its session as `wake turn started`, then renders its sanitized settled
   result with the same foreground renderer and restores `ad-coder> `. JSON and

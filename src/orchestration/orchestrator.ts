@@ -11,6 +11,7 @@ import {
 } from "../conversation/conversation";
 import type { CostAnomalyDetector } from "../economics/cost-anomaly";
 import { CostAnomalyBlockedError } from "../economics/cost-anomaly";
+import { aggregateLedgerRecords } from "../ledger/analytics";
 import type { MemoryLedgerSink } from "../ledger/ledger";
 import { FileLedgerSink, MemoryLedgerSink as MemoryLedgerSinkImpl } from "../ledger/ledger";
 import type { ToolActivityConsumer, ToolActivitySnapshot } from "../observability/tool-activity";
@@ -1658,6 +1659,15 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
   if (config.seedLedgerRecords !== undefined) sink.seed(config.seedLedgerRecords);
   const ownerId = config.backgroundOwnerId ?? crypto.randomUUID();
   const controller = new SessionLimitController(config.sessionLimits);
+  // The shared sink contains the orchestrator row plus every delegated and
+  // pipeline child row. Re-aggregate provider-reported ledger costs on demand;
+  // never reprice tokens or use a child stage's partial total.
+  const costSession = {
+    status: () => ({
+      spentUsd: aggregateLedgerRecords(sink.records()).total.costUsd,
+      ...(controller.limits.maxCostUsd > 0 ? { maxCostUsd: controller.limits.maxCostUsd } : {}),
+    }),
+  };
   // ONE activity channel for the whole orchestrated session. A conversation
   // that is handed no channel builds a private one, so without this every
   // delegated `run_role` worker and every pipeline stage published into a
@@ -2113,6 +2123,10 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
       ...(seed.costAnomalyDetector !== undefined && {
         costAnomalyDetector: seed.costAnomalyDetector,
       }),
+      costSession,
+    } as ConversationSession & {
+      costSession: { status: () => { spentUsd: number; maxCostUsd?: number } };
+      costAnomalyDetector?: CostAnomalyDetector;
     };
   // Wake pump: state notices (paused/failed/...) must start an orchestrator
   // turn even when no front drives one. The pump re-reads durable wake state on
@@ -2198,8 +2212,10 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
     ...(seed.costAnomalyDetector !== undefined && {
       costAnomalyDetector: seed.costAnomalyDetector,
     }),
+    costSession,
   } as ConversationSession & {
     backgroundRuns: BackgroundRunManager;
     costAnomalyDetector?: CostAnomalyDetector;
+    costSession: { status: () => { spentUsd: number; maxCostUsd?: number } };
   };
 }

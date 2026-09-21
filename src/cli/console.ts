@@ -2,6 +2,7 @@ import { ContextCompactionLostError, describeCompactionFailure } from "../contex
 import {
   ConsoleControlError,
   type ConsoleControlFailure,
+  type ConsoleCostControl,
   type CostAnomalyControl,
   DEFAULT_CONSOLE_CONTROL_PAGE_SIZE,
   executeConsoleControl,
@@ -89,6 +90,8 @@ export interface RunConsoleParams {
    * (`docs/contracts/cli.md`).
    */
   costAnomaly?: CostAnomalyControl;
+  /** Ledger-backed session total, including nested pipeline runs. */
+  costSession?: ConsoleCostControl;
 }
 
 export interface ConsoleRunResult {
@@ -415,6 +418,8 @@ function renderControl(
   else if (result.type === "cost_status")
     safe = {
       type: result.type,
+      ...(result.spentUsd === undefined ? {} : { spentUsd: result.spentUsd }),
+      ...(result.maxCostUsd === undefined ? {} : { maxCostUsd: result.maxCostUsd }),
       // Numbers and scope names only -- exactly what the durable block holds.
       blocked: result.blocked.map((scope) => ({
         provider: sanitizeTerminalText(scope.provider),
@@ -453,12 +458,19 @@ function renderControl(
       .join("\n")}\n`;
   }
   if (result.type === "console_control") return `ad-coder: current turn ${result.status}\n`;
-  if (result.type === "cost_status")
-    return `${
+  if (result.type === "cost_status") {
+    const spend =
+      result.spentUsd === undefined
+        ? ""
+        : result.maxCostUsd === undefined
+          ? `ad-coder: session spent ${formatCostUsd(result.spentUsd)}\n`
+          : `ad-coder: session spent ${formatCostUsd(result.spentUsd)} of ${formatCostUsd(result.maxCostUsd)}\n`;
+    const blocked =
       result.blocked
         .map((scope) => renderCostBlock(scope.provider, scope.model, scope.block))
-        .join("\n") || "ad-coder: no model is blocked for billing above its declared price"
-    }\n`;
+        .join("\n") || "ad-coder: no model is blocked for billing above its declared price";
+    return `${spend}${blocked}\n`;
+  }
   if (result.type === "cost_release")
     return `ad-coder: accepted ${formatCostRatio(result.released.ratio)} as the price of ${result.provider}/${result.model}; this model runs again\n`;
   if (result.type === "background_start") {
@@ -906,6 +918,7 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
         : executeConsoleControl(line.trim(), {
             ...(backgroundRuns === undefined ? {} : { backgroundRuns }),
             ...(params.costAnomaly === undefined ? {} : { costAnomaly: params.costAnomaly }),
+            ...(params.costSession === undefined ? {} : { costSession: params.costSession }),
             interrupt: params.session.interrupt ?? (async () => false),
             maxPageSize: controlPageSize,
           });
