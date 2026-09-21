@@ -737,7 +737,7 @@ export function formatPlannerInstruction(): string {
     `When your plan is ready, record it by calling the ${SUBMIT_PLAN_TOOL_NAME} tool.`,
     "Call it with this shape:",
     '{ "complexity": "trivial" | "medium" | "complex", "securitySurface": "none" | "low" | "elevated", "summary": "<short summary>", "contractRequirements": ["<rule>"], "affectedFiles": ["<path>"], "surfaceAnalysis": { "projectType": "<type>", "surfaces": [{"id":"<stable-id>","name":"<surface>","rationale":"<why affected>"}], "coverage": [{"surfaceId":"<stable-id>","status":"covered|not_applicable|research_required","contractIds":["<canonical id>"],"evidence":["<source or gap evidence>"],"rationale":"<decision>"}] } }',
-    "This structured submission is mandatory. Identify every affected product surface before coding.",
+    `This structured submission is mandatory: ${SUBMIT_PLAN_TOOL_NAME} is the structured submission. Prose without a ${SUBMIT_PLAN_TOOL_NAME} tool call is rejected as plan_not_json and the plan is lost; one complete JSON object in the documented shape is accepted as text. Identify every affected product surface before coding.`,
     // The text fallback used to demand a bare object with "no Markdown", which
     // asked models to suppress the fenced form they emit by default and made a
     // recoverable handoff look like a refusal. State what the parser accepts

@@ -11,6 +11,11 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.175.0] - 2026-09-21
+
+### Fixed
+- **Planner handoffs now name the consequence of missing `submit_plan` (issue #554).** Prose without the structured submission is rejected as `plan_not_json` and the plan is lost; one complete JSON object in the documented shape is accepted as text.
+
 ## [0.174.0] - 2026-09-21
 
 ### Added
