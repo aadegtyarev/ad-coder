@@ -14,7 +14,9 @@ enforces that dated release headings go in non-increasing date order
 ## [0.170.0] - 2026-09-21
 
 ### Changed
-- Stub heading staked by the coordinator; the lane replaces this line with the real entry.
+- **Added the orchestrator contract audit (issue #570).** The dated review records
+  current-base evidence for landing-contract clauses K0–K12 and separately
+  identifies a precedence collision with the accepted project rules.
 
 ## [0.164.0] - 2026-09-21
 
