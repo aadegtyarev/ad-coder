@@ -11,6 +11,7 @@ import {
 } from "../src/stamp/delivery-signature";
 import {
   checkReviewStamps,
+  compareVersionFixup,
   localIsoNow,
   readStampsMarker,
   recordReviewStampFromResult,
@@ -166,6 +167,106 @@ function stampFixture() {
     findingsRef: "docs/reviews/stamps.log",
   };
 }
+
+test("version fixup compares only branch paths and the narrow version definition", () => {
+  const base = {
+    "package.json": '{\n  "name": "ad-coder",\n  "version": "0.160.0"\n}\n',
+    "CHANGELOG.md": "## [0.160.0] - 2026-09-20\n\n- reviewed\n",
+  };
+  const current = {
+    ...base,
+    "package.json": '{\n  "name": "ad-coder",\n  "version": "0.161.0"\n}\n',
+    "CHANGELOG.md": "## [0.161.0] - 2026-09-20\n\n- reviewed\n",
+  };
+  expect(
+    compareVersionFixup({
+      reviewed: base,
+      current,
+      mainChangelog: base["CHANGELOG.md"],
+      branchPaths: ["package.json", "CHANGELOG.md"],
+      stampApproved: true,
+      stampMatchesReviewed: true,
+    }).ok,
+  ).toBe(true);
+  expect(
+    compareVersionFixup({
+      reviewed: base,
+      current: { ...current, "src/code.ts": "changed\n" },
+      mainChangelog: base["CHANGELOG.md"],
+      branchPaths: ["package.json", "CHANGELOG.md", "src/code.ts"],
+      stampApproved: true,
+      stampMatchesReviewed: true,
+    }).ok,
+  ).toBe(false);
+  expect(
+    compareVersionFixup({
+      reviewed: base,
+      current: {
+        ...current,
+        "package.json": '{\n  "name": "changed",\n  "version": "0.161.0"\n}\n',
+      },
+      mainChangelog: base["CHANGELOG.md"],
+      branchPaths: ["package.json", "CHANGELOG.md"],
+      stampApproved: true,
+      stampMatchesReviewed: true,
+    }).ok,
+  ).toBe(false);
+});
+
+test("version fixup permits the exact mechanical union of main changelog blocks", () => {
+  const branch = "## [0.161.0] - 2026-09-20\n\n- branch\n";
+  const main = "## [0.160.0] - 2026-09-19\n\n- main\n";
+  expect(
+    compareVersionFixup({
+      reviewed: { "CHANGELOG.md": branch },
+      current: { "CHANGELOG.md": `${branch}\n${main}` },
+      mainChangelog: main,
+      branchPaths: ["CHANGELOG.md"],
+      stampApproved: true,
+      stampMatchesReviewed: true,
+    }).ok,
+  ).toBe(true);
+});
+
+test("version fixup rejects an empty CI branch scope", () => {
+  const result = compareVersionFixup({
+    reviewed: { "src/code.ts": "old\n" },
+    current: { "src/code.ts": "new\n" },
+    mainChangelog: "",
+    branchPaths: [],
+    stampApproved: true,
+    stampMatchesReviewed: true,
+  });
+  expect(result.ok).toBe(false);
+});
+
+test("version fixup rejects historical and unrelated changelog headings", () => {
+  const reviewed =
+    "## [0.161.0] - 2026-09-21\n\n- branch\n\n## [0.160.0] - 2026-09-20\n\n- historical\n";
+  const main = "## [0.160.0] - 2026-09-20\n\n- historical\n";
+  expect(
+    compareVersionFixup({
+      reviewed: { "CHANGELOG.md": reviewed },
+      current: {
+        "CHANGELOG.md": reviewed.replace("[0.160.0]", "[9.9.9]"),
+      },
+      mainChangelog: main,
+      branchPaths: ["CHANGELOG.md"],
+      stampApproved: true,
+      stampMatchesReviewed: true,
+    }).ok,
+  ).toBe(false);
+  expect(
+    compareVersionFixup({
+      reviewed: { "CHANGELOG.md": reviewed },
+      current: { "CHANGELOG.md": `${reviewed}\n## [9.9.9] - 2026-09-22\n` },
+      mainChangelog: main,
+      branchPaths: ["CHANGELOG.md"],
+      stampApproved: true,
+      stampMatchesReviewed: true,
+    }).ok,
+  ).toBe(false);
+});
 
 test("a review stamp round-trips through render and parse", () => {
   const stamp = { ...stampFixture(), treeDigest: "a".repeat(64) };
