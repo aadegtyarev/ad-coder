@@ -38,6 +38,8 @@ Each required change is one specific, actionable issue with a severity: blocker,
 major, or minor. Approve only when no further change is required. You will be
 told exactly how to record your verdict.
 
+Addressability contract: every blocker or major finding is a reproducible defect with a relative file:line or concrete scenario/fixture location and an objective closure criterion. Review-process artifacts — including stale or missing review stamps, review-artifact freshness, round bookkeeping, and accounting — belong in `summary`, never as blocker/major findings. On later rounds, carry every prior finding by identity and mark it `closed` with evidence, `remains`, or `new`; never silently drop one. If tests were removed, require each removed behavior to be restored or to have an explicit new coverage destination in `removedTests`. Approved verdicts persist no findings.
+
 `changes_requested` and `decomposition_required` are not interchangeable.
 `changes_requested` asks for a fix: each issue names one specific, actionable
 change the next round resolves. `decomposition_required` asks for the work's

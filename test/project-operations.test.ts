@@ -270,7 +270,10 @@ test("LDO run imports preserve provenance across reconstruction and resume at co
   fs.writeFileSync(
     source,
     `${JSON.stringify(
-      ldoRun("needs-fix", { coder: ldoCoder(), reviewer1: ldoReview("changes_requested") }),
+      ldoRun("needs-fix", {
+        coder: ldoCoder(),
+        reviewer1: { ...ldoReview("changes_requested"), issues: [] },
+      }),
     )}\n`,
   );
   const store = new ProjectStore(target);
@@ -312,7 +315,17 @@ test("LDO run imports preserve provenance across reconstruction and resume at co
     fauxAssistantMessage(
       fauxToolCall(SUBMIT_VERDICT_TOOL_NAME, {
         status: "approved",
-        issues: [],
+        issues: [
+          {
+            severity: "major",
+            findingId: "fix-it",
+            what: "fix it",
+            location: "src/a.ts:1",
+            closureCriterion: "the focused regression test passes",
+            resolution: "closed",
+            evidence: "the focused regression test passes",
+          },
+        ],
         summary: "approved",
       }),
     ),
@@ -2236,7 +2249,15 @@ test("a failed contract re-review cannot close approved", async () => {
     async reviewCurrent(state) {
       const verdict: Verdict = {
         status: "changes_requested",
-        issues: [{ severity: "major", what: "Rule is not satisfied" }],
+        issues: [
+          {
+            severity: "major",
+            findingId: "rule-not-satisfied",
+            what: "Rule is not satisfied",
+            location: "src/example.ts:1",
+            closureCriterion: "the focused regression test passes",
+          },
+        ],
         summary: "correction required",
       };
       return {

@@ -11,6 +11,11 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.156.0] - 2026-09-21
+
+- Require stable identities and explicit closure evidence for blocker/major findings across review rounds.
+- Enforce machine-inventoried removed-test coverage declarations and document the review-artifact boundary as a project contract.
+
 ## [0.155.0] - 2026-09-21
 
 ### Fixed
@@ -33,6 +38,10 @@ enforces that dated release headings go in non-increasing date order
   `run_not_found` detail naming the checked candidates; exit 1 is reserved for
   a positively identified pid that is already dead. Verified stops continue to
   check process identity, target directory, start time, and witness tokens.
+
+## [0.152.0] - 2026-09-21
+
+- Make review findings addressable and reproducible, carry bounded prior-round findings safely, and require explicit coverage fate for removed tests.
 
 ## [0.151.0] - 2026-09-21
 

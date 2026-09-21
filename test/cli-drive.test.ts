@@ -155,7 +155,15 @@ test("a scripted choice sequence drives the loop and settles on the chosen stop"
   const reviewer = reviewerRole(fx);
   const changes: Verdict = {
     status: "changes_requested",
-    issues: [{ severity: "major", what: "fix it" }],
+    issues: [
+      {
+        severity: "major",
+        findingId: "fix-it",
+        what: "fix it",
+        location: "src/example.ts:1",
+        closureCriterion: "the focused regression test passes",
+      },
+    ],
     summary: "needs work",
   };
   fx.faux.setResponses([fauxAssistantMessage("coded once"), ...reviewerTurn(changes)]);
@@ -500,10 +508,32 @@ test("auto:true reproduces runPipeline's approved/rounds/verdicts on the same sc
   const reviewer = reviewerRole(fx);
   const changes: Verdict = {
     status: "changes_requested",
-    issues: [{ severity: "major", what: "add a guard" }],
+    issues: [
+      {
+        severity: "major",
+        findingId: "add-guard",
+        what: "add a guard",
+        location: "src/example.ts:1",
+        closureCriterion: "the focused regression test passes",
+      },
+    ],
     summary: "again",
   };
-  const approve: Verdict = { status: "approved", issues: [], summary: "fixed" };
+  const approve: Verdict = {
+    status: "approved",
+    issues: [
+      {
+        severity: "major",
+        findingId: "add-guard",
+        what: "add a guard",
+        location: "src/example.ts:1",
+        closureCriterion: "the focused regression test passes",
+        resolution: "closed",
+        evidence: "the focused regression test passes",
+      },
+    ],
+    summary: "fixed",
+  };
   const script: FauxResponseStep[] = [
     fauxAssistantMessage(
       fauxToolCall(SUBMIT_FOLLOW_UP_TOOL_NAME, {

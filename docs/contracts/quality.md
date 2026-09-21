@@ -2,6 +2,21 @@
 
 Rules for the project's own code quality. A violation is always blocking.
 
+- 2026-09-21: **Review artifacts are not product findings.** The structured
+  `submit_verdict` boundary accepts blocker/major findings only when each has a
+  stable `findingId`, a bounded location, and an objective closure criterion.
+  Subsequent verdicts must account for every prior identity as `closed` with
+  evidence or `remains`; `new` is reserved for a new identity. Review stamps,
+  freshness, round bookkeeping, and accounting are process evidence and belong
+  in `summary`, never in blocker/major issues.
+- 2026-09-21: **Removed test coverage fate is machine-enforced.** The reviewer
+  receives an inventory of non-empty removed lines from changed test files in
+  the bounded diff. When that inventory is available, every entry must appear
+  exactly once in `removedTests` with `fate: restored` or `fate: moved` and a
+  concrete destination; an omitted entry is a malformed verdict. This contract
+  deliberately governs observable diff lines, not an impossible claim to infer
+  the semantic meaning of arbitrary deleted code.
+
 - 2026-09-17: **A review stamp the gate checks: no stamp, no merge (issue
   #239, closed with #240).** The stamp certifies that a review round happened
   and names what it reviewed: the working-tree digest of the tree at review

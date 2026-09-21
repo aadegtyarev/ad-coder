@@ -49,7 +49,33 @@ export type IssueSeverity = "blocker" | "major" | "minor";
  */
 export interface VerdictIssue {
   severity: IssueSeverity;
+  /** Stable, relative file:line or scenario/fixture address for a reproducible finding. */
+  location?: string;
+  /** Objective observation that proves the finding is closed. */
+  closureCriterion?: string;
+  /** Bounded model-authored description, carried as untrusted data. */
   what: string;
+  /** Optional identity used to distinguish carried findings from new findings. */
+  findingId?: string;
+  /** Resolution of a carried finding in a subsequent review. */
+  resolution?: "closed" | "remains" | "new";
+  /** Evidence supporting a closed resolution. */
+  evidence?: string;
+}
+
+export interface RemovedTestBehavior {
+  /** Exact identity from the machine-collected removed-test inventory. */
+  removedTestId: string;
+  behavior: string;
+  fate: "restored" | "moved";
+  destination: string;
+}
+
+export interface RemovedTestInventoryEntry {
+  removedTestId: string;
+  path: string;
+  line: number;
+  text: string;
 }
 
 export interface ReviewCoverage {
@@ -73,6 +99,8 @@ export interface Verdict {
   summary: string;
   /** Exact resolved governance matrix reviewed in this round. */
   coverage?: ReviewCoverage[];
+  /** Machine-visible fate of test behaviours removed by the change. */
+  removedTests?: RemovedTestBehavior[];
 }
 
 /**
