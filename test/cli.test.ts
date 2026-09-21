@@ -606,7 +606,6 @@ test("profile CLI previews and applies a portable import before exporting it", (
     const inputPath = path.join(root, "portable.json");
     const portable = {
       version: 1,
-      inventories: [{ name: "work", providers: [{ id: "codex", models: ["codex-terra"] }] }],
       calibratedRouting: [],
       economicRecords: [],
       subscriptionCapacityRanges: [],
@@ -617,7 +616,7 @@ test("profile CLI previews and applies a portable import before exporting it", (
     expect(preview.code).toBe(0);
     expect(JSON.parse(preview.stdout)).toMatchObject({
       mode: "merge",
-      creates: ["inventory:work"],
+      creates: [],
     });
     expect(fs.existsSync(profilePath)).toBe(false);
 
@@ -805,22 +804,6 @@ test("profile CLI returns stable JSON errors for invalid input, conflicts, and u
       expect(result.code).toBe(1);
       expect(JSON.parse(result.stderr).error.code).toBe("invalid_profile");
     }
-
-    const first = JSON.stringify({
-      version: 1,
-      inventories: [{ name: "work", providers: [{ id: "codex", models: ["terra"] }] }],
-      calibratedRouting: [],
-      economicRecords: [],
-      subscriptionCapacityRanges: [],
-    });
-    expect(runImport("first", first, "import-apply").code).toBe(0);
-    const conflicting = first.replace('"terra"', '"sol"');
-    const conflict = runImport("conflict", conflicting);
-    expect(conflict.code).toBe(0);
-    expect(JSON.parse(conflict.stdout).conflicts).toEqual(["inventory:work"]);
-    const applyConflict = runImport("conflict-apply", conflicting, "import-apply");
-    expect(applyConflict.code).toBe(1);
-    expect(JSON.parse(applyConflict.stderr).error.code).toBe("conflict");
 
     const unsafe = runCli(["profile", "show", "--profile-path", root]);
     expect(unsafe.code).toBe(1);

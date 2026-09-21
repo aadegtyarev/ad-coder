@@ -66,7 +66,6 @@ import { DEFAULT_MAX_PROJECTS } from "../session-manager/manager";
 import { pluginNamesFromToolNames } from "../skills/resolver";
 import { LOAD_SKILL_TOOL_NAME, roleSkillKit } from "../skills/role-kit";
 import { resolveStampRequirement } from "../stamp/record-review-stamp";
-import type { CalibrationSource } from "../user-profile";
 import { buildImageInspectionTool, buildWebTools } from "../web/tools";
 import { BUILT_IN_PIPELINE_WORKFLOW_NAME } from "../workflows/builtin-pipeline";
 import { printStartupBannerOnce } from "./startup-banner";
@@ -899,7 +898,7 @@ function resolveConfig(
   // `models.yaml`. The retired JSON-inventory namespace (#513) is gone with the
   // route: a snapshot calibrated against an inventory naming the same string is
   // no longer the same source, because there is no such source to be.
-  const selectedSource: CalibrationSource | undefined =
+  const selectedSource: { kind: "models-profile"; name: string } | undefined =
     yamlSelection !== undefined ? { kind: "models-profile", name: yamlSelection.name } : undefined;
   // Read only when a source is selected: a snapshot can apply to nothing else,
   // and a target directory's malformed snapshot must not fail a run that could

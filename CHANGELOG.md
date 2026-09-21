@@ -11,6 +11,11 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.151.0] - 2026-09-20
+
+### Changed
+- **Personal profiles no longer treat JSON inventories as routing sources (issue #536).** Legacy `inventories: []` is accepted and dropped; non-empty inventories and inventory calibrated-routing entries receive a typed remedy directing operators to a named `models.yaml` profile. Writers and project-calibration envelopes never emit the obsolete key, while `modelsProfile` routing remains supported.
+
 ## [0.150.0] - 2026-09-21
 
 ### Fixed

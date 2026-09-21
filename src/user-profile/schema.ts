@@ -5,12 +5,10 @@ import type {
   EconomicConfidence,
   EconomicRecord,
   EconomicRecordKind,
-  ModelInventoryConfig,
   SubscriptionCapacityRange,
   UserProfile,
   UserProfileCapabilities,
 } from "./types";
-import { calibrationSourceOf } from "./types";
 
 const ECONOMIC_KINDS = new Set<EconomicRecordKind>([
   "price",
@@ -85,16 +83,11 @@ function parseCalibratedRouting(value: unknown): CalibratedRouting {
     ["inventory", "modelsProfile", "profile", "observedOn", "source", "confidence"],
     "calibrated routing",
   );
-  // EXACTLY ONE SOURCE (issue #506). Both present is ambiguous -- the two
-  // namespaces resolve against different model sets -- and neither is no
-  // source at all. Each shape is named in its own message so the refused
-  // document says which mistake it made.
-  const namesInventory = routing.inventory !== undefined;
-  const namesModelsProfile = routing.modelsProfile !== undefined;
-  if (namesInventory && namesModelsProfile)
-    invalid("calibrated routing must name either an inventory or a models profile, not both");
-  if (!namesInventory && !namesModelsProfile)
-    invalid("calibrated routing must name an inventory or a models profile");
+  if (routing.inventory !== undefined)
+    invalid(
+      "calibratedRouting.inventory is not a routing source: JSON inventory is not a routing source; name a models.yaml profile instead (for example, `ad-coder profile snapshot --models-profile <name>`)",
+    );
+  if (routing.modelsProfile === undefined) invalid("calibrated routing must name a models profile");
   if (
     typeof routing.confidence !== "string" ||
     !CONFIDENCES.has(routing.confidence as EconomicConfidence)
@@ -114,19 +107,10 @@ function parseCalibratedRouting(value: unknown): CalibratedRouting {
   }
   try {
     return {
-      ...(namesInventory
-        ? {
-            inventory: string(
-              routing.inventory,
-              "calibrated routing inventory must be a non-empty string",
-            ),
-          }
-        : {
-            modelsProfile: string(
-              routing.modelsProfile,
-              "calibrated routing models profile must be a non-empty string",
-            ),
-          }),
+      modelsProfile: string(
+        routing.modelsProfile,
+        "calibrated routing models profile must be a non-empty string",
+      ),
       profile: parseProfile(profileValue),
       observedOn: date(
         routing.observedOn,
@@ -169,39 +153,6 @@ function parseSubscriptionCapacityRange(value: unknown): SubscriptionCapacityRan
     source: safeSource(range.source, "subscription capacity source must be a non-empty string"),
     confidence: range.confidence as EconomicConfidence,
   };
-}
-
-function parseInventory(value: unknown): ModelInventoryConfig {
-  const entry = object(value, "inventory must be an object");
-  exactKeys(entry, ["name", "providers", "default"], "inventory");
-  const name = string(entry.name, "inventory.name must be a non-empty string");
-  if (!Array.isArray(entry.providers) || entry.providers.length === 0)
-    invalid("inventory.providers must be a non-empty array");
-  const providerIds = new Set<string>();
-  const providers = entry.providers.map((providerValue) => {
-    const provider = object(providerValue, "inventory provider must be an object");
-    exactKeys(provider, ["id", "models"], "inventory provider");
-    const id = string(provider.id, "inventory provider id must be a non-empty string");
-    if (providerIds.has(id)) invalid("inventory provider ids must be unique");
-    providerIds.add(id);
-    if (
-      !Array.isArray(provider.models) ||
-      provider.models.length === 0 ||
-      provider.models.some((model) => typeof model !== "string" || model.trim().length === 0)
-    )
-      invalid("inventory provider models must be a non-empty array of non-empty strings");
-    if (new Set(provider.models).size !== provider.models.length)
-      invalid("inventory provider models must be unique");
-    return { id, models: [...provider.models] };
-  });
-  const defaultModel =
-    entry.default === undefined ? undefined : string(entry.default, "inventory.default");
-  if (
-    defaultModel !== undefined &&
-    !providers.some((provider) => provider.models.includes(defaultModel))
-  )
-    invalid("inventory.default must name a declared model");
-  return { name, providers, ...(defaultModel === undefined ? {} : { default: defaultModel }) };
 }
 
 export function parseEconomicRecord(value: unknown): EconomicRecord {
@@ -282,48 +233,25 @@ export function parseUserProfile(value: unknown): UserProfile {
       "unsupported user profile version",
     );
   if (
-    !Array.isArray(profile.inventories) ||
-    !Array.isArray(profile.calibratedRouting) ||
-    !Array.isArray(profile.economicRecords) ||
-    !Array.isArray(profile.subscriptionCapacityRanges)
+    profile.inventories !== undefined &&
+    (!Array.isArray(profile.inventories) || profile.inventories.length > 0)
   )
     invalid(
-      "profile inventories, calibratedRouting, economicRecords, and subscriptionCapacityRanges must be arrays",
+      "inventories is not a routing source: JSON inventory is not a routing source; name a models.yaml profile instead (for example, `ad-coder profile snapshot --models-profile <name>`)",
     );
+  if (!Array.isArray(profile.calibratedRouting))
+    invalid("profile.calibratedRouting must be an array");
+  if (!Array.isArray(profile.economicRecords)) invalid("profile.economicRecords must be an array");
+  if (!Array.isArray(profile.subscriptionCapacityRanges))
+    invalid("profile.subscriptionCapacityRanges must be an array");
   const capabilities =
     profile.capabilities === undefined ? undefined : parseCapabilities(profile.capabilities);
-  const inventories = profile.inventories.map(parseInventory);
-  const names = new Set<string>();
-  for (const inventory of inventories) {
-    if (names.has(inventory.name)) invalid("inventory names must be unique");
-    names.add(inventory.name);
-  }
   const calibratedRouting = profile.calibratedRouting.map(parseCalibratedRouting);
   const routingSources = new Set<string>();
-  let hasModelsProfileSource = false;
   for (const routing of calibratedRouting) {
-    const source = calibrationSourceOf(routing);
-    if (source === undefined)
-      invalid("calibrated routing must name an inventory or a models profile");
-    // The kind is part of the identity: a JSON inventory and a models.yaml
-    // profile may legitimately share a name, and they are different sources.
-    const key = `${source.kind}\u0000${source.name}`;
-    if (routingSources.has(key)) invalid("calibrated routing sources must be unique");
-    routingSources.add(key);
-    if (source.kind === "models-profile") {
-      // The model list of a models.yaml profile lives in `models.yaml`, which
-      // this stored document deliberately does not copy. Membership is checked
-      // where that file IS loaded: `profile snapshot --models-profile` refuses
-      // a cell the selected profile cannot serve, and the route itself refuses
-      // an unknown model at resolution.
-      hasModelsProfileSource = true;
-      continue;
-    }
-    const inventory = inventories.find((entry) => entry.name === source.name);
-    if (inventory === undefined) invalid("calibrated routing must reference a declared inventory");
-    const models = new Set(inventory.providers.flatMap((provider) => provider.models));
-    if (routing.profile.entries.some((entry) => !models.has(entry.model)))
-      invalid("calibrated routing models must belong to its inventory");
+    if (routingSources.has(routing.modelsProfile))
+      invalid("calibrated routing models profiles must be unique");
+    routingSources.add(routing.modelsProfile);
   }
   const economicRecords = profile.economicRecords.map(parseEconomicRecord);
   const recordsById = new Map<string, EconomicRecord>();
@@ -346,22 +274,6 @@ export function parseUserProfile(value: unknown): UserProfile {
   const subscriptionCapacityRanges = profile.subscriptionCapacityRanges.map(
     parseSubscriptionCapacityRange,
   );
-  const inventoryProviders = new Set(
-    inventories.flatMap((inventory) => inventory.providers.map((provider) => provider.id)),
-  );
-  // A capacity range is scoped to a provider of a declared routing source. For
-  // the inventory arm this document holds the provider list and can check it
-  // here; for a models-profile source the providers live in `models.yaml`,
-  // which is not readable from a stored profile document, so the check is
-  // deferred to the one place that loads it -- `profile snapshot`, which keeps
-  // only the ranges whose provider the selected profile actually reaches
-  // (issue #506). The strict check still applies whenever every source is an
-  // inventory, so a document with no models-profile source cannot loosen it.
-  if (
-    !hasModelsProfileSource &&
-    subscriptionCapacityRanges.some((range) => !inventoryProviders.has(range.provider))
-  )
-    invalid("subscription capacity provider must belong to a declared inventory provider");
   const capacityKeys = new Set<string>();
   for (const range of subscriptionCapacityRanges) {
     const key = `${range.provider}\u0000${range.unit}`;
@@ -371,7 +283,6 @@ export function parseUserProfile(value: unknown): UserProfile {
   }
   return {
     version: 1,
-    inventories,
     calibratedRouting,
     economicRecords,
     subscriptionCapacityRanges,
