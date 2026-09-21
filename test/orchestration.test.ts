@@ -595,6 +595,52 @@ test("later rounds accept a prior minor finding without an identity", () => {
   expect(roundTwo.status).toBe("approved");
 });
 
+test("later rounds reject an omitted id-bearing minor and accept its resolution", () => {
+  const prior = parseVerdict(
+    {
+      status: "changes_requested",
+      issues: [
+        {
+          severity: "minor",
+          findingId: "carried-minor",
+          what: "polish the wording",
+        },
+      ],
+      summary: "minor follow-up",
+    },
+    "round-1",
+  );
+
+  expect(() =>
+    parseVerdict(
+      { status: "approved", issues: [], summary: "silently dropped" },
+      "round-2",
+      undefined,
+      prior.issues,
+    ),
+  ).toThrow(/carried-minor/);
+
+  const resolved = parseVerdict(
+    {
+      status: "changes_requested",
+      issues: [
+        {
+          severity: "minor",
+          findingId: "carried-minor",
+          what: "polish the wording",
+          resolution: "closed",
+          evidence: "focused regression passes",
+        },
+      ],
+      summary: "minor resolved",
+    },
+    "round-2",
+    undefined,
+    prior.issues,
+  );
+  expect(resolved.issues[0]?.resolution).toBe("closed");
+});
+
 test("later rounds accept a new id-less minor alongside a carried major", () => {
   const priorMajor = parseVerdict(
     {

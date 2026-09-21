@@ -311,12 +311,10 @@ export function parseVerdict(
       'verdict.issues must name at least one REMAINING defect when verdict.status is "changes_requested" (an empty list means nothing must change: resolved findings belong in verdict.summary, and "approved" is the verdict with an empty verdict.issues); resubmit the corrected verdict',
     );
 
-  // Minor findings are intentionally not identity-accounted: their contract does
-  // not require a findingId, so carrying one into the next round must not make a
-  // valid round-1 verdict impossible to resolve. Blocker and major findings remain
-  // identity-accounted and therefore retain the stable-ID requirement.
+  // Findings with an ID are identity-accounted regardless of severity. Preserve
+  // compatibility only for prior minor findings that never had an ID.
   const carriedFindings = priorFindings.filter(
-    (finding) => finding.severity === "blocker" || finding.severity === "major",
+    (finding) => finding.findingId !== undefined || finding.severity !== "minor",
   );
   if (carriedFindings.length > 0) {
     const priorIds = new Set(carriedFindings.map((finding) => finding.findingId));
