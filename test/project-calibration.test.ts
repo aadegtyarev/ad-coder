@@ -18,6 +18,10 @@ const workSource = {
   kind: "models-profile" as const,
   name: "work",
   providers: [{ id: "codex", models: ["luna", "terra"] }],
+  // No declared facts: this source models a `models.yaml` whose rows state no
+  // prices at all, which is the case every existing expectation was written
+  // against -- economics then come from the profile's own records alone.
+  facts: [],
 };
 
 const profile = {
@@ -145,6 +149,7 @@ test("a snapshot calibrated against a models.yaml profile names it, in its own n
       kind: "models-profile" as const,
       name: "codex-pro100",
       providers: [{ id: "openai-codex", models: ["gpt-5.6-luna"] }],
+      facts: [],
     };
     const snapshot = createProjectCalibrationSnapshot(modelsProfile, source);
     // The source is named in ITS OWN namespace: a models.yaml profile is never
@@ -184,6 +189,7 @@ test("a snapshot calibrated against a models.yaml profile names it, in its own n
         kind: "models-profile",
         name: "other",
         providers: [],
+        facts: [],
       }),
     ).toThrow(UserProfileError);
   } finally {
@@ -303,4 +309,129 @@ test("a snapshot naming a JSON inventory is refused by name, with the command th
   // fail the exact-field-set comparison instead and never mention any of this.
   expect(refusal.message).not.toContain("fields are invalid");
   expect(refusal.detail).not.toBe("snapshot");
+});
+
+test("a snapshot fills economics from the declared facts its source carries (#540)", () => {
+  const source = {
+    kind: "models-profile" as const,
+    name: "codex-pro100",
+    providers: [{ id: "openai-codex", models: ["gpt-5.6-luna", "gpt-5.6-terra"] }],
+    facts: [
+      {
+        provider: "openai-codex",
+        model: "gpt-5.6-luna",
+        input: 0.2,
+        output: 1.2,
+        cacheRead: 0.02,
+        contextWindow: 200000,
+      },
+      // No cacheRead/cacheWrite/contextWindow: this row declares none, and a
+      // snapshot states what the file says rather than settling them to zero.
+      { provider: "openai-codex", model: "gpt-5.6-terra", input: 2, output: 12 },
+      // Out of scope: the walk does not reach it, so it is not written.
+      { provider: "openai-codex", model: "ghost", input: 9, output: 9 },
+    ],
+  };
+  const document = {
+    version: 1 as const,
+    inventories: [],
+    calibratedRouting: [
+      {
+        modelsProfile: "codex-pro100",
+        profile: {
+          entries: [
+            { role: "coder" as const, complexity: "trivial" as const, model: "gpt-5.6-luna" },
+            { role: "coder" as const, complexity: "medium" as const, model: "gpt-5.6-terra" },
+          ],
+        },
+        observedOn: "2026-09-21",
+        source: "benchmark",
+        confidence: "measured" as const,
+      },
+    ],
+    // The operator answered exactly ONE scope by hand.
+    economicRecords: [
+      {
+        id: "luna-input-observed",
+        observedAt: "2026-09-20T00:00:00.000Z",
+        provider: "openai-codex",
+        model: "gpt-5.6-luna",
+        kind: "price" as const,
+        value: 0.25,
+        unit: "usd_per_million_input",
+        source: "provider-measurement",
+        confidence: "measured" as const,
+      },
+    ],
+    subscriptionCapacityRanges: [],
+  };
+  const snapshot = createProjectCalibrationSnapshot(document, source);
+  const at = (model: string, unit: string) =>
+    snapshot.economics.find((entry) => entry.model === model && entry.unit === unit);
+
+  // The answered scope keeps THEIR number, provenance and all...
+  expect(at("gpt-5.6-luna", "usd_per_million_input")).toMatchObject({
+    value: 0.25,
+    source: "provider-measurement",
+    confidence: "measured",
+    observedOn: "2026-09-20",
+  });
+  // ...and the rest of that model is filled from the file, dated by the
+  // calibration's own observation day and labelled as what it is.
+  expect(at("gpt-5.6-luna", "usd_per_million_output")).toMatchObject({
+    kind: "price",
+    value: 1.2,
+    source: "project-calibration",
+    confidence: "estimated",
+    observedOn: "2026-09-21",
+  });
+  expect(at("gpt-5.6-luna", "usd_per_million_cached_input")).toMatchObject({ value: 0.02 });
+  expect(at("gpt-5.6-luna", "tokens")).toMatchObject({
+    kind: "context_limit",
+    value: 200000,
+  });
+  // The second model is filled too, and its undeclared facts stay absent.
+  expect(at("gpt-5.6-terra", "usd_per_million_input")).toMatchObject({ value: 2 });
+  expect(at("gpt-5.6-terra", "usd_per_million_output")).toMatchObject({ value: 12 });
+  expect(at("gpt-5.6-luna", "usd_per_million_cache_write")).toBeUndefined();
+  expect(at("gpt-5.6-terra", "usd_per_million_cache_write")).toBeUndefined();
+  expect(at("gpt-5.6-terra", "tokens")).toBeUndefined();
+  // A fact for a model outside the walk's scope is not written, whatever it says.
+  expect(snapshot.economics.some((entry) => entry.model === "ghost")).toBe(false);
+
+  // The filled records survive the parser a committed snapshot goes through:
+  // building the snapshot already re-parsed them, and the round-trip is equal.
+  expect(parseProjectCalibrationSnapshot(snapshot)).toEqual(snapshot);
+});
+
+test("a profile with no records at all still yields a snapshot with declared economics (#540)", () => {
+  const source = {
+    kind: "models-profile" as const,
+    name: "work",
+    providers: [{ id: "codex", models: ["luna"] }],
+    facts: [{ provider: "codex", model: "luna", input: 1, output: 4, contextWindow: 100000 }],
+  };
+  const empty = {
+    version: 1 as const,
+    inventories: [],
+    calibratedRouting: [
+      {
+        modelsProfile: "work",
+        profile: {
+          entries: [{ role: "coder" as const, complexity: "trivial" as const, model: "luna" }],
+        },
+        observedOn: "2026-09-21",
+        source: "benchmark",
+        confidence: "measured" as const,
+      },
+    ],
+    economicRecords: [],
+    subscriptionCapacityRanges: [],
+  };
+  const snapshot = createProjectCalibrationSnapshot(empty, source);
+  expect(snapshot.economics.map((entry) => entry.unit).sort()).toEqual([
+    "tokens",
+    "usd_per_million_input",
+    "usd_per_million_output",
+  ]);
 });

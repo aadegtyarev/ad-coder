@@ -166,10 +166,35 @@ export function toRegistryProvider(
  * no enabled provider declares contributes nothing here; the resolver raises
  * `unknown_model` for it at run time, loudly, which is where that belongs.
  */
+/**
+ * The economic facts ONE reachable model resolves to, in the shape the
+ * calibration layer fills a snapshot's `economics` from (issue #540).
+ *
+ * A field is present exactly when the config file (or the catalog it names)
+ * declared it: `input`/`output` are required rows, while an absent `cacheRead`,
+ * `cacheWrite` or `contextWindow` is a number the operator never stated -- and
+ * a snapshot states only what the file says, rather than dressing the
+ * resolver's zero-settlement up as a fact. Prices are per MILLION tokens, the
+ * unit the resolver bills in.
+ */
+export type ModelsProfileFact = {
+  provider: string;
+  model: string;
+  input: number;
+  output: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  contextWindow?: number;
+};
+
 export function modelsProfileSource(
   config: ModelsConfig,
   profileName?: string,
-): { name: string; providers: Array<{ id: string; models: string[] }> } {
+): {
+  name: string;
+  providers: Array<{ id: string; models: string[] }>;
+  facts: ModelsProfileFact[];
+} {
   const { name, reachable } = toRegistryAndProfile(config, profileName);
   const byProvider = new Map<string, string[]>();
   for (const { provider, model } of reachable) {
@@ -177,7 +202,43 @@ export function modelsProfileSource(
     if (!models.includes(model)) models.push(model);
     byProvider.set(provider, models);
   }
-  return { name, providers: [...byProvider].map(([id, models]) => ({ id, models })) };
+  // THE DECLARED FACTS (issue #540): the price, cache-price and
+  // context-window numbers each reachable model resolves to, taken from the
+  // SAME projection the registry dispatches with -- so a snapshot can carry
+  // economic facts without the operator hand-recording a single one, and
+  // without this layer re-reading `models.yaml` on its own. A number the row
+  // does NOT declare is absent from the fact rather than settled to zero: the
+  // registry settles zero to bill with (`toRegistryModel`), and this shape
+  // exists precisely so a snapshot states what the operator wrote and never a
+  // default dressed up as a price.
+  const declared = new Map<string, ConfigModelConfig>();
+  for (const [id, provider] of Object.entries(config.providers)) {
+    for (const [model, entry] of Object.entries(provider.models)) {
+      // A DISABLED provider reaches nothing, so it owns nothing: the same
+      // filter the projection applies, kept here so a fact never describes a
+      // model the resolver would refuse to dispatch to.
+      if (provider.enabled) declared.set(`${id}\u0000${model}`, entry);
+    }
+  }
+  const facts: ModelsProfileFact[] = [];
+  for (const { provider, model } of reachable) {
+    const entry = declared.get(`${provider}\u0000${model}`);
+    if (entry === undefined) continue;
+    facts.push({
+      provider,
+      model,
+      input: entry.input,
+      output: entry.output,
+      ...(entry.cacheRead === undefined ? {} : { cacheRead: entry.cacheRead }),
+      ...(entry.cacheWrite === undefined ? {} : { cacheWrite: entry.cacheWrite }),
+      ...(entry.contextWindow === undefined ? {} : { contextWindow: entry.contextWindow }),
+    });
+  }
+  return {
+    name,
+    providers: [...byProvider].map(([id, models]) => ({ id, models })),
+    facts,
+  };
 }
 
 /**

@@ -20,6 +20,11 @@ enforces that dated release headings go in non-increasing date order
   a positively identified pid that is already dead. Verified stops continue to
   check process identity, target directory, start time, and witness tokens.
 
+## [0.154.0] - 2026-09-21
+
+### Fixed
+- **A calibration snapshot fills its economics from the declared config (issue #540).** A snapshot's `economics` used to come only from records hand-written into the private user profile, so a `models.yaml` that declares its prices produced a snapshot with none: the config layer's own walk now hands the snapshot a fact per reachable model (input/output prices, plus cache prices and the context window when the row declares them), and the snapshot fills every scope the operator's records do not already answer. Existing records always win; an undeclared cache price is left absent rather than invented as a zero; filled facts are labelled `project-calibration`/`estimated` and dated by the calibration's `observedOn`.
+
 ## [0.151.0] - 2026-09-21
 
 ### Changed
