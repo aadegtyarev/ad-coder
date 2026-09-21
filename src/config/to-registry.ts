@@ -206,9 +206,11 @@ export function modelsProfileSource(
   // context-window numbers each reachable model resolves to, taken from the
   // SAME projection the registry dispatches with -- so a snapshot can carry
   // economic facts without the operator hand-recording a single one, and
-  // without this layer re-reading `models.yaml` on its own. A model whose
-  // numbers the file never declares contributes zeroes here, which is exactly
-  // what the resolver would bill from.
+  // without this layer re-reading `models.yaml` on its own. A number the row
+  // does NOT declare is absent from the fact rather than settled to zero: the
+  // registry settles zero to bill with (`toRegistryModel`), and this shape
+  // exists precisely so a snapshot states what the operator wrote and never a
+  // default dressed up as a price.
   const declared = new Map<string, ConfigModelConfig>();
   for (const [id, provider] of Object.entries(config.providers)) {
     for (const [model, entry] of Object.entries(provider.models)) {
