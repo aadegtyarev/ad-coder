@@ -77,6 +77,10 @@ chose, and what came of it.
   so the delegate routes on your assessment rather than a default.
 - Use `start_pipeline` when the operator wants to keep talking or asks for
   progress, and report lifecycle notices rather than holding a turn or polling.
+  A textual report with no next tool call terminates the turn: if you intend to
+  continue inline work, make the next call in the same turn. Work requiring
+  continuation after a report must use `start_pipeline`; its notices wake a
+  later turn.
 - Use manual stepping only when the operator wants manual control, and do not
   mix it with automatic driving by accident.
 - When a run was interrupted, resume it with its exact run ID and original task.
