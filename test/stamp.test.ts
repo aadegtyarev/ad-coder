@@ -195,21 +195,200 @@ test("a shallow checkout diagnoses missing stamp ancestry, then passes after CI 
   fs.rmSync(shallow, { recursive: true, force: true });
 });
 
-test("CI fetches full history immediately before the unchanged merge-ref stamp fallback", () => {
-  const ci = fs.readFileSync(
-    path.join(import.meta.dir, "..", ".github", "workflows", "ci.yml"),
-    "utf8",
-  );
-  const fetch = ci.indexOf('git fetch --unshallow origin "$GITHUB_REF" main');
-  const fallback = ci.indexOf("- run: bun run stamp:check || bun run scripts/check-stamp-fixup.ts");
-  expect(fetch).toBeGreaterThan(-1);
-  expect(fetch).toBeLessThan(fallback);
-  expect(ci).toContain("PR merge ref is retained");
+test("CI installs origin/main when preparing a detached shallow merge-ref checkout", () => {
+  const source = gitRepo();
+  const bare = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-origin-")));
+  const shallow = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-merge-")));
+  const fixed = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-fixed-")));
+  try {
+    git(source, ["init", "--bare", "--quiet", bare]);
+    fs.writeFileSync(path.join(source, "ad-coder.stamps.json"), '{"file":"stamps.log"}');
+    fs.writeFileSync(path.join(source, "stamps.log"), "initial\\n");
+    addAll(source);
+    commit(source, "base");
+    git(source, ["branch", "-M", "main"]);
+    git(source, ["checkout", "-qb", "feature"]);
+    fs.writeFileSync(path.join(source, "feature.txt"), "feature\\n");
+    fs.appendFileSync(path.join(source, "stamps.log"), "feature stamp\\n");
+    addAll(source);
+    commit(source, "feature");
+    git(source, ["checkout", "main"]);
+    fs.writeFileSync(path.join(source, "main.txt"), "main\\n");
+    addAll(source);
+    commit(source, "main");
+    git(source, ["merge", "--no-ff", "feature", "-m", "merge"]);
+    git(source, ["push", bare, "HEAD:refs/pull/1/merge"]);
+    fs.writeFileSync(path.join(source, "after-merge.txt"), "after merge\\n");
+    addAll(source);
+    commit(source, "after merge");
+    git(source, ["push", bare, "main:refs/heads/main"]);
+    git(bare, ["symbolic-ref", "HEAD", "refs/heads/main"]);
+
+    git(shallow, ["init", "--quiet"]);
+    git(shallow, ["remote", "add", "origin", bare]);
+    // actions/checkout's PR-merge fetch refspec need not include origin/main.
+    git(shallow, ["config", "--unset-all", "remote.origin.fetch"]);
+    git(shallow, ["fetch", "--depth=1", "origin", "refs/pull/1/merge:refs/remotes/pull/1/merge"]);
+    git(shallow, [
+      "config",
+      "--add",
+      "remote.origin.fetch",
+      "+refs/pull/1/merge:refs/remotes/pull/1/merge",
+    ]);
+    git(shallow, ["checkout", "--detach", "refs/remotes/pull/1/merge"]);
+    expect(
+      gitResult(shallow, ["show-ref", "--verify", "refs/remotes/origin/main"]).exitCode,
+    ).not.toBe(0);
+    expect(() => checkRequiredHistory(shallow)).toThrow(/parent revision [0-9a-f]+\^/);
+
+    const unqualifiedMain = gitResult(shallow, [
+      "fetch",
+      "--unshallow",
+      "origin",
+      "refs/pull/1/merge",
+      "main",
+    ]);
+    expect(unqualifiedMain.exitCode).toBe(0);
+    expect(
+      gitResult(shallow, ["show-ref", "--verify", "refs/remotes/origin/main"]).exitCode,
+    ).not.toBe(0);
+    // Naming `main` as a second source ref fetches it only to FETCH_HEAD; it
+    // does not create the remote-tracking ref used by the history fallback.
+    expect(() => checkRequiredHistory(shallow)).toThrow(/history unavailable/);
+
+    git(fixed, ["init", "--quiet"]);
+    git(fixed, ["remote", "add", "origin", bare]);
+    git(fixed, ["config", "--unset-all", "remote.origin.fetch"]);
+    git(fixed, ["fetch", "--depth=1", "origin", "refs/pull/1/merge:refs/remotes/pull/1/merge"]);
+    git(fixed, ["checkout", "--detach", "refs/remotes/pull/1/merge"]);
+    // With no configured remote refspec, an unqualified remote fetch has no
+    // merge ref to deepen, even though HEAD is detached at that merge commit.
+    const unconfiguredUnshallow = gitResult(fixed, ["fetch", "--unshallow", "origin"]);
+    expect(unconfiguredUnshallow.exitCode).toBe(0);
+    expect(() => checkRequiredHistory(fixed)).toThrow(/history unavailable/);
+
+    // The unqualified fetch may consume the shallow boundary while fetching a
+    // different ref, so start the exact CI preparation from a fresh checkout.
+    fs.rmSync(fixed, { recursive: true, force: true });
+    fs.mkdirSync(fixed);
+    git(fixed, ["init", "--quiet"]);
+    git(fixed, ["remote", "add", "origin", bare]);
+    git(fixed, ["fetch", "--depth=1", "origin", "refs/pull/1/merge:refs/remotes/pull/1/merge"]);
+    git(fixed, ["checkout", "--detach", "refs/remotes/pull/1/merge"]);
+    const checkedOutHead = gitOutput(fixed, ["rev-parse", "HEAD"]);
+    const checkedOutTree = gitOutput(fixed, ["rev-parse", "HEAD^{tree}"]);
+
+    const mergeRefspec = [
+      "fetch",
+      "--unshallow",
+      "origin",
+      "+refs/pull/1/merge:refs/remotes/pull/1/merge",
+    ];
+    git(fixed, mergeRefspec);
+    git(fixed, ["fetch", "origin", "+refs/heads/main:refs/remotes/origin/main"]);
+    expect(gitResult(fixed, ["show-ref", "--verify", "refs/remotes/origin/main"]).exitCode).toBe(0);
+    // The exact two CI refspecs deepen the merge ref and install the base ref;
+    // the detached checkout itself remains the same commit and tree.
+    expect(() => checkRequiredHistory(fixed)).not.toThrow();
+    expect(gitOutput(fixed, ["rev-parse", "HEAD"])).toBe(checkedOutHead);
+    expect(gitOutput(fixed, ["rev-parse", "HEAD^{tree}"])).toBe(checkedOutTree);
+
+    const ci = fs.readFileSync(
+      path.join(import.meta.dir, "..", ".github", "workflows", "ci.yml"),
+      "utf8",
+    );
+    const githubPullNumber = "$" + "{{ github.event.pull_request.number }}";
+    const unshallow = ci.indexOf(
+      `git fetch --unshallow origin "+refs/pull/${githubPullNumber}/merge:refs/remotes/pull/${githubPullNumber}/merge"`,
+    );
+    const refspec = ci.indexOf('git fetch origin "+refs/heads/main:refs/remotes/origin/main"');
+    const fallback = ci.indexOf(
+      "- run: bun run stamp:check || bun run scripts/check-stamp-fixup.ts",
+    );
+    expect(unshallow).toBeGreaterThan(-1);
+    expect(unshallow).toBeLessThan(refspec);
+    expect(refspec).toBeLessThan(fallback);
+    expect(ci).toContain("PR merge ref is retained");
+  } finally {
+    fs.rmSync(source, { recursive: true, force: true });
+    fs.rmSync(bare, { recursive: true, force: true });
+    fs.rmSync(shallow, { recursive: true, force: true });
+    fs.rmSync(fixed, { recursive: true, force: true });
+  }
 });
 
+test("CI prepares a depth-one detached push checkout with full main history", () => {
+  const source = gitRepo();
+  const bare = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-push-origin-")));
+  const shallow = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-push-")));
+  try {
+    git(source, ["init", "--bare", "--quiet", bare]);
+    fs.writeFileSync(path.join(source, "ad-coder.stamps.json"), '{"file":"stamps.log"}');
+    fs.writeFileSync(path.join(source, "stamps.log"), "initial\\n");
+    addAll(source);
+    commit(source, "base");
+    git(source, ["branch", "-M", "main"]);
+    fs.appendFileSync(path.join(source, "stamps.log"), "latest\\n");
+    addAll(source);
+    commit(source, "stamp");
+    git(source, ["push", bare, "main:refs/heads/main"]);
+    git(bare, ["symbolic-ref", "HEAD", "refs/heads/main"]);
+
+    git(shallow, ["init", "--quiet"]);
+    git(shallow, ["remote", "add", "origin", bare]);
+    git(shallow, ["fetch", "--depth=1", "origin", "refs/heads/main"]);
+    git(shallow, ["checkout", "--detach", "FETCH_HEAD"]);
+    const checkedOutHead = gitOutput(shallow, ["rev-parse", "HEAD"]);
+    const checkedOutTree = gitOutput(shallow, ["rev-parse", "HEAD^{tree}"]);
+    expect(() => checkRequiredHistory(shallow)).toThrow(/history unavailable/);
+
+    git(shallow, ["fetch", "--unshallow", "origin", "+refs/heads/main:refs/remotes/origin/main"]);
+    git(shallow, ["fetch", "origin", "+refs/heads/main:refs/remotes/origin/main"]);
+    expect(() => checkRequiredHistory(shallow)).not.toThrow();
+    expect(gitOutput(shallow, ["rev-parse", "HEAD"])).toBe(checkedOutHead);
+    expect(gitOutput(shallow, ["rev-parse", "HEAD^{tree}"])).toBe(checkedOutTree);
+    expect(gitResult(shallow, ["show-ref", "--verify", "refs/remotes/origin/main"]).exitCode).toBe(
+      0,
+    );
+
+    const ci = fs.readFileSync(
+      path.join(import.meta.dir, "..", ".github", "workflows", "ci.yml"),
+      "utf8",
+    );
+    const pushStep = ci.indexOf("- if: github.event_name == 'push'");
+    const pushRefspec = ci.indexOf(
+      'git fetch --unshallow origin "+refs/heads/main:refs/remotes/origin/main"',
+      pushStep,
+    );
+    const pullStep = ci.indexOf("- if: github.event_name == 'pull_request'");
+    const fallback = ci.indexOf(
+      "- run: bun run stamp:check || bun run scripts/check-stamp-fixup.ts",
+    );
+    expect(pushStep).toBeGreaterThan(-1);
+    expect(pushStep).toBeLessThan(pushRefspec);
+    expect(pushRefspec).toBeLessThan(pullStep);
+    expect(pullStep).toBeLessThan(fallback);
+  } finally {
+    fs.rmSync(source, { recursive: true, force: true });
+    fs.rmSync(bare, { recursive: true, force: true });
+    fs.rmSync(shallow, { recursive: true, force: true });
+  }
+});
+
+function gitResult(root: string, args: string[]): { exitCode: number; stderr: string } {
+  const result = Bun.spawnSync(["git", ...args], { cwd: root, stdout: "pipe", stderr: "pipe" });
+  return { exitCode: result.exitCode, stderr: result.stderr.toString() };
+}
+
 function git(root: string, args: string[]): void {
+  const result = gitResult(root, args);
+  if (result.exitCode !== 0) throw new Error(result.stderr);
+}
+
+function gitOutput(root: string, args: string[]): string {
   const result = Bun.spawnSync(["git", ...args], { cwd: root, stdout: "pipe", stderr: "pipe" });
   if (result.exitCode !== 0) throw new Error(result.stderr.toString());
+  return result.stdout.toString().trim();
 }
 
 function commit(root: string, message: string): void {

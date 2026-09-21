@@ -49,7 +49,13 @@ jobs:
       # The fallback reads the stamp's parent and the merge-base. The default
       # PR merge ref is retained, but checkout's shallow history may not contain
       # them; fetch the complete history immediately before this last step.
-      # This transfers the full Git history, but does not change the checked-out
-      # merge ref or tree, so the digest still certifies the tree that would land.
-      - run: git fetch --unshallow origin "$GITHUB_REF" main
+      # These fetches transfer the full Git history, but do not change the
+      # checked-out ref or tree, so the digest still certifies that checkout.
+      # Push checkouts also start at depth 1; install main under its explicit
+      # remote-tracking name before the fallback reads it.
+      - if: github.event_name == 'push'
+        run: git fetch --unshallow origin "+refs/heads/main:refs/remotes/origin/main"
+      - if: github.event_name == 'pull_request'
+        run: git fetch --unshallow origin "+refs/pull/${{ github.event.pull_request.number }}/merge:refs/remotes/pull/${{ github.event.pull_request.number }}/merge"
+      - run: git fetch origin "+refs/heads/main:refs/remotes/origin/main"
       - run: bun run stamp:check || bun run scripts/check-stamp-fixup.ts
