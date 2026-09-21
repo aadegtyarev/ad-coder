@@ -51,8 +51,11 @@ setting here is a REQUIRED default (K10.6), not a constant.
   `src/orchestration/control-plane.ts`). The word carries two meanings in the
   project's older text, and both are in `docs/contracts/operation-modes.md`: its
   2026-09-12 entries use `manual` and `auto` as modes, and its 2026-09-17 entry
-  calls the **execution world** a mode as well ("which mode the session is in --
-  roles only, roles plus the enabled workflow modules, or direct editing"). This
+  calls the **execution world** a mode as well -- "which mode the session is in --
+  roles only, roles plus the enabled workflow modules, or direct editing when
+  neither surface is registered", quoted to its last clause because that clause
+  reaches for "surface" for the thing the sentence has just called a mode, which
+  is the collision this bullet names. This
   contract uses "mode" for the `manual`/`auto` axis alone and calls the execution
   world the **surface**; an older sentence that says "mode" for the execution
   world is read as the surface, and the difference is stated here rather than
@@ -248,7 +251,10 @@ report (K8.8), not a separate formality.
 ## K7. Waiting and waking
 
 K7.1. Every long-running piece of work has a path that wakes the orchestrator. A
-state event (STATE) wakes a turn; an activity event is rendering only.
+**state notice** wakes a turn -- the project's own term and its kinds (`paused`,
+`failed`, `operator_attention`, `timed_out`, `completed`, `stage_changed`) are
+fixed by `docs/contracts/operator-flow.md` (2026-09-19, #387); an **activity**
+notice is rendering only.
 K7.2. A wake-up reaches the operator: what the woken turn learned is not lost.
 K7.3. Polling is not a waiting mechanism **for the orchestrator**: it does not
 spend turns polling. The product watches the condition (a watcher, an observer)
@@ -267,10 +273,11 @@ K7.4. If a wake-up is lost, the task must not look like "WIP" anyway: the operat
 sees what exactly is awaited and since when.
 K7.5. The orchestrator has a **wait instrument**: it puts itself to sleep, until an
 event or a timer. Waiting is a state of the task, not the end of work: the task
-stays WIP and the thing awaited is named. The instrument does not exist today
-(#563): its arrival is a design decision in `docs/ROADMAP.md`, so this clause reads
-as a requirement, and its absence from the code is an audit finding (K11.1) rather
-than a description of what exists.
+stays WIP and the thing awaited is named. The instrument does not exist today, so
+this clause reads as a requirement rather than a description of what exists, and its
+absence from the code is an audit finding (K11.1); the missing instrument is
+tracked as issue #563 in the project's tracker -- the contract names the obligation,
+the issue is where its absence is followed.
 K7.6. A wait condition is named precisely: (a) the event -- what exactly, on which
 object (a run, a stage, a pull request, a CI check on a named commit); (b) the
 timer -- until a moment or for a duration. The waiting state is durable: it
@@ -361,10 +368,13 @@ operator -- silently substituting one piece of evidence for another is forbidden
 K8.9.1. The relaxation lives where the evidence set lives -- in the project's
 policy, not in this text. A known case: a change that edits prose only and states
 no rule needs no independent review (`docs/contracts/product-change.md`,
-2026-09-18 -- CHANGELOG entries and the package description included, if the
-project counts them as such prose). The boundary of the relaxation is declared by
-the project; the orchestrator does not widen it at its own discretion and does not
-retell it as its own decision.
+2026-09-18). That entry fixes the boundary by NAMING what it exempts -- "a README
+section, a guide, a dated note under `docs/reviews/`" -- so the list is closed as
+written: a CHANGELOG entry and the package description are release metadata, and
+they are not on it, which is why a version bump or a changelog block carries the
+review round like any other change. The boundary of the relaxation is declared by
+the project; the orchestrator does not widen it at its own discretion, does not
+read the list by analogy, and does not retell the relaxation as its own decision.
 K8.10. A **green pull request** is: mergeable (K8.11), the project's gates, and the
 rest of the **declared evidence set** (K8.9) -- a fresh stamp on that same frozen
 tree when the policy requires one, and CI when it is available (K8.9). A
@@ -424,11 +434,11 @@ K9.3.4. edit the contract to match the code's actual behaviour (K11.1).
 ## K10. Settings
 
 K10.1. Where a value comes from, in one order. Three of the layers are
-`docs/contracts/config.md`'s own, in that contract's words (2026-09-13, unchanged
-since): the built-in default, then a persistent setting the operator owns, then an
-explicit launch parameter -- the parameter beats the setting, and the default
-resolves when both are absent. The same entry says the persistent layer is open on
-purpose and that no operator-owned settings store exists yet (#116): a design
+`docs/contracts/config.md`'s own, in that contract's words (the entries of
+2026-09-16): the built-in default, then a persistent setting the operator owns, then
+an explicit launch parameter -- the parameter beats the setting, and the default
+resolves when both are absent. Those entries also say the persistent layer is open
+on purpose and that no operator-owned settings store exists yet (#116, item 3): a design
 decision rather than a fact, so this contract requires the layer's BEHAVIOUR rather
 than an existing file, and a missing store is an audit finding (K11.1), not a
 cancellation of the rule. This contract's store IS that persistent layer -- the
@@ -465,6 +475,14 @@ expressed through the settings listed above. A project that wants such an item
 switchable is owed a setting that names it here **with its default**; until that
 setting exists the item is not a switch, and an implementer who invents one has
 invented a setting this contract does not carry.
+K10.6.2. Three of those names are introduced BY THIS CONTRACT and exist nowhere
+else yet: `silentRaiseFactor` (K6.2), `maxContinuations` (K3.4) and
+`waitTimeoutMs` (K7.7). Naming them here is a requirement owed to code (K11.1),
+not a description of a surface a reader could go and read: each is the name under
+which the behaviour its clause requires must become configurable, with the default
+above. Their absence from the code is an audit finding. The remaining settings of
+K10.6 -- the mode, `review.require-stamp` and the flags -- name surfaces the code
+already carries.
 
 ## K11. Contract and memory discipline
 
@@ -519,7 +537,10 @@ stamp (#283); `stage-limit-calibration.md` for the measured step of a raise;
 that does not exist yet (#116); `cost-anomaly.md` for the provider's bill as a
 separate entity; `operator-flow.md` for what a pause is and who reports it -- with
 its polling sentence still to be marked superseded by a reviewed edit (K7.3); and
-`docs/ROADMAP.md` for the wait instrument (#563) as a design decision still open.
+the project's tracker for the wait instrument the code does not have yet (#563,
+K7.5) -- that issue is where the missing instrument is tracked, and it is cited as
+a REQUIREMENT of this text (K10.6.2) rather than as a design decision recorded
+elsewhere.
 Three amendments are owed to other files, and all of them are edits to those files
 rather than statements this contract can make for them: the supersession mark in
 `operator-flow.md` (K7.3); the exception the `review.require-stamp` setting needs
