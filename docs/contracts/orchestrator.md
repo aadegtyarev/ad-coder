@@ -10,23 +10,19 @@ NORMATIVE: it says how the orchestrator must behave. Where the code disagrees
 with it, the code is the defect -- the text is never edited to match a behaviour
 (K11.1).
 
-Terms that carry a project meaning are defined in K0 before first use. This
-contract states obligations; the surfaces it names are the project's settings, so
-what is written here about a setting is a REQUIRED default, not a constant.
+Every clause is an obligation. Where a clause names a mechanism the code does not
+have yet, the clause is a REQUIREMENT: its absence from the code is an audit
+finding (K11.1), never a reason to soften the text. Terms that carry a project
+meaning are fixed by K0; this preamble uses them in their ordinary sense. The
+surfaces the clauses name are the project's settings, so what is written about a
+setting here is a REQUIRED default (K10.6), not a constant.
 
-- 2026-09-21: **The contract was written at the operator's request and revised
-  five times the same day on his corrections.** Those corrections are the source
-  of the clauses that recur below, and each is recorded where it bites: merge
-  green pull requests and file tickets are project settings, "like the 50%
-  ceiling" (K9.0); a task is a SERIES of turns, not one turn (K0, K1.4); a
-  closing cost report is mandatory, including for a task that failed (K8.8); the
-  orchestrator needs a wait instrument, and CI is not always available (K7.5-K7.9,
-  K8.9); a conflicted pull request is a merge blocker, not unavailable CI (K8.11);
-  work need not go through the full pipeline -- a single role, or the
-  orchestrator's own hands, is often the honest path (K5.0); and any policy a
-  project may want to change is a setting, never a constant in this text (K5.0.2,
-  K8.9, K9.1.8, K12).
-- 2026-09-21: **The contract is reviewed like a contract and not like
+- 2026-09-21: **This document is the first version of the orchestrator contract,
+  and it is written as a whole** rather than distilled from practice. Its reading
+  is therefore: a clause states what the orchestrator owes, the audit that follows
+  compares the code against it clause by clause, and the pieces chosen for
+  implementation are dispatched out of that audit.
+- 2026-09-21: **A contract is reviewed like a contract and not like
   documentation** (`product-change.md`, 2026-09-18): it is the text every later
   reviewer enforces, so changing it changes what "reviewed" means. It lands
   through a branch and a pull request, its own gates, an independent review round,
@@ -119,8 +115,9 @@ call inside the same turn, or the start of a run that has a wake-up path (K7).
 K3.3. A turn of work must not require the operator's next message. If the operator
 stays silent, the task must advance or explicitly ask for a decision.
 K3.4. Continuation is bounded: at most `maxContinuations` in a row (a project
-setting, K10) and never dearer than the declared budget; exhaustion moves the task
-to `blocked` with a question, never into silence.
+setting, K10; required default `3`, K10.6) and never dearer than the declared
+budget; exhaustion moves the task to `blocked` with a question, never into
+silence.
 K3.5. Continuation is gated by the mode, and the gate is a **boundary of
 decisions**, not a ban on moving. What exactly a mode reserves to the operator is
 defined by `docs/contracts/operation-modes.md`: in `manual` product and
@@ -159,10 +156,16 @@ K5.0. The path of work is chosen **by price** and named to the operator **before
 it is taken: the operator reads the orchestrator's replies, not its tool calls.
 The rungs, cheapest first:
 
-- **own hands** -- one file and at most five changed lines, the bound measured by
-  the machine rather than judged by the orchestrator
-  (`docs/contracts/operation-modes.md`, 2026-09-19); an edit that touched code is
-  covered by a reviewer;
+- **own hands** -- the one direct edit whose terms are `operation-modes.md`'s and
+  are NOT restated as a new rule here: a recorded `trivial` classification (one
+  function, no call sites, the fix uniquely determined) together with the
+  machine-measured bound of at most one file and five changed lines, added and
+  removed, **accumulated across still-uncovered edits until a reviewer covers
+  them** (`docs/contracts/operation-modes.md`, 2026-09-17 and 2026-09-19,
+  #271/#388). An edit that touched code is covered by a reviewer before the work
+  closes; where roles are not reachable, the direct edit stands and its
+  accumulated `reviewer_unavailable` record is what that mode provides (the #386
+  collapse);
 - **one role** (`run_role`) -- one bounded job: a planner to size the work, a
   researcher to answer a question, a reviewer to give advice;
 - **a standalone reviewer round** -- when a role has already worked and a stamp is
@@ -181,9 +184,12 @@ because a delegated conversation delivers by prose and carries no structured
 verdict (`docs/contracts/quality.md`, 2026-09-19). That is a limitation of **one
 surface**, not a sentence on the work: the stamp comes either from the pipeline or
 from a standalone reviewer round. An edit by the orchestrator's own hands --
-a typo in code or a loop condition included -- therefore **does get reviewed**: the
-runtime attaches reviewer cover to a bounded trivial edit (#388), and a change
-that touched code is closed by a standalone reviewer round. "There will be no
+a typo in code or a loop condition included -- therefore **owes the cover**
+`operation-modes.md` describes: the runtime attaches reviewer cover to a bounded
+trivial edit, and a change that touched code is closed by a standalone reviewer
+round. One case is declared and named rather than silently skipped: where roles
+are not reachable at all, the direct edit stands with its `reviewer_unavailable`
+record (the #386 collapse) -- and outside that declared mode, "there will be no
 stamp" is not an answer to such an edit.
 K5.0.3. A request that does not fit the orchestrator's hands is no reason to walk
 silently into the heaviest machinery: the operator is offered the options by
@@ -193,8 +199,9 @@ is what is missing, or the pipeline if the sequence is what is being bought.
 K5.1. A role's work is done by a role. The coordinator does not substitute for a
 role with its own hands, even when that is faster: findings and features leave as
 runs or as tickets. There is exactly one exception -- the bounded own-hands edit
-of K5.0 -- and its bound is **machine-measured** (one file, five changed lines):
-"does not substitute" covers everything that crosses that bound.
+of K5.0, held to `operation-modes.md`'s terms (the recorded `trivial`
+classification plus the machine-measured one-file/five-line bound, accumulated
+until cover): "does not substitute" covers everything that crosses that bound.
 K5.2. A dispatch carries: the goal, the acceptance criterion, the bounds (files,
 scope), the budget, the ceilings and the task shape.
 K5.3. Bounds are drawn narrow: a file, a function, one change -- with no "roll back
@@ -242,9 +249,12 @@ spend turns polling. The product watches the condition (a watcher, an observer)
 and wakes the orchestrator with an event; where the source offers no push channel
 -- as CI in GitHub does not -- the product polls, not the turn.
 (`docs/contracts/operator-flow.md` describes polling as the path by which a pause
-reaches the orchestrator; this clause refines **who** polls. The canon's wording
-is marked superseded, or an audit would read polling from a turn as the sanctioned
-mechanism.)
+reaches the orchestrator; this clause refines **who** polls. That sentence of
+`operator-flow.md` is NOT yet marked superseded: the mark is an edit to that file,
+reviewed like any other edit, and it is still owed. Until it is made, the address
+that decides is this clause -- where the two texts disagree about who polls, K7.3
+governs -- so an audit reads precedence here rather than inferring it from the
+absence of a mark.)
 K7.4. If a wake-up is lost, the task must not look like "WIP" anyway: the operator
 sees what exactly is awaited and since when.
 K7.5. The orchestrator has a **wait instrument**: it puts itself to sleep, until an
@@ -258,7 +268,8 @@ object (a run, a stage, a pull request, a CI check on a named commit); (b) the
 timer -- until a moment or for a duration. The waiting state is durable: it
 survives a process restart instead of living in a turn's memory.
 K7.7. A wait has a limit, set **together with the condition** (`waitTimeoutMs`, a
-project setting, K10): a wait without a limit is not waiting but losing. An expired
+project setting, K10; required default `900000` -- fifteen minutes -- K10.6): a
+wait without a limit is not waiting but losing. An expired
 limit is a wake-up whose outcome is "did not arrive", and it requires action
 (escalation, a decision, a change of plan) rather than another sleep in a loop.
 K7.8. A wait is interrupted by the operator: their message wakes the orchestrator
@@ -298,16 +309,20 @@ K8.9. The set of readiness evidence is **not a constant of this contract but a
 declared policy of the project**. Its carriers are the project's quality contract
 (what CI is composed from) and the `review.requireStamp` setting (`settings.yaml`:
 `auto`/`on`/`off`); the orchestrator must obtain exactly what the project declared
-and name what it obtained. This project's default is three pieces of evidence, of
-which gates and stamp are obligatory: (a) **the project's own gates** on the frozen
-tree; (b) **a fresh review stamp** on that same tree -- the stamp covers the whole
-tree, so a tree that changed after approval (a rebase included) is red again and
-the approval is obtained anew; (c) CI, when it is available. If CI is objectively
+and name what it obtained -- **including a declared policy that requires no
+stamp**, which is a lawful declaration and not a defect of the run. This project's
+default is three pieces of evidence: (a) **the project's own gates** on the frozen
+tree -- never dispensable; (b) **a fresh review stamp** on that same tree -- the
+stamp covers the whole tree, so a tree that changed after approval (a rebase
+included) is red again and the approval is obtained anew; this is the evidence the
+`review.requireStamp` setting governs, and with that setting at `off` the project
+has declared the stamp away, so it is then not owed and the run says which
+declaration it acted under; (c) CI, when it is available. If CI is objectively
 unavailable (not configured in the project, limits spent), the merge is allowed
-**without it** -- but never without (a) and (b): CI's unavailability cancels
-neither gates nor review. Then the unavailability is said plainly, recorded as an
-artefact and reported to the operator -- silently substituting one piece of
-evidence for another is forbidden.
+**without it**. What unavailability never cancels is the evidence the declared
+policy still requires -- under the default policy, gates and stamp. The
+unavailability is said plainly, recorded as an artefact and reported to the
+operator -- silently substituting one piece of evidence for another is forbidden.
 K8.9.1. The relaxation lives where the evidence set lives -- in the project's
 policy, not in this text. A known case: a change that edits prose only and states
 no rule needs no independent review (`docs/contracts/product-change.md`,
@@ -315,8 +330,9 @@ no rule needs no independent review (`docs/contracts/product-change.md`,
 project counts them as such prose). The boundary of the relaxation is declared by
 the project; the orchestrator does not widen it at its own discretion and does not
 retell it as its own decision.
-K8.10. A **green pull request** is: mergeable (K8.11), the project's gates, **a
-fresh stamp** on that same frozen tree, and CI when it is available (K8.9). A
+K8.10. A **green pull request** is: mergeable (K8.11), the project's gates, and the
+rest of the **declared evidence set** (K8.9) -- a fresh stamp on that same frozen
+tree when the policy requires one, and CI when it is available (K8.9). A
 review through `run_role` does not make one -- advice writes no stamp (K5.0.2) --
 but the stamp does not come from the pipeline alone: a standalone reviewer round
 gives the same one. A merge without CI is lawful only under K8.9 and with the
@@ -336,15 +352,16 @@ cancelled by a setting from below, and K9.3 even less so: no project setting mov
 an item from K9.3 into K9.1.
 
 **K9.1. On its own** (each item is a flag or a number in the project's settings;
-flags default to on):
+a flag's default is named where the item is listed, and the list of required
+defaults is K10.6):
 K9.1.1. dispatch within the agreed budget;
 K9.1.2. silently raise a ceiling within the `silentRaiseFactor` threshold (K6.2);
 K9.1.3. lower the mode;
 K9.1.4. retry a failed step within the budget;
-K9.1.5. merge green pull requests (a flag; "green" by K8.10, mergeable by K8.11)
--- this is the **named exception** to K9.2.6: merging a green pull request is
-irreversible, but it is also the ordinary completion of the work;
-K9.1.6. file tickets (a flag);
+K9.1.5. merge green pull requests (a flag, default **on**; "green" by K8.10,
+mergeable by K8.11) -- this is the **named exception** to K9.2.6: merging a green
+pull request is irreversible, but it is also the ordinary completion of the work;
+K9.1.6. file tickets (a flag, default **on**);
 K9.1.7. read any artefact;
 K9.1.8. work by its own hands beyond the machine bound of K5.0 -- a **flag, off by
 default**; switching it on names the new bound, and that bound is not "as much as
@@ -382,7 +399,17 @@ or default.
 K10.4. Changing a setting, the system asks whose it is -- the profile's or the
 project's -- and says aloud that a profile setting changes the behaviour of every
 project.
-K10.5. Feature flags default to on; switching one off is a deliberate act.
+K10.5. A flag's default is declared where the flag is introduced (K10.6); changing
+one -- in either direction -- is a deliberate act of the project, named as such
+(K10.4) and never an accident of a missing row.
+K10.6. **Every setting this contract names carries a required default**, because
+K10.2 makes an absent setting mean its default; a setting whose default is missing
+is a defect OF THIS CONTRACT, not a free choice for the implementer. The set:
+`silentRaiseFactor` `+50%` (K6.2); `maxContinuations` `3` (K3.4); `waitTimeoutMs`
+`900000` (K7.7); the stamp requirement `review.requireStamp` `auto` (K8.9); the
+"merge green pull requests" flag on (K9.1.5); the "file tickets" flag on
+(K9.1.6); the "own hands beyond the machine bound" flag off (K9.1.8); and the
+delivery surface, whose default is named in K12.
 
 ## K11. Contract and memory discipline
 
@@ -394,19 +421,32 @@ K11.3. Durable records are kept for: mandates (the mode, raises), learned ceilin
 with their evidence, and run outcomes.
 K11.4. Long-lived decisions live in the repository's documents, not in a
 conversation.
+K11.5. **A project's conventions are read before work in it starts.** Delivery
+discipline -- which branch, what a commit is, whether work lands through a pull
+request, how a merge is done, how a release is cut, what a deploy requires -- is a
+PROJECT decision recorded in the project's own documents (this repository:
+`AGENTS.md`), not the orchestrator's personal habit and not something to be
+re-invented per task. An orchestrator that has not read them is improvising and
+should say so rather than present its improvisation as the project's rule.
 
 ## K12. What the contract does not cover
 
 - Provider behaviour and billing.
 - GitHub's own mechanics: branch protection, the platform's review requirements,
   account rights, API calls.
-- **The delivery surface itself** is also a project and profile setting: whether a
-  pull request is created at all, whether a green one is merged at once, whether a
-  stamp is required (`review.requireStamp`). This project's default is a branch and
-  a pull request for every change, an immediate merge of a green one, and a stamp
-  before the merge (`AGENTS.md`, `docs/contracts/quality.md`); a project that wants
-  no pull request declares so itself, and K8.9-K8.11 then describe what "done"
-  means **on the surface it chose** instead of imposing the surface.
+- **The delivery surface itself** -- whether a pull request is created at all,
+  whether a green one is merged at once, whether a stamp is required -- is a
+  REQUIRED project and profile setting, and this clause is honest about its state:
+  the setting does not exist in the configuration surfaces yet.
+  `review.requireStamp` has a type, a default, a validator and a gate path; a
+  delivery-surface setting has none of the four, so the requirement stands
+  unimplemented, and its absence is an audit finding (K11.1) rather than a
+  described behaviour. Until it exists, this project's declared default is a
+  branch and a pull request for every change, an immediate merge of a green one,
+  and a stamp before the merge (`AGENTS.md`, `docs/contracts/quality.md`); a
+  project that wants no pull request at all is owed the setting, and K8.9-K8.11
+  then describe what "done" means **on the surface it chose** instead of imposing
+  the surface.
 - The internals of the roles (how the coder writes code, how the reviewer reaches
   a verdict) -- they have contracts of their own.
 - Model choice and routing -- that is `models.yaml` and the profile.
@@ -422,5 +462,6 @@ documentation exemption and the standalone reviewer path that writes the same
 stamp (#283); `stage-limit-calibration.md` for the measured step of a raise;
 `config.md` for the setting layers, the meaning of zero, and the settings store
 that does not exist yet (#116); `cost-anomaly.md` for the provider's bill as a
-separate entity; `operator-flow.md` for what a pause is and who reports it; and
+separate entity; `operator-flow.md` for what a pause is and who reports it -- with
+its polling sentence still to be marked superseded by a reviewed edit (K7.3); and
 `docs/ROADMAP.md` for the wait instrument (#563) as a design decision still open.
