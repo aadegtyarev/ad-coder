@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
   parseTelegramRoomBindings,
+  serializeTelegramRoomBindings,
   TelegramRoomBindingError,
   TelegramRoomBindingStore,
 } from "../src";
@@ -68,6 +69,40 @@ test("fixed bindings require a selected session and malformed ids fail closed", 
   expect(() => rooms.create("fixed", "fixed", null)).toThrow(TelegramRoomBindingError);
   expect(() => rooms.create("bad\u0000room", "switchable", null)).toThrow(TelegramRoomBindingError);
   expect(() => parseTelegramRoomBindings({ version: 2, bindings: {} })).toThrow(
+    TelegramRoomBindingError,
+  );
+});
+
+test("parser and serializer reject non-plain JSON records", () => {
+  const valid = { version: 1, bindings: {} };
+  const decorated = (value: object): unknown => Object.assign(value, valid);
+  const invalidRoots = [
+    decorated(new Map()),
+    decorated(new Date()),
+    decorated(new Number(1)),
+    decorated(new String("bindings")),
+    decorated(new Boolean(true)),
+    Object.assign(Object.create({ custom: true }), valid),
+  ];
+
+  for (const value of invalidRoots) {
+    expect(() => parseTelegramRoomBindings(value)).toThrow(TelegramRoomBindingError);
+    expect(() =>
+      serializeTelegramRoomBindings(value as Parameters<typeof serializeTelegramRoomBindings>[0]),
+    ).toThrow(TelegramRoomBindingError);
+  }
+
+  const customBindings = Object.assign(Object.create({ custom: true }), {});
+  customBindings.room = { kind: "switchable", sessionId: null };
+  expect(() => parseTelegramRoomBindings({ version: 1, bindings: customBindings })).toThrow(
+    TelegramRoomBindingError,
+  );
+
+  const customRecord = Object.assign(Object.create({ custom: true }), {
+    kind: "switchable",
+    sessionId: null,
+  });
+  expect(() => parseTelegramRoomBindings({ version: 1, bindings: { room: customRecord } })).toThrow(
     TelegramRoomBindingError,
   );
 });
