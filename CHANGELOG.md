@@ -43,8 +43,8 @@ enforces that dated release headings go in non-increasing date order
 
 ## [0.167.0] - 2026-09-21
 
-### Fixed
-- **Planner handoffs now name the consequence of missing `submit_plan` (issue #554).** Prose without the structured submission is rejected as `plan_not_json` and the plan is lost; one complete JSON object in the documented shape is accepted as text.
+### Changed
+- **Skill loads now render as `Skill <skill-id>` in tool activity (issue #569).**
 
 ## [0.164.0] - 2026-09-21
 
