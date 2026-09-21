@@ -2,6 +2,13 @@
 
 Rules for the project's own code quality. A violation is always blocking.
 
+- 2026-09-21: **The pre-merge stamp gate is outside an in-run review's scope
+  (issue #550).** `bun run stamp:check` is a strict PRE-MERGE gate and is
+  intentionally absent from the declared in-run gates. It is red before a
+  settled approved review writes its stamp, so it is not an in-run blocker or a
+  review finding. The settle path writes the stamp after approval; failed
+  declared gates still block and remain review evidence.
+
 - 2026-09-21: **Review artifacts are not product findings.** The structured
   `submit_verdict` boundary accepts blocker/major findings only when each has a
   stable `findingId`, a bounded location, and an objective closure criterion.

@@ -11,6 +11,14 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.160.0] - 2026-09-21
+
+### Fixed
+- **Reviewers now receive the stamp-gate scope explicitly (issue #550).** The strict
+  PRE-MERGE `bun run stamp:check` gate is identified as intentionally absent from
+  declared in-run gates, red until a settled approved review writes it, and neither
+  an in-run blocker nor a review finding; failed declared gates remain blocking.
+
 ## [0.159.0] - 2026-09-21
 
 ### Fixed

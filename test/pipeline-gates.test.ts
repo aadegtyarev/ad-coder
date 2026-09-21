@@ -186,6 +186,44 @@ test("the pipeline runs the declared gates after the coder and hands the reviewe
   expect(reviewerPrompt).toContain("blocker");
 });
 
+test("review framing distinguishes the strict pre-merge stamp gate from declared blockers", async () => {
+  const fx = fixture();
+  const coder = fx.role("coder", "You code.");
+  const reviewer = reviewerRole(fx);
+  let reviewerPrompt = "";
+  fx.faux.setResponses([
+    fauxAssistantMessage("coded"),
+    (context) => {
+      reviewerPrompt = lastUserText(context);
+      return reviewerTurn(APPROVED)[0];
+    },
+    reviewerTurn(APPROVED)[1],
+  ]);
+
+  const report = await runPipeline({
+    targetDir: fx.targetDir,
+    models: fx.models,
+    task: "implement stamp scope",
+    maxRounds: 1,
+    roles: { coder, reviewer },
+    qualityGates: {
+      gates: [{ name: "declared check", kind: "project", command: ["check"] }],
+      executor: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
+    },
+  });
+
+  expect(report.gateReport?.passed).toBe(true);
+  expect(reviewerPrompt).toContain(
+    "bun run stamp:check is a strict PRE-MERGE gate, intentionally absent from the declared gates",
+  );
+  expect(reviewerPrompt).toContain(
+    "red before a settled approved review writes its stamp, so it is not an in-run blocker and is not a review finding",
+  );
+  expect(reviewerPrompt).toContain("failed declared gates still block");
+  expect(reviewerPrompt).not.toContain("- bun run stamp:check: PASSED");
+  expect(reviewerPrompt).not.toContain("- bun run stamp:check: FAILED");
+});
+
 test("a red declared gate returns to the Coder with the captured output, then reviews only when green", async () => {
   const fx = fixture();
   const coder = fx.role("coder", "You code.");

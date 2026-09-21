@@ -2086,6 +2086,7 @@ function formatGateEvidence(report: GateReport | undefined): string {
     }`,
     ...failureBlocks,
     "Treat a failed declared gate as a blocker, evidenced by the captured output.",
+    "bun run stamp:check is a strict PRE-MERGE gate, intentionally absent from the declared gates: it is red before a settled approved review writes its stamp, so it is not an in-run blocker and is not a review finding. Do not block or request changes for this gate; the settle path writes the stamp after approval, while failed declared gates still block.",
   ].join("\n\n");
 }
 
