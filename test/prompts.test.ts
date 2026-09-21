@@ -199,6 +199,16 @@ test("a prompt with trailing whitespace and non-ASCII round-trips verbatim", () 
   expect(resolvePrompt("verbatim", { builtinDir })).toBe(body);
 });
 
+test("the orchestrator prompt makes an inline turn's terminal report explicit (issue #555)", () => {
+  const prompt = flat(resolvePrompt("orchestrator"));
+  expect(prompt).toContain("A textual report with no next tool call terminates the turn");
+  expect(prompt).toContain(
+    "if you intend to continue inline work, make the next call in the same turn",
+  );
+  expect(prompt).toContain("Work requiring continuation after a report must use `start_pipeline`");
+  expect(prompt).toContain("its notices wake a later turn");
+});
+
 test("the orchestrator prompt makes classification a step before mutation (issues #263/#264)", () => {
   const prompt = flat(resolvePrompt("orchestrator"));
   // The classification step exists, names the rubric it runs on, and is named

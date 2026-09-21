@@ -11,6 +11,13 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.163.0] - 2026-09-21
+
+### Fixed
+- **Inline orchestrator reports now state the turn boundary (issue #555).** A report
+  without a next tool call ends the turn; continued work must call the next tool
+  inline or use `start_pipeline` so its notices wake a later turn.
+
 ## [0.161.0] - 2026-09-21
 
 ### Fixed
