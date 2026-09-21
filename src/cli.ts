@@ -236,6 +236,17 @@ function fail(message: string): never {
   process.exit(2);
 }
 
+function failInvalidConfig(message: string): never {
+  if (machineJsonFront) {
+    process.stderr.write(
+      `${JSON.stringify({ error: { code: "invalid_config", detail: message } })}\n`,
+    );
+    process.exit(2);
+  }
+  process.stderr.write(`ad-coder: ${message}\n`);
+  process.exit(2);
+}
+
 // Human budget for one `config show` row -- the same 120-column line the docs
 // readability gate uses: ids join the row only while the whole row still fits,
 // so an unbounded catalogue can never flood a terminal.
@@ -1079,13 +1090,13 @@ function parseProjectStoreConfig(value: string | undefined): ProjectStoreConfig 
   try {
     parsed = JSON.parse(fs.readFileSync(resolved, "utf8"));
   } catch (error) {
-    fail(`cannot parse --project-store-config ${resolved}: ${errorMessage(error)}`);
+    failInvalidConfig(`cannot parse --project-store-config ${resolved}: ${errorMessage(error)}`);
   }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     fail("--project-store-config must contain a JSON object");
   }
   const object = parsed as Record<string, unknown>;
-  const allowedTop = new Set(["retention", "byteLimits", "projectOperations"]);
+  const allowedTop = new Set(["retention", "byteLimits", "lockRetry", "projectOperations"]);
   if (Object.keys(object).some((key) => !allowedTop.has(key))) {
     fail("--project-store-config contains an unknown setting");
   }
@@ -1121,6 +1132,24 @@ function parseProjectStoreConfig(value: string | undefined): ProjectStoreConfig 
         fail(`invalid --project-store-config setting: ${groupName}.${key}`);
       }
     }
+  }
+  const lockRetry = object.lockRetry;
+  if (lockRetry !== undefined) {
+    if (typeof lockRetry !== "object" || lockRetry === null || Array.isArray(lockRetry))
+      failInvalidConfig("--project-store-config lockRetry must be an object");
+    const lockObject = lockRetry as Record<string, unknown>;
+    if (Object.keys(lockObject).some((key) => key !== "delaysMs"))
+      failInvalidConfig("--project-store-config contains an unknown lockRetry setting");
+    const delays = lockObject.delaysMs;
+    if (
+      delays !== undefined &&
+      (!Array.isArray(delays) ||
+        delays.length === 0 ||
+        delays.some(
+          (delay) => typeof delay !== "number" || !Number.isSafeInteger(delay) || delay <= 0,
+        ))
+    )
+      failInvalidConfig("invalid --project-store-config setting: lockRetry.delaysMs");
   }
   const operations = object.projectOperations;
   if (operations !== undefined) {

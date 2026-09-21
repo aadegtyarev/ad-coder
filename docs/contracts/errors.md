@@ -1,5 +1,13 @@
 # Error behavior contract
 
+Versioned project-store lock contention is a typed `version_conflict` with the
+stable message `managed state is locked` after its configured bounded retry
+schedule is exhausted. Invalid lock-retry configuration is a typed
+`invalid_config` failure naming `lockRetry.delaysMs`; it is rejected before any
+lock is acquired. A lock is considered stale only with dead/zombie process
+ evidence or a mismatched available process start-time witness, never from PID
+alone.
+
 For library, CLI, workflow, provider, and tool authors, this contract answers: how
 does a failed operation remain understandable and actionable to humans and stable
 for machines?

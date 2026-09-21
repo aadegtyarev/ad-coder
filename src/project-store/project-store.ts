@@ -34,6 +34,7 @@ const DEFAULT_RETENTION = Object.fromEntries(
   AREAS.map((area) => [area, 0]),
 ) as ProjectStoreRetention;
 const DEFAULT_BYTES: ProjectStoreByteLimits = { attachment: 0, state: 0, jsonlRecord: 0 };
+export const DEFAULT_PROJECT_STORE_LOCK_RETRY_DELAYS_MS = [10, 20, 40, 80] as const;
 const STORE_GITIGNORE = "*\n!calibration.json\n";
 
 export class ProjectStore {
@@ -42,7 +43,10 @@ export class ProjectStore {
   readonly byteLimits: ProjectStoreByteLimits;
   readonly fileSystem: ProjectStoreFileSystem;
   readonly projectOperations: ProjectOperationsConfig;
+  readonly lockRetryDelaysMs: readonly number[];
   private readonly sessions: JsonlSessionRepo;
+  /** Test-only synchronization seam for deterministic stale-lock races. */
+  private versionedLockHook?: (phase: "stale-inspected") => void;
 
   constructor(targetDir: string, config: ProjectStoreConfig = {}) {
     const resolvedTarget = resolveTargetDir(targetDir);
@@ -58,6 +62,10 @@ export class ProjectStore {
     };
     this.retention = { ...DEFAULT_RETENTION, ...config.retention };
     this.byteLimits = { ...DEFAULT_BYTES, ...config.byteLimits };
+    this.validateLockRetryConfig(config.lockRetry);
+    this.lockRetryDelaysMs =
+      config.lockRetry?.delaysMs ?? DEFAULT_PROJECT_STORE_LOCK_RETRY_DELAYS_MS;
+    this.validateLockRetry(this.lockRetryDelaysMs);
     this.projectOperations = {
       backlogBackend: "files",
       evidenceLimit: 0,
@@ -293,7 +301,7 @@ export class ProjectStore {
   ): VersionedState<T> {
     this.assertInside(destination);
     this.createPrivateDir(path.dirname(destination));
-    const release = this.acquireLock(`${destination}.lock`);
+    const release = this.acquireVersionedLock(`${destination}.lock`);
     try {
       let current = 0;
       try {
@@ -329,7 +337,7 @@ export class ProjectStore {
   ): VersionedState<T> {
     this.assertInside(destination);
     this.createPrivateDir(path.dirname(destination));
-    const release = this.acquireLock(`${destination}.lock`);
+    const release = this.acquireVersionedLock(`${destination}.lock`);
     try {
       let current: VersionedState<T> | undefined;
       try {
@@ -537,29 +545,203 @@ export class ProjectStore {
     }
   }
 
+  private acquireVersionedLock(lockPath: string): () => void {
+    this.assertDestination(lockPath);
+    const identity = this.processIdentity();
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return this.withVersionedLockCoordination(lockPath, () =>
+          this.createLock(lockPath, identity),
+        );
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        const holder = this.readVersionedLock(lockPath);
+        if (holder !== undefined && !this.isVersionedLockHolderAlive(holder)) {
+          this.versionedLockHook?.("stale-inspected");
+          if (this.reclaimStaleLock(lockPath, holder)) continue;
+        }
+        const delay = this.lockRetryDelaysMs[attempt];
+        if (delay === undefined)
+          throw new ProjectStoreError("version_conflict", lockPath, "managed state is locked");
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay);
+      }
+    }
+  }
+
   private acquireLock(lockPath: string): () => void {
     this.assertDestination(lockPath);
-    let fd: number;
     try {
-      fd = fs.openSync(
-        lockPath,
-        fs.constants.O_WRONLY |
-          fs.constants.O_CREAT |
-          fs.constants.O_EXCL |
-          fs.constants.O_NOFOLLOW,
-        0o600,
-      );
-      fs.writeFileSync(fd, `${JSON.stringify({ pid: process.pid })}\n`);
-      fs.fsyncSync(fd);
+      return this.createLock(lockPath, { pid: process.pid });
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "EEXIST")
         throw new ProjectStoreError("version_conflict", lockPath, "managed state is locked");
       throw error;
     }
+  }
+
+  private withVersionedLockCoordination<T>(lockPath: string, operation: () => T): T {
+    const coordinationPath = `${lockPath}.coordination`;
+    const identity = { ...this.processIdentity(), token: crypto.randomUUID() };
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        fs.mkdirSync(coordinationPath, 0o700);
+        fs.writeFileSync(path.join(coordinationPath, "owner"), `${JSON.stringify(identity)}\n`, {
+          mode: 0o600,
+        });
+        break;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        const owner = this.readVersionedLock(path.join(coordinationPath, "owner"));
+        if (owner !== undefined && !this.isVersionedLockHolderAlive(owner)) {
+          const current = this.readVersionedLock(path.join(coordinationPath, "owner"));
+          if (current?.token !== owner.token) continue;
+          const quarantine = `${coordinationPath}.reclaim-${owner.token}`;
+          try {
+            fs.renameSync(coordinationPath, quarantine);
+          } catch (renameError) {
+            if ((renameError as NodeJS.ErrnoException).code === "ENOENT") continue;
+            throw renameError;
+          }
+          fs.rmSync(quarantine, { recursive: true, force: true });
+          continue;
+        }
+        const delay = this.lockRetryDelaysMs[attempt];
+        if (delay === undefined)
+          throw new ProjectStoreError("version_conflict", lockPath, "managed state is locked");
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay);
+      }
+    }
+    try {
+      return operation();
+    } finally {
+      fs.rmSync(coordinationPath, { recursive: true, force: true });
+    }
+  }
+
+  private createLock(
+    lockPath: string,
+    identity: { pid: number; startTime?: string; token?: string },
+  ): () => void {
+    this.assertDestination(lockPath);
+    const ownedIdentity = { ...identity, token: identity.token ?? crypto.randomUUID() };
+    const fd = fs.openSync(
+      lockPath,
+      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW,
+      0o600,
+    );
+    fs.writeFileSync(fd, `${JSON.stringify(ownedIdentity)}\n`);
+    fs.fsyncSync(fd);
     return () => {
-      fs.closeSync(fd);
-      fs.unlinkSync(lockPath);
+      try {
+        this.withVersionedLockCoordination(lockPath, () => {
+          if (this.readLockToken(lockPath) !== ownedIdentity.token) return;
+          const released = `${lockPath}.release-${ownedIdentity.token}`;
+          try {
+            fs.renameSync(lockPath, released);
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+            return;
+          }
+          fs.unlinkSync(released);
+        });
+      } finally {
+        fs.closeSync(fd);
+      }
     };
+  }
+
+  private processIdentity(): { pid: number; startTime: string } {
+    return { pid: process.pid, startTime: this.readProcessStartTime(process.pid) ?? "unavailable" };
+  }
+
+  private reclaimStaleLock(
+    lockPath: string,
+    inspected: { pid: number; startTime: string; token: string },
+  ): boolean {
+    return this.withVersionedLockCoordination(lockPath, () => {
+      const current = this.readVersionedLock(lockPath);
+      // The coordination directory makes creation and reclamation one protocol:
+      // a contender cannot replace the pathname between this identity check and rename.
+      if (current?.token !== inspected.token) return false;
+      const quarantine = `${lockPath}.reclaim-${inspected.token}`;
+      try {
+        fs.renameSync(lockPath, quarantine);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+        throw error;
+      }
+      const quarantined = this.readVersionedLock(quarantine);
+      if (quarantined?.token !== inspected.token)
+        throw new Error("stale lock ownership changed during reclamation");
+      fs.unlinkSync(quarantine);
+      return true;
+    });
+  }
+
+  private readLockToken(lockPath: string): string | undefined {
+    try {
+      const value = JSON.parse(fs.readFileSync(lockPath, "utf8")) as { token?: unknown };
+      return typeof value.token === "string" ? value.token : undefined;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT" || error instanceof SyntaxError)
+        return undefined;
+      throw error;
+    }
+  }
+
+  private readVersionedLock(
+    lockPath: string,
+  ): { pid: number; startTime: string; token: string } | undefined {
+    try {
+      const value = JSON.parse(fs.readFileSync(lockPath, "utf8")) as Record<string, unknown>;
+      if (
+        !Number.isSafeInteger(value.pid) ||
+        (value.pid as number) <= 0 ||
+        typeof value.startTime !== "string" ||
+        (value.startTime !== "unavailable" && !/^\d{1,32}$/.test(value.startTime)) ||
+        typeof value.token !== "string" ||
+        !/^[0-9a-f-]{36}$/.test(value.token)
+      )
+        return undefined;
+      return { pid: value.pid as number, startTime: value.startTime, token: value.token };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT" || error instanceof SyntaxError)
+        return undefined;
+      throw error;
+    }
+  }
+
+  private isVersionedLockHolderAlive(holder: { pid: number; startTime: string }): boolean {
+    try {
+      process.kill(holder.pid, 0);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
+      return true;
+    }
+    const current = this.readProcessIdentity(holder.pid);
+    if (current === undefined || holder.startTime === "unavailable") return true;
+    if (current.state === "Z") return false;
+    return current.startTime === holder.startTime;
+  }
+
+  private readProcessStartTime(pid: number): string | undefined {
+    return this.readProcessIdentity(pid)?.startTime;
+  }
+
+  private readProcessIdentity(pid: number): { state: string; startTime: string } | undefined {
+    try {
+      const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+      const tail = stat
+        .slice(stat.lastIndexOf(")") + 2)
+        .trim()
+        .split(" ");
+      const [state = "", startTime] = [tail[0], tail[19]];
+      return state !== undefined && startTime !== undefined && /^\d{1,32}$/.test(startTime)
+        ? { state, startTime }
+        : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   private sessionLeasePath(id: string): string {
@@ -665,6 +847,36 @@ export class ProjectStore {
         "invalid_id",
         name,
         "destination name must be one path component",
+      );
+  }
+  private validateLockRetryConfig(config: ProjectStoreConfig["lockRetry"]): void {
+    if (config === undefined) return;
+    if (
+      typeof config !== "object" ||
+      config === null ||
+      Array.isArray(config) ||
+      Object.getPrototypeOf(config) !== Object.prototype ||
+      Object.keys(config).some((key) => key !== "delaysMs")
+    )
+      throw new ProjectStoreError(
+        "invalid_config",
+        "lockRetry",
+        "lockRetry must contain only the delaysMs setting",
+      );
+    if (Object.hasOwn(config, "delaysMs"))
+      this.validateLockRetry((config as { delaysMs: readonly number[] }).delaysMs);
+  }
+
+  private validateLockRetry(delays: readonly number[]): void {
+    if (
+      !Array.isArray(delays) ||
+      delays.length === 0 ||
+      delays.some((delay) => !Number.isSafeInteger(delay) || delay <= 0)
+    )
+      throw new ProjectStoreError(
+        "invalid_config",
+        "lockRetry.delaysMs",
+        "lock retry delays must be a non-empty array of positive safe integers",
       );
   }
   private validateLimits<T extends object>(limits: T): void {
