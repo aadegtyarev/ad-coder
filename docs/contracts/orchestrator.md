@@ -543,7 +543,8 @@ separate entity; `operator-flow.md` for what a pause is and who reports it -- wi
 its polling sentence still to be marked superseded by a reviewed edit (K7.3); and
 the project's tracker for the wait instrument the code does not have yet (#563,
 K7.5) -- that issue is where the missing instrument is tracked, and it is cited as
-a REQUIREMENT of this text (K10.6.2) rather than as a design decision recorded
+a REQUIREMENT of this text (K7.5 for the instrument, K10.6.2 for the name it must
+carry when it becomes a setting) rather than as a design decision recorded
 elsewhere.
 Three amendments are owed to other files, and all of them are edits to those files
 rather than statements this contract can make for them: the supersession mark in
