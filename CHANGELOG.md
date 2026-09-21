@@ -11,6 +11,35 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.150.0] - 2026-09-21
+
+### Fixed
+- **A run record is never published terminal before its outcome is attached,
+  so `background status` cannot report a run that exists as missing (issue
+  #534).** The durable record invariant is `isTerminal(lifecycle) ===
+  (outcome !== undefined)`, and the failure path broke it: it set `failed`,
+  published that record, and only then built the outcome and wrote a second
+  time. For the length of that window the file on disk was a terminal record
+  with no outcome, and the two readers of one file disagreed about it --
+  `load()` drops an unparseable record and answers `not_found`, while
+  `refresh()` throws `state_unavailable` for the same bytes. Both were
+  observed as flakes of `background status` (a returning `not_found` for a run
+  whose record existed, and a status run that read the same file fine on the
+  retry). The outcome is now built before the single append that publishes it,
+  matching every other terminal writer (`completed`, `cancel`, `timed_out`,
+  `failLaunch`, and the abandoned branch of `load()`). The regression test
+  hooks the publication seam (`ProjectStore.mutateVersionedJson`) and asserts
+  the invariant for every record a run publishes, so it covers the class
+  rather than re-testing the one path that regressed.
+- **Every git fixture commits with a repo-local identity of its own, so the
+  suite passes with no global git configuration (issue #534).** One closeout
+  fixture set `user.name` and left `git commit` to borrow `user.email` from
+  the developer's global config: green on a configured machine,
+  `Author identity unknown` in a clean environment (a fresh CI runner, a
+  container, an empty HOME). A single `initGitRepo` helper now sets both
+  fields wherever a fixture commits, and the acceptance control is the suite
+  passing with `GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null`.
+
 ## [0.149.0] - 2026-09-20
 
 ### Added

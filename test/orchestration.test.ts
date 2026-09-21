@@ -169,12 +169,24 @@ function changedFilesConfig(
   } as unknown as PipelineConfig;
 }
 
-/** Empty repo with one commit, mirroring the runner-test fixture. */
-function initChangedFilesRepo(prefix: string): string {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+/**
+ * A repo whose commits depend on nothing outside itself. A repo-local
+ * `user.name` alone is not enough: `git commit` happily borrows `user.email`
+ * from the developer's global config, so a fixture that sets only the name
+ * passes on a configured machine and dies with "Author identity unknown" on a
+ * clean one (a fresh CI runner, a container, an empty HOME). Both values are
+ * set in one place so no fixture can inherit half an identity (issue #534).
+ */
+function initGitRepo(dir: string): void {
   execFileSync("git", ["init", "-q"], { cwd: dir });
   execFileSync("git", ["config", "user.name", "Test"], { cwd: dir });
   execFileSync("git", ["config", "user.email", "test@example.invalid"], { cwd: dir });
+}
+
+/** Empty repo with one commit, mirroring the runner-test fixture. */
+function initChangedFilesRepo(prefix: string): string {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+  initGitRepo(dir);
   execFileSync("git", ["commit", "-qm", "base", "--allow-empty"], { cwd: dir });
   return dir;
 }
@@ -874,8 +886,7 @@ test("one round approve returns approved:true rounds:1", async () => {
 
 test("a coder stage that enters its closeout reserve settles structurally closed_out (issue #327)", async () => {
   const fx = fixture();
-  execFileSync("git", ["init", "-q"], { cwd: fx.targetDir });
-  execFileSync("git", ["config", "user.name", "Test"], { cwd: fx.targetDir });
+  initGitRepo(fx.targetDir);
   fs.writeFileSync(path.join(fx.targetDir, "tracked.txt"), "base\n");
   execFileSync("git", ["add", "tracked.txt"], { cwd: fx.targetDir });
   execFileSync("git", ["commit", "-qm", "base"], { cwd: fx.targetDir });
@@ -915,11 +926,7 @@ test("a coder stage that enters its closeout reserve settles structurally closed
 
 test("pipeline aggregates exact multi-response stage observations in stable order", async () => {
   const fx = fixture();
-  execFileSync("git", ["init", "-q"], { cwd: fx.targetDir });
-  execFileSync("git", ["config", "user.name", "Test"], { cwd: fx.targetDir });
-  execFileSync("git", ["config", "user.email", "test@example.invalid"], {
-    cwd: fx.targetDir,
-  });
+  initGitRepo(fx.targetDir);
   fs.writeFileSync(path.join(fx.targetDir, "tracked.txt"), "base\n");
   execFileSync("git", ["add", "tracked.txt"], { cwd: fx.targetDir });
   execFileSync("git", ["commit", "-qm", "base"], { cwd: fx.targetDir });
@@ -1060,11 +1067,7 @@ test("two rounds: reviewer round-1 issue is threaded into the coder round-2 prom
   const fx = fixture();
   const coderPrompts: string[] = [];
   const reviewerPrompts: string[] = [];
-  execFileSync("git", ["init", "-q"], { cwd: fx.targetDir });
-  execFileSync("git", ["config", "user.name", "Test"], { cwd: fx.targetDir });
-  execFileSync("git", ["config", "user.email", "test@example.invalid"], {
-    cwd: fx.targetDir,
-  });
+  initGitRepo(fx.targetDir);
   fs.writeFileSync(path.join(fx.targetDir, "baseline.txt"), "baseline\n");
   execFileSync("git", ["add", "baseline.txt"], { cwd: fx.targetDir });
   execFileSync("git", ["commit", "-qm", "baseline"], { cwd: fx.targetDir });
@@ -1126,9 +1129,7 @@ test("two rounds: reviewer round-1 issue is threaded into the coder round-2 prom
 test("untracked retry evidence remains focused when its bounded projection is safe", async () => {
   const fx = fixture();
   const reviewerPrompts: string[] = [];
-  execFileSync("git", ["init", "-q"], { cwd: fx.targetDir });
-  execFileSync("git", ["config", "user.name", "Test"], { cwd: fx.targetDir });
-  execFileSync("git", ["config", "user.email", "test@example.invalid"], { cwd: fx.targetDir });
+  initGitRepo(fx.targetDir);
   fs.writeFileSync(path.join(fx.targetDir, "baseline.txt"), "baseline\n");
   execFileSync("git", ["add", "baseline.txt"], { cwd: fx.targetDir });
   execFileSync("git", ["commit", "-qm", "baseline"], { cwd: fx.targetDir });
@@ -1174,9 +1175,7 @@ test("untracked retry evidence remains focused when its bounded projection is sa
 
 test("an over-ceiling untracked change escalates on material_diff with its path list intact (issue #449)", async () => {
   const fx = fixture();
-  execFileSync("git", ["init", "-q"], { cwd: fx.targetDir });
-  execFileSync("git", ["config", "user.name", "Test"], { cwd: fx.targetDir });
-  execFileSync("git", ["config", "user.email", "test@example.invalid"], { cwd: fx.targetDir });
+  initGitRepo(fx.targetDir);
   fs.writeFileSync(path.join(fx.targetDir, "baseline.txt"), "baseline\n");
   execFileSync("git", ["add", "baseline.txt"], { cwd: fx.targetDir });
   execFileSync("git", ["commit", "-qm", "baseline"], { cwd: fx.targetDir });

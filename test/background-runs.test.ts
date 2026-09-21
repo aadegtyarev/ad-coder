@@ -12,6 +12,8 @@ import {
 } from "../src/orchestration/background-runs";
 import type { RunPipelineResult } from "../src/orchestration/orchestrator";
 import { PipelinePauseError } from "../src/orchestration/types";
+import { ProjectStore } from "../src/project-store/project-store";
+import type { VersionedState } from "../src/project-store/types";
 
 function deferred<T>(): {
   promise: Promise<T>;
@@ -552,6 +554,75 @@ test("subscription consumer and persisted-state failures are safe and typed", as
     new BackgroundRunError("state_unavailable", requested.runId),
   );
   await owner.close();
+});
+
+/**
+ * The record invariant every reader of a run record depends on is
+ * `isTerminal(lifecycle) === (outcome !== undefined)`. A record that breaks it
+ * is not "partially written" to the readers: `load()` drops it silently and
+ * answers `not_found`, and `refresh()` throws `state_unavailable` for the same
+ * file -- so a run that breaks it is one a concurrent `background status`
+ * reports as missing, exactly once, then reads fine on the retry.
+ *
+ * A writer that sets a TERMINAL lifecycle, publishes, and only then attaches
+ * the outcome opens that window for the duration of one write. This asserts the
+ * invariant at the publication seam (`ProjectStore.mutateVersionedJson`, the one
+ * call that puts a record on disk), so it covers every writer on the failure
+ * path rather than re-testing the one that regressed (issue #534).
+ */
+test("a published run record is never terminal without its outcome (issue #534)", async () => {
+  const targetDir = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-record-invariant-")),
+  );
+  const stateDir = path.join(targetDir, ".ad-coder", "runs", "background");
+  const published: Array<{ lifecycle: string; hasOutcome: boolean }> = [];
+  const original = ProjectStore.prototype.mutateVersionedJson;
+  // The seam is generic over the stored value and this wrapper only reads two
+  // fields of it, so it is written over `unknown` and cast back to the generic
+  // signature it replaces; every caller keeps the original typing.
+  ProjectStore.prototype.mutateVersionedJson = function (
+    this: ProjectStore,
+    destination: string,
+    mutate: (current: VersionedState<unknown> | undefined) => unknown,
+  ): VersionedState<unknown> {
+    return original.call(this, destination, (current) => {
+      const next = mutate(current);
+      if (path.dirname(destination) === stateDir && next !== undefined && next !== null) {
+        // `next` is the run record itself: `mutateVersionedJson` wraps it into
+        // `{ version, value }` after this callback returns, so what is observed
+        // here is exactly what the next reader will parse out of `value`.
+        const record = next as { lifecycle?: unknown; outcome?: unknown };
+        published.push({
+          lifecycle: String(record.lifecycle),
+          hasOutcome: record.outcome !== undefined,
+        });
+      }
+      return next;
+    });
+  } as typeof ProjectStore.prototype.mutateVersionedJson;
+  let manager: BackgroundRunManager | undefined;
+  try {
+    manager = new BackgroundRunManager(
+      async () => {
+        throw new Error("internal failure");
+      },
+      {},
+      targetDir,
+      "record-invariant-owner",
+    );
+    const run = manager.start("failing task");
+    await manager.wait(run.runId);
+  } finally {
+    ProjectStore.prototype.mutateVersionedJson = original;
+    await manager?.close();
+  }
+  const terminal = (lifecycle: string): boolean =>
+    (["failed", "cancelled", "timed_out", "completed"] as readonly string[]).includes(lifecycle);
+  // Not vacuous: the scenario really did publish the failing run's outcome.
+  expect(
+    published.filter((entry) => entry.lifecycle === "failed" && entry.hasOutcome).length,
+  ).toBeGreaterThan(0);
+  expect(published.filter((entry) => terminal(entry.lifecycle) !== entry.hasOutcome)).toEqual([]);
 });
 
 test("zero disables active-run and event-retention limits", async () => {
