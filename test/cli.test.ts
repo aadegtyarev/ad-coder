@@ -606,7 +606,6 @@ test("profile CLI previews and applies a portable import before exporting it", (
     const inputPath = path.join(root, "portable.json");
     const portable = {
       version: 1,
-      inventories: [{ name: "work", providers: [{ id: "codex", models: ["codex-terra"] }] }],
       calibratedRouting: [],
       economicRecords: [],
       subscriptionCapacityRanges: [],
@@ -617,7 +616,7 @@ test("profile CLI previews and applies a portable import before exporting it", (
     expect(preview.code).toBe(0);
     expect(JSON.parse(preview.stdout)).toMatchObject({
       mode: "merge",
-      creates: ["inventory:work"],
+      creates: [],
     });
     expect(fs.existsSync(profilePath)).toBe(false);
 
@@ -627,6 +626,64 @@ test("profile CLI previews and applies a portable import before exporting it", (
     const exported = runCli(["profile", "export", "--profile-path", profilePath]);
     expect(exported.code).toBe(0);
     expect(JSON.parse(exported.stdout)).toEqual(portable);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("profile CLI previews conflicts and rejects applying them", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-profile-cli-conflict-"));
+  try {
+    const profilePath = path.join(root, "private", "profile.json");
+    const localPath = path.join(root, "local.json");
+    const conflictPath = path.join(root, "conflict.json");
+    const routing = {
+      modelsProfile: "daily",
+      profile: { entries: [{ role: "coder", complexity: "medium", model: "gpt" }] },
+      observedOn: "2026-09-20",
+      source: "benchmark",
+      confidence: "measured",
+    };
+    const record = {
+      id: "price-1",
+      observedAt: "2026-09-13T00:00:00.000Z",
+      provider: "openai",
+      model: "gpt",
+      kind: "price",
+      value: 2.5,
+      unit: "USD/1M tokens",
+      source: "https://example.test/pricing",
+      confidence: "official",
+    };
+    const document = {
+      version: 1,
+      calibratedRouting: [routing],
+      economicRecords: [record],
+      subscriptionCapacityRanges: [],
+    };
+    fs.writeFileSync(localPath, JSON.stringify(document));
+    const seed = runCli([
+      "profile",
+      "import-apply",
+      "--input",
+      localPath,
+      "--mode",
+      "merge",
+      "--profile-path",
+      profilePath,
+    ]);
+    expect(seed.code).toBe(0);
+    fs.writeFileSync(
+      conflictPath,
+      JSON.stringify({ ...document, economicRecords: [{ ...record, value: 99 }] }),
+    );
+    const args = ["--input", conflictPath, "--mode", "merge", "--profile-path", profilePath];
+    const preview = runCli(["profile", "import-preview", ...args]);
+    expect(preview.code).toBe(0);
+    expect(JSON.parse(preview.stdout).conflicts).toContain("economicRecord:price-1");
+    const apply = runCli(["profile", "import-apply", ...args]);
+    expect(apply.code).toBe(1);
+    expect(JSON.parse(apply.stderr).error.code).toBe("conflict");
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -805,22 +862,6 @@ test("profile CLI returns stable JSON errors for invalid input, conflicts, and u
       expect(result.code).toBe(1);
       expect(JSON.parse(result.stderr).error.code).toBe("invalid_profile");
     }
-
-    const first = JSON.stringify({
-      version: 1,
-      inventories: [{ name: "work", providers: [{ id: "codex", models: ["terra"] }] }],
-      calibratedRouting: [],
-      economicRecords: [],
-      subscriptionCapacityRanges: [],
-    });
-    expect(runImport("first", first, "import-apply").code).toBe(0);
-    const conflicting = first.replace('"terra"', '"sol"');
-    const conflict = runImport("conflict", conflicting);
-    expect(conflict.code).toBe(0);
-    expect(JSON.parse(conflict.stdout).conflicts).toEqual(["inventory:work"]);
-    const applyConflict = runImport("conflict-apply", conflicting, "import-apply");
-    expect(applyConflict.code).toBe(1);
-    expect(JSON.parse(applyConflict.stderr).error.code).toBe("conflict");
 
     const unsafe = runCli(["profile", "show", "--profile-path", root]);
     expect(unsafe.code).toBe(1);

@@ -192,14 +192,12 @@ Rules the operator declared for ad-coder. A violation is always blocking.
   is future work).
 - 2026-09-19: **The stored `inventories.json` route is retired (referencing
   the same-day `models.yaml` entry above; issue #280).** `models.yaml` is the
-  operator-facing stored routing source; `ad-coder config migrate` (0.80.0)
-  is the only stored-JSON reader, and `--inventory-config` remains a per-run
-  data path. An absent `models.yaml` with a PRESENT stored `inventories.json`
-  is a loud typed error naming `config migrate` -- never a silent switch to
-  the env-preset/codex route, and the resolver never rewrites the stored
-  file. With both absent, the built-in env-preset/codex route runs exactly as
-  before. Nothing is seeded on first use: this supersedes the 2026-09-14
-  first-use seeding rule, whose text remains above as history.
+  operator-facing stored routing source; `--inventory-config` remains a per-run
+  data path. If `models.yaml` is absent, any `inventories.json` is ignored and
+  resolution exits 0; there is no migration or error. With both absent, the
+  built-in env-preset/codex route runs exactly as before. Nothing is seeded on
+  first use: this supersedes the 2026-09-14 first-use seeding rule, whose text
+  remains above as history.
 - 2026-09-19: **`settings.yaml`'s `review` section is an explicit override of
   the review-stamp marker-file behaviour, resolved ONCE and threaded to BOTH
   the settle writer and the `stamp check` gate so the two can never disagree
@@ -210,10 +208,12 @@ Rules the operator declared for ad-coder. A violation is always blocking.
   present-but-empty or malformed `settings.yaml` is refused, never silently
   defaulted; only an ABSENT file takes the defaults.
 - 2026-09-13: User profiles are portable through explicit versioned export and
-  import. Exports contain inventories, routing calibration, confirmed economic
-  history, and safe subscription-capacity estimates, but never credentials,
-  account identifiers, raw provider responses, or project run transcripts.
-  Import validates before mutation and resolves conflicts explicitly.
+  import. Exports contain routing calibration, confirmed economic history, and
+  safe subscription-capacity estimates, but never credentials, account
+  identifiers, raw provider responses, or project run transcripts. Import
+  validates before mutation and resolves conflicts explicitly. Profiles contain
+  routing calibration, confirmed economic history, and safe
+  subscription-capacity estimates, never inventory definitions.
 - 2026-09-13: Confirmed model price and limit changes append history rather than
   rewriting it. Current values retain source, observation date, units, and
   confidence. Projects may commit a bounded anonymous snapshot plus calibrated
@@ -352,6 +352,15 @@ Rules the operator declared for ad-coder. A violation is always blocking.
   boundary rule about what crosses the process, not a change to the
   interactive default.
 
+- 2026-09-20: **Personal profiles no longer route through JSON inventories
+  (issue #536).** Legacy `inventories: []` is accepted and dropped; non-empty
+  inventories and `calibratedRouting.inventory` are typed refusals directing
+  operators to a named `models.yaml` profile (and
+  `ad-coder profile snapshot --models-profile <name>` where applicable).
+  Writers never emit the obsolete key. If `models.yaml` is absent, a present
+  `inventories.json` is ignored and resolution exits 0; there is no migration
+  or error.
+
 ## Sources
 
 The 2026-09-11 rules implement “good out of the box, everything overridable.”
@@ -366,8 +375,8 @@ is the single editable runtime source" rule for routing: `models.yaml` is the
 operator-facing routing document and `settings.yaml` the behaviour document,
 resolved YAML-first-then-JSON with the winning source visible rather than
 silent; the same-day retirement entry above makes the retirement real: a
-present `inventories.json` under an absent `models.yaml` is a loud typed error
-naming `config migrate`, and nothing is seeded on first use.
+present `inventories.json` under an absent `models.yaml` is ignored and resolution
+exits 0; nothing is seeded on first use.
 The decomposition-depth exception implements the operation-mode contract's
 default stop after a child pipeline asks for decomposition again.
 The 2026-09-16 capability rule generalises the 2026-09-11 pair from values to

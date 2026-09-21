@@ -56,7 +56,6 @@ function storeError(cause?: unknown): UserProfileError {
 function emptyProfile(): UserProfile {
   return {
     version: 1,
-    inventories: [],
     calibratedRouting: [],
     economicRecords: [],
     subscriptionCapacityRanges: [],
@@ -336,7 +335,7 @@ export function createDefaultUserProfileStore(): FileUserProfileStore {
 /**
  * A synchronous read of the profile's capability switches, taken before run
  * configuration. Run-configuration building is synchronous by design, and
- * capability settings must reach every command the same way inventories do;
+ * capability settings must reach every command consistently;
  * the async store owns mutation and locking, while this never writes and reads
  * the committed file once. Same safety checks as `read`: no symlinks, no world
  * access, single hard link. A missing store is the built-in default -- it is

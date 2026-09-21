@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { SubscriptionCapacityRange, UserProfile } from "ad-coder";
+import type { CalibratedRouting, UserProfile } from "ad-coder";
 import {
   exportUserProfile,
   FileUserProfileStore,
@@ -16,22 +16,12 @@ afterEach(() => {
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 
-function profile(records: UserProfile["economicRecords"] = []): UserProfile {
-  return {
-    version: 1,
-    inventories: [
-      {
-        name: "primary",
-        providers: [{ id: "openai", models: ["gpt"] }],
-        default: "gpt",
-      },
-    ],
-    calibratedRouting: [],
-    economicRecords: records,
-    subscriptionCapacityRanges: [],
-  };
-}
-
+const base = (): UserProfile => ({
+  version: 1,
+  calibratedRouting: [],
+  economicRecords: [],
+  subscriptionCapacityRanges: [],
+});
 const record = {
   id: "price-1",
   observedAt: "2026-09-13T00:00:00.000Z",
@@ -43,82 +33,165 @@ const record = {
   source: "https://example.test/pricing",
   confidence: "official" as const,
 };
-
-function createStore(Store: typeof FileUserProfileStore = FileUserProfileStore): {
-  file: string;
-  store: FileUserProfileStore;
-} {
+const cell = (modelsProfile = "daily"): CalibratedRouting => ({
+  modelsProfile,
+  profile: { entries: [{ role: "coder", complexity: "medium", model: "gpt" }] },
+  observedOn: "2026-09-20",
+  source: "benchmark",
+  confidence: "measured" as const,
+});
+function store(Store: typeof FileUserProfileStore = FileUserProfileStore) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-profile-"));
   roots.push(root);
   const file = path.join(root, "private", "profile.json");
   return { file, store: new Store({ userHome: root, configPath: file }) };
 }
 
-test("parses and round-trips only complete version-one portable profiles", () => {
-  const expected = profile([record]);
+test("validates the complete inventory-free version-one schema", () => {
+  const expected = { ...base(), economicRecords: [record] };
   expect(parseUserProfileJson(exportUserProfile(expected))).toEqual(expected);
-
   for (const invalid of [
     "{",
-    JSON.stringify({ inventories: [], economicRecords: [] }),
-    JSON.stringify({ ...profile(), version: 2 }),
-    JSON.stringify({ ...profile(), inventories: [{}] }),
+    JSON.stringify({ economicRecords: [] }),
+    JSON.stringify({ ...base(), version: 2 }),
+    JSON.stringify({ ...base(), economicRecords: [{ ...record, value: "2.5" }] }),
+    JSON.stringify({ ...base(), economicRecords: [{ ...record, value: -1 }] }),
+    JSON.stringify({ ...base(), economicRecords: [{ ...record, observedAt: "2026-09-13" }] }),
+    JSON.stringify({ ...base(), economicRecords: [{ ...record, confidence: "guess" }] }),
+    JSON.stringify({ ...base(), economicRecords: [{ ...record, source: "not-a-safe-source" }] }),
+    JSON.stringify({ ...base(), calibratedRouting: [{ ...cell(), modelsProfile: "" }] }),
+    JSON.stringify({ ...base(), calibratedRouting: [{ ...cell(), profile: { entries: "bad" } }] }),
+    JSON.stringify({ ...base(), calibratedRouting: [{ ...cell(), confidence: "guess" }] }),
     JSON.stringify({
-      ...profile(),
-      inventories: [{ name: "bad", providers: [{ id: "p", models: [] }] }],
+      ...base(),
+      calibratedRouting: [{ ...cell(), observedOn: "2026-09-13T00:00:00Z" }],
     }),
+    JSON.stringify({ ...base(), calibratedRouting: [{ ...cell(), source: "private-token" }] }),
+    JSON.stringify({ ...base(), calibratedRouting: [cell(), cell()] }),
+    JSON.stringify({ ...base(), economicRecords: [record, record] }),
     JSON.stringify({
-      ...profile(),
-      inventories: [{ name: "bad", providers: [{ id: "p", models: ["m"] }], default: "other" }],
+      ...base(),
+      subscriptionCapacityRanges: [
+        {
+          provider: "p",
+          unit: "u",
+          lowerBound: 1,
+          upperBound: 2,
+          observedOn: "2026-09-13",
+          source: "https://example.test",
+          confidence: "measured",
+        },
+        {
+          provider: "p",
+          unit: "u",
+          lowerBound: 3,
+          upperBound: 4,
+          observedOn: "2026-09-14",
+          source: "https://example.test",
+          confidence: "measured",
+        },
+      ],
     }),
-    JSON.stringify({ ...profile(), economicRecords: [{ ...record, value: "2.5" }] }),
-    JSON.stringify({ ...profile(), economicRecords: [{ ...record, value: -1 }] }),
-    JSON.stringify({ ...profile(), economicRecords: [{ ...record, observedAt: "2026-09-13" }] }),
-    JSON.stringify({ ...profile(), extra: true }),
-  ]) {
+    JSON.stringify({ ...base(), subscriptionCapacityRanges: [{ provider: "p" }] }),
+    JSON.stringify({
+      ...base(),
+      subscriptionCapacityRanges: [
+        {
+          provider: "p",
+          unit: "u",
+          lowerBound: 2,
+          upperBound: 1,
+          observedOn: "2026-09-13",
+          source: "https://example.test",
+          confidence: "measured",
+        },
+      ],
+    }),
+    JSON.stringify({ ...base(), subscriptionCapacityRanges: "bad" }),
+    JSON.stringify({ ...base(), calibratedRouting: [{ ...cell(), nested: true }] }),
+    JSON.stringify({ ...base(), extra: true }),
+  ])
     expect(() => parseUserProfileJson(invalid)).toThrow(UserProfileError);
+});
+
+test("accepts and drops legacy empty inventories, and writers never emit it", () => {
+  const parsed = parseUserProfileJson(JSON.stringify({ ...base(), inventories: [] }));
+  expect(parsed).not.toHaveProperty("inventories");
+  expect(exportUserProfile(parsed)).not.toContain("inventories");
+  expect(parseUserProfileJson(JSON.stringify(base()))).toEqual(base());
+});
+
+test("reports unrelated malformed fields without the inventory remedy", () => {
+  for (const [field, value] of [
+    ["subscriptionCapacityRanges", "bad"],
+    ["economicRecords", "bad"],
+  ] as const) {
+    expect(() => parseUserProfileJson(JSON.stringify({ ...base(), [field]: value }))).toThrow(
+      new UserProfileError(
+        "invalid_profile",
+        `profile.${field} must be an array`,
+        `invalid user profile: profile.${field} must be an array`,
+      ),
+    );
+    try {
+      parseUserProfileJson(JSON.stringify({ ...base(), [field]: value }));
+    } catch (error) {
+      expect((error as Error).message).not.toContain("inventories");
+      expect((error as Error).message).not.toContain("models.yaml");
+    }
   }
 });
 
-test("returns empty missing state and persists validated profiles privately", async () => {
-  const { file, store: profileStore } = createStore();
-  expect(await profileStore.read()).toEqual({
-    version: 1,
-    inventories: [],
-    calibratedRouting: [],
-    economicRecords: [],
-    subscriptionCapacityRanges: [],
-  });
-  expect(fs.existsSync(path.dirname(file))).toBe(false);
-
-  await profileStore.write(profile());
-  expect(fs.statSync(path.dirname(file)).mode & 0o777).toBe(0o700);
-  expect(fs.statSync(file).mode & 0o777).toBe(0o600);
-
-  fs.writeFileSync(file, "{not-json", { mode: 0o600 });
-  await expect(profileStore.read()).rejects.toMatchObject({ code: "invalid_profile" });
+test("rejects obsolete inventories and calibratedRouting.inventory with typed remedies", () => {
+  for (const value of [{ name: "x" }, "bad"]) {
+    try {
+      parseUserProfileJson(JSON.stringify({ ...base(), inventories: value }));
+    } catch (error) {
+      expect((error as UserProfileError).code).toBe("invalid_profile");
+      expect((error as Error).message).toContain("models.yaml");
+    }
+  }
+  expect(() =>
+    parseUserProfileJson(JSON.stringify({ ...base(), inventories: [{ name: "x" }] })),
+  ).toThrow(UserProfileError);
+  try {
+    parseUserProfileJson(
+      JSON.stringify({ ...base(), calibratedRouting: [{ ...cell(), inventory: "old" }] }),
+    );
+  } catch (error) {
+    expect((error as UserProfileError).detail).toContain("calibratedRouting.inventory");
+    expect((error as Error).message).toContain("models.yaml");
+  }
 });
 
-test("appends economics records and rejects every history rewrite", async () => {
-  const { store: profileStore } = createStore();
-  await profileStore.write(profile([record]));
+test("appends economic history and rejects every history rewrite", async () => {
+  const { store: profileStore } = store();
+  await profileStore.write({ ...base(), economicRecords: [record] });
   const second = { ...record, id: "price-2", value: 3, previousId: record.id };
   await profileStore.appendEconomicRecord(second);
   expect((await profileStore.read()).economicRecords).toEqual([record, second]);
-
   await expect(
     profileStore.appendEconomicRecord({ ...second, id: "bad", value: Number.NaN }),
   ).rejects.toMatchObject({ code: "invalid_profile" });
-  await expect(
-    profileStore.write(profile([{ ...record, id: "price-2", value: 3 }])),
-  ).rejects.toMatchObject({ code: "conflict" });
+  const rewrites: Array<{ records: UserProfile["economicRecords"]; code: string }> = [
+    { records: [], code: "conflict" },
+    { records: [second, record], code: "invalid_profile" },
+    { records: [{ ...record, value: 99 }, second], code: "conflict" },
+    { records: [record, { ...second, id: "price-3" }], code: "conflict" },
+  ];
+  for (const rewrite of rewrites)
+    await expect(
+      profileStore.write({ ...base(), economicRecords: rewrite.records }),
+    ).rejects.toMatchObject({
+      code: rewrite.code,
+    });
   expect((await profileStore.read()).economicRecords).toEqual([record, second]);
 });
 
-test("accepts append-only server-reported credit balance observations", () => {
+test("accepts append-only credit balance observations", () => {
   const first = {
     ...record,
-    id: "credit-balance-1",
+    id: "credit-1",
     kind: "credit_balance" as const,
     value: 500,
     unit: "credits",
@@ -127,20 +200,105 @@ test("accepts append-only server-reported credit balance observations", () => {
   };
   const second = {
     ...first,
-    id: "credit-balance-2",
+    id: "credit-2",
     observedAt: "2026-09-14T00:00:00.000Z",
     value: 375,
     previousId: first.id,
   };
-  expect(parseUserProfileJson(exportUserProfile(profile([first, second]))).economicRecords).toEqual(
-    [first, second],
-  );
+  expect(
+    parseUserProfileJson(exportUserProfile({ ...base(), economicRecords: [first, second] }))
+      .economicRecords,
+  ).toEqual([first, second]);
 });
 
-test("independent stores serialize concurrent economic appends", async () => {
-  const { file, store: first } = createStore();
+test("rejects every credential-bearing and unsafe source before export", () => {
+  for (const source of [
+    "https://user:password@example.test/source",
+    "https://example.test/source?api_key=secret",
+    "https://example.test/source?access_token=secret",
+    "https://example.test/source?key=secret",
+    "https://example.test/source?auth=secret",
+    "https://example.test/source#access_token=secret",
+    "private-token-value",
+    "run:alice-account-123",
+    "response:private-data",
+  ]) {
+    expect(() =>
+      exportUserProfile({ ...base(), economicRecords: [{ ...record, source }] }),
+    ).toThrow(UserProfileError);
+  }
+});
+
+test("round-trips calibrated routing and safe capacity ranges", () => {
+  const range = {
+    provider: "openai",
+    unit: "requests/hour",
+    lowerBound: 10,
+    upperBound: 20,
+    observedOn: "2026-09-13",
+    source: "https://example.test/limits",
+    confidence: "provider_reported" as const,
+  };
+  const profile = {
+    ...base(),
+    calibratedRouting: [cell()],
+    subscriptionCapacityRanges: [range],
+  };
+  expect(parseUserProfileJson(exportUserProfile(profile))).toEqual(profile);
+  for (const invalid of [
+    { ...profile, calibratedRouting: [{ ...cell(), profile: { entries: "bad" } }] },
+    { ...profile, subscriptionCapacityRanges: [{ ...range, lowerBound: 21 }] },
+    {
+      ...profile,
+      subscriptionCapacityRanges: [{ ...range, observedOn: "2026-09-13T00:00:00.000Z" }],
+    },
+  ])
+    expect(() => exportUserProfile(invalid)).toThrow(UserProfileError);
+});
+
+test("exports deterministic portable data", () => {
+  const profile = { ...base(), economicRecords: [record], calibratedRouting: [cell()] };
+  const exported = exportUserProfile(profile);
+  expect(exported).toBe(exportUserProfile(profile));
+  expect(parseUserProfileJson(exported)).toEqual(profile);
+});
+
+test("imports merge and replace with conflicts without publication", async () => {
+  const { file, store: profileStore } = store();
+  await profileStore.write({ ...base(), economicRecords: [record] });
+  const before = fs.readFileSync(file);
+  await expect(
+    profileStore.import({ ...base(), economicRecords: [{ ...record, value: 99 }] }, "merge"),
+  ).rejects.toMatchObject({ code: "conflict" });
+  expect(fs.readFileSync(file)).toEqual(before);
+  const incoming = { ...base(), calibratedRouting: [cell("weekly")] };
+  await profileStore.import(incoming, "replace");
+  expect((await profileStore.read()).calibratedRouting).toEqual(incoming.calibratedRouting);
+  expect((await profileStore.read()).economicRecords).toEqual([record]);
+});
+
+test("failed beforeCommit preserves the complete prior document", async () => {
+  class FailingStore extends FileUserProfileStore {
+    fail = false;
+    protected override async beforeCommit() {
+      if (this.fail) throw new Error("injected commit failure");
+    }
+  }
+  const { file, store: rawFailingStore } = store(FailingStore);
+  const failingStore = rawFailingStore as FailingStore;
+  await failingStore.write({ ...base(), economicRecords: [record] });
+  const before = fs.readFileSync(file);
+  failingStore.fail = true;
+  await expect(
+    failingStore.appendEconomicRecord({ ...record, id: "price-2" }),
+  ).rejects.toMatchObject({ code: "io_error" });
+  expect(fs.readFileSync(file)).toEqual(before);
+});
+
+test("serializes concurrent appends across stores", async () => {
+  const { file, store: first } = store();
   const second = new FileUserProfileStore({ userHome: path.dirname(file), path: file });
-  await first.write(profile());
+  await first.write(base());
   await Promise.all([
     first.appendEconomicRecord(record),
     second.appendEconomicRecord({ ...record, id: "price-2", value: 3 }),
@@ -152,286 +310,137 @@ test("independent stores serialize concurrent economic appends", async () => {
   expect(fs.existsSync(`${file}.lock`)).toBe(false);
 });
 
-test("round-trips valid source URLs and imports them", () => {
-  const expected = profile([record]);
-  expected.economicRecords[0]!.source = "https://example.test/pricing";
-  expected.calibratedRouting = [
-    {
-      inventory: "primary",
-      profile: { entries: [{ role: "coder", complexity: "medium", model: "gpt" }] },
-      observedOn: "2026-09-13",
-      source: "https://example.test/calibration",
-      confidence: "measured",
-    },
-  ];
-  expected.subscriptionCapacityRanges = [
-    {
-      provider: "openai",
-      unit: "requests/hour",
-      lowerBound: 10,
-      upperBound: 20,
-      observedOn: "2026-09-13",
-      source: "https://example.test/limits",
-      confidence: "provider_reported",
-    },
-  ];
-
-  const exported = exportUserProfile(expected);
-  expect(parseUserProfileJson(exported)).toEqual(expected);
-  expect(previewUserProfileImport(profile(), expected, "merge").result).toEqual(expected);
+test("preserves private store safety controls", async () => {
+  const { file, store: profileStore } = store();
+  expect(await profileStore.read()).toEqual(base());
+  await profileStore.write({ ...base(), economicRecords: [record] });
+  expect(fs.statSync(path.dirname(file)).mode & 0o777).toBe(0o700);
+  expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+  fs.writeFileSync(file, "{not-json", { mode: 0o600 });
+  await expect(profileStore.read()).rejects.toMatchObject({ code: "invalid_profile" });
 });
 
-test("validates calibrated routing and safe subscription-capacity ranges", () => {
-  const expected = profile();
-  expected.calibratedRouting = [
-    {
-      inventory: "primary",
-      profile: { entries: [{ role: "coder", complexity: "medium", model: "gpt" }] },
-      observedOn: "2026-09-13",
-      source: "https://example.test/calibration",
-      confidence: "measured",
-    },
-  ];
-  expected.subscriptionCapacityRanges = [
-    {
-      provider: "openai",
-      unit: "requests/hour",
-      lowerBound: 10,
-      upperBound: 20,
-      observedOn: "2026-09-13",
-      source: "https://example.test/limits",
-      confidence: "provider_reported",
-    },
-  ];
-  const exported = exportUserProfile(expected);
-  expect(exported).toBe(exportUserProfile(expected));
-  expect(parseUserProfileJson(exported)).toEqual(expected);
-
-  for (const invalid of [
-    {
-      ...expected,
-      calibratedRouting: [{ ...expected.calibratedRouting[0]!, inventory: "missing" }],
-    },
-    {
-      ...expected,
-      calibratedRouting: [
-        {
-          ...expected.calibratedRouting[0]!,
-          profile: { entries: [{ role: "coder", complexity: "medium", model: "outside" }] },
-        },
-      ],
-    },
-    {
-      ...expected,
-      subscriptionCapacityRanges: [{ ...expected.subscriptionCapacityRanges[0]!, lowerBound: 21 }],
-    },
-    {
-      ...expected,
-      subscriptionCapacityRanges: [
-        { ...expected.subscriptionCapacityRanges[0]!, observedOn: "2026-09-13T00:00:00.000Z" },
-      ],
-    },
-    {
-      ...expected,
-      subscriptionCapacityRanges: [
-        { ...expected.subscriptionCapacityRanges[0]!, provider: "orphan-provider" },
-      ],
-    },
-  ]) {
-    expect(() => exportUserProfile(invalid)).toThrow(UserProfileError);
-  }
-});
-
-test("a calibration names exactly one source: an inventory or a models.yaml profile", () => {
-  const cell = {
-    profile: {
-      entries: [{ role: "coder" as const, complexity: "medium" as const, model: "gpt-5.6-luna" }],
-    },
-    observedOn: "2026-09-20",
-    source: "benchmark",
-    confidence: "measured" as const,
-  };
-  const parse = (routing: unknown, over: Partial<UserProfile> = {}) =>
-    parseUserProfileJson(JSON.stringify({ ...profile(), ...over, calibratedRouting: [routing] }));
-  // The models.yaml arm: the source's model list lives in `models.yaml`, which
-  // a portable profile deliberately does not copy, so the cell is accepted here
-  // and checked where that file is loaded.
-  const modelsArm = parse({ ...cell, modelsProfile: "codex-pro100" }, { inventories: [] });
-  expect(modelsArm.calibratedRouting).toEqual([{ ...cell, modelsProfile: "codex-pro100" }]);
-  // The kind is part of the identity, so the two namespaces cannot silently
-  // collapse: naming BOTH is refused, and naming NEITHER is refused.
-  expect(() => parse({ ...cell, inventory: "primary", modelsProfile: "primary" })).toThrow(
-    UserProfileError,
-  );
-  expect(() => parse(cell)).toThrow(UserProfileError);
-  expect(() => parse({ ...cell, modelsProfile: "" })).toThrow(UserProfileError);
-  // An unknown field is refused on either arm, as before.
-  expect(() => parse({ ...cell, modelsProfile: "codex-pro100", extra: 1 })).toThrow(
-    UserProfileError,
-  );
-  // The inventory arm keeps its two checks: the reference must resolve, and the
-  // routing may only name that inventory's models.
-  expect(() => parse({ ...cell, inventory: "missing" }, { inventories: [] })).toThrow(
-    UserProfileError,
-  );
-  expect(() => parse({ ...cell, inventory: "primary" })).toThrow(UserProfileError);
-  // A capacity range's provider is checked against the source that can check
-  // it: strictly against a declared inventory, and deferred to `models.yaml`
-  // only when a models-profile source is declared (issue #506).
-  const range: SubscriptionCapacityRange = {
-    provider: "openai-codex",
-    unit: "requests/hour",
-    lowerBound: 10,
-    upperBound: 20,
-    observedOn: "2026-09-20",
-    source: "https://example.test/limits",
-    confidence: "provider_reported",
-  };
-  expect(() =>
-    parseUserProfileJson(JSON.stringify({ ...profile(), subscriptionCapacityRanges: [range] })),
-  ).toThrow(UserProfileError);
-  expect(
-    parse(
-      { ...cell, modelsProfile: "codex-pro100" },
-      { inventories: [], subscriptionCapacityRanges: [range] },
-    ).subscriptionCapacityRanges,
-  ).toEqual([range]);
-});
-
-test("rejects credential-bearing source URLs before export", () => {
-  const sources = [
-    "https://user:password@example.test/source",
-    "https://example.test/source?api_key=secret",
-    "https://example.test/source?access_token=secret",
-    "https://example.test/source?key=secret",
-    "https://example.test/source?auth=secret",
-    "https://example.test/source#access_token=secret",
-    "private-token-value",
-    "run:alice-account-123",
-    "response:private-data",
-  ];
-  for (const source of sources) {
-    expect(() => exportUserProfile(profile([{ ...record, source }]))).toThrow(UserProfileError);
-  }
-});
-
-test("exports deterministic portable data without leaking rejected private fields", () => {
-  const exported = exportUserProfile(profile([record]));
-  expect(exported).toBe(exportUserProfile(profile([record])));
-  expect(parseUserProfileJson(exported)).toEqual(profile([record]));
-
-  const secret = "private-token-value";
-  try {
-    exportUserProfile({ ...profile(), credentials: secret });
-    throw new Error("expected private field rejection");
-  } catch (error) {
-    expect(error).toBeInstanceOf(UserProfileError);
-    expect((error as Error).message).not.toContain(secret);
-  }
-});
-
-test("previews repeatedly without writes and applies merge or replace", async () => {
-  const { file, store: profileStore } = createStore();
-  await profileStore.write(profile([record]));
-  const before = fs.readFileSync(file);
-  const beforeMode = fs.statSync(file).mode;
-  const incoming = profile([{ ...record, id: "price-2", value: 3 }]);
-  incoming.inventories = [
-    { name: "secondary", providers: [{ id: "anthropic", models: ["claude"] }] },
-  ];
-  incoming.calibratedRouting = [
-    {
-      inventory: "secondary",
-      profile: { entries: [{ role: "coder", complexity: "medium", model: "claude" }] },
-      observedOn: "2026-09-13",
-      source: "https://example.test/calibration",
-      confidence: "measured",
-    },
-  ];
-  incoming.subscriptionCapacityRanges = [
-    {
-      provider: "anthropic",
-      unit: "requests/hour",
-      lowerBound: 10,
-      upperBound: 20,
-      observedOn: "2026-09-13",
-      source: "https://example.test/limits",
-      confidence: "provider_reported",
-    },
-  ];
-
-  const first = await profileStore.previewImport(incoming, "merge");
-  const second = previewUserProfileImport(await profileStore.read(), incoming, "merge");
-  expect(first).toEqual(second);
-  expect(first.conflicts).toEqual([]);
-  expect(first.creates).toEqual([
-    "inventory:secondary",
-    // The source KIND is part of the identity (#506): a JSON inventory and a
-    // models.yaml profile may share a name and are still different sources, so
-    // a preview can never report one as the other.
-    "calibratedRouting:inventory:secondary",
-    "subscriptionCapacityRange:anthropic:requests/hour",
-    "economicRecord:price-2",
-  ]);
-  expect(fs.readFileSync(file)).toEqual(before);
-  expect(fs.statSync(file).mode).toBe(beforeMode);
-
-  await profileStore.import(incoming, "merge");
-  const mergedBytes = fs.readFileSync(file);
-  expect((await profileStore.read()).economicRecords).toEqual([
-    record,
-    incoming.economicRecords[0]!,
-  ]);
-  expect((await profileStore.read()).calibratedRouting).toEqual(incoming.calibratedRouting);
-  expect((await profileStore.read()).subscriptionCapacityRanges).toEqual(
-    incoming.subscriptionCapacityRanges,
-  );
-  await profileStore.import(incoming, "merge");
-  expect(fs.readFileSync(file)).toEqual(mergedBytes);
-
-  await profileStore.import({ ...profile(), inventories: [] }, "replace");
-  expect((await profileStore.read()).inventories).toEqual([]);
-  expect((await profileStore.read()).economicRecords).toEqual([
-    record,
-    incoming.economicRecords[0]!,
-  ]);
-});
-
-test("rejects conflicts and invalid modes without changing the private document", async () => {
-  const { file, store: profileStore } = createStore();
-  await profileStore.write(profile([record]));
-  const before = fs.readFileSync(file);
-
-  await expect(
-    profileStore.import(profile([{ ...record, value: 99 }]), "merge"),
-  ).rejects.toMatchObject({
-    code: "conflict",
-  });
-  expect(() => previewUserProfileImport(profile(), profile(), "invalid" as "merge")).toThrow(
-    UserProfileError,
-  );
-  expect(fs.readFileSync(file)).toEqual(before);
-});
-
-test("a failed atomic commit preserves the prior complete document", async () => {
-  class FailingStore extends FileUserProfileStore {
-    fail = false;
-
-    protected override async beforeCommit(): Promise<void> {
-      if (this.fail) throw new Error("injected commit failure");
+test("rejects malicious imports at the persistence boundary in both modes", async () => {
+  for (const mode of ["merge", "replace"] as const)
+    for (const payload of [
+      { ...base(), inventories: [{ name: "attack" }] },
+      { ...base(), calibratedRouting: [{ ...cell(), inventory: "attack" }] },
+    ]) {
+      const { file, store: profileStore } = store();
+      const local = { ...base(), economicRecords: [record] };
+      await profileStore.write(local);
+      const before = fs.readFileSync(file);
+      await expect(profileStore.import(payload, mode)).rejects.toMatchObject({
+        code: "invalid_profile",
+      });
+      expect(await profileStore.read()).toEqual(local);
+      expect(fs.readFileSync(file)).toEqual(before);
     }
+});
+
+test("rejects secret-bearing imports before publication in both modes", async () => {
+  for (const mode of ["merge", "replace"] as const) {
+    const { file, store: profileStore } = store();
+    const local = { ...base(), economicRecords: [record] };
+    await profileStore.write(local);
+    const before = fs.readFileSync(file, "utf8");
+    await expect(
+      profileStore.import(
+        {
+          ...base(),
+          economicRecords: [{ ...record, source: "https://example.test/source?key=secret" }],
+        },
+        mode,
+      ),
+    ).rejects.toMatchObject({ code: "invalid_profile" });
+    expect(await profileStore.read()).toEqual(local);
+    expect(fs.readFileSync(file, "utf8")).toBe(before);
   }
+});
 
-  const { file, store } = createStore(FailingStore);
-  const failingStore = store as FailingStore;
-  await failingStore.write(profile([record]));
-  const before = fs.readFileSync(file);
-  failingStore.fail = true;
+test("rejected imports contend at the file lock while independent appends succeed", async () => {
+  const deferred = () => {
+    let resolve!: () => void;
+    const promise = new Promise<void>((done) => (resolve = done));
+    return { promise, resolve };
+  };
+  for (const mode of ["merge", "replace"] as const)
+    for (const payload of [
+      { ...base(), inventories: [{ name: "attack" }] },
+      { ...base(), calibratedRouting: [{ ...cell(), inventory: "attack" }] },
+    ]) {
+      class BlockingAppendStore extends FileUserProfileStore {
+        block = false;
+        entered = deferred();
+        release = deferred();
+        protected override async beforeCommit() {
+          if (!this.block) return;
+          this.entered.resolve();
+          await this.release.promise;
+        }
+      }
+      const { file } = store();
+      const appendStore = new BlockingAppendStore({ userHome: path.dirname(file), path: file });
+      const importStore = new FileUserProfileStore({ userHome: path.dirname(file), path: file });
+      await appendStore.write({ ...base(), economicRecords: [record] });
+      const before = fs.readFileSync(file);
+      appendStore.block = true;
+      const appendedRecord = {
+        ...record,
+        id: "price-race",
+        value: 3,
+        previousId: record.id,
+      };
+      const appended = appendStore.appendEconomicRecord(appendedRecord);
+      await appendStore.entered.promise;
+      // The rejected import is independent and must wait on the same filesystem
+      // lock, not merely on a private serial queue.
+      const rejected = importStore.import(payload, mode);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(fs.existsSync(`${file}.lock`)).toBe(true);
+      appendStore.release.resolve();
+      const results = await Promise.allSettled([rejected, appended]);
+      expect(results[0]).toMatchObject({
+        status: "rejected",
+        reason: { code: "invalid_profile" },
+      });
+      if (results[0].status === "rejected") {
+        expect(results[0].reason.message).toContain("models.yaml");
+      }
+      expect(results[1]).toMatchObject({ status: "fulfilled" });
+      const expected = { ...base(), economicRecords: [record, appendedRecord] };
+      expect(await appendStore.read()).toEqual(expected);
+      expect(await importStore.read()).toEqual(expected);
+      expect(fs.readFileSync(file, "utf8")).toBe(exportUserProfile(expected));
+      expect(before).not.toEqual(fs.readFileSync(file));
+    }
+});
 
-  await expect(
-    failingStore.appendEconomicRecord({ ...record, id: "price-2", value: 3 }),
-  ).rejects.toMatchObject({ code: "io_error" });
-  expect(fs.readFileSync(file)).toEqual(before);
-  failingStore.fail = false;
-  expect((await failingStore.read()).economicRecords).toEqual([record]);
+test("rejects secret-bearing imports in both modes without changing bytes", async () => {
+  for (const mode of ["merge", "replace"] as const) {
+    const { file, store: profileStore } = store();
+    const local = { ...base(), economicRecords: [record] };
+    await profileStore.write(local);
+    const before = fs.readFileSync(file);
+    const incoming = {
+      ...base(),
+      economicRecords: [{ ...record, id: "secret", source: "https://user:password@example.test" }],
+    };
+    await expect(profileStore.import(incoming, mode)).rejects.toMatchObject({
+      code: "invalid_profile",
+    });
+    expect(await profileStore.read()).toEqual(local);
+    expect(fs.readFileSync(file)).toEqual(before);
+  }
+});
+
+test("preview import is non-mutating and preserves typed obsolete-field rejection", () => {
+  const local = base();
+  expect(previewUserProfileImport(local, { ...base(), inventories: [] }, "merge").result).toEqual(
+    local,
+  );
+  for (const mode of ["merge", "replace"] as const)
+    expect(() =>
+      previewUserProfileImport(local, { ...base(), inventories: [{ name: "attack" }] }, mode),
+    ).toThrow(UserProfileError);
 });

@@ -1,12 +1,5 @@
 import type { Profile } from "../profiles/types";
 
-/** A provider/model inventory that is safe to move between machines. */
-export interface ModelInventoryConfig {
-  name: string;
-  providers: Array<{ id: string; models: string[] }>;
-  default?: string;
-}
-
 /**
  * `credit_balance` is a server-reported, account-free balance observation. It
  * must use a stable provider/model scope and a unit such as `credits`, so two
@@ -37,49 +30,18 @@ export interface EconomicRecord {
  * A source-linked routing profile calibrated against a NAMED routing source.
  * Two namespaces exist and are deliberately kept apart (issue #506):
  *
- * - `inventory` names a portable JSON inventory declared in this same profile's
- *   `inventories` block. It is the original route, kept parsing unchanged.
  * - `modelsProfile` names a profile in the operator's `models.yaml`. The model
  *   list of that source lives in `models.yaml`, which this stored document does
  *   not carry: settings live in ONE place, so the YAML is not copied here.
  *
- * Exactly one of the two is present. A bare name would be ambiguous the moment
- * an inventory and a models.yaml profile share it, and the two resolve against
- * different model sets, so the kind is written down rather than guessed.
+ * Exactly one models.yaml profile name is present.
  */
 export interface CalibratedRouting {
-  inventory?: string;
-  modelsProfile?: string;
+  modelsProfile: string;
   profile: Profile;
   observedOn: string;
   source: string;
   confidence: EconomicConfidence;
-}
-
-/**
- * The routing source a calibrated routing entry (or a project snapshot) names:
- * which namespace the name lives in, and the name. Produced by one function so
- * every consumer -- uniqueness, import merge, the project snapshot match --
- * reads the same source instead of pattern-matching the two optional fields.
- */
-export interface CalibrationSource {
-  kind: "inventory" | "models-profile";
-  name: string;
-}
-
-/**
- * `undefined` when the entry names no source at all. The parser refuses that
- * shape, so a value that reached a store is guaranteed to name exactly one --
- * this stays total for hand-constructed values in tests and callers.
- */
-export function calibrationSourceOf(entry: {
-  inventory?: string;
-  modelsProfile?: string;
-}): CalibrationSource | undefined {
-  if (entry.inventory !== undefined) return { kind: "inventory", name: entry.inventory };
-  if (entry.modelsProfile !== undefined)
-    return { kind: "models-profile", name: entry.modelsProfile };
-  return undefined;
 }
 
 /**
@@ -98,7 +60,6 @@ export interface SubscriptionCapacityRange {
 
 export interface UserProfile {
   version: 1;
-  inventories: ModelInventoryConfig[];
   calibratedRouting: CalibratedRouting[];
   economicRecords: EconomicRecord[];
   subscriptionCapacityRanges: SubscriptionCapacityRange[];

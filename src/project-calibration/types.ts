@@ -1,6 +1,5 @@
 import type { Profile } from "../profiles/types";
 import type {
-  CalibrationSource,
   EconomicConfidence,
   EconomicRecordKind,
   SubscriptionCapacityRange,
@@ -49,7 +48,10 @@ export type ProjectCalibrationSnapshot = {
  * the snapshot names a `models.yaml` profile, and that is the only kind of
  * source a run can resolve.
  */
-export function snapshotSource(snapshot: ProjectCalibrationSnapshot): CalibrationSource {
+export function snapshotSource(snapshot: ProjectCalibrationSnapshot): {
+  kind: "models-profile";
+  name: string;
+} {
   return { kind: "models-profile", name: snapshot.modelsProfile };
 }
 

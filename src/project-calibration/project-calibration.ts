@@ -2,12 +2,7 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { parseProfile } from "../profiles/validate";
-import {
-  calibrationSourceOf,
-  parseUserProfile,
-  type UserProfile,
-  UserProfileError,
-} from "../user-profile";
+import { parseUserProfile, type UserProfile, UserProfileError } from "../user-profile";
 import type { ProjectCalibrationLimits, ProjectCalibrationSnapshot } from "./types";
 
 const FILE = "calibration.json";
@@ -49,10 +44,9 @@ export function createProjectCalibrationSnapshot(
 ): ProjectCalibrationSnapshot {
   const ref = source;
   const profile = parseUserProfile(value);
-  const routing = profile.calibratedRouting.find((x) => {
-    const named = calibrationSourceOf(x);
-    return named?.kind === ref.kind && named.name === ref.name;
-  });
+  const routing = profile.calibratedRouting.find(
+    (x) => ref.kind === "models-profile" && x.modelsProfile === ref.name,
+  );
   if (routing === undefined)
     throw new UserProfileError("not_found", ref.name, "calibrated models profile not found");
   // The source resolves the provider/model pairs it serves, and the field the
@@ -163,7 +157,6 @@ export function parseProjectCalibrationSnapshot(value: unknown): ProjectCalibrat
   // is loaded.
   const envelope = parseUserProfile({
     version: 1,
-    inventories: [],
     calibratedRouting: [
       {
         modelsProfile: x.modelsProfile,

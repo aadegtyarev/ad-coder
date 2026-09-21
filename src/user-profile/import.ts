@@ -1,7 +1,6 @@
 import { UserProfileError } from "./errors";
 import { parseUserProfile } from "./schema";
 import type { ImportMode, UserProfile, UserProfileImportPreview } from "./types";
-import { calibrationSourceOf } from "./types";
 
 function same(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
@@ -9,7 +8,7 @@ function same(left: unknown, right: unknown): boolean {
 
 /**
  * Plans import entirely in memory. Merge only adds distinct identities; replace
- * replaces inventories but never rewrites the append-only economics journal.
+ * replaces routing and capacity settings but never rewrites the append-only economics journal.
  */
 export function previewUserProfileImport(
   localValue: unknown,
@@ -24,14 +23,7 @@ export function previewUserProfileImport(
   const updates: string[] = [];
   const unchanged: string[] = [];
   const conflicts: string[] = [];
-  const localInventories = new Map(local.inventories.map((entry) => [entry.name, entry]));
-  // A calibrated routing entry is identified by its SOURCE, not by a bare name:
-  // an inventory and a models.yaml profile may share a name and are different
-  // sources (issue #506).
-  const routingKey = (entry: UserProfile["calibratedRouting"][number]) => {
-    const source = calibrationSourceOf(entry);
-    return source === undefined ? "unresolved" : `${source.kind}\u0000${source.name}`;
-  };
+  const routingKey = (entry: UserProfile["calibratedRouting"][number]) => entry.modelsProfile;
   const localRouting = new Map(local.calibratedRouting.map((entry) => [routingKey(entry), entry]));
   const localRecords = new Map(local.economicRecords.map((entry) => [entry.id, entry]));
   const capacityKey = (entry: UserProfile["subscriptionCapacityRanges"][number]) =>
@@ -41,8 +33,6 @@ export function previewUserProfileImport(
   );
 
   if (mode === "replace") {
-    if (same(local.inventories, incoming.inventories)) unchanged.push("inventories");
-    else updates.push("inventories");
     if (same(local.calibratedRouting, incoming.calibratedRouting))
       unchanged.push("calibratedRouting");
     else updates.push("calibratedRouting");
@@ -50,22 +40,15 @@ export function previewUserProfileImport(
       unchanged.push("subscriptionCapacityRanges");
     else updates.push("subscriptionCapacityRanges");
   } else {
-    for (const inventory of incoming.inventories) {
-      const current = localInventories.get(inventory.name);
-      if (current === undefined) creates.push(`inventory:${inventory.name}`);
-      else if (same(current, inventory)) unchanged.push(`inventory:${inventory.name}`);
-      else conflicts.push(`inventory:${inventory.name}`);
-    }
   }
 
   for (const routing of incoming.calibratedRouting) {
     const current = localRouting.get(routingKey(routing));
     if (mode === "replace") continue;
-    const source = calibrationSourceOf(routing);
-    const label = source === undefined ? "unresolved" : `${source.kind}:${source.name}`;
-    if (current === undefined) creates.push(`calibratedRouting:${label}`);
-    else if (same(current, routing)) unchanged.push(`calibratedRouting:${label}`);
-    else conflicts.push(`calibratedRouting:${label}`);
+    const label = routing.modelsProfile;
+    if (current === undefined) creates.push(`calibratedRouting:models-profile:${label}`);
+    else if (same(current, routing)) unchanged.push(`calibratedRouting:models-profile:${label}`);
+    else conflicts.push(`calibratedRouting:models-profile:${label}`);
   }
 
   for (const range of incoming.subscriptionCapacityRanges) {
@@ -87,13 +70,6 @@ export function previewUserProfileImport(
   }
 
   if (conflicts.length > 0) return { mode, creates, updates, unchanged, conflicts };
-  const inventories =
-    mode === "replace"
-      ? incoming.inventories
-      : [
-          ...local.inventories,
-          ...incoming.inventories.filter((entry) => !localInventories.has(entry.name)),
-        ];
   const calibratedRouting =
     mode === "replace"
       ? incoming.calibratedRouting
@@ -122,7 +98,6 @@ export function previewUserProfileImport(
     conflicts,
     result: {
       version: 1,
-      inventories,
       calibratedRouting,
       economicRecords,
       subscriptionCapacityRanges,
