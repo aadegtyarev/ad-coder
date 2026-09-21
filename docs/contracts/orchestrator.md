@@ -264,14 +264,14 @@ spend turns polling. The product watches the condition (a watcher, an observer)
 and wakes the orchestrator with an event; where the source offers no push channel
 -- as CI in GitHub does not -- the product polls, not the turn.
 (`docs/contracts/operator-flow.md` describes polling as the path by which a pause
-reaches the orchestrator; this clause refines **who** polls. That sentence of
-`operator-flow.md` is NOT yet marked superseded: the mark is an edit to that file,
-reviewed like any other edit, and it is still owed. Until it is made the two texts
-disagree about who polls, and this clause does not settle that disagreement by
-declaring itself the winner -- a text that out-ranks another by implication is the
-same defect K8.9 names below. The orchestrator does what the code does, the
-disagreement is named to the operator, and it stays open until a ruling resolves it
-rather than being read as already decided by the absence of a mark.)
+reaches the orchestrator; this clause fixes **who** polls, and it **governs**:
+the orchestrator does not spend turns polling, and an implementer follows this
+rule. That entry of `operator-flow.md`, dated 2026-09-17, was written before the
+wake machinery K7.1 and K7.2 require, and its sentence putting the polling on the
+orchestrator is owed a "stale" marking -- an edit to that file, reviewed like any
+other edit. Until the marking lands that sentence is a known defect of that file
+(K11.6), not a second rule of equal standing, and it is not a licence for the
+orchestrator to poll.)
 K7.4. If a wake-up is lost, the task must not look like "WIP" anyway: the operator
 sees what exactly is awaited and since when.
 K7.5. The orchestrator has a **wait instrument**: it puts itself to sleep, until an
@@ -336,33 +336,31 @@ the settle writer and the gate so the two can never disagree. The code carries
 exactly that (`src/config/validate.ts`, `src/stamp/record-review-stamp.ts`), so a
 project that declares the stamp away is exercised, not aspirational, and a run
 that acts under that declaration names it rather than passing the absence off as
-an oversight. One contradiction is named here rather than hidden, and this
-contract does not rule on it. The quality contract states the pre-merge rule
+an oversight. One contradiction is named here rather than hidden, and it is
+**ruled on here**. The quality contract states the pre-merge rule
 unconditionally -- `bun run stamp:check` is the pre-merge gate, and its list of
 blocking failures (`no stamp`, a malformed newest stamp, a `changes_requested`
 verdict, a stale digest) names no setting exception anywhere
 (`docs/contracts/quality.md`, 2026-09-17, #239/#240); that file's entry of
 2026-09-21 calls the same gate "a strict PRE-MERGE gate" once more and still names
-no exception. The two texts therefore prescribe opposite outcomes for one value:
-the setting's own definition and the code make `off` write nothing and pass the
-gate, and the quality contract as written makes a merge without a matching stamp
-fail. The project's date convention answers "which rule is newer" (`CHANGELOG.md`;
-`docs/contracts/documentation.md`, 2026-09-17 -- dated entries carry one local
-clock) and does not say that a later date repeals a conflicting rule, so the date
-does not settle this either, and this contract does not settle it by declaring
-itself the winner (K11.1). What is owed is an amendment to `quality.md` that names
-the exception, reviewed like any other edit, exactly as the mark of K7.3 is owed to
-`operator-flow.md`; until it is made, a project that sets `off` acts on a value
-whose consequence for the merge gate the quality contract has not accounted for,
-and the orchestrator names the declaration it acted under without presenting the
-question as closed. This project's default is three pieces of
+no exception. The two texts prescribe opposite outcomes for one value: the
+setting's own definition and the code make `off` write nothing and pass the gate,
+while the quality contract as written makes a merge without a matching stamp fail.
+**The rule an implementer follows is the setting's**: a project that declares the
+stamp away merges without it, and the gate passes -- because the evidence set is
+the project's declared policy (K10.6), and a gate that ignores its own project's
+declaration does not implement the policy, it overrides it. The quality contract is
+therefore owed an amendment naming the exception, reviewed like any other edit,
+exactly as the "stale" mark of K7.3 is owed to `operator-flow.md`; until it lands,
+its unconditional list is a known defect of that file (K11.6) rather than a second
+live rule, and a run acting under `off` names the declaration it acted under. This project's default is three pieces of
 evidence: (a) **the project's own gates** on the frozen
 tree -- never dispensable; (b) **a fresh review stamp** on that same tree -- the
 stamp covers the whole tree, so a tree that changed after approval (a rebase
 included) is red again and the approval is obtained anew; this is the evidence the
 `review.require-stamp` setting governs -- under `off` the code writes no stamp and
-the gate passes, with the contradiction of the paragraph above left standing and
-named by the run that acts on it; (c) CI, when it is available. If CI is objectively
+the gate passes, on the ruling of the paragraph above, which the run acting on it
+names; (c) CI, when it is available. If CI is objectively
 unavailable (not configured in the project, limits spent), the merge is allowed
 **without it**. What unavailability never cancels is the evidence the declared
 policy still requires -- under the default policy, gates and stamp. The
@@ -442,17 +440,22 @@ K10.1. Where a value comes from, in one order. Three of the layers are
 2026-09-16): the built-in default, then a persistent setting the operator owns, then
 an explicit launch parameter -- the parameter beats the setting, and the default
 resolves when both are absent. Those entries also say the persistent layer is open
-on purpose and that no operator-owned settings store exists yet (#116, item 3): a design
-decision rather than a fact, so this contract requires the layer's BEHAVIOUR rather
-than an existing file, and a missing store is an audit finding (K11.1), not a
-cancellation of the rule. This contract's store IS that persistent layer -- the
-profile's `settings.yaml` in the config home, with a project-level override on top
-of it -- so what one project declares does not change every other project (K10.4).
+on purpose, that no operator-owned settings store exists yet (#116, item 3), and
+that until one does only a launch parameter can switch a capability off. **This
+clause governs that point (K11.6)**: this contract's store IS that persistent layer
+-- the profile's `settings.yaml` in the config home, with a project-level override
+on top of it -- so what one project declares does not change every other project
+(K10.4). The same contract's entry of 2026-09-19 already reads that file's `review`
+section as a live override that is refused when present-but-empty or malformed,
+which is a file that exists; the sentence denying the store is therefore owed a
+supersession marking, reviewed like any other edit, and until it lands a missing
+store is an audit finding (K11.1), not a cancellation of the rule.
 The order BETWEEN the profile layer and the project layer, profile below project and
 both below an explicit launch parameter, is this contract's requirement and not
 `config.md`'s: the cited entry names the three layers and carries no
 profile-versus-project ordering. That ordering is owed to `config.md` as an
-amendment, on the same terms as the two amendments K8.9 and the Sources name.
+amendment -- a silent file made to agree, not the conflict K11.6 rules on, because
+that entry does not prescribe the opposite order; it names no order at all.
 K10.2. No file -- the defaults. A file that exists but is unusable (corrupt,
 empty) -- a refusal, never a silent default.
 K10.3. The effective value is named **together with its source**: project, profile
@@ -516,6 +519,18 @@ PROJECT decision recorded in the project's own documents (this repository:
 `AGENTS.md`), not the orchestrator's personal habit and not something to be
 re-invented per task. An orchestrator that has not read them is improvising and
 should say so rather than present its improvisation as the project's rule.
+K11.6. **When a clause here and a sentence of an OLDER contract prescribe
+opposite outcomes for one behaviour, the clause here governs that behaviour** --
+it is the rule an implementer follows -- and the older sentence is owed an
+amendment that names the change, reviewed like any other edit. An owed amendment
+is a defect of the older FILE, not an open question: leaving it open would make
+the two texts equally binding and leave an implementer nothing to implement. The
+known cases are the polling owner (K7.3 against `operator-flow.md`), the
+`review.require-stamp: off` outcome (K8.9 against `quality.md`), and the existence
+of the persistent settings store (K10.1 against `config.md`); each clause names the
+file it amends. A clause does not gain this standing by silence or by being
+newer: it must say that it governs and what file it amends, and a clause that
+merely disagrees is the defect this rule exists to prevent.
 
 ## K12. What the contract does not cover
 
@@ -548,8 +563,9 @@ the gate's evidence (2026-09-17, #239/#240) and for a `run_role` review being
 advisory (2026-09-19); `product-change.md` for review independence, the
 documentation exemption and the standalone reviewer path that writes the same
 stamp (#283); `stage-limit-calibration.md` for the measured step of a raise;
-`config.md` for the setting layers, the meaning of zero, and the settings store
-that does not exist yet (#116); `cost-anomaly.md` for the provider's bill as a
+`config.md` for the setting layers and the meaning of zero -- with the sentence
+denying the settings store owed a supersession mark, and the profile-versus-project
+ordering owed outright (K10.1); `cost-anomaly.md` for the provider's bill as a
 separate entity; `operator-flow.md` for what a pause is and who reports it -- with
 its polling sentence still to be marked superseded by a reviewed edit (K7.3); and
 the project's tracker for the wait instrument the code does not have yet (#563,
@@ -557,11 +573,17 @@ K7.5) -- that issue is where the missing instrument is tracked, and it is cited 
 a REQUIREMENT of this text (K7.5 for the instrument, K10.6.2 for the name it must
 carry when it becomes a setting) rather than as a design decision recorded
 elsewhere.
-Three amendments are owed to other files, and all of them are edits to those files
+Four amendments are owed to other files, and all of them are edits to those files
 rather than statements this contract can make for them: the supersession mark in
 `operator-flow.md` (K7.3); the exception the `review.require-stamp` setting needs
-named in `quality.md`'s pre-merge list, whose absence is what leaves the two texts
-prescribing opposite outcomes for `off` (K8.9); and the profile-versus-project
-ordering of the setting layers, which `config.md` does not declare (K10.1). Until
-they are made, the contradictions they name stand in the text, and this contract
-records them rather than resolving them by a precedence rule of its own (K11.1).
+named in `quality.md`'s pre-merge list (K8.9); and two in `config.md` -- the
+supersession mark for its sentence denying that the persistent settings store
+exists, and the declaration of the profile-versus-project ordering (K10.1, both).
+
+Three of them amend files that today prescribe the OPPOSITE of what the clause
+requires, and K11.6 rules on that: while the amendment is owed, the clause governs
+the behaviour and the older sentence is a defect of its file -- so the owner of the
+poll, the outcome of `off`, and the existence of the store are each fixed here
+rather than left to be settled when the amendment lands. The fourth is not a
+conflict: `config.md` is silent on the ordering rather than opposed to it, and this
+contract supplies the rule (K10.1), with the amendment making that file agree.
