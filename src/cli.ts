@@ -1090,7 +1090,7 @@ function parseProjectStoreConfig(value: string | undefined): ProjectStoreConfig 
   try {
     parsed = JSON.parse(fs.readFileSync(resolved, "utf8"));
   } catch (error) {
-    fail(`cannot parse --project-store-config ${resolved}: ${errorMessage(error)}`);
+    failInvalidConfig(`cannot parse --project-store-config ${resolved}: ${errorMessage(error)}`);
   }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     fail("--project-store-config must contain a JSON object");
@@ -1136,10 +1136,10 @@ function parseProjectStoreConfig(value: string | undefined): ProjectStoreConfig 
   const lockRetry = object.lockRetry;
   if (lockRetry !== undefined) {
     if (typeof lockRetry !== "object" || lockRetry === null || Array.isArray(lockRetry))
-      fail("--project-store-config lockRetry must be an object");
+      failInvalidConfig("--project-store-config lockRetry must be an object");
     const lockObject = lockRetry as Record<string, unknown>;
     if (Object.keys(lockObject).some((key) => key !== "delaysMs"))
-      fail("--project-store-config contains an unknown lockRetry setting");
+      failInvalidConfig("--project-store-config contains an unknown lockRetry setting");
     const delays = lockObject.delaysMs;
     if (
       delays !== undefined &&

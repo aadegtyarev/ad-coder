@@ -1652,10 +1652,14 @@ test("project-store config accepts default lock retry policy in the CLI", () => 
   expect(empty.stderr).toContain("lockRetry.delaysMs");
 
   fs.writeFileSync(config, JSON.stringify({ lockRetry: { unexpected: true } }), { mode: 0o600 });
-  expect(run().code).toBe(2);
+  const unknown = run();
+  expect(unknown.code).toBe(2);
+  expect(unknown.stderr).toContain('"code":"invalid_config"');
 
   fs.writeFileSync(config, "{ malformed", { mode: 0o600 });
-  expect(run().code).toBe(2);
+  const malformed = run();
+  expect(malformed.code).toBe(2);
+  expect(malformed.stderr).toContain('"code":"invalid_config"');
 });
 
 test("operations validates retry policy and emits stage metrics in control reports", () => {
