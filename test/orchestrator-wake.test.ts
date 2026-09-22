@@ -42,7 +42,11 @@ function readRecord(
   targetDir: string,
   runId: string,
 ): Record<string, unknown> & {
-  value: { wake?: { entries: WakeEntry[] } };
+  value: {
+    lifecycle?: string;
+    pause?: { code?: string };
+    wake?: { entries: WakeEntry[] };
+  };
 } {
   const raw = JSON.parse(
     fs.readFileSync(
@@ -130,11 +134,14 @@ test("(a) a paused run wakes the orchestrator via durable state, then marks the 
   // Fixed, code-built: never the run's raw task string.
   expect(prompt).not.toContain(task);
 
-  // After the turn the record marks it handled.
+  // Handling the wake acknowledges delivery, but does not alter the durable
+  // paused lifecycle or its safe pause payload.
   const after = readRecord(targetDir, runId).value;
   const handled = after.wake!.entries.find((w) => w.kind === "paused");
   expect(handled?.handled).toBe(true);
   expect(handled?.handledAt).toBeTypeOf("number");
+  expect(after.lifecycle).toBe("paused");
+  expect(after.pause?.code).toBe("stage_limit");
 
   await manager.close();
 });

@@ -654,6 +654,22 @@ export {
 export type { RoleSkillKit, RoleSkillKitOptions } from "./skills/role-kit";
 export { roleSkillKit } from "./skills/role-kit";
 export type {
+  TelegramRoomBinding,
+  TelegramRoomBindingErrorCode,
+  TelegramRoomBindingErrorProjection,
+  TelegramRoomBindingKind,
+  TelegramRoomBindingRecord,
+  TelegramRoomBindingsDocument,
+} from "./telegram/room-bindings";
+export {
+  parseTelegramRoomBindings,
+  serializeTelegramRoomBindings,
+  TELEGRAM_ROOM_BINDINGS_VERSION,
+  TELEGRAM_SESSION_ID_PATTERN,
+  TelegramRoomBindingError,
+  TelegramRoomBindingStore,
+} from "./telegram/room-bindings";
+export type {
   UpdateCommandResult,
   UpdateCommandRunner,
   UpdateErrorCode,

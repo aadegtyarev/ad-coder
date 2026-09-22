@@ -11,6 +11,12 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.1] - 2026-09-22
+
+### Removed
+- **The remaining legacy Claude adapters.** The unused `.claude/adapters/`
+  files are removed with the already-retired `.claude` runtime.
+
 ## [0.181.0] - 2026-09-22
 
 ### Added
@@ -175,6 +181,11 @@ enforces that dated release headings go in non-increasing date order
 ## [0.149.0] - 2026-09-20
 
 ### Added
+- **Telegram room-binding API.** The library exports a versioned, secret-free
+  room-binding schema and strict parser/serializer plus an in-memory store.
+  Telegram v1 creates and mutates only `switchable` rooms; `fixed` remains
+  schema-forward-compatible but is refused by operational methods until the
+  later topic mode ships.
 - **The headless SessionManager (issue #365, layer 2 slice of #108).** One
   programmatic core (`src/session-manager/*`) per the 2026-09-14 ROADMAP
   decision: one shared durable Orchestrator conversation per project, safe

@@ -1095,13 +1095,18 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
         ({ surfaceId, contractIds }) =>
           !SAFE_RESEARCH_ID.test(surfaceId) ||
           LIKELY_SECRET.test(surfaceId) ||
-          contractIds.some((id) => !SAFE_RESEARCH_ID.test(id) || LIKELY_SECRET.test(id)),
+          contractIds.some(
+            (id) =>
+              !Object.hasOwn(CONTRACT_INDEX, id) ||
+              !SAFE_RESEARCH_ID.test(id) ||
+              LIKELY_SECRET.test(id),
+          ),
       )
     )
       throw new OrchestrationError(
         "requirements_unresolved",
         "research",
-        "research identifiers failed the outbound secret guard",
+        "research coverage contains unsupported contract references",
       );
     const query = JSON.stringify(
       unresolved.map(({ surfaceId, contractIds }) => ({ surfaceId, contractIds })),
@@ -1145,6 +1150,25 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
         "research",
         "research has no surface analysis",
       );
+    const researchRunId = intent.queryHash.slice(0, 32);
+    if (
+      unresolved.some(
+        ({ surfaceId, contractIds }) =>
+          !SAFE_RESEARCH_ID.test(surfaceId) ||
+          LIKELY_SECRET.test(surfaceId) ||
+          contractIds.some(
+            (id) =>
+              !Object.hasOwn(CONTRACT_INDEX, id) ||
+              !SAFE_RESEARCH_ID.test(id) ||
+              LIKELY_SECRET.test(id),
+          ),
+      )
+    )
+      throw new OrchestrationError(
+        "requirements_unresolved",
+        researchRunId,
+        "research coverage contains unsupported contract references",
+      );
     const query = JSON.stringify(
       unresolved.map(({ surfaceId, contractIds }) => ({ surfaceId, contractIds })),
     );
@@ -1159,7 +1183,6 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
         "research",
         "research cursor no longer matches the checkpointed surface analysis",
       );
-    const researchRunId = intent.queryHash.slice(0, 32);
     const researcherWithBrief =
       researchBrief === undefined
         ? researcher
@@ -1211,31 +1234,54 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
         "research has no surface analysis",
       );
     const canonicalEvidence = new Map<string, string>();
+    let realProjectRoot: string;
+    try {
+      realProjectRoot = fs.realpathSync(targetDir);
+    } catch {
+      throw new OrchestrationError(
+        "requirements_unresolved",
+        researchRunId,
+        "canonical contract evidence is unavailable",
+      );
+    }
     for (const item of analysis.coverage)
       for (const id of item.contractIds) {
-        const relative = CONTRACT_INDEX[id as keyof typeof CONTRACT_INDEX];
-        const absolute = path.resolve(targetDir, relative);
-        if (!absolute.startsWith(`${path.resolve(targetDir)}${path.sep}`))
+        // Check the static registry again at the durable boundary. A checkpoint
+        // is untrusted input too, and must never turn an arbitrary string into
+        // a path or a research query.
+        if (!Object.hasOwn(CONTRACT_INDEX, id))
           throw new OrchestrationError(
             "requirements_unresolved",
             researchRunId,
-            "canonical contract path escapes the project",
+            "canonical contract evidence is unavailable",
           );
+        const relative = CONTRACT_INDEX[id as keyof typeof CONTRACT_INDEX];
+        const absolute = path.resolve(realProjectRoot, relative);
+        let realFile: string;
         let bytes: Buffer;
         try {
-          bytes = fs.readFileSync(absolute);
+          realFile = fs.realpathSync(absolute);
+          const relativeToRoot = path.relative(realProjectRoot, realFile);
+          if (
+            relativeToRoot === "" ||
+            relativeToRoot.startsWith(`..${path.sep}`) ||
+            path.isAbsolute(relativeToRoot)
+          )
+            throw new Error("escaping contract");
+          if (!fs.statSync(realFile).isFile()) throw new Error("non-regular contract");
+          bytes = fs.readFileSync(realFile);
         } catch {
           throw new OrchestrationError(
             "requirements_unresolved",
             researchRunId,
-            `canonical contract evidence is unavailable for ${id}`,
+            "canonical contract evidence is unavailable",
           );
         }
         if (bytes.length === 0 || bytes.length > RESEARCH_RESPONSE_MAX_BYTES)
           throw new OrchestrationError(
             "requirements_unresolved",
             researchRunId,
-            `canonical contract evidence is invalid for ${id}`,
+            "canonical contract evidence is invalid",
           );
         canonicalEvidence.set(id, new Bun.CryptoHasher("sha256").update(bytes).digest("hex"));
       }
@@ -1266,7 +1312,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       throw new OrchestrationError(
         "requirements_unresolved",
         researchRunId,
-        `research lacks canonical contract corroboration for surface IDs ${stillUnresolved.map(({ surfaceId }) => surfaceId).join(", ")}`,
+        "research lacks canonical contract corroboration for one or more surfaces",
       );
     const provenance = {
       destination: intent.destination,
