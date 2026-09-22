@@ -258,6 +258,68 @@ test("resume reclaims a new-format session lease left by a dead standalone worke
   ).toBe("complete");
 });
 
+test("an ambiguous durable session pauses a standalone run for manual recovery", async () => {
+  const { models, model, role } = fixture();
+  const runId = `ambiguous-session-${crypto.randomUUID()}`;
+  const task = "review after journal recovery";
+  const abortController = new AbortController();
+  abortController.abort();
+
+  // First establish the normal resumable checkpoint and durable session.
+  await expect(
+    runRoleStandalone({
+      role,
+      model,
+      models,
+      targetDir,
+      task,
+      runId,
+      abortSignal: abortController.signal,
+    }),
+  ).rejects.toBeInstanceOf(RunInterruptedError);
+
+  // Reproduce the exact recovery case: two committed records claim the same
+  // sequence. ProjectStore correctly refuses to guess their ordering.
+  const store = new ProjectStore(targetDir);
+  const metadata = (await store.listSessions()).find((item) => item.id === runId);
+  if (metadata === undefined) throw new Error("missing standalone session metadata");
+  const records = fs
+    .readFileSync(metadata.path, "utf8")
+    .trim()
+    .split("\n")
+    .slice(1)
+    .flatMap((line) => {
+      const parsed = JSON.parse(line);
+      return Array.isArray(parsed) ? parsed : [parsed];
+    }) as Array<{ seq: number }>;
+  const duplicate = records.at(-1)?.seq;
+  if (duplicate === undefined) throw new Error("missing session transaction");
+  fs.appendFileSync(
+    metadata.path,
+    `${JSON.stringify({ kind: "value", op: "set", seq: duplicate, namespace: "test", key: "duplicate" })}\n`,
+  );
+
+  await expect(
+    runRoleStandalone({
+      role,
+      model,
+      models,
+      targetDir,
+      task,
+      runId,
+      resumeExisting: true,
+    }),
+  ).rejects.toMatchObject({ code: "ambiguous_journal", path: metadata.path });
+
+  expect(store_read(targetDir, runId)).toMatchObject({
+    status: "paused",
+    pause: {
+      code: "manual_recovery",
+      reason: "ambiguous_journal",
+    },
+  });
+});
+
 test("a failed empty provider turn settles its standalone run with safe recovery evidence", async () => {
   const { faux, models, model, role } = fixture();
   const runId = `empty-turn-${crypto.randomUUID()}`;

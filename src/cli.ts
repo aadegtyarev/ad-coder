@@ -686,6 +686,17 @@ export async function runRoleStandalone(params: {
            * witness file it is read from is consumed by this write.
            */
           stopRequest?: { requestedAt: number; requesterPid: number };
+        }
+      | {
+          /**
+           * The session cannot be opened without an explicit operator choice.
+           * This is distinct from a failed provider attempt: the durable
+           * transcript still exists, but recovery must not invent an ordering
+           * for it (issue #596).
+           */
+          code: "manual_recovery";
+          reason: "ambiguous_journal";
+          detail: string;
         };
     /**
      * Safe terminal diagnosis for a failed attempt.  Do not persist a raw
@@ -766,7 +777,6 @@ export async function runRoleStandalone(params: {
       checkpoint.version,
     );
     consumeRunStopRequest(store, runId);
-    session = await store.resumeSession(runId, BACKGROUND_CONTEXT);
   } else {
     checkpoint = store.writeVersionedJson(
       checkpointPath,
@@ -790,7 +800,6 @@ export async function runRoleStandalone(params: {
       },
       0,
     );
-    session = await store.createSession(runId, BACKGROUND_CONTEXT);
   }
   /**
    * Runtime progress has more than one durable observer (turn admission,
@@ -807,6 +816,41 @@ export async function runRoleStandalone(params: {
       return update(current.value);
     });
   };
+  try {
+    session =
+      params.resumeExisting === true
+        ? await store.resumeSession(runId, BACKGROUND_CONTEXT)
+        : await store.createSession(runId, BACKGROUND_CONTEXT);
+  } catch (error) {
+    // Session opening happens after the checkpoint deliberately claims this
+    // process owns the attempt.  It therefore needs its own closeout: a
+    // journal that requires explicit recovery used to escape here and leave a
+    // dead process advertised as `running` forever.
+    if (error instanceof ProjectStoreError && error.code === "ambiguous_journal") {
+      updateCheckpoint((current) => ({
+        ...current,
+        status: "paused",
+        pause: {
+          code: "manual_recovery",
+          reason: "ambiguous_journal",
+          detail: "session journal requires explicit recovery before this role can resume",
+        },
+      }));
+    } else {
+      // A session-store error before the runner has begun is a terminal result
+      // of this attempt.  Preserve only its stable classification: a lower
+      // layer's message can name host paths or untrusted data.
+      updateCheckpoint((current) => ({
+        ...current,
+        status: "failed",
+        failure: {
+          code: error instanceof ProjectStoreError ? error.code : "internal_error",
+          message: "role session could not be opened; inspect harness diagnostics and retry",
+        },
+      }));
+    }
+    throw error;
+  }
   let latestStageLimitSnapshot: Readonly<StageLimitSnapshot> | undefined;
   let result: Awaited<ReturnType<ReturnType<typeof createRoleRunner>["runRole"]>>;
   try {

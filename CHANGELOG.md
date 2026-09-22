@@ -11,6 +11,15 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.12] - 2026-09-23
+
+### Fixed
+
+- **A session-open failure no longer strands a standalone role.** A journal
+  that needs explicit recovery records a durable `manual_recovery` pause;
+  other pre-run session-store failures settle the attempt safely instead of
+  leaving a dead process advertised as `running`.
+
 ## [0.181.11] - 2026-09-23
 
 ### Fixed
