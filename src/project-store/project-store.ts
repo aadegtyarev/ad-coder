@@ -753,38 +753,10 @@ export class ProjectStore {
   }
 
   private acquireSessionLease(id: string): () => void {
-    const leasePath = this.sessionLeasePath(id);
-    try {
-      return this.acquireLock(leasePath);
-    } catch (error) {
-      if (!(error instanceof ProjectStoreError) || error.code !== "version_conflict") throw error;
-      const holder = this.readLeasePid(leasePath);
-      if (holder === undefined || this.isProcessAlive(holder)) throw error;
-      fs.unlinkSync(leasePath);
-      return this.acquireLock(leasePath);
-    }
-  }
-
-  private readLeasePid(leasePath: string): number | undefined {
-    this.assertDestination(leasePath);
-    try {
-      const parsed = JSON.parse(fs.readFileSync(leasePath, "utf8")) as { pid?: unknown };
-      return Number.isSafeInteger(parsed.pid) && (parsed.pid as number) > 0
-        ? (parsed.pid as number)
-        : undefined;
-    } catch (error) {
-      if (error instanceof SyntaxError) return undefined;
-      throw error;
-    }
-  }
-
-  private isProcessAlive(pid: number): boolean {
-    try {
-      process.kill(pid, 0);
-      return true;
-    } catch (error) {
-      return (error as NodeJS.ErrnoException).code !== "ESRCH";
-    }
+    // A role process can die between opening its durable session and its
+    // closeout handler. Use the same PID+start-time protocol as versioned
+    // state, so resume reclaims that orphan but cannot steal a reused PID.
+    return this.acquireVersionedLock(this.sessionLeasePath(id));
   }
 
   private async withLockedSession<T extends ProjectSessionMetadata>(
@@ -793,7 +765,9 @@ export class ProjectStore {
     open: () => Promise<Session<T>>,
   ): Promise<Session<T>> {
     this.validateId(id);
-    const releaseCoordination = this.acquireLock(this.sessionCoordinationPath());
+    // This short lock can itself be orphaned by a process death while opening
+    // a session. It needs the same stale-owner recovery as the long lease.
+    const releaseCoordination = this.acquireVersionedLock(this.sessionCoordinationPath());
     let release: (() => void) | undefined;
     let session: Session<T> | undefined;
     try {
