@@ -232,6 +232,12 @@ workflows — one substrate, swappable drivers.
   stepped engine (which threads an explicit `WorkflowState`) is the substrate that
   makes this natural — a plan produced by one driver/target is a value another can
   resume against a different target.
+
+- **REQUIREMENT — managed worktree lifecycle.** Worktrees created by ad-coder
+  live under the project-local ignored `.worktrees/` root, not beside the
+  repository or in `.ad-coder/` runtime state. After a verified merge, the
+  publisher safely removes only its own clean, inactive worktree from a parent
+  context; it retains and reports anything it cannot prove safe to remove.
 - **REQUIREMENT — breakpoint control (implemented).** Drivers can auto-advance
   through phases and pause before a chosen phase, then resume from durable state.
   The trusted `control run-until` action exposes this without requiring a caller

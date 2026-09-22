@@ -40,3 +40,4 @@
 - `ui-responsiveness.md` — interactive fronts; read when changing controls or waiting.
 - `wake-delivery.md` — background wake turns; read when changing durable notifications.
 - `work-decomposition.md` — workflow follow-up splitting; read when changing automatic slices.
+- `worktree-lifecycle.md` — managed worktree creation and cleanup; read when isolating work.

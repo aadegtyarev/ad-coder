@@ -18,7 +18,9 @@ This contract owns how a product change is defined, coordinated, and closed.
   when responsibility boundaries demand it; separate structural moves from
   behaviour changes.
 - A working tree has one writer. Concurrent mutable work uses separate
-  worktrees; `--target-dir` is not isolation (see [security](security.md)).
+  worktrees; managed worktree creation and cleanup follow
+  [worktree lifecycle](worktree-lifecycle.md). `--target-dir` is not isolation
+  (see [security](security.md)).
 - Claim an issue before work starts using an assignee, `in-progress` label, and
   identifying comment. Link the pull request to close it on merge, or close it
   immediately afterwards.
