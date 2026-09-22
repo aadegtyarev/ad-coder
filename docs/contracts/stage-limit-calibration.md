@@ -11,6 +11,11 @@ number below; failure means **no second raise** — classify the next snapshot a
 repeated attempts, no progress) vs too-large (real progress still ongoing), then stop-and-report
 or decompose instead.
 
+A standalone role that reaches its final-response reserve is paused with the
+structured `stage_closeout` fact; its partial final answer is not a completed
+task. Resume requires raising that exhausted ceiling (or disabling it), then
+continues the durable session rather than replaying the partial answer.
+
 | Stage | Limit reason | Shape | Learned ceiling | Evidence |
 |-------|--------------|-------|-----------------|----------|
 | plan | duration | slice-planning of one bounded medium slice inside a complex feature | **810000 ms** — learned on @preset/zai-glm53flash, so model- and shape-specific | run `4c26d8d9-f682-4587-8e5e-07f1de1f8e82`, plan stage, 2026-09-18 local |
@@ -28,6 +33,9 @@ Two moments the ceiling rests on; they are not one continuous effort and must no
   stageMetrics in the coordinator run file: status closed_out, durationMs 726866.161581,
   stageCloseout {code stage_closeout, reason model_turns, detail "20/30 model turns used,
   12 reserved"}, input 544898 (cachedInput 300032, freshInput 244866), readFiles [].
+Standalone closeout resume is verified the same way rather than only asserted:
+a paused standalone session resumes only after its exhausted ceiling is raised
+and continues the durable session, never replaying the partial answer.
 
 Absolute source paths (`<W>` is the worktree the run executed in, `/home/adegtyarev/Develop/Hobby/ad-coder-wt-scale`):
 

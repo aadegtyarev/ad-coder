@@ -6,6 +6,7 @@ import type {
 } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { createModels, fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
+import { deriveContextBudget } from "../src/context/budget";
 import type { CompactionHookResult } from "../src/context/compactor";
 import { produceSummary, selectRecentTail } from "../src/context/compactor";
 import type { CompactionFailure, ContextBudget, Summarizer } from "../src/index";
@@ -160,6 +161,19 @@ test("durableCompactionSettings maps the budget onto the harness threshold", () 
     keepRecentTokens: 50_000,
   });
   expect(200_000 - shipped.reserveTokens).toBe(180_000 - 20_000);
+});
+
+test("the shipped budget begins automatic compaction at 70 percent of the role window", () => {
+  const contextWindow = 200_000;
+  const resolved = deriveContextBudget(contextWindow);
+  const settings = durableCompactionSettings(resolved, contextWindow);
+
+  expect(resolved).toEqual({
+    maxTokens: 160_000,
+    reserveTokens: 20_000,
+    keepRecentTokens: 50_000,
+  });
+  expect(contextWindow - settings.reserveTokens).toBe(140_000);
 });
 
 test("durableCompactionSettings keeps a negative reserve impossible", () => {
@@ -322,6 +336,43 @@ test("a summarizer that recovers summarizes the next preparation", async () => {
   // next preparation simply gets a summary. A one-off refusal costs one
   // fallback, not the session (issue #391).
   expect(committed(result).summary).toContain("SUMMARY");
+});
+
+test("compaction caps oversized summaries, retries three times, then uses the active-model fallback", async () => {
+  let primaryCalls = 0;
+  let fallbackCalls = 0;
+  const primary: Summarizer = async () => {
+    primaryCalls += 1;
+    return Array.from({ length: 4_000 }, (_, index) => `fact-${index}`).join(" ");
+  };
+  const fallback: Summarizer = async () => {
+    fallbackCalls += 1;
+    return "brief retained state";
+  };
+  const { result, writes } = await captureStderr(() =>
+    driveHook(preparation({ messagesToSummarize: [big()], retainedTail: [small("tail")] }), {
+      budget: budget(),
+      summarizer: primary,
+      fallbackSummarizer: fallback,
+      summarizerScope: { provider: "cheap", model: "summary" },
+      fallbackScope: { provider: "active", model: "reviewer" },
+      summaryMaxTokens: 10,
+      summarizerRetryLimit: 3,
+    }),
+  );
+
+  expect(primaryCalls).toBe(3);
+  expect(fallbackCalls).toBe(1);
+  expect(committed(result).summary).toContain("brief retained state");
+  expect(committed(result).details).toMatchObject({
+    compactionFallbackUsed: true,
+    compactionFallbackSource: "cheap/summary",
+    compactionFallbackRoute: "active/reviewer",
+    compactionFallbackAttempts: 3,
+  });
+  expect(writes).toContain(
+    "compaction fallback used (cheap/summary -> active/reviewer, attempts 3)",
+  );
 });
 
 test("describeCompactionFailure renders names and numbers only", () => {
@@ -567,6 +618,20 @@ test("createSummarizer asks for no prompt cache on its one-shot request", async 
   const summarizer = createSummarizer(models, faux.getModel() as Model<Api>);
   expect(await summarizer([small("source")])).toBe("brief");
   expect(faux.state.callCount).toBe(1);
+});
+
+test("createSummarizer passes its configured output cap to the provider", async () => {
+  const faux = fauxProvider({ provider: "summary", models: [{ id: "cheap" }] });
+  const models = createModels();
+  models.setProvider(faux.provider);
+  faux.setResponses([
+    (_context, options) => {
+      expect(options?.maxTokens).toBe(123);
+      return fauxAssistantMessage([{ type: "text", text: "brief" }]);
+    },
+  ]);
+  const summarizer = createSummarizer(models, faux.getModel() as Model<Api>, 123);
+  expect(await summarizer([small("source")])).toBe("brief");
 });
 
 test("createSummarizer rejects custom messages and empty provider output", async () => {

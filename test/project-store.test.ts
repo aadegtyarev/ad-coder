@@ -319,10 +319,40 @@ describe("ProjectStore", () => {
     const session = await store.createSession("stale_session");
     await session.close(BACKGROUND_CONTEXT);
     const lease = path.join(store.layout.tmp, "session-stale_session.lease");
-    fs.writeFileSync(lease, `${JSON.stringify({ pid: 999_999 })}\n`, { mode: 0o600 });
+    // Simulate a killed standalone role whose PID has already been reused by
+    // this test process. A PID-only lease check would reject resume forever.
+    const deadOwner = { pid: process.pid, startTime: "0", token: crypto.randomUUID() };
+    fs.writeFileSync(lease, `${JSON.stringify(deadOwner)}\n`, { mode: 0o600 });
+    const coordination = path.join(store.layout.tmp, "session-coordination.lock");
+    fs.writeFileSync(coordination, `${JSON.stringify(deadOwner)}\n`, { mode: 0o600 });
     const reopened = await new ProjectStore(root).resumeSession("stale_session");
     await reopened.close(BACKGROUND_CONTEXT);
     expect(fs.existsSync(lease)).toBe(false);
+    expect(fs.existsSync(coordination)).toBe(false);
+  });
+
+  test("recovers legacy pid-only session locks after a killed standalone role", async () => {
+    const root = target();
+    const store = new ProjectStore(root);
+    const session = await store.createSession("legacy_session");
+    await session.close(BACKGROUND_CONTEXT);
+    const holder = await childHoldingLock();
+    const lease = path.join(store.layout.tmp, "session-legacy_session.lease");
+    const coordination = path.join(store.layout.tmp, "session-coordination.lock");
+    // This is the on-disk form a standalone role from before the start-time
+    // witness left behind when its harness was killed.
+    fs.writeFileSync(lease, `${JSON.stringify({ pid: holder.process.pid })}\n`, { mode: 0o600 });
+    fs.writeFileSync(coordination, `${JSON.stringify({ pid: holder.process.pid })}\n`, {
+      mode: 0o600,
+    });
+    holder.process.kill();
+    await holder.process.exited;
+
+    const reopened = await new ProjectStore(root).resumeSession("legacy_session");
+    await reopened.close(BACKGROUND_CONTEXT);
+
+    expect(fs.existsSync(lease)).toBe(false);
+    expect(fs.existsSync(coordination)).toBe(false);
   });
 
   test("cleanup skips a session leased by another store", async () => {
@@ -454,6 +484,135 @@ describe("ProjectStore", () => {
     await expect(store.createSession("limited_session")).rejects.toMatchObject({
       code: "resource_limit",
     });
+  });
+
+  test("commits concurrent session transactions in sequence order", async () => {
+    const store = new ProjectStore(target());
+    const journal = path.join(store.layout.sessions, "ordered.jsonl");
+    const later = store.fileSystem.appendFile(
+      journal,
+      `${JSON.stringify({ kind: "value", op: "set", seq: 3, namespace: "test", key: "later" })}\n`,
+      BACKGROUND_CONTEXT,
+    );
+    const first = store.fileSystem.appendFile(
+      journal,
+      `${JSON.stringify({ kind: "value", op: "set", seq: 1, namespace: "test", key: "first" })}\n`,
+      BACKGROUND_CONTEXT,
+    );
+    const second = store.fileSystem.appendFile(
+      journal,
+      `${JSON.stringify({ kind: "value", op: "set", seq: 2, namespace: "test", key: "second" })}\n`,
+      BACKGROUND_CONTEXT,
+    );
+    await expect(Promise.all([later, first, second])).resolves.toEqual([
+      { ok: true, value: undefined },
+      { ok: true, value: undefined },
+      { ok: true, value: undefined },
+    ]);
+    expect(
+      fs
+        .readFileSync(journal, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => (JSON.parse(line) as { seq: number }).seq),
+    ).toEqual([1, 2, 3]);
+  });
+
+  test("resumes a complete journal whose older appends arrived out of order", async () => {
+    const root = target();
+    const store = new ProjectStore(root);
+    const created = await store.createSession("reordered_session");
+    const branch = await created.createBranch("main", null, BACKGROUND_CONTEXT);
+    await branch.appendCustomEntry("test", { ready: true }, BACKGROUND_CONTEXT);
+    await created.close(BACKGROUND_CONTEXT);
+    const [metadata] = await store.listSessions();
+    if (metadata === undefined) throw new Error("missing session metadata");
+    const records = fs
+      .readFileSync(metadata.path, "utf8")
+      .trim()
+      .split("\n")
+      .slice(1)
+      .flatMap((line) => {
+        const parsed = JSON.parse(line);
+        return Array.isArray(parsed) ? parsed : [parsed];
+      }) as Array<{ seq: number }>;
+    const last = records.at(-1)?.seq;
+    if (last === undefined) throw new Error("missing session transaction");
+    fs.appendFileSync(
+      metadata.path,
+      `${JSON.stringify({ kind: "value", op: "set", seq: last + 2, namespace: "test", key: "later" })}\n${JSON.stringify({ kind: "value", op: "set", seq: last + 1, namespace: "test", key: "first" })}\n`,
+    );
+    const resumed = await new ProjectStore(root).resumeSession("reordered_session");
+    await resumed.close(BACKGROUND_CONTEXT);
+    const sequences = fs
+      .readFileSync(metadata.path, "utf8")
+      .trim()
+      .split("\n")
+      .slice(1)
+      .flatMap((line) => {
+        const parsed = JSON.parse(line);
+        return Array.isArray(parsed) ? parsed : [parsed];
+      })
+      .map(({ seq }: { seq: number }) => seq);
+    expect(sequences).toEqual([...sequences].sort((left, right) => left - right));
+  });
+
+  test("pauses an overlapping journal until an explicit clear preserves it", async () => {
+    const root = target();
+    const store = new ProjectStore(root);
+    const created = await store.createSession("ambiguous_session");
+    const branch = await created.createBranch("main", null, BACKGROUND_CONTEXT);
+    await branch.appendCustomEntry("test", { ready: true }, BACKGROUND_CONTEXT);
+    await created.close(BACKGROUND_CONTEXT);
+    const [metadata] = await store.listSessions();
+    if (metadata === undefined) throw new Error("missing session metadata");
+    const records = fs
+      .readFileSync(metadata.path, "utf8")
+      .trim()
+      .split("\n")
+      .slice(1)
+      .flatMap((line) => {
+        const parsed = JSON.parse(line);
+        return Array.isArray(parsed) ? parsed : [parsed];
+      }) as Array<{ seq: number }>;
+    const duplicate = records.at(-1)?.seq;
+    if (duplicate === undefined) throw new Error("missing session transaction");
+    fs.appendFileSync(
+      metadata.path,
+      `${JSON.stringify({ kind: "value", op: "set", seq: duplicate, namespace: "test", key: "duplicate" })}\n`,
+    );
+    const before = fs.readFileSync(metadata.path, "utf8");
+    expect(store.fileSystem.repairOutOfOrderTransactions(metadata.path)).toBe(false);
+    expect(fs.readFileSync(metadata.path, "utf8")).toBe(before);
+    // A normal resume is read-only.  It returns a typed ambiguity instead of
+    // inventing an ordering that would lose one of the colliding records.
+    await expect(new ProjectStore(root).resumeSession("ambiguous_session")).rejects.toMatchObject({
+      code: "ambiguous_journal",
+      path: metadata.path,
+    });
+    expect(fs.readFileSync(metadata.path, "utf8")).toBe(before);
+
+    // Clear is an explicit operator recovery action. It moves the exact bytes
+    // out of the active sessions directory and records their safe location on
+    // the new same-id continuation; it never rewrites or drops the evidence.
+    const recovered = await new ProjectStore(root).clearAmbiguousSession("ambiguous_session");
+    const recovery = (await recovered.findEntries({ type: "custom" }, BACKGROUND_CONTEXT)).find(
+      (entry) => entry.type === "custom" && entry.customType === "ad-coder.session_recovery",
+    );
+    expect(recovery).toMatchObject({
+      type: "custom",
+      data: {
+        state: "cleared_ambiguous_journal",
+        recovery: "new_continuation",
+        artifact: { type: "ambiguous_journal" },
+      },
+    });
+    if (recovery?.type !== "custom") throw new Error("missing durable recovery entry");
+    const artifact = (recovery.data as { artifact: { path: string } }).artifact.path;
+    expect(artifact).toContain(path.join(".ad-coder", "scratch", "recovery"));
+    expect(fs.readFileSync(artifact, "utf8")).toBe(before);
+    await recovered.close(BACKGROUND_CONTEXT);
+    await expect(new ProjectStore(root).resumeSession("ambiguous_session")).resolves.toBeDefined();
   });
 
   test("rejects a pre-planted runtime symlink", () => {

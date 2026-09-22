@@ -11,6 +11,96 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.13] - 2026-09-23
+
+### Fixed
+
+- **Active-model compaction fallback is regression-tested as an ad-coder
+  compaction.** The test now asserts the durable fallback marker and the
+  hook-owned entry actually produced by the bounded route.
+
+## [0.181.12] - 2026-09-23
+
+### Fixed
+
+- **Standalone roles release their own durable lease before result recovery.**
+  A completed role can no longer contend with itself while reopening its saved
+  session to extract the result; fallback compaction also never commits an
+  absent summary.
+
+## [0.181.11] - 2026-09-23
+
+### Fixed
+
+- **Standalone closeout is resumable.** A role that reaches its final-response
+  reserve now records a `stage_closeout` pause and its partial result instead
+  of falsely completing; resuming requires a raised exhausted ceiling.
+
+## [0.181.10] - 2026-09-23
+
+### Fixed
+
+- **An ambiguous session journal now has a safe continuation path.** Resume
+  preserves overlapping committed transactions and reports a typed recovery;
+  an explicit clear archives the exact journal and records its location on a
+  fresh same-id continuation rather than silently choosing or deleting data.
+
+## [0.181.7] - 2026-09-23
+
+### Fixed
+
+- **Automatic compaction now starts at the configured default.** The shipped
+  context budget begins durable compaction at 70% of a role's active context
+  window, rather than the previous 80%.
+- **Compaction summaries are now bounded and recoverable.** Summary output is
+  capped at one third of the active context window by default; the cap, three
+  summarizer attempts, and active-model fallback are configurable and visible
+  in effective configuration.
+
+## [0.181.6] - 2026-09-22
+
+### Fixed
+
+- **Interrupted role journals remain resumable.** Session transactions now
+  commit in sequence order when SDK persistence callbacks arrive concurrently.
+  A complete older journal with only that ordering fault is safely reordered on
+  reopen; ambiguous or partial journal data is left untouched and still fails
+  loudly.
+
+## [0.181.5] - 2026-09-22
+
+### Fixed
+
+- **A stale standalone checkpoint can no longer strand recovery.** Progress
+  and closeout updates now merge under the record lock, so an intervening
+  durable update cannot turn successful completion into a version-conflict
+  crash. Resume also remains proven against a dead versioned worker lease.
+
+## [0.181.4] - 2026-09-22
+
+### Fixed
+
+- **A failed standalone provider turn no longer remains `running`.** Empty
+  failed turns now persist their safe `empty_turn` diagnosis before the worker
+  exits; unknown failures settle as `internal_error` without storing provider
+  response text. A later retry clears the previous terminal diagnosis.
+
+## [0.181.3] - 2026-09-22
+
+### Fixed
+
+- **A killed standalone role no longer strands its pre-witness lock.** Resume
+  recognises the former pid-only lease shape and safely reclaims it only after
+  the operating system confirms that its owner is gone.
+
+## [0.181.2] - 2026-09-22
+
+### Fixed
+
+- **Standalone-role resumes reclaim locks left by a killed process.** Durable
+  session leases and their coordination lock now verify the process start time,
+  so an orphaned lock cannot prevent recovery or be mistaken for a reused PID.
+
 ## [0.181.1] - 2026-09-22
 
 ### Removed

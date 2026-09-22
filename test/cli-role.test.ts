@@ -32,7 +32,7 @@ import { ProjectStore } from "../src/project-store/project-store";
 import { ProjectStoreError } from "../src/project-store/types";
 import type { Role } from "../src/role";
 import { defineRole } from "../src/role";
-import { RunInterruptedError } from "../src/runner/errors";
+import { EmptyTurnError, RunInterruptedError } from "../src/runner/errors";
 
 const CONTEXT_WINDOW = 200_000;
 const BUDGET = { maxTokens: 100_000, reserveTokens: 10_000, keepRecentTokens: 20_000 } as const;
@@ -71,6 +71,16 @@ function fixture() {
   return { faux, models, model, role };
 }
 
+function processStartTime(pid: number): string {
+  const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+  const startTime = stat
+    .slice(stat.lastIndexOf(")") + 2)
+    .trim()
+    .split(" ")[19];
+  if (startTime === undefined) throw new Error("missing process start time");
+  return startTime;
+}
+
 test("runRoleStandalone drives one faux turn and returns the assistant text plus a numeric cost", async () => {
   const { faux, models, model, role } = fixture();
   faux.setResponses([fauxAssistantMessage("looks good to me")]);
@@ -97,8 +107,45 @@ test("runRoleStandalone drives one faux turn and returns the assistant text plus
     status: "complete",
     result: { text: expect.stringContaining("looks good to me"), cost },
   });
+  // The standalone owner supplied the session to `runRole`, so it also must
+  // release that facade before it reopens the session to extract the result.
+  // A retained lease made a completed live role fail its own result-read and
+  // stranded the next `--resume-run` behind "managed state is locked".
+  expect(fs.existsSync(path.join(targetDir, ".ad-coder", "tmp", `session-${runId}.lease`))).toBe(
+    false,
+  );
   // The ledger recorded the turn, and the cost is summed from it.
   expect(ledgerSink.records().length).toBeGreaterThan(0);
+});
+
+test("standalone closeout merges a checkpoint advanced while its model turn is in flight", async () => {
+  const { faux, models, model, role } = fixture();
+  const runId = `checkpoint-race-${crypto.randomUUID()}`;
+  const store = new ProjectStore(targetDir);
+  const checkpointPath = path.join(store.layout.runs, `standalone-${runId}.json`);
+  // A progress observer writes the checkpoint before the provider dispatch.
+  // Simulate a second, durable observer completing while that dispatch is in
+  // flight. Before this regression fix, the normal closeout then tried to
+  // write its stale version and stranded the run as `running`.
+  faux.setResponses([
+    () => {
+      const current = store.readVersionedJson<Record<string, unknown>>(checkpointPath);
+      store.writeVersionedJson(checkpointPath, current.value, current.version);
+      return fauxAssistantMessage("durably settled");
+    },
+  ]);
+
+  const result = await runRoleStandalone({
+    role,
+    model,
+    models,
+    targetDir,
+    task: "review the raced checkpoint",
+    runId,
+  });
+
+  expect(result.text).toContain("durably settled");
+  expect(store.readVersionedJson<{ status: string }>(checkpointPath).value.status).toBe("complete");
 });
 
 test("standalone roles enforce the same stage budgets as pipeline roles", async () => {
@@ -165,6 +212,97 @@ test("an interrupted standalone role persists a resumable pause and releases its
   });
   expect(resumed.text).toContain("resumed after interruption");
   expect(store.readVersionedJson<{ status: string }>(checkpointPath).value.status).toBe("complete");
+});
+
+test("resume reclaims a new-format session lease left by a dead standalone worker", async () => {
+  const { faux, models, model, role } = fixture();
+  const runId = `dead-worker-${crypto.randomUUID()}`;
+  const task = "review after a worker died";
+  const abortController = new AbortController();
+  abortController.abort();
+
+  await expect(
+    runRoleStandalone({
+      role,
+      model,
+      models,
+      targetDir,
+      task,
+      runId,
+      abortSignal: abortController.signal,
+    }),
+  ).rejects.toBeInstanceOf(RunInterruptedError);
+
+  const store = new ProjectStore(targetDir);
+  const lease = path.join(store.layout.tmp, `session-${runId}.lease`);
+  const worker = Bun.spawn(["sleep", "60"], { stdout: "ignore", stderr: "ignore" });
+  const identity = {
+    pid: worker.pid,
+    startTime: processStartTime(worker.pid),
+    token: crypto.randomUUID(),
+  };
+  fs.writeFileSync(lease, `${JSON.stringify(identity)}\n`, { mode: 0o600 });
+  worker.kill();
+  await worker.exited;
+
+  faux.setResponses([fauxAssistantMessage("reconnected safely")]);
+  const resumed = await runRoleStandalone({
+    role,
+    model,
+    models,
+    targetDir,
+    task,
+    runId,
+    resumeExisting: true,
+  });
+
+  expect(resumed.text).toContain("reconnected safely");
+  expect(fs.existsSync(lease)).toBe(false);
+  expect(
+    store.readVersionedJson<{ status: string }>(
+      path.join(store.layout.runs, `standalone-${runId}.json`),
+    ).value.status,
+  ).toBe("complete");
+});
+
+test("a failed empty provider turn settles its standalone run with safe recovery evidence", async () => {
+  const { faux, models, model, role } = fixture();
+  const runId = `empty-turn-${crypto.randomUUID()}`;
+  // This is the real failure shape from a provider adapter: the thrown source
+  // becomes a settled `assistant_error`, which `runRole` types as
+  // EmptyTurnError.  The standalone owner must close its durable record before
+  // it lets that error cross the CLI boundary.
+  faux.setResponses([
+    () => {
+      throw new Error("provider failed without a response");
+    },
+  ]);
+
+  await expect(
+    runRoleStandalone({
+      role,
+      model,
+      models,
+      targetDir,
+      task: "review the change",
+      runId,
+    }),
+  ).rejects.toBeInstanceOf(EmptyTurnError);
+
+  const store = new ProjectStore(targetDir);
+  const checkpointPath = path.join(store.layout.runs, `standalone-${runId}.json`);
+  expect(
+    store.readVersionedJson<{
+      status: string;
+      failure?: { code: string; message: string };
+    }>(checkpointPath).value,
+  ).toMatchObject({
+    status: "failed",
+    failure: {
+      code: "empty_turn",
+      message: expect.stringContaining("failed empty turn"),
+    },
+  });
 });
 
 test("a started standalone run records its own process identity in the checkpoint", async () => {
@@ -423,7 +561,7 @@ test("standalone role resumes the same durable run only after its exhausted budg
       status: string;
       cumulativeUsage: { toolTurns: number };
     }>(checkpointPath).value,
-  ).toMatchObject({ status: "running", cumulativeUsage: { toolTurns: 1 } });
+  ).toMatchObject({ status: "failed", cumulativeUsage: { toolTurns: 1 } });
 
   faux.setResponses([
     fauxAssistantMessage([
@@ -822,7 +960,43 @@ test("a standalone run that settles inside the closeout reserve relays the fact"
   const durable = JSON.parse(
     fs.readFileSync(path.join(targetDir, ".ad-coder", "runs", `standalone-${runId}.json`), "utf8"),
   ).value;
+  expect(durable.status).toBe("paused");
+  expect(durable.pause).toMatchObject({
+    code: "stage_closeout",
+    reason: "tool_turns",
+    limit: 2,
+    observed: 1,
+  });
   expect(durable.result.stageCloseout).toEqual(result.stageCloseout);
+
+  // Closeout has a usable partial answer, but never silently claims that the
+  // original task finished. A raised ceiling resumes the same durable session
+  // and admits a fresh continuation after the settled closeout turn.
+  faux.setResponses([fauxAssistantMessage("completed after the raised limit")]);
+  await expect(
+    runRoleStandalone({
+      role,
+      model,
+      models,
+      targetDir,
+      task: "review the closing change",
+      runId,
+      resumeExisting: true,
+      stageLimits: { maxToolTurns: 2, finalResponseReserveToolTurns: 1 },
+    }),
+  ).rejects.toBeInstanceOf(ProjectStoreError);
+  const resumed = await runRoleStandalone({
+    role,
+    model,
+    models,
+    targetDir,
+    task: "review the closing change",
+    runId,
+    resumeExisting: true,
+    stageLimits: { maxToolTurns: 4, finalResponseReserveToolTurns: 1 },
+  });
+  expect(resumed.text).toContain("completed after the raised limit");
+  expect(store_read(targetDir, runId).status).toBe("complete");
 });
 
 test("a normal standalone run carries no stageCloseout", async () => {

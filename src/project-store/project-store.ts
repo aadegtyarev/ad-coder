@@ -133,7 +133,42 @@ export class ProjectStore {
   ): Promise<Session<ProjectSessionMetadata>> {
     return this.withLockedSession(id, context, async () => {
       const metadata = await this.findSession(id, context);
-      return this.sessions.open(metadata, context);
+      return await this.openSessionWithOrderedRecovery(metadata, context);
+    });
+  }
+
+  /**
+   * Explicit recovery for a session whose complete JSONL transactions overlap.
+   * This never tries to select one conflicting record.  It preserves the raw
+   * journal in scratch/recovery and starts a fresh same-id continuation with a
+   * durable, machine-readable pointer to that evidence.
+   */
+  async clearAmbiguousSession(
+    id: string,
+    context: Context = BACKGROUND_CONTEXT,
+  ): Promise<Session<ProjectSessionMetadata>> {
+    return this.withLockedSession(id, context, async () => {
+      const metadata = await this.findSession(id, context);
+      const artifactPath = this.fileSystem.quarantineOverlappingTransactions(metadata.path);
+      if (artifactPath === undefined)
+        throw new ProjectStoreError(
+          "ambiguous_journal",
+          metadata.path,
+          "session journal is not a complete overlapping transaction set",
+        );
+      const replacement = await this.sessions.create({ id, cwd: this.layout.targetDir }, context);
+      const branch = await replacement.createBranch("main", null, context);
+      await branch.appendCustomEntry(
+        "ad-coder.session_recovery",
+        {
+          version: 1,
+          state: "cleared_ambiguous_journal",
+          artifact: { type: "ambiguous_journal", path: artifactPath },
+          recovery: "new_continuation",
+        },
+        context,
+      );
+      return replacement;
     });
   }
 
@@ -171,13 +206,47 @@ export class ProjectStore {
         throw new ProjectStoreError("unsafe_object", id, `duplicate session metadata: ${id}`);
       if (matches[0] === undefined)
         return this.sessions.create({ id, cwd: this.layout.targetDir }, context);
-      return this.sessions.open(matches[0], context);
+      return await this.openSessionWithOrderedRecovery(matches[0], context);
     });
   }
 
   async close(context: Context = BACKGROUND_CONTEXT): Promise<void> {
     await this.sessions.close(context);
     await this.fileSystem.cleanup(context);
+  }
+
+  private async openSessionWithOrderedRecovery(
+    metadata: ProjectSessionMetadata,
+    context: Context,
+  ): Promise<Session<ProjectSessionMetadata>> {
+    try {
+      return await this.sessions.open(metadata, context);
+    } catch (error) {
+      if (!this.hasOutOfOrderTransactionError(error)) throw error;
+      if (!this.fileSystem.repairOutOfOrderTransactions(metadata.path)) {
+        if (this.fileSystem.hasOverlappingTransactions(metadata.path))
+          throw new ProjectStoreError(
+            "ambiguous_journal",
+            metadata.path,
+            "session journal has overlapping committed transactions; inspect it or clear it for a new continuation",
+          );
+        throw new ProjectStoreError(
+          "corrupt_state",
+          metadata.path,
+          "session journal has a non-monotonic incomplete transaction",
+        );
+      }
+      return await this.sessions.open(metadata, context);
+    }
+  }
+
+  private hasOutOfOrderTransactionError(error: unknown): boolean {
+    let current = error;
+    while (current instanceof Error) {
+      if (current.message.startsWith("Non-monotonic storage sequence:")) return true;
+      current = current.cause;
+    }
+    return false;
   }
 
   async copyAttachment(
@@ -560,6 +629,16 @@ export class ProjectStore {
           this.versionedLockHook?.("stale-inspected");
           if (this.reclaimStaleLock(lockPath, holder)) continue;
         }
+        // Releases before the start-time witness was introduced wrote either
+        // `{ pid }` or `{ pid, token }`.  A dead owner of one of those files
+        // must not strand every future resume.  Do not infer liveness from a
+        // PID alone, though: without the witness a live or reused PID is
+        // deliberately treated as held.
+        const legacyHolder = this.readLegacyLock(lockPath);
+        if (legacyHolder !== undefined && this.isProcessDefinitelyDead(legacyHolder.pid)) {
+          this.versionedLockHook?.("stale-inspected");
+          if (this.reclaimLegacyLock(lockPath, legacyHolder)) continue;
+        }
         const delay = this.lockRetryDelaysMs[attempt];
         if (delay === undefined)
           throw new ProjectStoreError("version_conflict", lockPath, "managed state is locked");
@@ -596,6 +675,21 @@ export class ProjectStore {
           const current = this.readVersionedLock(path.join(coordinationPath, "owner"));
           if (current?.token !== owner.token) continue;
           const quarantine = `${coordinationPath}.reclaim-${owner.token}`;
+          try {
+            fs.renameSync(coordinationPath, quarantine);
+          } catch (renameError) {
+            if ((renameError as NodeJS.ErrnoException).code === "ENOENT") continue;
+            throw renameError;
+          }
+          fs.rmSync(quarantine, { recursive: true, force: true });
+          continue;
+        }
+        const legacyOwner = this.readLegacyLock(path.join(coordinationPath, "owner"));
+        if (legacyOwner !== undefined && this.isProcessDefinitelyDead(legacyOwner.pid)) {
+          const ownerPath = path.join(coordinationPath, "owner");
+          const current = this.readLegacyLock(ownerPath);
+          if (current?.raw !== legacyOwner.raw) continue;
+          const quarantine = `${coordinationPath}.reclaim-${crypto.randomUUID()}`;
           try {
             fs.renameSync(coordinationPath, quarantine);
           } catch (renameError) {
@@ -678,6 +772,27 @@ export class ProjectStore {
     });
   }
 
+  /**
+   * Reclaim a recognised pre-witness lock while holding the current protocol's
+   * coordination directory.  The byte comparison prevents deleting a lock a
+   * contender installed after the initial inspection.
+   */
+  private reclaimLegacyLock(lockPath: string, inspected: { pid: number; raw: string }): boolean {
+    return this.withVersionedLockCoordination(lockPath, () => {
+      const current = this.readLegacyLock(lockPath);
+      if (current?.raw !== inspected.raw) return false;
+      const quarantine = `${lockPath}.reclaim-${crypto.randomUUID()}`;
+      try {
+        fs.renameSync(lockPath, quarantine);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+        throw error;
+      }
+      fs.unlinkSync(quarantine);
+      return true;
+    });
+  }
+
   private readLockToken(lockPath: string): string | undefined {
     try {
       const value = JSON.parse(fs.readFileSync(lockPath, "utf8")) as { token?: unknown };
@@ -711,6 +826,30 @@ export class ProjectStore {
     }
   }
 
+  /** Read only the two lock shapes emitted before `startTime` existed. */
+  private readLegacyLock(lockPath: string): { pid: number; raw: string } | undefined {
+    try {
+      const raw = fs.readFileSync(lockPath, "utf8");
+      const value = JSON.parse(raw) as Record<string, unknown>;
+      const keys = Object.keys(value).sort();
+      const pid = value.pid;
+      const token = value.token;
+      if (
+        !Number.isSafeInteger(pid) ||
+        (pid as number) <= 0 ||
+        ((keys.length !== 1 || keys[0] !== "pid") &&
+          (keys.length !== 2 || keys[0] !== "pid" || keys[1] !== "token")) ||
+        (token !== undefined && (typeof token !== "string" || !/^[0-9a-f-]{36}$/.test(token)))
+      )
+        return undefined;
+      return { pid: pid as number, raw };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT" || error instanceof SyntaxError)
+        return undefined;
+      throw error;
+    }
+  }
+
   private isVersionedLockHolderAlive(holder: { pid: number; startTime: string }): boolean {
     try {
       process.kill(holder.pid, 0);
@@ -722,6 +861,20 @@ export class ProjectStore {
     if (current === undefined || holder.startTime === "unavailable") return true;
     if (current.state === "Z") return false;
     return current.startTime === holder.startTime;
+  }
+
+  /**
+   * The old lock shape has no start-time witness.  Reclaim it only when the
+   * operating system positively identifies the process as gone or zombie;
+   * permission and procfs uncertainty remain a live lock.
+   */
+  private isProcessDefinitelyDead(pid: number): boolean {
+    try {
+      process.kill(pid, 0);
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code === "ESRCH";
+    }
+    return this.readProcessIdentity(pid)?.state === "Z";
   }
 
   private readProcessStartTime(pid: number): string | undefined {
@@ -753,38 +906,10 @@ export class ProjectStore {
   }
 
   private acquireSessionLease(id: string): () => void {
-    const leasePath = this.sessionLeasePath(id);
-    try {
-      return this.acquireLock(leasePath);
-    } catch (error) {
-      if (!(error instanceof ProjectStoreError) || error.code !== "version_conflict") throw error;
-      const holder = this.readLeasePid(leasePath);
-      if (holder === undefined || this.isProcessAlive(holder)) throw error;
-      fs.unlinkSync(leasePath);
-      return this.acquireLock(leasePath);
-    }
-  }
-
-  private readLeasePid(leasePath: string): number | undefined {
-    this.assertDestination(leasePath);
-    try {
-      const parsed = JSON.parse(fs.readFileSync(leasePath, "utf8")) as { pid?: unknown };
-      return Number.isSafeInteger(parsed.pid) && (parsed.pid as number) > 0
-        ? (parsed.pid as number)
-        : undefined;
-    } catch (error) {
-      if (error instanceof SyntaxError) return undefined;
-      throw error;
-    }
-  }
-
-  private isProcessAlive(pid: number): boolean {
-    try {
-      process.kill(pid, 0);
-      return true;
-    } catch (error) {
-      return (error as NodeJS.ErrnoException).code !== "ESRCH";
-    }
+    // A role process can die between opening its durable session and its
+    // closeout handler. Use the same PID+start-time protocol as versioned
+    // state, so resume reclaims that orphan but cannot steal a reused PID.
+    return this.acquireVersionedLock(this.sessionLeasePath(id));
   }
 
   private async withLockedSession<T extends ProjectSessionMetadata>(
@@ -793,7 +918,9 @@ export class ProjectStore {
     open: () => Promise<Session<T>>,
   ): Promise<Session<T>> {
     this.validateId(id);
-    const releaseCoordination = this.acquireLock(this.sessionCoordinationPath());
+    // This short lock can itself be orphaned by a process death while opening
+    // a session. It needs the same stale-owner recovery as the long lease.
+    const releaseCoordination = this.acquireVersionedLock(this.sessionCoordinationPath());
     let release: (() => void) | undefined;
     let session: Session<T> | undefined;
     try {

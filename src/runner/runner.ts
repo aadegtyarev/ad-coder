@@ -19,6 +19,7 @@ import {
   attachDurableCompaction,
   COMPACTION_SAFETY_PROMPT,
   compactionLostErrorFrom,
+  createSummarizer,
   resolveCompactionPolicy,
 } from "../context/compactor";
 import { assertContextFitsBudget, assertTurnFitsBudget } from "../context/preflight";
@@ -823,6 +824,12 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
           model: compaction.summarizerModel.id,
         },
       }),
+      ...(compaction.fallbackToRoleModel && {
+        fallbackSummarizer: createSummarizer(models, params.model, compaction.summaryMaxTokens),
+        fallbackScope: { provider: params.model.provider, model: params.model.id },
+      }),
+      summaryMaxTokens: compaction.summaryMaxTokens,
+      summarizerRetryLimit: compaction.summarizerRetryLimit,
     });
   }
   const ownsActivityChannel = params.activityChannel === undefined;

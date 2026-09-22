@@ -82,6 +82,7 @@ import {
 } from "./orchestration/run-stop";
 import { createWorkflowSession } from "./orchestration/session";
 import {
+  STAGE_LIMIT_KEY,
   type StageCloseoutFact,
   StageLimitError,
   type StageLimitReason,
@@ -144,7 +145,12 @@ import {
 import { parseRegistryConfig } from "./registry/validate";
 import type { Role } from "./role";
 import { defineRole } from "./role";
-import { assertRunId, RunInterruptedError, resolveTargetDir } from "./runner/errors";
+import {
+  assertRunId,
+  EmptyTurnError,
+  RunInterruptedError,
+  resolveTargetDir,
+} from "./runner/errors";
 import { createRoleRunner } from "./runner/role-runner";
 import type { Tool } from "./runner/tool";
 import type { SessionLimits } from "./session-limits";
@@ -627,7 +633,13 @@ export async function runRoleStandalone(params: {
       StageLimitSnapshot,
       "elapsedMs" | "modelTurns" | "toolTurns" | "inputTokens" | "lastInputTokens" | "costUsd"
     >;
-    status: "running" | "paused" | "complete";
+    /**
+     * `failed` is terminal for THIS attempt, not a claim that the durable
+     * session is gone.  A provider error must never leave a dead process
+     * advertised as a live `running` role: the record is what `runs status`,
+     * resume, and recovery read after the launcher has exited.
+     */
+    status: "running" | "paused" | "complete" | "failed";
     /**
      * The process that owns (last owned) this run, recorded by the run's own
      * process at start and re-recorded by the process that resumes (issue
@@ -650,6 +662,18 @@ export async function runRoleStandalone(params: {
           observed: number;
         }
       | {
+          /**
+           * A final answer after the closeout reserve is an honest partial
+           * attempt, not completion.  The durable pause tells recovery which
+           * budget must grow before it can continue (issue #596).
+           */
+          code: "stage_closeout";
+          reason: StageCloseoutFact["reason"];
+          detail: string;
+          limit: number;
+          observed: number;
+        }
+      | {
           code: "interrupted";
           /**
            * Which signal ended the run (issue #479): an external stop is not
@@ -663,6 +687,13 @@ export async function runRoleStandalone(params: {
            */
           stopRequest?: { requestedAt: number; requesterPid: number };
         };
+    /**
+     * Safe terminal diagnosis for a failed attempt.  Do not persist a raw
+     * provider Error here: its message can contain a response body.  The
+     * explicitly audited EmptyTurnError carries authored-safe wording; all
+     * other errors keep only their stable `internal_error` classification.
+     */
+    failure?: { code: string; message: string };
   };
   const taskDigest = new Bun.CryptoHasher("sha256").update(params.task).digest("hex");
   let checkpoint: import("./project-store/types").VersionedState<Checkpoint>;
@@ -709,28 +740,17 @@ export async function runRoleStandalone(params: {
         prior.cumulativeUsage.inputTokens,
     };
     stageLimitInitial = cumulativeUsage;
-    if (prior.pause?.code === "stage_limit") {
-      const key: Record<StageLimitReason, keyof StageLimits | undefined> = {
-        duration: "maxDurationMs",
-        model_turns: "maxModelTurns",
-        tool_turns: "maxToolTurns",
-        input: "maxInputTokens",
-        cost: "maxCostUsd",
-        cost_in_flight: "maxCostUsd",
-        cost_unknown: "maxCostUsd",
-      };
-      const configured =
-        key[prior.pause.reason] === undefined
-          ? undefined
-          : params.stageLimits?.[key[prior.pause.reason] as keyof StageLimits];
+    if (prior.pause?.code === "stage_limit" || prior.pause?.code === "stage_closeout") {
+      const key = STAGE_LIMIT_KEY[prior.pause.reason];
+      const configured = params.stageLimits?.[key];
       if (configured !== 0 && (configured === undefined || configured <= prior.pause.limit))
         throw new ProjectStoreError(
           "invalid_config",
           checkpointPath,
-          `resume requires a larger ${String(key[prior.pause.reason])} or 0`,
+          `resume requires a larger ${key} or 0`,
         );
     }
-    const { pause: _pause, ...resumed } = prior;
+    const { pause: _pause, failure: _failure, result: _result, ...resumed } = prior;
     checkpoint = store.writeVersionedJson(
       checkpointPath,
       {
@@ -772,6 +792,22 @@ export async function runRoleStandalone(params: {
     );
     session = await store.createSession(runId, BACKGROUND_CONTEXT);
   }
+  /**
+   * Runtime progress has more than one durable observer (turn admission,
+   * closeout, and recovery).  A later observer is allowed to have advanced
+   * the record by the time this caller settles, so merge under the store lock
+   * instead of turning an otherwise recoverable role into a stale-version
+   * failure.  Session ownership still makes the role a single writer in the
+   * semantic sense; this only serializes its independent durability paths.
+   */
+  const updateCheckpoint = (update: (current: Checkpoint) => Checkpoint): void => {
+    checkpoint = store.mutateVersionedJson<Checkpoint>(checkpointPath, (current) => {
+      if (current === undefined)
+        throw new ProjectStoreError("not_found", checkpointPath, "standalone checkpoint was lost");
+      return update(current.value);
+    });
+  };
+  let latestStageLimitSnapshot: Readonly<StageLimitSnapshot> | undefined;
   let result: Awaited<ReturnType<ReturnType<typeof createRoleRunner>["runRole"]>>;
   try {
     result = await createRoleRunner({
@@ -794,30 +830,37 @@ export async function runRoleStandalone(params: {
       runId,
       session,
       ...(params.resumeExisting === true && { resumeActiveOperation: true }),
+      // Closeout deliberately lets the model settle a partial final answer.
+      // A resumed standalone run must therefore admit the original task as a
+      // continuation instead of replaying that settled partial result.
+      ...(params.resumeExisting === true && { resumePromptOnSettled: true }),
       ...(stageLimitInitial !== undefined && { stageLimitInitial }),
       stageLimitObserver: (snapshot) => {
+        latestStageLimitSnapshot = snapshot;
         const { elapsedMs, modelTurns, toolTurns, inputTokens, lastInputTokens, costUsd } =
           snapshot;
-        checkpoint = store.writeVersionedJson(
-          checkpointPath,
-          {
-            ...checkpoint.value,
-            cumulativeUsage: {
-              elapsedMs,
-              modelTurns,
-              toolTurns,
-              inputTokens,
-              lastInputTokens,
-              costUsd,
-            },
+        updateCheckpoint((current) => ({
+          ...current,
+          cumulativeUsage: {
+            elapsedMs,
+            modelTurns,
+            toolTurns,
+            inputTokens,
+            lastInputTokens,
+            costUsd,
           },
-          checkpoint.version,
-        );
+        }));
       },
       ...(params.ledgerSink !== undefined && { ledgerSink: params.ledgerSink }),
       ...(params.tools !== undefined && { tools: params.tools }),
       ...(params.abortSignal !== undefined && { abortSignal: params.abortSignal }),
     });
+    // `runRole` owns and closes only a session it opened itself.  Standalone
+    // already opened this facade so it could claim the durable lease before a
+    // runner exists; release that lease before reopening a readable facade
+    // below.  Otherwise a successful live role can contend with *itself* and
+    // report "managed state is locked" after it has done all of its work.
+    await session.close(BACKGROUND_CONTEXT);
   } catch (error) {
     try {
       await session.close(BACKGROUND_CONTEXT);
@@ -833,28 +876,24 @@ export async function runRoleStandalone(params: {
         );
       const { elapsedMs, modelTurns, toolTurns, inputTokens, lastInputTokens, costUsd } =
         error.snapshot;
-      store.writeVersionedJson(
-        checkpointPath,
-        {
-          ...checkpoint.value,
-          status: "paused",
-          cumulativeUsage: {
-            elapsedMs,
-            modelTurns,
-            toolTurns,
-            inputTokens,
-            lastInputTokens,
-            costUsd,
-          },
-          pause: {
-            code: "stage_limit",
-            reason: error.reason,
-            limit: error.limit,
-            observed: error.observed,
-          },
+      updateCheckpoint((current) => ({
+        ...current,
+        status: "paused",
+        cumulativeUsage: {
+          elapsedMs,
+          modelTurns,
+          toolTurns,
+          inputTokens,
+          lastInputTokens,
+          costUsd,
         },
-        checkpoint.version,
-      );
+        pause: {
+          code: "stage_limit",
+          reason: error.reason,
+          limit: error.limit,
+          observed: error.observed,
+        },
+      }));
     }
     if (error instanceof RunInterruptedError || params.abortSignal?.aborted === true) {
       // Issue #479: the pause names the signal that ended the run and, when a
@@ -864,25 +903,41 @@ export async function runRoleStandalone(params: {
       // victim that died before reaching this write.
       const signal = params.interruptSignal?.();
       const stopRequest = readRunStopRequest(store, runId);
-      store.writeVersionedJson(
-        checkpointPath,
-        {
-          ...checkpoint.value,
-          status: "paused",
-          pause: {
-            code: "interrupted",
-            ...(signal !== undefined && { signal }),
-            ...(stopRequest !== undefined && {
-              stopRequest: {
-                requestedAt: stopRequest.requestedAt,
-                requesterPid: stopRequest.requesterPid,
-              },
-            }),
-          },
+      updateCheckpoint((current) => ({
+        ...current,
+        status: "paused",
+        pause: {
+          code: "interrupted",
+          ...(signal !== undefined && { signal }),
+          ...(stopRequest !== undefined && {
+            stopRequest: {
+              requestedAt: stopRequest.requestedAt,
+              requesterPid: stopRequest.requesterPid,
+            },
+          }),
         },
-        checkpoint.version,
-      );
+      }));
       if (stopRequest !== undefined) consumeRunStopRequest(store, runId);
+    }
+    if (
+      !(error instanceof StageLimitError) &&
+      !(error instanceof RunInterruptedError) &&
+      !params.abortSignal?.aborted
+    ) {
+      // A provider (or harness) failure is a terminal result of this attempt.
+      // Before this closeout, an EmptyTurnError escaped this function and the
+      // checkpoint kept `running` forever, even though its process had exited.
+      // Keep the provider's actionable, authored wording only for the typed
+      // empty-turn class.  Unknown Error.message values may carry a provider
+      // body, prompt, or credentials, so their durable projection is fixed.
+      const failure =
+        error instanceof EmptyTurnError
+          ? { code: error.code, message: error.message }
+          : {
+              code: "internal_error",
+              message: "role attempt failed; inspect harness diagnostics and retry",
+            };
+      updateCheckpoint((current) => ({ ...current, status: "failed", failure }));
     }
     throw error;
   }
@@ -902,12 +957,39 @@ export async function runRoleStandalone(params: {
     ...(result.stageCloseout !== undefined && { stageCloseout: result.stageCloseout }),
     observations: result.observations,
   };
-  const { pause: _pause, ...completed } = checkpoint.value;
-  store.writeVersionedJson(
-    checkpointPath,
-    { ...completed, status: "complete", result: durableResult },
-    checkpoint.version,
-  );
+  const closeout = result.stageCloseout;
+  updateCheckpoint((current) => {
+    const { pause: _pause, failure: _failure, ...settled } = current;
+    if (closeout === undefined) return { ...settled, status: "complete", result: durableResult };
+
+    // A closeout controller has observed a snapshot before it can emit this
+    // fact (model/tool admission publishes one). Keep the defensive fallback
+    // so an adapter regression still leaves the run resumable rather than
+    // replacing a partial result with a dead `running` record.
+    const key = STAGE_LIMIT_KEY[closeout.reason];
+    const snapshot = latestStageLimitSnapshot;
+    const limit = snapshot?.[key] ?? params.stageLimits?.[key] ?? 0;
+    const observed =
+      closeout.reason === "duration"
+        ? (snapshot?.elapsedMs ?? current.cumulativeUsage.elapsedMs)
+        : closeout.reason === "model_turns"
+          ? (snapshot?.modelTurns ?? current.cumulativeUsage.modelTurns)
+          : closeout.reason === "tool_turns"
+            ? (snapshot?.toolTurns ?? current.cumulativeUsage.toolTurns)
+            : (snapshot?.inputTokens ?? current.cumulativeUsage.inputTokens);
+    return {
+      ...settled,
+      status: "paused",
+      result: durableResult,
+      pause: {
+        code: "stage_closeout",
+        reason: closeout.reason,
+        detail: closeout.detail,
+        limit,
+        observed,
+      },
+    };
+  });
   return {
     text,
     cost: durableResult.cost,
@@ -2508,6 +2590,22 @@ function buildConfigOptions(
   ) {
     fail(`invalid --compaction-mode: ${compactionMode}`);
   }
+  const compactionSummaryMaxTokens = parsePositiveIntegerFlag(
+    "--compaction-summary-max-tokens",
+    flags["--compaction-summary-max-tokens"],
+  );
+  const compactionSummarizerRetryLimit = parsePositiveIntegerFlag(
+    "--compaction-summarizer-retry-limit",
+    flags["--compaction-summarizer-retry-limit"],
+  );
+  const compactionFallback = flags["--compaction-fallback-to-role-model"];
+  if (
+    compactionFallback !== undefined &&
+    compactionFallback !== "true" &&
+    compactionFallback !== "false"
+  ) {
+    fail(`invalid --compaction-fallback-to-role-model: ${compactionFallback}`);
+  }
   const researchPurpose = flags["--research-purpose"];
   if (
     researchPurpose !== undefined &&
@@ -2703,6 +2801,11 @@ function buildConfigOptions(
       summarizerModel: flags["--summarizer-model"],
     }),
     ...(compactionMode !== undefined && { compactionMode }),
+    ...(compactionSummaryMaxTokens !== undefined && { compactionSummaryMaxTokens }),
+    ...(compactionSummarizerRetryLimit !== undefined && { compactionSummarizerRetryLimit }),
+    ...(compactionFallback !== undefined && {
+      compactionFallbackToRoleModel: compactionFallback === "true",
+    }),
     ...(researchPurpose !== undefined && { researchPurpose }),
     ...(researchBriefValues[0] !== undefined && {
       researchBrief: {
@@ -3482,6 +3585,21 @@ const PIPELINE_OPTIONS: CommandDefinition["options"] = [
     name: "--compaction-mode",
     value: "<mode>",
     description: "Set auto or disabled-then-halt context handling.",
+  },
+  {
+    name: "--compaction-summary-max-tokens",
+    value: "<n>",
+    description: "Cap one durable summary; defaults to one third of the active context window.",
+  },
+  {
+    name: "--compaction-summarizer-retry-limit",
+    value: "<n>",
+    description: "Attempts on the selected summarizer before active-model fallback; defaults to 3.",
+  },
+  {
+    name: "--compaction-fallback-to-role-model",
+    value: "<boolean>",
+    description: "Retry an exhausted summarizer with the active role model; defaults to true.",
   },
   {
     name: "--pipeline-context",
