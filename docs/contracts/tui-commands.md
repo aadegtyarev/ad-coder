@@ -23,6 +23,9 @@ This contract owns commands available to an operator in `ad-coder tui`.
   syntax/example; `/sessions select <number>` selects one through the shared
   manager. It queues selection after any active turn and makes later ordinary
   input target the selected session.
+- `/status` shows the selected session's bounded state and ledger projection;
+  `/about` shows harness name, version, enabled capabilities, and concise help.
+  Both are local read-only controls with matching machine API actions.
 - `/skills` lists reachable skills with applicability, syntax, and an example.
   `/skills load <id>` and `/skills unload <id>` alter the active session's
   explicit skill selection through the shared resolver and durable session state.
@@ -58,7 +61,7 @@ evidence, role/agent/workflow launch, skill selection durability, ceiling
 validation, orchestrator messaging, profile switching, and credential-free
 profile rendering; test model listing, override, reset, and read-only estimate
 feedback; test session listing and idle/active-turn selection; test parallel-lane
-availability and admission parity.
+availability and admission parity; test session status and harness-about parity.
 
 ## Related surfaces
 
@@ -68,3 +71,4 @@ availability and admission parity.
 - [Skills](skills.md) owns selection semantics.
 - [Routing configuration](routing-config.md) owns model and price data.
 - [Autonomy](autonomy.md) owns delegated authority.
+- [Runtime inspection](runtime-inspection.md) owns status and about content.

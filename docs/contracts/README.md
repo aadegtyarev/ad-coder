@@ -29,6 +29,7 @@
 - `quality.md` — project quality gates; read when changing checks or review evidence.
 - `release.md` — release evidence and metadata; read before merging or publishing a release.
 - `review-evidence.md` — independent review proof; read when changing verdicts or merge stamps.
+- `runtime-inspection.md` — session/ledger diagnostics; read when changing status, usage, or about.
 - `resumability.md` — checkpoint and recovery; read when persisting or resuming work.
 - `role-tools.md` — role and tool wiring; read when changing a role's tool access.
 - `role-catalog.md` — built-in and prompt-defined roles; read when adding or removing a role.

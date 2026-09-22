@@ -4,7 +4,8 @@ This contract governs read-only reports over run ledgers.
 
 ## Guarantees
 
-- The CLI report and programmatic reader/aggregator expose the same report.
+- The session inspector, machine API, and programmatic reader/aggregator expose
+  the same ledger report.
 - Projections contain identifiers, numbers, role, provider/model, tool names,
   and counts. They never contain task text, prompts, file contents, provider
   payloads, or tool arguments.
@@ -22,3 +23,4 @@ This contract governs read-only reports over run ledgers.
 - [Command-line front](cli.md).
 - [Public error behaviour](errors.md).
 - [Delivery evidence](product-change.md).
+- [Runtime inspection](runtime-inspection.md) owns session and harness projection.

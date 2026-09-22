@@ -15,9 +15,11 @@ It is the JSON projection of headless operations and TUI controls.
   `profiles` lists, shows, and selects profiles; and `runs` reads or controls a
   durable run. `sessions` lists and selects accessible sessions. `config` shows
   resolved configuration and changes a validated setting where that setting's
-  owner permits it. `estimates` returns the current forecast and planning
-  feedback read-only. The public names may be refined only through the
-  compatibility contract, not by adding a front-only capability.
+  owner permits it. `sessions.inspect` projects session/ledger state and
+  `harness.about` projects identity/version/capabilities; `estimates` returns
+  the current forecast and planning feedback read-only. The public names may be
+  refined only through the compatibility contract, not by adding a front-only
+  capability.
 - API requests use explicit fields rather than TUI command text. Their success,
   refusal, validation, run identity, durable state, and machine-readable error
   have the same semantics as their TUI counterpart. A read or list action makes
@@ -60,3 +62,4 @@ model listing, override, and reset; and typed refusals for legacy modes and
 - [Resumability](resumability.md) owns recovery semantics.
 - [Task estimation](task-estimation.md) owns forecasts and feedback.
 - [Parallel lanes](parallel-lanes.md) owns concurrent-lane semantics.
+- [Runtime inspection](runtime-inspection.md) owns status and about projections.

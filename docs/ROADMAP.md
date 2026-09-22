@@ -271,6 +271,12 @@ workflows — one substrate, swappable drivers.
   lanes retain independent budgets, review, resume, and outcome. A non-Git
   workspace permits parallel research but one mutable lane only.
 
+- **REQUIREMENT — runtime inspection.** Operator and orchestrator share a
+  read-only, redacted session inspector: session/run/lane state, role/model
+  tokens and provider-reported costs, totals, effective ceilings/profile, and
+  bounded diagnostics. TUI/API also expose harness name, SemVer version, enabled
+  module capabilities, and concise help through the same core projection.
+
 - **REQUIREMENT — background agent dispatch.** A TUI operator and the
   orchestrator can launch built-in, prompt-defined custom, or ad-hoc agents
   without blocking interactive input. Project prompt files create and remove

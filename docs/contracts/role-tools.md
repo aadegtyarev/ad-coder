@@ -9,6 +9,9 @@ tools and the tool objects registered for the request that serves that role.
   process. A declaration that names a missing tool is invalid.
 - A delegated role receives its result as assistant text. Workflow submission
   tools are not declared for that independent invocation.
+- The orchestrator receives the read-only runtime-inspection tools declared by
+  [runtime inspection](runtime-inspection.md). Their output remains bounded and
+  uses the same redaction as the operator-facing projection.
 
 ## Verification
 
@@ -21,3 +24,4 @@ tools and the tool objects registered for the request that serves that role.
 - [Skill selection](skills.md).
 - [Role catalog](role-catalog.md) owns prompt-defined identities.
 - [Agent dispatch](agent-dispatch.md) owns invocation and lifecycle.
+- [Runtime inspection](runtime-inspection.md) owns inspector semantics.
