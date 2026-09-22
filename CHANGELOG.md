@@ -11,6 +11,14 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.5] - 2026-09-22
+
+### Fixed
+
+- **The role-selection regression test follows its contract boundary.** It
+  verifies the preference order in the owning skill and the operation-mode
+  contract's link to that owner, without duplicating prompt guidance in contracts.
+
 ## [0.181.4] - 2026-09-22
 
 ### Fixed
