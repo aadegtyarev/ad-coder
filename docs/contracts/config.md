@@ -54,6 +54,8 @@ resolved. It does not own model routing; see [routing configuration](routing-con
   fallback policy, and forge delivery-summary publication are settings; see
   [provider admission](provider-admission.md), [routing configuration](routing-config.md),
   and [product changes](product-change.md).
+- Review-stamp requirement, covered path/glob scope, and narrow version-metadata
+  reuse paths are settings; see [review evidence](review-evidence.md).
 - Execution mode, destructive-command guard, protected roots, and a selected
   sandbox or optional LLM-guard provider are settings; see
   [execution boundary](execution-boundary.md).

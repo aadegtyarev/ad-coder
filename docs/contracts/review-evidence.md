@@ -1,14 +1,19 @@
 # Review evidence contract
 
-This contract owns independent review evidence for a tree proposed for merge.
+This contract owns independent review evidence and scoped review stamps for a
+proposed delivery.
 
 ## Guarantees
 
 - Code, configuration, prompts, skills, tests, and contracts require independent
-  review. Only prose that establishes no rule is exempt. A pipeline review stage
-  satisfies this requirement; outside a pipeline, use the standalone reviewer
-  CLI and submit a structured verdict. An author or the authoring model family
-  is not independent.
+  review when they are included in the project's review scope. Only prose that
+  establishes no rule is exempt. A structured verdict from the bundled pipeline
+  review stage or an independently dispatched reviewer satisfies this requirement;
+  an author or the authoring model family is not independent.
+- The bundled pipeline requires a review stamp by default. The project may disable
+  that requirement explicitly or apply its own review policy when the bundled
+  workflow is disabled. A manual role launch is evidence only when it settles the
+  same structured verdict and scope through the shared review operation.
 - A blocker or major finding has a stable identity, bounded location, and
   objective closure criterion. Later verdicts account for every prior identity
   as `closed` with evidence or `remains`; `new` identifies a distinct finding.
@@ -19,25 +24,30 @@ This contract owns independent review evidence for a tree proposed for merge.
 - A review retry carries the prior review text into its new session. If no text
   exists, it starts a complete review instead of asserting an unverifiable prior
   action. This applies to reviewer and planner handoff retries.
-- `run_role` reviewer delegation is advisory prose and cannot satisfy this
-  contract. Only a pipeline review stage or standalone reviewer CLI creates a
-  structured verdict and review stamp.
-- A review stamp is written only from a settled structured verdict, records the
-  reviewed tree digest, base, verdict, role route, time, and run identifiers,
-  and excludes itself from the digest. It is stale when the reviewed tree moves.
-  When the resolved review policy requires a stamp, a missing, malformed,
-  changes-requested, or stale newest stamp blocks merge; recovery is a fresh
-  review. `require-stamp: on` requires it, `off` writes none and passes this
-  gate, and `auto` follows the repository marker.
+- A review stamp is written only from a settled structured verdict. It records
+  reviewed path patterns, exact covered-path digest manifest, base, verdict, role
+  route, time, and run identifiers, and excludes stamp storage from coverage.
+  The default bundled-pipeline scope is source code and `docs/contracts/**`;
+  projects extend or replace it with explicit path or glob patterns.
+- When the resolved policy requires a stamp, a missing, malformed,
+  changes-requested, or coverage-stale newest stamp blocks delivery. A covered-path
+  change requires a fresh review. Changes outside coverage do not invalidate it.
+- A project may declare a narrow version-metadata reuse policy. CI accepts the
+  immediately preceding approved stamp only when every current-tree difference
+  from its stamped parent matches an allowed path/glob and no covered path changed.
+  The default ad-coder policy permits only `CHANGELOG.md` and `package.json` for
+  this final version-resolution step; other projects declare their own paths.
 - Stamps exist only in this repository when its committed `ad-coder.stamps.json`
   marker enables them. They are never written into a target project.
 
 ## Verification
 
 `bun run stamp:check` is a pre-merge gate, not an in-run review gate: a newly
-approved review creates its stamp only when it settles. A changed tree must pass
-a new review and then this gate. Review stages run declared in-run quality gates
-before submitting approval.
+approved review creates its stamp only when it settles. Test default code/contract
+coverage, custom glob scope, scope manifest integrity, stale covered changes,
+non-covered changes, the exact parent-only version-metadata exception, and its
+refusal for an extra or covered change. Review stages run declared in-run quality
+gates before submitting approval.
 
 ## Related surfaces
 

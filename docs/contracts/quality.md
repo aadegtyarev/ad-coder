@@ -21,8 +21,8 @@ This contract owns the project's engineering quality checks and review criteria.
 - A changed project stack, framework, component, or test surface invalidates the
   relevant quality strategy until [quality bootstrap](quality-bootstrap.md)
   revalidates it; existing green results do not waive that check.
-- `bun run stamp:check` is deliberately a pre-merge gate, not a declared in-run
-  gate; [review evidence](review-evidence.md) owns its semantics.
+- `bun run stamp:check` is deliberately a pre-delivery gate, not a declared in-run
+  gate; [review evidence](review-evidence.md) owns its scoped-stamp semantics.
 - Installation and release claims use a bounded integrity-checked smoke of the
   produced artifact without global installation mutation.
 - Shared temporary-directory cleanup touches only owned `ad-coder-test-` roots,
