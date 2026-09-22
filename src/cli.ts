@@ -165,7 +165,12 @@ import {
   SkillResolutionError,
   skillInventory,
 } from "./skills/resolver";
-import { stampBodyCheckErrors, stampCheckErrors, stampDeliveryText } from "./stamp/cli";
+import {
+  StampLedgerSourceError,
+  stampBodyCheckErrors,
+  stampCheckErrors,
+  stampDeliveryText,
+} from "./stamp/cli";
 import { recordReviewStampFromResult, resolveStampRequirement } from "./stamp/record-review-stamp";
 import { findingsReportLines } from "./stamp/verdict-findings";
 import { formatUpdateResult, UpdateError, updateAdCoder } from "./update/updater";
@@ -1611,7 +1616,12 @@ function stampCommand(positionals: string[], flags: Record<string, string | unde
   const targetDir = resolveTargetDir(flags["--target-dir"] ?? process.cwd());
   if (action === "delivery") {
     const fileArgs = positionals.slice(2);
-    process.stdout.write(`${stampDeliveryText(targetDir, fileArgs)}\n`);
+    try {
+      process.stdout.write(`${stampDeliveryText(targetDir, fileArgs)}\n`);
+    } catch (error) {
+      if (error instanceof StampLedgerSourceError) fail(error.message);
+      throw error;
+    }
     return;
   }
   if (action === "body-check") {
@@ -1619,7 +1629,13 @@ function stampCommand(positionals: string[], flags: Record<string, string | unde
     if (bodyPath === undefined)
       fail("stamp body-check requires a pull-request body file path as the first argument");
     const fileArgs = positionals.slice(3);
-    const failures = stampBodyCheckErrors(bodyPath, targetDir, fileArgs);
+    let failures: ReturnType<typeof stampBodyCheckErrors>;
+    try {
+      failures = stampBodyCheckErrors(bodyPath, targetDir, fileArgs);
+    } catch (error) {
+      if (error instanceof StampLedgerSourceError) fail(error.message);
+      throw error;
+    }
     if (failures.length > 0)
       failGate(
         failures.map(({ reason }) => reason).join("\n"),

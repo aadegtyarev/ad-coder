@@ -152,6 +152,37 @@ test("stamp body-check on a blockless body: reason and action on both fronts", (
   }
 });
 
+test("stamp delivery and body-check report an omitted target ledger as usage on both fronts", () => {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-stamp-no-ledger-")));
+  try {
+    const expected = `no ledger files exist under ${path.join(dir, ".ad-coder", "ledger")}/`;
+    const delivery = runStamp(["delivery", "--target-dir", dir]);
+    expect(delivery.code).toBe(2);
+    expect(delivery.stdout).toBe("");
+    expect(delivery.stderr).toContain(expected);
+    expect(delivery.stderr).toContain("usage: ad-coder");
+
+    const deliveryJson = runStamp(["delivery", "--target-dir", dir, "--json"]);
+    expect(deliveryJson.code).toBe(2);
+    expect(deliveryJson.stderr).not.toContain("usage: ad-coder");
+    expect(JSON.parse(deliveryJson.stderr).error).toEqual({ code: "usage", detail: expected });
+
+    const body = path.join(dir, "body.md");
+    fs.writeFileSync(body, "## Delivery\n");
+    const bodyCheck = runStamp(["body-check", body, "--target-dir", dir]);
+    expect(bodyCheck.code).toBe(2);
+    expect(bodyCheck.stderr).toContain(expected);
+    expect(bodyCheck.stderr).toContain("usage: ad-coder");
+
+    const bodyCheckJson = runStamp(["body-check", body, "--target-dir", dir, "--json"]);
+    expect(bodyCheckJson.code).toBe(2);
+    expect(bodyCheckJson.stderr).not.toContain("usage: ad-coder");
+    expect(JSON.parse(bodyCheckJson.stderr).error).toEqual({ code: "usage", detail: expected });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("argument errors keep the usage path: help on stderr and the usage code", () => {
   const dir = staleStampRepo();
   try {
