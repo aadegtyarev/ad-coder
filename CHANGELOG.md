@@ -11,6 +11,14 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.16] - 2026-09-23
+
+### Added
+
+- **Machine-facing stop and stamp APIs are public.** Embedders can now request
+  a verified single-run stop and render delivery or review-stamp gates through
+  the package root, without invoking CLI parsing or output handling.
+
 ## [0.181.15] - 2026-09-23
 
 ### Fixed

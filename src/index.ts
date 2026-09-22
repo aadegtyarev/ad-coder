@@ -281,6 +281,8 @@ export {
   StageLimitController,
   StageLimitError,
 } from "./orchestration/stage-limits";
+export type { StopRunInput, StopRunOutcome, StopRunSuccess } from "./orchestration/stop-run";
+export { DEFAULT_RUN_STOP_KILL_AFTER_MS, stopRun } from "./orchestration/stop-run";
 export type {
   AvailableTransition,
   Complexity,
@@ -653,6 +655,12 @@ export {
 } from "./skills/resolver";
 export type { RoleSkillKit, RoleSkillKitOptions } from "./skills/role-kit";
 export { roleSkillKit } from "./skills/role-kit";
+export {
+  stampBodyCheckErrors,
+  stampCheckErrors,
+  stampDeliveryText,
+} from "./stamp/cli";
+export type { ReviewStampFailure } from "./stamp/record-review-stamp";
 export type {
   TelegramRoomBinding,
   TelegramRoomBindingErrorCode,
