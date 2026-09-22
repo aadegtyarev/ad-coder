@@ -549,6 +549,10 @@ workflows — one substrate, swappable drivers.
   selector serves constrained and large context windows; roles and dispatches
   compose explicit allowed/required/inherited skill sets without granting tools.
   Selection is durable and inspectable. Research is in [skill-practices.md](skill-practices.md).
+- **REQUIREMENT — meaningful tool activity.** A tool registers a semantic activity
+  descriptor and renderer or cannot run; generic `Tool …` placeholders are never
+  shown. Human path output shortens from the left while preserving filename and
+  useful trailing directories; structured events retain complete safe identity.
 - **REQUIREMENT — economical session titles.** Extract titles locally from the
   first user message by default. Optional semantic generation uses the resolved
   Summarizer role with its default cache-off policy, low admission priority, and
