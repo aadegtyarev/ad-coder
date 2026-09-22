@@ -15,12 +15,12 @@ A room is the one addressable endpoint a message arrives on: a personal chat in
 v1, and later one group topic. Everything the front does is keyed by room,
 never by a hardcoded chat id.
 
-- 2026-09-16: A binding maps `roomId -> sessionId` plus a `kind` that decides
-  whether `sessionId` is mutable. `switchable` (personal chat) lets `attach`
-  change it; `fixed` (a `(groupChatId, topicId)` room) sets it at creation and
-  removes it at deletion. `sessionId: null` means nothing is selected. v1
-  implements only `switchable`; the schema already admits `fixed`, so a topic
-  mode is a second room kind, not a rewrite.
+- 2026-09-16: v1 operates only on `switchable` personal-chat bindings:
+  `attach` changes the selected `sessionId`, and `sessionId: null` means nothing
+  is selected. Creation of `fixed` bindings is rejected; a fixed record found in
+  forward-compatible schema data is not resolved, listed, attached, or removed
+  by v1. The schema declaration may still parse and preserve `fixed` for a later
+  topic mode, without making it an operational v1 room kind.
 - 2026-09-16: Message handling, command dispatch, and event delivery depend on
   three room-level seams -- `resolveSession(room)`, `authorize(room, actor)`,
   `deliveryTargets(sessionId)` -- and no handler reads `chatId` directly or
