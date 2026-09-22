@@ -11,6 +11,15 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.13] - 2026-09-23
+
+### Fixed
+
+- **Ambiguous journal recovery is now callable.** The machine operations
+  action requires the exact session id and project directory, archives the raw
+  journal, and reports the marked continuation instead of retrying or choosing
+  a transaction order.
+
 ## [0.181.12] - 2026-09-23
 
 ### Fixed

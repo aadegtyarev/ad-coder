@@ -2004,7 +2004,39 @@ async function operationsCommand(
     });
   };
   let result: unknown;
-  if (action === "control-triage") {
+  if (action === "session-clear-ambiguous") {
+    const id = flags["--id"];
+    if (id === undefined) fail("--id is required for this operations action");
+    const recovered = await store.clearAmbiguousSession(id, BACKGROUND_CONTEXT);
+    try {
+      const entry = (await recovered.findEntries({ type: "custom" }, BACKGROUND_CONTEXT)).find(
+        (candidate) =>
+          candidate.type === "custom" && candidate.customType === "ad-coder.session_recovery",
+      );
+      if (entry?.type !== "custom")
+        throw new Error("ambiguous session recovery did not write its durable receipt");
+      const data = entry.data as {
+        state?: unknown;
+        recovery?: unknown;
+        artifact?: { type?: unknown; path?: unknown };
+      };
+      if (
+        data.state !== "cleared_ambiguous_journal" ||
+        data.recovery !== "new_continuation" ||
+        data.artifact?.type !== "ambiguous_journal" ||
+        typeof data.artifact.path !== "string"
+      )
+        throw new Error("ambiguous session recovery receipt is invalid");
+      result = {
+        id,
+        state: data.state,
+        recovery: data.recovery,
+        artifact: { type: data.artifact.type, path: data.artifact.path },
+      };
+    } finally {
+      await recovered.close(BACKGROUND_CONTEXT);
+    }
+  } else if (action === "control-triage") {
     result = { route: triageControlPlaneTask(input() as never) };
   } else if (action === "control-start") {
     const supplied = strictOperationInput(input(), ["requestKey", "task", "mode", "scope"], action);
@@ -4155,7 +4187,7 @@ const COMMANDS: readonly CommandDefinition[] = [
       {
         name: "<action>",
         description:
-          "Action including control start/status/list/resume/cancel/decisions/run-until/report/publish, publish-preflight, ldo-resume, and backlog operations.",
+          "Action including session-clear-ambiguous, control start/status/list/resume/cancel/decisions/run-until/report/publish, publish-preflight, ldo-resume, and backlog operations.",
       },
     ],
     options: [
@@ -4558,7 +4590,14 @@ export function projectCliError(error: unknown): Record<string, unknown> {
       nextAction: SessionNotAcquiredError.NEXT_ACTION,
     };
   if (error instanceof ProjectOperationsError) return { code: error.code, detail: error.detail };
-  if (error instanceof ProjectStoreError) return { code: error.code, detail: error.path };
+  if (error instanceof ProjectStoreError)
+    return {
+      code: error.code,
+      detail: error.path,
+      text: error.message,
+      retryable: false,
+      ...(error.nextAction === undefined ? {} : { nextAction: error.nextAction }),
+    };
   if (error instanceof BackgroundRunError) return { code: error.code, detail: error.detail };
   return { code: "internal_error" };
 }
@@ -4572,7 +4611,9 @@ export function renderCliError(error: unknown): string {
         ? error.nextAction
         : error instanceof SessionNotAcquiredError
           ? SessionNotAcquiredError.NEXT_ACTION
-          : undefined;
+          : error instanceof ProjectStoreError
+            ? error.nextAction
+            : undefined;
   return `ad-coder: ${errorMessage(error)}${action === undefined ? "" : `; ${action}`}\n`;
 }
 

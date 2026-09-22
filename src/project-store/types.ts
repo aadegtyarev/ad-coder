@@ -124,6 +124,8 @@ export class ProjectStoreError extends Error {
     readonly code: ProjectStoreErrorCode,
     readonly path: string,
     message: string,
+    /** A safe, concrete recovery instruction for the front that caught this error. */
+    readonly nextAction?: string,
   ) {
     super(message);
   }

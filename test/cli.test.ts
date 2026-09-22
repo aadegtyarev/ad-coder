@@ -9,6 +9,7 @@ import { renderAuthEvent, runAuthCommand } from "../src/cli/auth";
 import { SessionNotAcquiredError } from "../src/conversation/conversation";
 import type { DurableRunRecord } from "../src/orchestration/control-plane";
 import { ProjectStore } from "../src/project-store/project-store";
+import { ProjectStoreError } from "../src/project-store/types";
 import { UpdateError } from "../src/update/updater";
 
 const REPO_ROOT = path.resolve(import.meta.dir, "..");
@@ -2427,3 +2428,97 @@ test("the session-manager front lists sessions as JSON and refuses a bad invocat
     fs.rmSync(root, { recursive: true, force: true });
   }
 }, 20_000);
+
+test("machine recovery explicitly archives an ambiguous journal before continuing", async () => {
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-cli-ambiguous-journal-"));
+  try {
+    const store = new ProjectStore(target);
+    const session = await store.createSession("ambiguous_session");
+    const branch = await session.createBranch("main", null);
+    await branch.appendCustomEntry("test", { ready: true });
+    await session.close();
+    const [metadata] = await store.listSessions();
+    if (metadata === undefined) throw new Error("missing durable session metadata");
+    const before = fs.readFileSync(metadata.path, "utf8");
+    const records = before
+      .trim()
+      .split("\n")
+      .slice(1)
+      .flatMap((line) => {
+        const parsed = JSON.parse(line);
+        return Array.isArray(parsed) ? parsed : [parsed];
+      }) as Array<{ seq?: unknown }>;
+    const last = records.at(-1);
+    if (last === undefined) throw new Error("missing durable session transaction");
+    if (typeof last.seq !== "number") throw new Error("missing durable session sequence");
+    fs.appendFileSync(
+      metadata.path,
+      `${JSON.stringify({ kind: "value", op: "set", seq: last.seq, namespace: "test", key: "duplicate" })}\n`,
+    );
+    const ambiguousBytes = fs.readFileSync(metadata.path, "utf8");
+
+    await expect(new ProjectStore(target).resumeSession("ambiguous_session")).rejects.toMatchObject(
+      {
+        code: "ambiguous_journal",
+        nextAction: expect.stringContaining("session-clear-ambiguous"),
+      },
+    );
+    const result = runCli([
+      "operations",
+      "session-clear-ambiguous",
+      "--id",
+      "ambiguous_session",
+      "--target-dir",
+      target,
+    ]);
+    expect(result.code).toBe(0);
+    expect(result.stderr).toBe("");
+    const output = JSON.parse(result.stdout) as {
+      id: string;
+      state: string;
+      recovery: string;
+      artifact: { type: string; path: string };
+    };
+    expect(output).toMatchObject({
+      id: "ambiguous_session",
+      state: "cleared_ambiguous_journal",
+      recovery: "new_continuation",
+      artifact: { type: "ambiguous_journal" },
+    });
+    expect(fs.readFileSync(output.artifact.path, "utf8")).toBe(ambiguousBytes);
+    // The machine front must not return while it still owns the replacement
+    // continuation. Otherwise the very next standalone resume can hit the
+    // lease left by this short-lived CLI process instead of the new session.
+    expect(fs.existsSync(path.join(store.layout.tmp, "session-ambiguous_session.lease"))).toBe(
+      false,
+    );
+    await expect(
+      new ProjectStore(target).resumeSession("ambiguous_session"),
+    ).resolves.toBeDefined();
+
+    const noId = runCli(["operations", "session-clear-ambiguous", "--target-dir", target]);
+    expect(noId.code).toBe(2);
+    expect(JSON.parse(noId.stderr)).toMatchObject({ error: { code: "usage" } });
+  } finally {
+    fs.rmSync(target, { recursive: true, force: true });
+  }
+});
+
+test("ambiguous-journal guidance survives the CLI error projection", () => {
+  const error = new ProjectStoreError(
+    "ambiguous_journal",
+    "/safe/project/.ad-coder/sessions/ambiguous.jsonl",
+    "session journal has overlapping committed transactions",
+    "use the explicit recovery action",
+  );
+  expect(projectCliError(error)).toEqual({
+    code: "ambiguous_journal",
+    detail: error.path,
+    text: error.message,
+    retryable: false,
+    nextAction: "use the explicit recovery action",
+  });
+  expect(renderCliError(error)).toBe(
+    "ad-coder: session journal has overlapping committed transactions; use the explicit recovery action\n",
+  );
+});

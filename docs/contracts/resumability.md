@@ -45,6 +45,9 @@ This contract owns preservation and recovery of every durable ad-coder state.
   an ordering fault. Resume leaves its bytes untouched and reports a typed
   pause. Only an explicit clear may archive the exact journal and begin a
   marked fresh continuation; it never guesses which conflicting record wins.
+  The machine recovery action requires the exact session identity and project
+  scope, returns the archive location and continuation marker, and is never
+  invoked as part of ordinary resume.
 - TUI and machine resume controls expose the same restored state, pending input,
   paused ambiguity, and available action. Resume is idempotent: repeated resume
   requests do not duplicate a run, wake, message, or external effect.
