@@ -560,6 +560,16 @@ export class ProjectStore {
           this.versionedLockHook?.("stale-inspected");
           if (this.reclaimStaleLock(lockPath, holder)) continue;
         }
+        // Releases before the start-time witness was introduced wrote either
+        // `{ pid }` or `{ pid, token }`.  A dead owner of one of those files
+        // must not strand every future resume.  Do not infer liveness from a
+        // PID alone, though: without the witness a live or reused PID is
+        // deliberately treated as held.
+        const legacyHolder = this.readLegacyLock(lockPath);
+        if (legacyHolder !== undefined && this.isProcessDefinitelyDead(legacyHolder.pid)) {
+          this.versionedLockHook?.("stale-inspected");
+          if (this.reclaimLegacyLock(lockPath, legacyHolder)) continue;
+        }
         const delay = this.lockRetryDelaysMs[attempt];
         if (delay === undefined)
           throw new ProjectStoreError("version_conflict", lockPath, "managed state is locked");
@@ -596,6 +606,21 @@ export class ProjectStore {
           const current = this.readVersionedLock(path.join(coordinationPath, "owner"));
           if (current?.token !== owner.token) continue;
           const quarantine = `${coordinationPath}.reclaim-${owner.token}`;
+          try {
+            fs.renameSync(coordinationPath, quarantine);
+          } catch (renameError) {
+            if ((renameError as NodeJS.ErrnoException).code === "ENOENT") continue;
+            throw renameError;
+          }
+          fs.rmSync(quarantine, { recursive: true, force: true });
+          continue;
+        }
+        const legacyOwner = this.readLegacyLock(path.join(coordinationPath, "owner"));
+        if (legacyOwner !== undefined && this.isProcessDefinitelyDead(legacyOwner.pid)) {
+          const ownerPath = path.join(coordinationPath, "owner");
+          const current = this.readLegacyLock(ownerPath);
+          if (current?.raw !== legacyOwner.raw) continue;
+          const quarantine = `${coordinationPath}.reclaim-${crypto.randomUUID()}`;
           try {
             fs.renameSync(coordinationPath, quarantine);
           } catch (renameError) {
@@ -678,6 +703,27 @@ export class ProjectStore {
     });
   }
 
+  /**
+   * Reclaim a recognised pre-witness lock while holding the current protocol's
+   * coordination directory.  The byte comparison prevents deleting a lock a
+   * contender installed after the initial inspection.
+   */
+  private reclaimLegacyLock(lockPath: string, inspected: { pid: number; raw: string }): boolean {
+    return this.withVersionedLockCoordination(lockPath, () => {
+      const current = this.readLegacyLock(lockPath);
+      if (current?.raw !== inspected.raw) return false;
+      const quarantine = `${lockPath}.reclaim-${crypto.randomUUID()}`;
+      try {
+        fs.renameSync(lockPath, quarantine);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+        throw error;
+      }
+      fs.unlinkSync(quarantine);
+      return true;
+    });
+  }
+
   private readLockToken(lockPath: string): string | undefined {
     try {
       const value = JSON.parse(fs.readFileSync(lockPath, "utf8")) as { token?: unknown };
@@ -711,6 +757,30 @@ export class ProjectStore {
     }
   }
 
+  /** Read only the two lock shapes emitted before `startTime` existed. */
+  private readLegacyLock(lockPath: string): { pid: number; raw: string } | undefined {
+    try {
+      const raw = fs.readFileSync(lockPath, "utf8");
+      const value = JSON.parse(raw) as Record<string, unknown>;
+      const keys = Object.keys(value).sort();
+      const pid = value.pid;
+      const token = value.token;
+      if (
+        !Number.isSafeInteger(pid) ||
+        (pid as number) <= 0 ||
+        ((keys.length !== 1 || keys[0] !== "pid") &&
+          (keys.length !== 2 || keys[0] !== "pid" || keys[1] !== "token")) ||
+        (token !== undefined && (typeof token !== "string" || !/^[0-9a-f-]{36}$/.test(token)))
+      )
+        return undefined;
+      return { pid: pid as number, raw };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT" || error instanceof SyntaxError)
+        return undefined;
+      throw error;
+    }
+  }
+
   private isVersionedLockHolderAlive(holder: { pid: number; startTime: string }): boolean {
     try {
       process.kill(holder.pid, 0);
@@ -722,6 +792,20 @@ export class ProjectStore {
     if (current === undefined || holder.startTime === "unavailable") return true;
     if (current.state === "Z") return false;
     return current.startTime === holder.startTime;
+  }
+
+  /**
+   * The old lock shape has no start-time witness.  Reclaim it only when the
+   * operating system positively identifies the process as gone or zombie;
+   * permission and procfs uncertainty remain a live lock.
+   */
+  private isProcessDefinitelyDead(pid: number): boolean {
+    try {
+      process.kill(pid, 0);
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code === "ESRCH";
+    }
+    return this.readProcessIdentity(pid)?.state === "Z";
   }
 
   private readProcessStartTime(pid: number): string | undefined {

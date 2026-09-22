@@ -331,6 +331,30 @@ describe("ProjectStore", () => {
     expect(fs.existsSync(coordination)).toBe(false);
   });
 
+  test("recovers legacy pid-only session locks after a killed standalone role", async () => {
+    const root = target();
+    const store = new ProjectStore(root);
+    const session = await store.createSession("legacy_session");
+    await session.close(BACKGROUND_CONTEXT);
+    const holder = await childHoldingLock();
+    const lease = path.join(store.layout.tmp, "session-legacy_session.lease");
+    const coordination = path.join(store.layout.tmp, "session-coordination.lock");
+    // This is the on-disk form a standalone role from before the start-time
+    // witness left behind when its harness was killed.
+    fs.writeFileSync(lease, `${JSON.stringify({ pid: holder.process.pid })}\n`, { mode: 0o600 });
+    fs.writeFileSync(coordination, `${JSON.stringify({ pid: holder.process.pid })}\n`, {
+      mode: 0o600,
+    });
+    holder.process.kill();
+    await holder.process.exited;
+
+    const reopened = await new ProjectStore(root).resumeSession("legacy_session");
+    await reopened.close(BACKGROUND_CONTEXT);
+
+    expect(fs.existsSync(lease)).toBe(false);
+    expect(fs.existsSync(coordination)).toBe(false);
+  });
+
   test("cleanup skips a session leased by another store", async () => {
     const root = target();
     const first = new ProjectStore(root, { retention: { sessions: 1 } });
