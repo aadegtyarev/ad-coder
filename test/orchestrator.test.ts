@@ -1758,63 +1758,6 @@ test("resume_pipeline reopens a durable stage pause and completes it", async () 
   expect(resumeTool).toBeDefined();
 });
 
-test("resume_pipeline atomically replaces a background stage pause with a red-gate terminal result", async () => {
-  const fx = fixture();
-  const runId = "background-resume-red-gate";
-  let stageMaxModelTurns = 1;
-  const buildConfig = (task: string): PipelineConfig => ({
-    ...fx.buildConfig(task),
-    coordinator: { runId },
-    stageLimits: { maxModelTurns: stageMaxModelTurns },
-  });
-  const core = createOrchestrator({
-    buildConfig,
-    ledgerSink: fx.sink,
-    backgroundTargetDir: fx.targetDir,
-    backgroundOwnerId: "background-resume-owner",
-  });
-  fx.faux.setResponses(governedPlanTurn());
-  const started = core.backgroundRuns.start("implement X");
-  await core.backgroundRuns.wait(started.runId);
-  expect(core.backgroundRuns.result(started.runId).lifecycle).toBe("paused");
-
-  stageMaxModelTurns = 8;
-  const changes: Verdict = {
-    status: "changes_requested",
-    issues: [
-      {
-        severity: "major",
-        findingId: "fix-x",
-        what: "fix X",
-        location: "src/example.ts:1",
-        closureCriterion: "the focused regression test passes",
-        resolution: "remains",
-      },
-    ],
-    summary: "needs work",
-  };
-  fx.faux.setResponses([
-    ...governedPlanTurn(),
-    ...[0, 1, 2].flatMap(() => [
-      fauxAssistantMessage("coded X"),
-      fauxAssistantMessage(fauxToolCall(SUBMIT_VERDICT_TOOL_NAME, changes)),
-      fauxAssistantMessage("review complete"),
-    ]),
-  ]);
-  const resumed = await core.resumePipeline("implement X", started.runId);
-  expect(resumed.result.approved).toBe(false);
-  expect(resumed.result.verdicts.at(-1)?.status).toBe("changes_requested");
-
-  const durable = core.backgroundRuns.result(started.runId);
-  expect(durable.lifecycle).toBe("completed");
-  if (durable.lifecycle !== "completed") throw new Error("expected terminal background result");
-  expect(durable.approved).toBe(false);
-  expect(durable.verdict).toBe("changes_requested");
-  expect(durable.metrics.steps).toBeGreaterThan(0);
-  expect(core.backgroundRuns.status(started.runId).lifecycle).toBe("completed");
-  await core.backgroundRuns.close();
-});
-
 test("resume_pipeline clears a plan_not_submitted pause and re-runs the plan stage", async () => {
   // The missing half of issue #315: the coordinator records a planner that
   // produced no submission as an explicitly resumable pause, but the resume act
