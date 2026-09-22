@@ -24,6 +24,7 @@
 - `release.md` — release evidence and metadata; read before merging or publishing a release.
 - `review-evidence.md` — independent review proof; read when changing verdicts or merge stamps.
 - `role-tools.md` — role and tool wiring; read when changing a role's tool access.
+- `run-control.md` — targeted run stopping; read when changing process termination.
 - `routing-calibration.md` — portable route evidence; read when changing profiles or snapshots.
 - `routing-config.md` — model routes and credentials; read when changing `models.yaml`.
 - `security.md` — security boundaries; read when changing trust or external effects.
