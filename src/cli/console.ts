@@ -82,8 +82,6 @@ export interface RunConsoleParams {
   interrupted?: () => boolean;
   /** Exact operator command shown after an empty provider turn. */
   authenticationCommand?: string;
-  /** Maximum in-turn recovery calls after Escape; default is the contract's 3. */
-  maxContinuations?: number;
   /**
    * The project's cost-anomaly detector. The SAME object the run uses, so a
    * block raised mid-turn is liftable by `/cost release` without leaving the
@@ -707,7 +705,6 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
     params.escapeSequenceTimeoutMs ?? DEFAULT_CONSOLE_ESCAPE_SEQUENCE_TIMEOUT_MS;
   const controlDrainMs = params.controlDrainMs ?? DEFAULT_CONSOLE_CONTROL_DRAIN_MS;
   const settleWaitMs = params.settleWaitMs ?? DEFAULT_CONSOLE_SETTLE_WAIT_MS;
-  const maxContinuations = params.maxContinuations ?? 3;
   if (!Number.isInteger(maxInputBytes) || maxInputBytes <= 0) {
     throw new RangeError("maxInputBytes must be a positive integer");
   }
@@ -721,8 +718,6 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
     throw new RangeError("controlDrainMs must be a non-negative safe integer");
   if (!Number.isSafeInteger(settleWaitMs) || settleWaitMs < 0)
     throw new RangeError("settleWaitMs must be a non-negative safe integer");
-  if (!Number.isSafeInteger(maxContinuations) || maxContinuations < 0)
-    throw new RangeError("maxContinuations must be a non-negative safe integer");
 
   let reason: ConsoleExitReason = "eof";
   let completedTurns = 0;
@@ -919,6 +914,7 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
         if (mode === "formatted") params.output.write("ad-coder> ");
         return;
       }
+      flushBackgroundNotices();
       rawResult = await runMonitoredStep(line);
       renderStepSuccess(rawResult);
     } catch (error) {
@@ -963,86 +959,13 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
               {
                 code: "interrupted",
                 message: `current turn interrupted: foreground console turn stopped; ${preserved}`,
-                action:
-                  checkpoint !== undefined && maxContinuations > 0
-                    ? "automatic bounded continuation is starting; if it cannot proceed, send the next prompt to resume the preserved work"
-                    : next,
+                action: next,
                 retryable: true,
               },
               mode,
             ),
           );
-          if (checkpoint !== undefined && maxContinuations > 0) {
-            // The provider call is allowed to settle before the wake call. This
-            // reuses the conversation's durable checkpoint hook and lane-busy
-            // guard instead of creating a second scheduler.
-            await params.session.whenSettled();
-            try {
-              rawResult = await runMonitoredStep(
-                "Continue the preserved work from the durable checkpoint.",
-              );
-              renderStepSuccess(rawResult);
-            } catch (continuationError) {
-              const evidence = `automatic continuation failed after exhaustion/no motion: ${describeErrorClass(continuationError)}`;
-              const question =
-                "Should the operator retry the preserved work or provide a new direction?";
-              const action = "answer this question, then send the next prompt";
-              let blocked: Awaited<
-                ReturnType<NonNullable<ConversationSession["blockContinuation"]>>
-              >;
-              try {
-                if (params.session.blockContinuation === undefined) {
-                  throw new Error("session cannot persist blocked continuation recovery");
-                }
-                blocked = await params.session.blockContinuation(
-                  checkpoint,
-                  evidence,
-                  question,
-                  action,
-                );
-              } catch (persistenceError) {
-                params.error.write(
-                  renderFailure(
-                    {
-                      code: "interrupted",
-                      message: `bounded continuation failed and blocked recovery could not be persisted: ${describeErrorClass(persistenceError)}`,
-                      action:
-                        "preserve the checkpoint and retry the console; operator decision is required",
-                      retryable: true,
-                    },
-                    mode,
-                  ),
-                );
-                if (mode === "json")
-                  params.error.write(
-                    `${JSON.stringify({ type: "continuation_block_persistence_failed", evidence })}\n`,
-                  );
-                return;
-              }
-              params.error.write(
-                renderFailure(
-                  {
-                    code: "interrupted",
-                    message: `bounded continuation exhausted; task is blocked (artifact ${blocked.artifact.type}/${blocked.artifact.id}). Decision: ${blocked.decision.question}`,
-                    action: blocked.decision.action,
-                    retryable: true,
-                  },
-                  mode,
-                ),
-              );
-              if (mode === "json") {
-                params.error.write(
-                  `${JSON.stringify({
-                    type: "continuation_blocked",
-                    state: blocked.state,
-                    artifact: blocked.artifact,
-                    evidence: blocked.evidence,
-                    decision: blocked.decision,
-                  })}\n`,
-                );
-              }
-            }
-          } else if (mode === "formatted") params.output.write("ad-coder> ");
+          if (mode === "formatted") params.output.write("ad-coder> ");
           return;
         } else if (isInstanceOf(error, SessionLimitError)) {
           params.error.write(
@@ -1244,6 +1167,7 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
                 if (budgetTimer !== undefined) clearTimeout(budgetTimer);
               });
               try {
+                flushBackgroundNotices();
                 rawResult = await runMonitoredStep(line);
                 renderStepSuccess(rawResult);
                 return;
@@ -1477,15 +1401,25 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
   const requestEscapeInterrupt = (): void => {
     escapeTimer = undefined;
     escapeState = "text";
+    suppressBackgroundNotices = true;
     interruptForeground();
   };
 
   let unsubscribeBackground: (() => void) | undefined;
   let unsubscribeWakeTurns: (() => void) | undefined;
+  let suppressBackgroundNotices = false;
+  const pendingBackgroundNotices: BackgroundRunNotice[] = [];
+  const flushBackgroundNotices = (): void => {
+    if (!suppressBackgroundNotices) return;
+    suppressBackgroundNotices = false;
+    for (const notice of pendingBackgroundNotices.splice(0))
+      params.error.write(renderBackgroundNotice(notice, mode));
+  };
   try {
     unsubscribeWakeTurns = params.session.subscribeWakeTurns?.(queueWakeRender);
     unsubscribeBackground = params.session.subscribeBackgroundRuns?.((notice) => {
-      params.error.write(renderBackgroundNotice(notice, mode));
+      if (suppressBackgroundNotices) pendingBackgroundNotices.push(notice);
+      else params.error.write(renderBackgroundNotice(notice, mode));
     });
   } catch {
     params.error.write(

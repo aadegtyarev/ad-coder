@@ -20,6 +20,7 @@ import { ContextBudgetError } from "../src/context/budget";
 import type { Summarizer } from "../src/context/compactor";
 import { ContextCompactionLostError, SUMMARIZATION_PROMPT } from "../src/context/compactor";
 import {
+  BLOCKED_RECOVERY_TYPE,
   CONTINUATION_CHECKPOINT_TYPE,
   ConversationRefusedError,
   startConversation,
@@ -253,6 +254,56 @@ test("interruption checkpoints durable status and resumes once after reopening",
     await reopened.close();
     await reopenedStore.close();
     fs.rmSync(durableTarget, { recursive: true, force: true });
+  }
+});
+
+test("blocked recovery is stored separately and never consumed as WIP continuation", async () => {
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-blocked-recovery-"));
+  const { faux, models, model, role } = harnessFixture();
+  const prompts: string[] = [];
+  faux.setResponses([
+    (context) => {
+      prompts.push(
+        context.messages
+          .filter((message) => message.role === "user")
+          .map((message) => (typeof message.content === "string" ? message.content : ""))
+          .join("\\n"),
+      );
+      return fauxAssistantMessage("reply");
+    },
+  ]);
+  const store = new ProjectStore(target);
+  const session = await store.openOrCreateSession("blocked-recovery-session");
+  const conversation = await startConversation({ role, targetDir: target, models, model, session });
+  try {
+    await conversation.blockContinuation?.(
+      {
+        version: 1,
+        state: "WIP",
+        artifact: {
+          type: CONTINUATION_CHECKPOINT_TYPE,
+          id: "blocked-recovery-session:continuation",
+        },
+        work: "preserved work",
+        reason: "escape",
+        next: "resume it",
+      },
+      "provider stopped",
+      "choose retry or redirect",
+      "send a decision",
+    );
+    await conversation.step("operator decision");
+    expect(prompts[0]).not.toContain("[Continuation preserved]");
+    const entries = await session.findEntries({ type: "custom", order: "asc" }, BACKGROUND_CONTEXT);
+    expect(
+      entries.some(
+        (entry) => entry.type === "custom" && entry.customType === BLOCKED_RECOVERY_TYPE,
+      ),
+    ).toBe(true);
+  } finally {
+    await conversation.close();
+    await store.close();
+    fs.rmSync(target, { recursive: true, force: true });
   }
 });
 

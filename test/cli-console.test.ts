@@ -565,90 +565,27 @@ test("reports a cooperative interruption separately from a provider failure", as
   expect(session.closes).toBe(1);
 });
 
-test("an Escape interruption wakes one bounded continuation without another prompt", async () => {
-  let calls = 0;
+test("an Escape interruption returns to the prompt without an automatic continuation", async () => {
   const session = fakeSession({
-    result: (input, turn) => {
-      calls++;
-      return {
-        runId: `run-${turn}`,
-        step: `turn:${turn}`,
-        status: "ok",
-        assistantText: `reply ${input}`,
-        toolCalls: [],
-        droppedRecords: 0,
-      };
-    },
+    stepError: new TurnInterruptedError({
+      version: 1,
+      state: "WIP",
+      artifact: { type: "console_continuation_checkpoint", id: "session:continuation" },
+      work: "finish the task",
+      reason: "escape",
+      next: "run the next action",
+    }),
   });
-  const originalStep = session.step.bind(session);
-  session.step = async (input) => {
-    if (calls === 0) {
-      session.inputs.push(input);
-      calls++;
-      throw new TurnInterruptedError({
-        version: 1,
-        state: "WIP",
-        artifact: { type: "console_continuation_checkpoint", id: "session:continuation" },
-        work: "finish the task",
-        reason: "escape",
-        next: "run the next action",
-      });
-    }
-    return originalStep(input);
-  };
+  const output = new Capture();
   const result = await runConsole({
     session,
     input: ttyFrom("operator prompt\\n"),
-    output: new Capture(),
+    output,
     error: new Capture(),
   });
-  expect(result.completedTurns).toBe(1);
-  expect(session.inputs).toEqual([
-    "operator prompt\\n",
-    "Continue the preserved work from the durable checkpoint.",
-  ]);
-});
-
-test("automatic continuation failure persists blocked recovery and projects blocked state", async () => {
-  const session = fakeSession();
-  const originalStep = session.step.bind(session);
-  let calls = 0;
-  session.step = async (input) => {
-    calls++;
-    if (calls === 1) {
-      throw new TurnInterruptedError({
-        version: 1,
-        state: "WIP",
-        artifact: { type: "console_continuation_checkpoint", id: "session:continuation" },
-        work: "finish the task",
-        reason: "escape",
-        next: "run the next action",
-      });
-    }
-    if (calls === 2) throw new Error("provider stopped");
-    return originalStep(input);
-  };
-  const error = new Capture();
-  const result = await runConsole({
-    session,
-    input: ttyFrom("operator prompt\\n"),
-    output: new Capture(),
-    error,
-    mode: "json",
-  });
-
   expect(result.completedTurns).toBe(0);
-  expect(session.blocked).toHaveLength(1);
-  expect(session.blocked[0]).toMatchObject({
-    state: "blocked",
-    artifact: { type: "console_blocked_recovery" },
-    decision: {
-      question: "Should the operator retry the preserved work or provide a new direction?",
-    },
-  });
-  expect(error.text()).toContain('"state":"blocked"');
-  expect(error.text()).toContain("automatic continuation failed after exhaustion/no motion: Error");
-  expect(error.text()).not.toContain("task remains WIP");
+  expect(session.inputs).toEqual(["operator prompt\\n"]);
+  expect(output.text()).toContain("ad-coder> ");
 });
 
 test("a spent compaction stops the console with --resume, never with 'retry'", async () => {
@@ -1754,6 +1691,58 @@ test("background notices render on stderr while input queues without starting mo
   expect(result).toEqual({ reason: "exit", completedTurns: 2 });
   expect(session.inputs).toEqual(["first", "second"]);
   expect(unsubscribed).toBe(1);
+});
+
+test("background notices after Escape wait for the next operator turn", async () => {
+  const input = rawInput();
+  const started = deferred();
+  const interrupted = deferred();
+  const session = fakeSession();
+  let consumer:
+    | Parameters<NonNullable<ConversationSession["subscribeBackgroundRuns"]>>[0]
+    | undefined;
+  session.subscribeBackgroundRuns = (next) => {
+    consumer = next;
+    return () => undefined;
+  };
+  session.step = async (line) => {
+    session.inputs.push(line);
+    started.resolve();
+    await interrupted.promise;
+    throw new TurnInterruptedError();
+  };
+  session.interrupt = async () => {
+    interrupted.resolve();
+    return true;
+  };
+  const error = new Capture();
+  const running = runConsole({
+    session,
+    input,
+    output: new Capture(),
+    error,
+    mode: "json",
+    escapeSequenceTimeoutMs: 10,
+  });
+  input.write("first\n");
+  await started.promise;
+  input.write("\u001b");
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  consumer?.({
+    type: "background_events",
+    runId: "after-escape",
+    events: [{ sequence: 1, runId: "after-escape", lifecycle: "completed", timestamp: 1 }],
+    nextCursor: 1,
+    gap: false,
+    droppedEvents: 0,
+    pending: false,
+  });
+  expect(error.text()).not.toContain("after-escape");
+  input.write("second\n/exit\n");
+  input.end();
+  await running;
+  expect(error.text()).toContain("after-escape");
+  expect(session.inputs).toEqual(["first", "second"]);
 });
 
 test("formatted background notices are content-free and do not call step", async () => {

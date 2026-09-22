@@ -479,7 +479,12 @@ export async function startConversation(config: ConversationConfig): Promise<Con
   const lane: AgentLane = await harness.lane(config.laneName ?? "main", context);
   const continuationStatus = config.continuationStatus;
   const continuationBranch = config.laneName ?? "main";
-  const appendContinuationCheckpoint = async (data: JsonValue): Promise<void> => {
+  const appendContinuationCheckpoint = async (
+    data: JsonValue,
+    type:
+      | typeof CONTINUATION_CHECKPOINT_TYPE
+      | typeof BLOCKED_RECOVERY_TYPE = CONTINUATION_CHECKPOINT_TYPE,
+  ): Promise<void> => {
     // Every field is bounded before serialization. This is deliberately not a
     // byte-count-and-drop guard: dropping the record would turn valid Unicode
     // progress into a lost task.
@@ -493,7 +498,7 @@ export async function startConversation(config: ConversationConfig): Promise<Con
         `cannot persist continuation checkpoint: lane ${continuationBranch} does not exist`,
       );
     }
-    await branch.appendCustomEntry(CONTINUATION_CHECKPOINT_TYPE, data, context);
+    await branch.appendCustomEntry(type, data, context);
   };
   const checkpoint = async (reason: string): Promise<DurableContinuationCheckpoint> => {
     const rawWork =
@@ -555,7 +560,7 @@ export async function startConversation(config: ConversationConfig): Promise<Con
       record.work = "foreground console turn";
       record.truncated = true;
     }
-    await appendContinuationCheckpoint(record as unknown as JsonValue);
+    await appendContinuationCheckpoint(record as unknown as JsonValue, BLOCKED_RECOVERY_TYPE);
     return record;
   };
   const offContinuationHook = harness.hooks.on(
@@ -569,11 +574,13 @@ export async function startConversation(config: ConversationConfig): Promise<Con
       if (entry === undefined || entry.type !== "custom" || entry.data === undefined)
         return undefined;
       const data = entry.data as {
+        state?: unknown;
         work?: unknown;
         reason?: unknown;
         next?: unknown;
         consumed?: boolean;
       };
+      if (data.state !== undefined && data.state !== "WIP") return undefined;
       if (data.consumed === true) return undefined;
       const work = typeof data.work === "string" ? data.work : "the foreground console turn";
       const reason = typeof data.reason === "string" ? data.reason : "the turn was interrupted";
