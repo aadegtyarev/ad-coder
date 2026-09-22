@@ -44,6 +44,8 @@ resolved. It does not own model routing; see [routing configuration](routing-con
 - Cost-reference precedence, catalogue refresh/cache policy, observed-price
   overlay aggregation and retention, variance notices, and provider/model
   tolerances are settings; see [cost anomaly](cost-anomaly.md).
+- Documentation language and selected project-practice bundles are settings;
+  see [documentation](documentation.md) and [project practices](project-practices.md).
 - Execution mode, destructive-command guard, protected roots, and a selected
   sandbox or optional LLM-guard provider are settings; see
   [execution boundary](execution-boundary.md).

@@ -5,13 +5,23 @@ reader understand and use a product surface.
 
 ## Guarantees
 
-- Project documentation is written in English.
+- Documentation language is a project setting, not a harness rule. A selected
+  documentation practice uses that language for generated or proposed prose.
 - Every document states its intended reader and the question it answers. Put
   the shortest usable path first; reveal rationale and internals only as needed.
+- Documentation is concise but complete for a technically capable reader new to
+  the project: it explains purpose, the usable path, important constraints, and
+  where to continue. A top-level index provides that entry path when several
+  documents cover a system.
 - Define project-specific terms before their first use. Use descriptive headings,
   short paragraphs, lists, tables, and diagrams when they reduce reading effort.
+- Write in plain information style: lead with useful facts and actions, use
+  specific verbs and nouns, and remove filler, repetition, and ceremonial prose.
 - Edit the affected section as a coherent whole. Do not preserve stale prose or
   append facts merely to avoid making a structural decision.
+- Document durable user, operator, or maintainer knowledge that code, tests,
+  typed interfaces, and generated help cannot communicate clearly. Do not restate
+  implementation line by line or create prose merely to satisfy a process.
 - Architecture documentation is a map, not a change log or implementation dump.
   It names components, connections, trust boundaries, and load-bearing decisions.
   Detailed algorithms belong with their subsystem or focused design document.
@@ -31,3 +41,4 @@ reader understand and use a product surface.
 - [Contract form](meta-contract.md).
 - [Quality gates](quality.md).
 - [Release metadata](release.md).
+- [Project practices](project-practices.md) owns portable adoption and removal.

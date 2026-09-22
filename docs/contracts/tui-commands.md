@@ -36,6 +36,9 @@ This contract owns commands available to an operator in `ad-coder tui`.
   propose, approve, decline, inventory, and revalidate a profile through shared
   headless operations; approval is required before an action that installs tools
   or writes quality configuration.
+- `/practices` lists selected and available practice bundles with syntax/example.
+  Its inspect, preview, enable, disable, update, replace, and remove actions use
+  shared headless operations and always show affected assets before mutation.
 - `/compact` explicitly compacts the selected session's eligible dialogue using
   its configured strategy. `/clear` explicitly clears that conversation context
   while retaining the durable session and ledger; both show scope and recovery
@@ -75,6 +78,8 @@ feedback; test session listing and idle/active-turn selection; test parallel-lan
 availability and admission parity; test session status and harness-about parity.
 Test grouped settings discovery, scoped mutation, source rendering, and API parity.
 Test automatic and manual compaction, clear, retry exhaustion, and API parity.
+Test practice discovery, no-write preview, selective enablement, modified-asset
+removal refusal, and API parity.
 
 ## Related surfaces
 
@@ -87,3 +92,4 @@ Test automatic and manual compaction, clear, retry exhaustion, and API parity.
 - [Runtime inspection](runtime-inspection.md) owns status and about content.
 - [Settings interface](settings-interface.md) owns grouped settings controls.
 - [Compaction](compaction.md) owns compact and clear semantics.
+- [Project practices](project-practices.md) owns portable guidance lifecycle.

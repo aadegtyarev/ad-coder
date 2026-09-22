@@ -20,6 +20,9 @@ It is the JSON projection of headless operations and TUI controls.
   bootstrap status and its propose/approve/decline/inventory/revalidate actions;
   `sessions.compact` and `sessions.clear` perform explicit context recovery;
   `estimates` returns the current forecast and planning feedback read-only. The
+  `practices` resource lists, inspects, previews, enables, disables, updates,
+  replaces, and removes portable project practices with the same guarded mutation
+  semantics as TUI. The
   public names may be refined only through the compatibility contract, not by
   adding a front-only capability.
 - API requests use explicit fields rather than TUI command text. Their success,
@@ -68,3 +71,4 @@ model listing, override, and reset; and typed refusals for legacy modes and
 - [Quality bootstrap](quality-bootstrap.md) owns quality setup actions.
 - [Settings interface](settings-interface.md) owns grouped settings actions.
 - [Compaction](compaction.md) owns explicit context recovery.
+- [Project practices](project-practices.md) owns portable guidance lifecycle.

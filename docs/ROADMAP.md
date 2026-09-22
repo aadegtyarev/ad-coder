@@ -500,6 +500,12 @@ workflows — one substrate, swappable drivers.
   contract-with-a-trigger, an immutable decision, or — if enforceable — a gate,
   not freeform prose. Trust perimeters are contracts. ad-coder ships this as an
   opinionated default so users don't reinvent docs/ chaos.
+- **REQUIREMENT — portable project practices.** Documentation, contract writing,
+  decomposition, and quality setup ship as named versioned practice bundles.
+  `bootstrap` and `init` propose a preview from project evidence; the operator
+  selects individual practices. A bundle is removable or replaceable without
+  overwriting edited project assets, and its guidance follows the project's
+  configured documentation language. See [project practices](contracts/project-practices.md).
 - **Auditor role + refactor executor** — recognizing decomposition needs vs doing
   them safely, two tools. Auditor: a cold-read role triggered by a drift signal
   (size band, churn, drift-log-reaches-8) that surfaces decomposition candidates

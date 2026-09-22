@@ -26,6 +26,7 @@
 - `orchestrator-run-observation.md` — orchestrator visibility of run outcomes; read when changing manual-run delivery.
 - `orchestrator.md` — task orchestration; read when changing orchestration behaviour.
 - `product-change.md` — delivery of product changes; read before planning or reviewing one.
+- `project-practices.md` — portable practice bundles; read when adopting or removing project guidance.
 - `provider-admission.md` — provider capacity admission; read when changing model dispatch.
 - `provider-failures.md` — model generation failures; read when classifying provider errors.
 - `quality.md` — project quality gates; read when changing checks or review evidence.
