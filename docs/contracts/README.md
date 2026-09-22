@@ -27,3 +27,4 @@
 - `telegram.md` — Telegram front; read when changing Telegram behaviour.
 - `tool-observability.md` — tool activity; read when changing progress events or rendering.
 - `ui-responsiveness.md` — interactive fronts; read when changing controls or waiting.
+- `wake-delivery.md` — background wake turns; read when changing durable notifications.
