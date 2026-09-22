@@ -25,8 +25,10 @@ This contract owns independent review evidence for a tree proposed for merge.
 - A review stamp is written only from a settled structured verdict, records the
   reviewed tree digest, base, verdict, role route, time, and run identifiers,
   and excludes itself from the digest. It is stale when the reviewed tree moves.
-  A missing, malformed, changes-requested, or stale newest stamp blocks merge;
-  recovery is a fresh review.
+  When the resolved review policy requires a stamp, a missing, malformed,
+  changes-requested, or stale newest stamp blocks merge; recovery is a fresh
+  review. `require-stamp: on` requires it, `off` writes none and passes this
+  gate, and `auto` follows the repository marker.
 - Stamps exist only in this repository when its committed `ad-coder.stamps.json`
   marker enables them. They are never written into a target project.
 

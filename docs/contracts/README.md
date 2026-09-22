@@ -1,12 +1,14 @@
 # Contract index
 
 - `architecture.md` — product structure; read when adding or moving a capability.
+- `autonomy.md` — authority and budget control; read when changing autonomous actions.
 - `cli.md` — command-line front; read when changing commands, flags, or output.
 - `compaction.md` — context compaction; read when changing context retention.
 - `compatibility.md` — public compatibility and releases; read before a public change.
 - `config.md` — settings and defaults; read when behaviour is configurable.
 - `cost-anomaly.md` — unexpected provider prices; read when changing cost controls.
 - `decomposition.md` — code decomposition; read before splitting implementation.
+- `delegation.md` — execution-path selection; read when dispatching work or lanes.
 - `documentation.md` — project documentation; read when changing project prose.
 - `errors.md` — error behaviour; read when adding a boundary failure.
 - `ledger-report.md` — ledger reports; read when changing their API or output.
