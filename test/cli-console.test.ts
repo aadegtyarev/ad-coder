@@ -118,12 +118,25 @@ function fakeSession(
     closeError?: Error;
     settleDelay?: Promise<void>;
   } = {},
-): ConversationSession & { inputs: string[]; closes: number } {
+): ConversationSession & { inputs: string[]; closes: number; blocked: unknown[] } {
   return {
     runId: "session",
     ledgerPath: undefined,
     inputs: [],
     closes: 0,
+    blocked: [],
+    async blockContinuation(checkpoint, evidence, question, action) {
+      const record = {
+        version: 1 as const,
+        state: "blocked" as const,
+        artifact: { type: "console_blocked_recovery" as const, id: "session:continuation-blocked" },
+        evidence,
+        decision: { question, action },
+        work: checkpoint.work,
+      };
+      this.blocked.push(record);
+      return record;
+    },
     async step(input) {
       this.inputs.push(input);
       if (options.stepError !== undefined) throw options.stepError;
@@ -594,6 +607,48 @@ test("an Escape interruption wakes one bounded continuation without another prom
     "operator prompt\\n",
     "Continue the preserved work from the durable checkpoint.",
   ]);
+});
+
+test("automatic continuation failure persists blocked recovery and projects blocked state", async () => {
+  const session = fakeSession();
+  const originalStep = session.step.bind(session);
+  let calls = 0;
+  session.step = async (input) => {
+    calls++;
+    if (calls === 1) {
+      throw new TurnInterruptedError({
+        version: 1,
+        state: "WIP",
+        artifact: { type: "console_continuation_checkpoint", id: "session:continuation" },
+        work: "finish the task",
+        reason: "escape",
+        next: "run the next action",
+      });
+    }
+    if (calls === 2) throw new Error("provider stopped");
+    return originalStep(input);
+  };
+  const error = new Capture();
+  const result = await runConsole({
+    session,
+    input: ttyFrom("operator prompt\\n"),
+    output: new Capture(),
+    error,
+    mode: "json",
+  });
+
+  expect(result.completedTurns).toBe(0);
+  expect(session.blocked).toHaveLength(1);
+  expect(session.blocked[0]).toMatchObject({
+    state: "blocked",
+    artifact: { type: "console_blocked_recovery" },
+    decision: {
+      question: "Should the operator retry the preserved work or provide a new direction?",
+    },
+  });
+  expect(error.text()).toContain('"state":"blocked"');
+  expect(error.text()).toContain("automatic continuation failed after exhaustion/no motion: Error");
+  expect(error.text()).not.toContain("task remains WIP");
 });
 
 test("a spent compaction stops the console with --resume, never with 'retry'", async () => {
@@ -1902,7 +1957,7 @@ test("console-local background controls use headless APIs without model turns", 
       };
     },
   } as unknown as BackgroundRunManager;
-  const session = fakeSession() as ConversationSession & {
+  const session = fakeSession() as unknown as ConversationSession & {
     inputs: string[];
     closes: number;
     backgroundRuns: BackgroundRunManager;
@@ -1943,7 +1998,7 @@ test("local status runs while a foreground turn is pending", async () => {
   const input = rawInput();
   const turnStarted = deferred();
   const statusCalled = deferred();
-  const session = fakeSession() as ConversationSession & {
+  const session = fakeSession() as unknown as ConversationSession & {
     inputs: string[];
     closes: number;
     backgroundRuns: BackgroundRunManager;

@@ -86,7 +86,18 @@ export interface DurableContinuationCheckpoint {
   truncated?: true;
 }
 
+export interface DurableBlockedRecovery {
+  version: 1;
+  state: "blocked";
+  artifact: { type: typeof BLOCKED_RECOVERY_TYPE; id: string };
+  evidence: string;
+  decision: { question: string; action: string };
+  work: string;
+  truncated?: true;
+}
+
 export const CONTINUATION_CHECKPOINT_TYPE = "console_continuation_checkpoint";
+export const BLOCKED_RECOVERY_TYPE = "console_blocked_recovery";
 const CONTINUATION_CHECKPOINT_MAX_BYTES = 2_048;
 const CONTINUATION_PREAMBLE_MAX_CHARS = 600;
 
@@ -292,6 +303,13 @@ export interface ConversationSession {
   close(): Promise<void>;
   /** Abort only the currently active turn; the session remains usable afterwards. */
   interrupt?(): Promise<boolean>;
+  /** Persist the operator decision required after bounded continuation makes no progress. */
+  blockContinuation?(
+    checkpoint: DurableContinuationCheckpoint,
+    evidence: string,
+    question: string,
+    action: string,
+  ): Promise<DurableBlockedRecovery>;
   /** Optional for compatibility with external ConversationSession implementations. */
   subscribeToolActivity?(
     consumer: ToolActivityConsumer,
@@ -501,6 +519,40 @@ export async function startConversation(config: ConversationConfig): Promise<Con
       record.work = "foreground console turn";
       record.reason = "turn interrupted";
       record.next = "continue from durable checkpoint [truncated]";
+      record.truncated = true;
+    }
+    await appendContinuationCheckpoint(record as unknown as JsonValue);
+    return record;
+  };
+  const blockContinuation = async (
+    preserved: DurableContinuationCheckpoint,
+    evidence: string,
+    question: string,
+    action: string,
+  ): Promise<DurableBlockedRecovery> => {
+    const boundedEvidence = truncateContinuationUtf8(evidence, 512);
+    const boundedQuestion = truncateContinuationUtf8(question, 512);
+    const boundedAction = truncateContinuationUtf8(action, 512);
+    const boundedWork = truncateContinuationUtf8(preserved.work, 256);
+    const record: DurableBlockedRecovery = {
+      version: 1,
+      state: "blocked",
+      artifact: { type: BLOCKED_RECOVERY_TYPE, id: `${runId}:continuation-blocked` },
+      evidence: boundedEvidence.value,
+      decision: { question: boundedQuestion.value, action: boundedAction.value },
+      work: boundedWork.value,
+      ...((boundedEvidence.truncated ||
+        boundedQuestion.truncated ||
+        boundedAction.truncated ||
+        boundedWork.truncated) && { truncated: true }),
+    };
+    if (Buffer.byteLength(JSON.stringify(record), "utf8") > CONTINUATION_CHECKPOINT_MAX_BYTES) {
+      record.evidence = "automatic continuation exhausted without progress";
+      record.decision = {
+        question: "Should the operator retry the preserved work or provide a new direction?",
+        action: "answer this question, then send the next prompt",
+      };
+      record.work = "foreground console turn";
       record.truncated = true;
     }
     await appendContinuationCheckpoint(record as unknown as JsonValue);
@@ -949,6 +1001,7 @@ export async function startConversation(config: ConversationConfig): Promise<Con
 
   return {
     step,
+    blockContinuation,
     interrupt: async () => {
       if (!stepping) return false;
       interrupted = true;

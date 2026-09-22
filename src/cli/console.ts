@@ -983,13 +983,48 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
               );
               renderStepSuccess(rawResult);
             } catch (continuationError) {
+              const evidence = `automatic continuation failed after exhaustion/no motion: ${describeErrorClass(continuationError)}`;
+              const question =
+                "Should the operator retry the preserved work or provide a new direction?";
+              const action = "answer this question, then send the next prompt";
+              let blocked: Awaited<
+                ReturnType<NonNullable<ConversationSession["blockContinuation"]>>
+              >;
+              try {
+                if (params.session.blockContinuation === undefined) {
+                  throw new Error("session cannot persist blocked continuation recovery");
+                }
+                blocked = await params.session.blockContinuation(
+                  checkpoint,
+                  evidence,
+                  question,
+                  action,
+                );
+              } catch (persistenceError) {
+                params.error.write(
+                  renderFailure(
+                    {
+                      code: "interrupted",
+                      message: `bounded continuation failed and blocked recovery could not be persisted: ${describeErrorClass(persistenceError)}`,
+                      action:
+                        "preserve the checkpoint and retry the console; operator decision is required",
+                      retryable: true,
+                    },
+                    mode,
+                  ),
+                );
+                if (mode === "json")
+                  params.error.write(
+                    `${JSON.stringify({ type: "continuation_block_persistence_failed", evidence })}\n`,
+                  );
+                return;
+              }
               params.error.write(
                 renderFailure(
                   {
                     code: "interrupted",
-                    message:
-                      "bounded continuation could not proceed; task remains WIP in the durable checkpoint",
-                    action: "send the next prompt to resume the preserved work, or make a decision",
+                    message: `bounded continuation exhausted; task is blocked (artifact ${blocked.artifact.type}/${blocked.artifact.id}). Decision: ${blocked.decision.question}`,
+                    action: blocked.decision.action,
                     retryable: true,
                   },
                   mode,
@@ -997,7 +1032,13 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
               );
               if (mode === "json") {
                 params.error.write(
-                  `${JSON.stringify({ type: "continuation_blocked", cause: describeErrorClass(continuationError) })}\n`,
+                  `${JSON.stringify({
+                    type: "continuation_blocked",
+                    state: blocked.state,
+                    artifact: blocked.artifact,
+                    evidence: blocked.evidence,
+                    decision: blocked.decision,
+                  })}\n`,
                 );
               }
             }
