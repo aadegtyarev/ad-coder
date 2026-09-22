@@ -11,6 +11,16 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.6] - 2026-09-22
+
+### Fixed
+
+- **Interrupted role journals remain resumable.** Session transactions now
+  commit in sequence order when SDK persistence callbacks arrive concurrently.
+  A complete older journal with only that ordering fault is safely reordered on
+  reopen; ambiguous or partial journal data is left untouched and still fails
+  loudly.
+
 ## [0.181.5] - 2026-09-22
 
 ### Fixed
