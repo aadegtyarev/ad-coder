@@ -1,8 +1,8 @@
-# Pipeline change-context contract
+# Built-in pipeline context contract
 
-This contract owns how the built-in pipeline selects and passes changed-workspace
-context to its next role. It is not a general Git-diff API or a custom-workflow
-requirement.
+This contract owns how the supplied built-in pipeline workflow selects and passes
+changed-workspace context to its next role. The pipeline is an optional bundled
+workflow module; this is not a general Git-diff API or a custom-workflow rule.
 
 ## Guarantees
 
@@ -10,6 +10,9 @@ requirement.
   to let its consumer decide: changed paths and summary, bounded diff, selected
   files, or declared full context. It records representation, omissions, source,
   measured size, and cost attribution with the pipeline run.
+- The bundled pipeline module is enabled by explicit configuration and may be
+  disabled safely. Disabling it removes only this workflow and its context policy;
+  it does not remove durable state, sessions, roles, or a user-authored workflow.
 - The default strategy optimizes accepted-result cost, not token count alone. It
   accounts for rereads, retries, repair rounds, rejected review, and time caused
   by insufficient context; smaller input is preferred only while it remains the

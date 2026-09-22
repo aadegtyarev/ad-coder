@@ -21,7 +21,7 @@
 - `operation-modes.md` — manual and automatic authority; read when changing modes.
 - `pause-causes.md` — durable failure evidence; read when changing paused workflow state.
 - `parallel-lanes.md` — isolated concurrent work; read when launching mutable work in parallel.
-- `pipeline-change-context.md` — built-in change context; read when changing diff handoff or its economy policy.
+- `builtin-pipeline-context.md` — bundled pipeline context; read when changing diff handoff or its economy policy.
 - `operator-flow.md` — operator experience; read when changing task interaction.
 - `orchestrator-run-observation.md` — orchestrator visibility of run outcomes; read when changing manual-run delivery.
 - `orchestrator.md` — task orchestration; read when changing orchestration behaviour.
