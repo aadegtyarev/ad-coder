@@ -37,9 +37,9 @@ This contract owns the headless `SessionManager` API for shared durable sessions
   free input and controls route to it until another explicit selection.
 - TUI and machine resume actions validate an id before path use and require both its
   session and ledger. Without an id it selects the newest qualifying orchestrator
-  ledger. It settles an interrupted active operation before accepting new input,
-  retains the recovered answer with that operation, and attributes recovery cost
-  distinctly in durable ledger data.
+  ledger. They reconcile an interrupted active operation while accepting new input
+  into the durable queue, retain any recovered answer with that operation, and
+  attribute recovery cost distinctly in durable ledger data.
 - Input is accepted into a durable FIFO queue regardless of whether an
   orchestrator turn is active. With no active turn, the queue starts delivery
   immediately; otherwise the oldest message is delivered to the next turn after

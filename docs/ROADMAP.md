@@ -507,6 +507,12 @@ workflows — one substrate, swappable drivers.
   selects individual practices. A bundle is removable or replaceable without
   overwriting edited project assets, and its guidance follows the project's
   configured documentation language. See [project practices](contracts/project-practices.md).
+- **REQUIREMENT — core-owned resumable state.** A versioned `DurableStateStore`
+  is core infrastructure shared by sessions, roles, agents, ledgers, timers, and
+  built-in or custom workflows. Workflow modules declare their own serializable
+  state and restoration entrypoint but never own the store. Checkpointed
+  cross-entity transitions survive orderly exit, power loss, and harness failure;
+  an unrecoverable operation pauses with evidence while the session remains usable.
 - **Auditor role + refactor executor** — recognizing decomposition needs vs doing
   them safely, two tools. Auditor: a cold-read role triggered by a drift signal
   (size band, churn, drift-log-reaches-8) that surfaces decomposition candidates

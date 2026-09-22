@@ -9,10 +9,22 @@ This contract owns preservation and recovery of every durable ad-coder state.
   queued operator messages, task state, role and agent runs, workflow state and
   offered transitions, budgets and spend, selected profile and overrides, skill
   selection, waits, timers, wakes, and observable run history.
+- The core owns one `DurableStateStore` lifecycle for sessions, tasks, roles,
+  agents, runs, timers, wakes, ledgers, and workflow instances. Fronts, optional
+  workflow modules, and roles use its versioned state API; none owns a private
+  recovery store whose availability can determine whether a session resumes.
+- Every workflow, including a user-authored workflow, declares a versioned state
+  schema, checkpoint boundary, and restoration entrypoint before dispatch. The
+  core validates this declaration and refuses a workflow that cannot resume its
+  mutable state; disabling a workflow module never removes its stored evidence.
 - Each mutation needed to continue work is checkpointed atomically before its
   success is reported or a dependent action starts. Checkpoints are versioned,
   validated, bounded, and secret-free; raw prompts, provider payloads, tool
   arguments, and credentials are not copied into them.
+- A cross-entity transition commits its session, role/workflow, queue, wake, and
+  ledger references as one recoverable state transaction or remains visibly
+  uncommitted. Power loss or a process crash cannot report a later state without
+  its required predecessor data.
 - A resume reopens the same durable identities and preserves FIFO message order,
   workflow phase, role attribution, and ledger continuity. It resumes runnable
   work or schedules its next wake without requiring an operator to reconstruct
@@ -31,10 +43,11 @@ This contract owns preservation and recovery of every durable ad-coder state.
 
 ## Verification
 
-Test orderly exit and forced interruption at orchestration, role, workflow,
-timer, queue, and external-action boundaries; resume each from a fresh process.
-Assert preserved context/state/order, no duplicate effect, typed ambiguous-action
-pause, corrupt-checkpoint preservation, and idempotent repeated resume.
+Test orderly exit, power-loss-style interruption, and fatal harness failure at
+orchestration, role, built-in/custom workflow, timer, queue, and external-action
+boundaries; resume each from a fresh process. Assert preserved context/state/order,
+no duplicate effect, typed ambiguous-action pause, corrupt-checkpoint preservation,
+disabled-module evidence retention, and idempotent repeated resume.
 
 ## Related surfaces
 
@@ -43,3 +56,4 @@ pause, corrupt-checkpoint preservation, and idempotent repeated resume.
 - [Agent dispatch](agent-dispatch.md) owns role-run lifecycle.
 - [Wake delivery](wake-delivery.md) owns timers and durable notices.
 - [Public error behaviour](errors.md) owns recovery failures.
+- [Configuration](config.md) owns durable-store selection and limits.
