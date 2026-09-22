@@ -119,21 +119,24 @@ asking for a decision (the task sits `blocked` meanwhile -- it does not proceed
 
 K3.1. One turn is one provider call. A textual report with no following tool call
 **ends** the turn: whatever was to be said next will not be said.
-K3.2. Unfinished work therefore cannot end in a report. A continuation is either a
-call inside the same turn, or the start of a run that has a wake-up path (K7).
-K3.3. A turn of work must not require the operator's next message. If the operator
-stays silent, the task must advance or explicitly ask for a decision.
-K3.4. Continuation is bounded: at most `maxContinuations` in a row (a project
-setting, K10; required default `3`, K10.6) and never dearer than the declared
-budget; exhaustion moves the task to `blocked` with a question, never into
-silence.
+K3.2. Unfinished work therefore cannot end in a report. Except when the current
+foreground turn was interrupted by a deliberate operator Escape (K3.4), a
+continuation is either a call inside the same turn, or the start of a run that has
+a wake-up path (K7).
+K3.3. An ordinary turn of work must not require the operator's next message. If
+the operator stays silent, the task must advance or explicitly ask for a
+decision. The deliberate Escape in K3.4 is the exception: its durable WIP stays
+idle until the next operator input, with no automatic continuation.
+K3.4. An operator Escape interrupts only the current foreground turn. The
+interrupt preserves durable WIP state and returns to the prompt; no continuation
+turn is started until another operator input arrives.
 K3.5. Continuation is gated by the mode, and the gate is a **boundary of
 decisions**, not a ban on moving. What exactly a mode reserves to the operator is
 defined by `docs/contracts/operation-modes.md`: in `manual` product and
 architecture decisions wait for the operator, in `auto` they are delegated to the
 orchestrator and written to durable state. Inside that boundary, in `auto` the
-orchestrator continues by itself (K3.4); in `manual` it stops at the first
-decision the mode did not hand it.
+orchestrator continues by itself (K3.2), except after a deliberate Escape (K3.4);
+in `manual` it stops at the first decision the mode did not hand it.
 
 ## K4. Mode
 
@@ -470,7 +473,7 @@ K10.6. **Every setting this contract names carries a required default**, because
 K10.2 makes an absent setting mean its default; a setting whose default is missing
 is a defect OF THIS CONTRACT, not a free choice for the implementer. The set:
 the mode `manual` (K4.1); the intake mode clarification on (K4.3);
-`silentRaiseFactor` `+50%` (K6.2); `maxContinuations` `3` (K3.4); `waitTimeoutMs`
+`silentRaiseFactor` `+50%` (K6.2); `waitTimeoutMs`
 `900000` (K7.7); the stamp requirement `review.require-stamp` `auto` (K8.9); the
 "merge green pull requests" flag on (K9.1.5); the "file tickets" flag on
 (K9.1.6); the "own hands beyond the machine bound" flag off (K9.1.8); the
@@ -488,9 +491,9 @@ expressed through the settings listed above. A project that wants such an item
 switchable is owed a setting that names it here **with its default**; until that
 setting exists the item is not a switch, and an implementer who invents one has
 invented a setting this contract does not carry.
-K10.6.2. Three of those names are introduced BY THIS CONTRACT and exist nowhere
-else yet: `silentRaiseFactor` (K6.2), `maxContinuations` (K3.4) and
-`waitTimeoutMs` (K7.7). Naming them here is a requirement owed to code (K11.1),
+K10.6.2. Two of those names are introduced BY THIS CONTRACT and exist nowhere
+else yet: `silentRaiseFactor` (K6.2) and `waitTimeoutMs` (K7.7). Naming them
+here is a requirement owed to code (K11.1),
 not a description of a surface a reader could go and read: each is the name under
 which the behaviour its clause requires must become configurable, with the default
 above. Their absence from the code is an audit finding. Of the remaining settings

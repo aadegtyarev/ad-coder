@@ -914,6 +914,7 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
         if (mode === "formatted") params.output.write("ad-coder> ");
         return;
       }
+      flushBackgroundNotices();
       rawResult = await runMonitoredStep(line);
       renderStepSuccess(rawResult);
     } catch (error) {
@@ -930,8 +931,10 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
             renderFailure(
               {
                 code: "interrupted",
-                message: "console turn interrupted",
-                action: "restart the console to resume the session",
+                message:
+                  "console turn interrupted: foreground console turn stopped; bounded continuation checkpoint preserved",
+                action:
+                  "send the next prompt to resume the preserved work (or give a new direction)",
                 retryable: true,
               },
               mode,
@@ -945,12 +948,18 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
           if (mode === "formatted") params.output.write("ad-coder> ");
           return;
         } else if (isInstanceOf(error, TurnInterruptedError)) {
+          const checkpoint = error.checkpoint;
+          const next = checkpoint?.next ?? "send the next prompt to resume the preserved work";
+          const preserved =
+            checkpoint === undefined
+              ? "a durable continuation checkpoint (state WIP; artifact identity: console_continuation_checkpoint)"
+              : `state WIP; artifact ${checkpoint.artifact.type}/${checkpoint.artifact.id}; preserved work: ${checkpoint.work}; next: ${next}`;
           params.error.write(
             renderFailure(
               {
                 code: "interrupted",
-                message: "current turn interrupted",
-                action: "session remains available; enter the next prompt",
+                message: `current turn interrupted: foreground console turn stopped; ${preserved}`,
+                action: next,
                 retryable: true,
               },
               mode,
@@ -1158,6 +1167,7 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
                 if (budgetTimer !== undefined) clearTimeout(budgetTimer);
               });
               try {
+                flushBackgroundNotices();
                 rawResult = await runMonitoredStep(line);
                 renderStepSuccess(rawResult);
                 return;
@@ -1391,15 +1401,25 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
   const requestEscapeInterrupt = (): void => {
     escapeTimer = undefined;
     escapeState = "text";
+    suppressBackgroundNotices = true;
     interruptForeground();
   };
 
   let unsubscribeBackground: (() => void) | undefined;
   let unsubscribeWakeTurns: (() => void) | undefined;
+  let suppressBackgroundNotices = false;
+  const pendingBackgroundNotices: BackgroundRunNotice[] = [];
+  const flushBackgroundNotices = (): void => {
+    if (!suppressBackgroundNotices) return;
+    suppressBackgroundNotices = false;
+    for (const notice of pendingBackgroundNotices.splice(0))
+      params.error.write(renderBackgroundNotice(notice, mode));
+  };
   try {
     unsubscribeWakeTurns = params.session.subscribeWakeTurns?.(queueWakeRender);
     unsubscribeBackground = params.session.subscribeBackgroundRuns?.((notice) => {
-      params.error.write(renderBackgroundNotice(notice, mode));
+      if (suppressBackgroundNotices) pendingBackgroundNotices.push(notice);
+      else params.error.write(renderBackgroundNotice(notice, mode));
     });
   } catch {
     params.error.write(

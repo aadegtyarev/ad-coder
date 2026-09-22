@@ -118,12 +118,25 @@ function fakeSession(
     closeError?: Error;
     settleDelay?: Promise<void>;
   } = {},
-): ConversationSession & { inputs: string[]; closes: number } {
+): ConversationSession & { inputs: string[]; closes: number; blocked: unknown[] } {
   return {
     runId: "session",
     ledgerPath: undefined,
     inputs: [],
     closes: 0,
+    blocked: [],
+    async blockContinuation(checkpoint, evidence, question, action) {
+      const record = {
+        version: 1 as const,
+        state: "blocked" as const,
+        artifact: { type: "console_blocked_recovery" as const, id: "session:continuation-blocked" },
+        evidence,
+        decision: { question, action },
+        work: checkpoint.work,
+      };
+      this.blocked.push(record);
+      return record;
+    },
     async step(input) {
       this.inputs.push(input);
       if (options.stepError !== undefined) throw options.stepError;
@@ -546,8 +559,33 @@ test("reports a cooperative interruption separately from a provider failure", as
 
   expect(result).toEqual({ reason: "interrupted", completedTurns: 0 });
   expect(error.text()).toContain("console turn interrupted");
+  expect(error.text()).toContain("bounded continuation checkpoint preserved");
+  expect(error.text()).toContain("send the next prompt to resume the preserved work");
   expect(error.text()).not.toContain("console turn failed");
   expect(session.closes).toBe(1);
+});
+
+test("an Escape interruption returns to the prompt without an automatic continuation", async () => {
+  const session = fakeSession({
+    stepError: new TurnInterruptedError({
+      version: 1,
+      state: "WIP",
+      artifact: { type: "console_continuation_checkpoint", id: "session:continuation" },
+      work: "finish the task",
+      reason: "escape",
+      next: "run the next action",
+    }),
+  });
+  const output = new Capture();
+  const result = await runConsole({
+    session,
+    input: ttyFrom("operator prompt\\n"),
+    output,
+    error: new Capture(),
+  });
+  expect(result.completedTurns).toBe(0);
+  expect(session.inputs).toEqual(["operator prompt\\n"]);
+  expect(output.text()).toContain("ad-coder> ");
 });
 
 test("a spent compaction stops the console with --resume, never with 'retry'", async () => {
@@ -1655,6 +1693,58 @@ test("background notices render on stderr while input queues without starting mo
   expect(unsubscribed).toBe(1);
 });
 
+test("background notices after Escape wait for the next operator turn", async () => {
+  const input = rawInput();
+  const started = deferred();
+  const interrupted = deferred();
+  const session = fakeSession();
+  let consumer:
+    | Parameters<NonNullable<ConversationSession["subscribeBackgroundRuns"]>>[0]
+    | undefined;
+  session.subscribeBackgroundRuns = (next) => {
+    consumer = next;
+    return () => undefined;
+  };
+  session.step = async (line) => {
+    session.inputs.push(line);
+    started.resolve();
+    await interrupted.promise;
+    throw new TurnInterruptedError();
+  };
+  session.interrupt = async () => {
+    interrupted.resolve();
+    return true;
+  };
+  const error = new Capture();
+  const running = runConsole({
+    session,
+    input,
+    output: new Capture(),
+    error,
+    mode: "json",
+    escapeSequenceTimeoutMs: 10,
+  });
+  input.write("first\n");
+  await started.promise;
+  input.write("\u001b");
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  consumer?.({
+    type: "background_events",
+    runId: "after-escape",
+    events: [{ sequence: 1, runId: "after-escape", lifecycle: "completed", timestamp: 1 }],
+    nextCursor: 1,
+    gap: false,
+    droppedEvents: 0,
+    pending: false,
+  });
+  expect(error.text()).not.toContain("after-escape");
+  input.write("second\n/exit\n");
+  input.end();
+  await running;
+  expect(error.text()).toContain("after-escape");
+  expect(session.inputs).toEqual(["first", "second"]);
+});
+
 test("formatted background notices are content-free and do not call step", async () => {
   const session = fakeSession();
   session.subscribeBackgroundRuns = (consumer) => {
@@ -1856,7 +1946,7 @@ test("console-local background controls use headless APIs without model turns", 
       };
     },
   } as unknown as BackgroundRunManager;
-  const session = fakeSession() as ConversationSession & {
+  const session = fakeSession() as unknown as ConversationSession & {
     inputs: string[];
     closes: number;
     backgroundRuns: BackgroundRunManager;
@@ -1897,7 +1987,7 @@ test("local status runs while a foreground turn is pending", async () => {
   const input = rawInput();
   const turnStarted = deferred();
   const statusCalled = deferred();
-  const session = fakeSession() as ConversationSession & {
+  const session = fakeSession() as unknown as ConversationSession & {
     inputs: string[];
     closes: number;
     backgroundRuns: BackgroundRunManager;

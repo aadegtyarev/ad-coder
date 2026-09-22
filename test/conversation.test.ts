@@ -19,7 +19,13 @@ import {
 import { ContextBudgetError } from "../src/context/budget";
 import type { Summarizer } from "../src/context/compactor";
 import { ContextCompactionLostError, SUMMARIZATION_PROMPT } from "../src/context/compactor";
-import { ConversationRefusedError, startConversation } from "../src/conversation/conversation";
+import {
+  BLOCKED_RECOVERY_TYPE,
+  CONTINUATION_CHECKPOINT_TYPE,
+  ConversationRefusedError,
+  startConversation,
+  truncateContinuationUtf8,
+} from "../src/conversation/conversation";
 import {
   CostAnomalyBlockedError,
   CostAnomalyDetector,
@@ -27,6 +33,8 @@ import {
 } from "../src/economics/cost-anomaly";
 import { MemoryLedgerSink } from "../src/ledger/ledger";
 import type { ToolActivityRecord } from "../src/observability/tool-activity";
+import type { PendingWake } from "../src/orchestration/background-runs";
+import { WakePump } from "../src/orchestration/wake";
 import { ProjectStore } from "../src/project-store/project-store";
 import type { Role } from "../src/role";
 import { defineRole } from "../src/role";
@@ -107,6 +115,409 @@ test("a two-turn conversation retains history on the live session branch", async
     expect(assistants.length).toBeGreaterThanOrEqual(2);
   } finally {
     await conversation.close();
+  }
+});
+
+test("interruption checkpoints durable status and resumes once after reopening", async () => {
+  const durableTarget = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-continuation-")),
+  );
+  const { faux, models, model, role } = harnessFixture();
+  let providerStarted!: () => void;
+  const providerHasStarted = new Promise<void>((resolve) => {
+    providerStarted = resolve;
+  });
+  let releaseProvider!: () => void;
+  const providerRelease = new Promise<void>((resolve) => {
+    releaseProvider = resolve;
+  });
+  faux.setResponses([
+    async () => {
+      providerStarted();
+      await providerRelease;
+      return fauxAssistantMessage("late provider reply");
+    },
+    (context) => {
+      resumedPrompts.push(
+        context.messages
+          .filter((message) => message.role === "user")
+          .map((message) =>
+            typeof message.content === "string"
+              ? message.content
+              : message.content
+                  .filter((block) => block.type === "text")
+                  .map((block) => block.text)
+                  .join(""),
+          )
+          .join("\\n"),
+      );
+      return fauxAssistantMessage("resumed reply");
+    },
+    (context) => {
+      resumedPrompts.push(
+        context.messages
+          .filter((message) => message.role === "user")
+          .map((message) =>
+            typeof message.content === "string"
+              ? message.content
+              : message.content
+                  .filter((block) => block.type === "text")
+                  .map((block) => block.text)
+                  .join(""),
+          )
+          .join("\\n"),
+      );
+      return fauxAssistantMessage("second resumed reply");
+    },
+  ]);
+  const resumedPrompts: string[] = [];
+  const continuationStatus = {
+    status: "implement durable continuation",
+    next: "run the focused persistence tests",
+  };
+  const initialStore = new ProjectStore(durableTarget);
+  const initialSession = await initialStore.openOrCreateSession("continuation-session");
+  const first = await startConversation({
+    role,
+    targetDir: durableTarget,
+    models,
+    model,
+    runId: "continuation-session",
+    session: initialSession,
+    continuationStatus,
+  });
+  const interrupted = first.step("operator message before interruption");
+  void interrupted.catch(() => undefined);
+  await providerHasStarted;
+  expect(await first.interrupt?.()).toBe(true);
+  await expect(interrupted).rejects.toMatchObject({ code: "interrupted" });
+  releaseProvider();
+  await first.close();
+
+  const reopenedStore = new ProjectStore(durableTarget);
+  const reopenedSession = await reopenedStore.resumeSession("continuation-session");
+  const checkpointEntries = await reopenedSession.findEntries(
+    { type: "custom", order: "asc" },
+    BACKGROUND_CONTEXT,
+  );
+  const checkpoints = checkpointEntries.filter(
+    (entry) => entry.type === "custom" && entry.customType === CONTINUATION_CHECKPOINT_TYPE,
+  );
+  expect(checkpoints).toHaveLength(1);
+  const checkpoint = checkpoints[0];
+  if (checkpoint === undefined || checkpoint.type !== "custom") {
+    throw new Error("continuation checkpoint was not stored as a custom entry");
+  }
+  expect(Buffer.byteLength(JSON.stringify(checkpoint.data ?? {}), "utf8")).toBeLessThanOrEqual(
+    2_048,
+  );
+  expect(checkpoint.data).toMatchObject({
+    version: 1,
+    work: continuationStatus.status,
+    next: continuationStatus.next,
+  });
+
+  const reopened = await startConversation({
+    role,
+    targetDir: durableTarget,
+    models,
+    model,
+    runId: "continuation-session",
+    session: reopenedSession,
+  });
+  try {
+    await reopened.step("operator message after reopening");
+    expect(resumedPrompts).toHaveLength(1);
+    const firstResumedPrompt = resumedPrompts[0]!;
+    const continuationPreamble = "[Continuation preserved]";
+    expect(firstResumedPrompt).toContain(continuationPreamble);
+    expect(firstResumedPrompt).toContain(continuationStatus.status);
+    expect(firstResumedPrompt).toContain("operator message after reopening");
+    expect(firstResumedPrompt.indexOf(continuationPreamble)).toBeGreaterThanOrEqual(0);
+    expect(firstResumedPrompt.indexOf("operator message after reopening")).toBeGreaterThanOrEqual(
+      0,
+    );
+
+    await reopened.step("operator message after checkpoint consumption");
+    expect(resumedPrompts).toHaveLength(2);
+    const secondResumedPrompt = resumedPrompts[1]!;
+    expect(secondResumedPrompt).toContain("operator message after checkpoint consumption");
+    expect(secondResumedPrompt).not.toContain(continuationPreamble);
+    const consumedEntries = await reopenedSession.findEntries(
+      { type: "custom", order: "asc" },
+      BACKGROUND_CONTEXT,
+    );
+    expect(
+      consumedEntries.filter(
+        (entry) => entry.type === "custom" && entry.customType === CONTINUATION_CHECKPOINT_TYPE,
+      ),
+    ).toHaveLength(2);
+  } finally {
+    await reopened.close();
+    await reopenedStore.close();
+    fs.rmSync(durableTarget, { recursive: true, force: true });
+  }
+});
+
+test("blocked recovery is stored separately and never consumed as WIP continuation", async () => {
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-blocked-recovery-"));
+  const { faux, models, model, role } = harnessFixture();
+  const prompts: string[] = [];
+  faux.setResponses([
+    (context) => {
+      prompts.push(
+        context.messages
+          .filter((message) => message.role === "user")
+          .map((message) => (typeof message.content === "string" ? message.content : ""))
+          .join("\\n"),
+      );
+      return fauxAssistantMessage("reply");
+    },
+  ]);
+  const store = new ProjectStore(target);
+  const session = await store.openOrCreateSession("blocked-recovery-session");
+  const conversation = await startConversation({ role, targetDir: target, models, model, session });
+  try {
+    await conversation.blockContinuation?.(
+      {
+        version: 1,
+        state: "WIP",
+        artifact: {
+          type: CONTINUATION_CHECKPOINT_TYPE,
+          id: "blocked-recovery-session:continuation",
+        },
+        work: "preserved work",
+        reason: "escape",
+        next: "resume it",
+      },
+      "provider stopped",
+      "choose retry or redirect",
+      "send a decision",
+    );
+    await conversation.step("operator decision");
+    expect(prompts[0]).not.toContain("[Continuation preserved]");
+    const entries = await session.findEntries({ type: "custom", order: "asc" }, BACKGROUND_CONTEXT);
+    expect(
+      entries.some(
+        (entry) => entry.type === "custom" && entry.customType === BLOCKED_RECOVERY_TYPE,
+      ),
+    ).toBe(true);
+  } finally {
+    await conversation.close();
+    await store.close();
+    fs.rmSync(target, { recursive: true, force: true });
+  }
+});
+
+test("operator input durably releases recovery so a same-session reconnect drains wakes", async () => {
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-recovery-release-"));
+  const { faux, models, model, role } = harnessFixture();
+  faux.setResponses([fauxAssistantMessage("operator reply")]);
+  const store = new ProjectStore(target);
+  const session = await store.openOrCreateSession("recovery-release-session");
+  const first = await startConversation({ role, targetDir: target, models, model, session });
+  try {
+    await first.blockContinuation?.(
+      {
+        version: 1,
+        state: "WIP",
+        artifact: {
+          type: CONTINUATION_CHECKPOINT_TYPE,
+          id: "recovery-release-session:continuation",
+        },
+        work: "work",
+        reason: "interrupted",
+        next: "resume",
+      },
+      "stopped",
+      "choose",
+      "send input",
+    );
+    await first.step("operator input");
+  } finally {
+    await first.close();
+  }
+
+  const reopenedSession = await store.resumeSession("recovery-release-session");
+  const reopened = await startConversation({
+    role,
+    targetDir: target,
+    models,
+    model,
+    session: reopenedSession,
+  });
+  try {
+    expect(reopened.recoveryBlocked?.()).toBe(false);
+    const pending: PendingWake[] = [
+      {
+        runId: "wake-after-release",
+        kind: "paused",
+        firstAt: 1,
+        lastAt: 1,
+        count: 1,
+        handled: false,
+      },
+    ];
+    let turns = 0;
+    const pump = new WakePump({
+      listPending: () => pending.filter((wake) => !wake.handled),
+      markHandled: () => {
+        pending[0]!.handled = true;
+      },
+      recoveryBlocked: () => reopened.recoveryBlocked?.() ?? false,
+      turnActive: () => false,
+      runTurn: async () => {
+        turns += 1;
+      },
+    });
+    await pump.startupScan();
+    expect(turns).toBe(1);
+    expect(pending[0]!.handled).toBe(true);
+  } finally {
+    await reopened.close();
+    await store.close();
+    fs.rmSync(target, { recursive: true, force: true });
+  }
+});
+
+test("durable recovery remains blocked across reconnect until operator input", async () => {
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-recovery-blocked-"));
+  const { faux, models, model, role } = harnessFixture();
+  faux.setResponses([fauxAssistantMessage("seed")]);
+  const store = new ProjectStore(target);
+  const session = await store.openOrCreateSession("recovery-blocked-session");
+  const first = await startConversation({ role, targetDir: target, models, model, session });
+  await first.step("seed");
+  await first.blockContinuation?.(
+    {
+      version: 1,
+      state: "WIP",
+      artifact: { type: CONTINUATION_CHECKPOINT_TYPE, id: "recovery-blocked-session:continuation" },
+      work: "work",
+      reason: "interrupted",
+      next: "resume",
+    },
+    "stopped",
+    "choose",
+    "send input",
+  );
+  await first.close();
+  await store.close();
+
+  const reopenedStore = new ProjectStore(target);
+  const reopenedSession = await reopenedStore.resumeSession("recovery-blocked-session");
+  const reopened = await startConversation({
+    role,
+    targetDir: target,
+    models,
+    model,
+    session: reopenedSession,
+  });
+  try {
+    expect(reopened.recoveryBlocked?.()).toBe(true);
+    const pending: PendingWake[] = [
+      {
+        runId: "wake-while-blocked",
+        kind: "paused",
+        firstAt: 1,
+        lastAt: 1,
+        count: 1,
+        handled: false,
+      },
+    ];
+    let turns = 0;
+    const pump = new WakePump({
+      listPending: () => pending.filter((wake) => !wake.handled),
+      markHandled: () => {
+        pending[0]!.handled = true;
+      },
+      recoveryBlocked: () => reopened.recoveryBlocked?.() ?? false,
+      turnActive: () => false,
+      runTurn: async () => {
+        turns += 1;
+      },
+    });
+    // A blocked startup intentionally leaves the pump idle without resolving
+    // startupScan; one microtask observes the guard without introducing a race.
+    pump.notifyChange();
+    await Promise.resolve();
+    expect(turns).toBe(0);
+    expect(pending[0]!.handled).toBe(false);
+  } finally {
+    await reopened.close();
+    await reopenedStore.close();
+    fs.rmSync(target, { recursive: true, force: true });
+  }
+});
+
+test("an unblocked conversation wake drains normally", async () => {
+  const { models, model, role } = harnessFixture();
+  const session = await new MemorySessionRepo().create({}, BACKGROUND_CONTEXT);
+  const conversation = await startConversation({ role, targetDir, models, model, session });
+  try {
+    expect(conversation.recoveryBlocked?.()).toBe(false);
+    const pending: PendingWake[] = [
+      { runId: "wake-normal", kind: "paused", firstAt: 1, lastAt: 1, count: 1, handled: false },
+    ];
+    let turns = 0;
+    const pump = new WakePump({
+      listPending: () => pending.filter((wake) => !wake.handled),
+      markHandled: () => {
+        pending[0]!.handled = true;
+      },
+      recoveryBlocked: () => conversation.recoveryBlocked?.() ?? false,
+      turnActive: () => false,
+      runTurn: async () => {
+        turns += 1;
+      },
+    });
+    await pump.startupScan();
+    expect(turns).toBe(1);
+    expect(pending[0]!.handled).toBe(true);
+  } finally {
+    await conversation.close();
+  }
+});
+
+test("continuation UTF-8 truncation keeps emoji valid and byte-bounded", () => {
+  const bounded = truncateContinuationUtf8("🧭".repeat(900), 64);
+  expect(bounded.truncated).toBe(true);
+  expect(Buffer.byteLength(bounded.value, "utf8")).toBeLessThanOrEqual(64);
+  expect(bounded.value).toContain("[truncated]");
+  expect(() => JSON.stringify({ next: bounded.value })).not.toThrow();
+});
+
+test("a completed conversation turn does not create a continuation checkpoint", async () => {
+  const durableTarget = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-continuation-complete-")),
+  );
+  const { faux, models, model, role } = harnessFixture();
+  faux.setResponses([fauxAssistantMessage("completed reply")]);
+  const status = { status: "completed work", next: "nothing" };
+  const conversation = await startConversation({
+    role,
+    targetDir: durableTarget,
+    models,
+    model,
+    runId: "completed-session",
+    continuationStatus: status,
+  });
+  try {
+    await conversation.step("finish it");
+    await conversation.close();
+    const store = new ProjectStore(durableTarget);
+    const session = await store.resumeSession("completed-session");
+    const entries = await session.findEntries({ type: "custom", order: "asc" }, BACKGROUND_CONTEXT);
+    expect(
+      entries.some(
+        (entry) => entry.type === "custom" && entry.customType === CONTINUATION_CHECKPOINT_TYPE,
+      ),
+    ).toBe(false);
+    await session.close(BACKGROUND_CONTEXT);
+    await store.close();
+  } finally {
+    await conversation.close();
+    fs.rmSync(durableTarget, { recursive: true, force: true });
   }
 });
 

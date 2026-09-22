@@ -5,6 +5,7 @@ import type {
   AgentLane,
   Context,
   ExecutionToolContext,
+  JsonValue,
   Session,
 } from "@earendil-works/pi-agent-core";
 import { AgentHarness, BACKGROUND_CONTEXT, getOrThrow } from "@earendil-works/pi-agent-core";
@@ -70,6 +71,56 @@ import { SessionLimitController } from "../session-limits";
  * dotenv under `targetDir`. `targetDir` is the tools' starting directory, not a
  * sandbox.
  */
+export interface DurableContinuationStatus {
+  status?: string;
+  next?: string;
+}
+
+export interface DurableContinuationCheckpoint {
+  version: 1;
+  state: "WIP";
+  artifact: { type: typeof CONTINUATION_CHECKPOINT_TYPE; id: string };
+  work: string;
+  reason: string;
+  next: string;
+  truncated?: true;
+}
+
+export interface DurableBlockedRecovery {
+  version: 1;
+  state: "blocked";
+  artifact: { type: typeof BLOCKED_RECOVERY_TYPE; id: string };
+  evidence: string;
+  decision: { question: string; action: string };
+  work: string;
+  consumed?: true;
+  truncated?: true;
+}
+
+export const CONTINUATION_CHECKPOINT_TYPE = "console_continuation_checkpoint";
+export const BLOCKED_RECOVERY_TYPE = "console_blocked_recovery";
+const CONTINUATION_CHECKPOINT_MAX_BYTES = 2_048;
+const CONTINUATION_PREAMBLE_MAX_CHARS = 600;
+
+export function truncateContinuationUtf8(
+  value: string,
+  maxBytes: number,
+): {
+  value: string;
+  truncated: boolean;
+} {
+  if (Buffer.byteLength(value, "utf8") <= maxBytes) return { value, truncated: false };
+  const marker = "… [truncated]";
+  const markerBytes = Buffer.byteLength(marker, "utf8");
+  if (maxBytes < markerBytes) return { value: ".".repeat(maxBytes), truncated: true };
+  const room = maxBytes - markerBytes;
+  let end = Math.min(value.length, room);
+  while (end > 0 && Buffer.byteLength(value.slice(0, end), "utf8") > room) end--;
+  while (end > 0 && value.charCodeAt(end - 1) >= 0xd800 && value.charCodeAt(end - 1) <= 0xdbff)
+    end--;
+  return { value: `${value.slice(0, end)}${marker}`.slice(0, maxBytes), truncated: true };
+}
+
 export interface ConversationConfig {
   role: Role;
   /** REQUIRED agent working directory; tools + ledger operate here, not in the harness cwd. */
@@ -136,6 +187,8 @@ export interface ConversationConfig {
   toolActivity?: Partial<ToolActivityConfig>;
   /** Optional headless source of content-free background lifecycle notices. */
   subscribeBackgroundRuns?: (consumer: BackgroundRunNoticeConsumer) => () => void;
+  /** Mutable status reported by the foreground orchestrator's report_status tool. */
+  continuationStatus?: DurableContinuationStatus;
 }
 
 /** A tool invocation observed during a single turn: names only, never args or content. */
@@ -228,7 +281,7 @@ export class SessionNotAcquiredError extends Error {
 
 export class TurnInterruptedError extends Error {
   readonly code = "interrupted" as const;
-  constructor() {
+  constructor(readonly checkpoint?: DurableContinuationCheckpoint) {
     super("interrupted");
     this.name = "TurnInterruptedError";
   }
@@ -251,6 +304,13 @@ export interface ConversationSession {
   close(): Promise<void>;
   /** Abort only the currently active turn; the session remains usable afterwards. */
   interrupt?(): Promise<boolean>;
+  /** Persist the operator decision required after bounded continuation makes no progress. */
+  blockContinuation?(
+    checkpoint: DurableContinuationCheckpoint,
+    evidence: string,
+    question: string,
+    action: string,
+  ): Promise<DurableBlockedRecovery>;
   /** Optional for compatibility with external ConversationSession implementations. */
   subscribeToolActivity?(
     consumer: ToolActivityConsumer,
@@ -259,6 +319,8 @@ export interface ConversationSession {
   toolActivitySnapshot?(): ToolActivitySnapshot;
   /** Optional content-free pipeline notices; subscribing never starts a model turn. */
   subscribeBackgroundRuns?(consumer: BackgroundRunNoticeConsumer): () => void;
+  /** True while durable interrupted/blocked recovery awaits the next operator input. */
+  recoveryBlocked?(): boolean;
   /** Settled turns initiated by the wake pump, for the owning interactive front. */
   subscribeWakeTurns?(
     consumer: (
@@ -364,6 +426,24 @@ export async function startConversation(config: ConversationConfig): Promise<Con
   const acquiredSession = config.session ?? (await store?.openOrCreateSession(runId, context));
   if (acquiredSession === undefined) throw new SessionNotAcquiredError(runId);
   const session: Session = acquiredSession;
+  // Recovery is durable: reconnects inherit the same gate until an operator
+  // input starts. Only the newest recovery record is authoritative; the
+  // continuation hook appends a consumed marker when that input is applied.
+  const recoveryEntries = await session.findEntries({ type: "custom", order: "desc" }, context);
+  const latestRecovery = recoveryEntries.find(
+    (entry) =>
+      entry.type === "custom" &&
+      (entry.customType === CONTINUATION_CHECKPOINT_TYPE ||
+        entry.customType === BLOCKED_RECOVERY_TYPE),
+  );
+  let recoveryBlocked =
+    latestRecovery?.type === "custom" &&
+    ((latestRecovery.customType === BLOCKED_RECOVERY_TYPE &&
+      (latestRecovery.data as { consumed?: unknown } | undefined)?.consumed !== true) ||
+      (latestRecovery.customType === CONTINUATION_CHECKPOINT_TYPE &&
+        (latestRecovery.data as { state?: unknown; consumed?: unknown } | undefined)?.state ===
+          "WIP" &&
+        (latestRecovery.data as { consumed?: unknown } | undefined)?.consumed !== true));
 
   const base = toHarnessOptions(config.role, {
     session,
@@ -418,6 +498,154 @@ export async function startConversation(config: ConversationConfig): Promise<Con
   }
 
   const lane: AgentLane = await harness.lane(config.laneName ?? "main", context);
+  const continuationStatus = config.continuationStatus;
+  const continuationBranch = config.laneName ?? "main";
+  const appendContinuationCheckpoint = async (
+    data: JsonValue,
+    type:
+      | typeof CONTINUATION_CHECKPOINT_TYPE
+      | typeof BLOCKED_RECOVERY_TYPE = CONTINUATION_CHECKPOINT_TYPE,
+  ): Promise<void> => {
+    // Every field is bounded before serialization. This is deliberately not a
+    // byte-count-and-drop guard: dropping the record would turn valid Unicode
+    // progress into a lost task.
+    const encoded = JSON.stringify(data);
+    if (Buffer.byteLength(encoded, "utf8") > CONTINUATION_CHECKPOINT_MAX_BYTES) {
+      throw new Error("continuation checkpoint exceeded its byte bound after truncation");
+    }
+    const branch = await session.branch(continuationBranch, context);
+    if (branch === undefined) {
+      throw new Error(
+        `cannot persist continuation checkpoint: lane ${continuationBranch} does not exist`,
+      );
+    }
+    await branch.appendCustomEntry(type, data, context);
+  };
+  const consumeBlockedRecovery = async (): Promise<void> => {
+    if (!recoveryBlocked) return;
+    // The release is a journal transition, not a second in-memory/durable flag:
+    // a fresh start sees this newest BLOCKED_RECOVERY_TYPE record and reopens
+    // only because it is explicitly marked consumed.
+    await appendContinuationCheckpoint(
+      {
+        version: 1,
+        state: "blocked",
+        artifact: { type: BLOCKED_RECOVERY_TYPE, id: `${runId}:continuation-released` },
+        evidence: "operator input received",
+        decision: { question: "", action: "" },
+        work: "operator recovery released",
+        consumed: true,
+      } as unknown as JsonValue,
+      BLOCKED_RECOVERY_TYPE,
+    );
+    recoveryBlocked = false;
+  };
+
+  const checkpoint = async (reason: string): Promise<DurableContinuationCheckpoint> => {
+    const rawWork =
+      continuationStatus?.status ?? "the foreground console turn (no status was reported)";
+    const rawNext = continuationStatus?.next ?? "continue from the durable checkpoint";
+    const work = truncateContinuationUtf8(rawWork, 512);
+    const next = truncateContinuationUtf8(rawNext, 512);
+    const boundedReason = truncateContinuationUtf8(reason, 384);
+    const checkpointId = `${runId}:continuation`;
+    const record: DurableContinuationCheckpoint = {
+      version: 1,
+      state: "WIP",
+      artifact: { type: CONTINUATION_CHECKPOINT_TYPE, id: checkpointId },
+      work: work.value,
+      reason: boundedReason.value,
+      next: next.value,
+      ...((work.truncated || next.truncated || boundedReason.truncated) && { truncated: true }),
+    };
+    // The fixed metadata plus the three bounded fields fits today, but retain a
+    // truthful minimal record if a future serializer adds overhead.
+    if (Buffer.byteLength(JSON.stringify(record), "utf8") > CONTINUATION_CHECKPOINT_MAX_BYTES) {
+      record.version = 1;
+      record.work = "foreground console turn";
+      record.reason = "turn interrupted";
+      record.next = "continue from durable checkpoint [truncated]";
+      record.truncated = true;
+    }
+    await appendContinuationCheckpoint(record as unknown as JsonValue);
+    recoveryBlocked = true;
+    return record;
+  };
+  const blockContinuation = async (
+    preserved: DurableContinuationCheckpoint,
+    evidence: string,
+    question: string,
+    action: string,
+  ): Promise<DurableBlockedRecovery> => {
+    const boundedEvidence = truncateContinuationUtf8(evidence, 512);
+    const boundedQuestion = truncateContinuationUtf8(question, 512);
+    const boundedAction = truncateContinuationUtf8(action, 512);
+    const boundedWork = truncateContinuationUtf8(preserved.work, 256);
+    const record: DurableBlockedRecovery = {
+      version: 1,
+      state: "blocked",
+      artifact: { type: BLOCKED_RECOVERY_TYPE, id: `${runId}:continuation-blocked` },
+      evidence: boundedEvidence.value,
+      decision: { question: boundedQuestion.value, action: boundedAction.value },
+      work: boundedWork.value,
+      ...((boundedEvidence.truncated ||
+        boundedQuestion.truncated ||
+        boundedAction.truncated ||
+        boundedWork.truncated) && { truncated: true }),
+    };
+    if (Buffer.byteLength(JSON.stringify(record), "utf8") > CONTINUATION_CHECKPOINT_MAX_BYTES) {
+      record.evidence = "automatic continuation exhausted without progress";
+      record.decision = {
+        question: "Should the operator retry the preserved work or provide a new direction?",
+        action: "answer this question, then send the next prompt",
+      };
+      record.work = "foreground console turn";
+      record.truncated = true;
+    }
+    await appendContinuationCheckpoint(record as unknown as JsonValue, BLOCKED_RECOVERY_TYPE);
+    recoveryBlocked = true;
+    return record;
+  };
+  const offContinuationHook = harness.hooks.on(
+    "transform_context",
+    async (event) => {
+      const entries = await session.findEntries({ type: "custom", order: "desc" }, context);
+      const entry = entries.find(
+        (candidate) =>
+          candidate.type === "custom" && candidate.customType === CONTINUATION_CHECKPOINT_TYPE,
+      );
+      if (entry === undefined || entry.type !== "custom" || entry.data === undefined)
+        return undefined;
+      const data = entry.data as {
+        state?: unknown;
+        work?: unknown;
+        reason?: unknown;
+        next?: unknown;
+        consumed?: boolean;
+      };
+      if (data.state !== undefined && data.state !== "WIP") return undefined;
+      if (data.consumed === true) return undefined;
+      const work = typeof data.work === "string" ? data.work : "the foreground console turn";
+      const reason = typeof data.reason === "string" ? data.reason : "the turn was interrupted";
+      const next = typeof data.next === "string" ? data.next : "send the next prompt to resume";
+      await appendContinuationCheckpoint({ consumed: true });
+      return {
+        messages: [
+          {
+            role: "user",
+            content:
+              `[Continuation preserved] Work: ${work}. Stopped because: ${reason}. Next: ${next}.`.slice(
+                0,
+                CONTINUATION_PREAMBLE_MAX_CHARS,
+              ),
+            timestamp: Date.now(),
+          },
+          ...event.messages,
+        ],
+      };
+    },
+    { id: "ad-coder-continuation" },
+  );
 
   const role = config.role;
   const ownsActivityChannel = config.activityChannel === undefined;
@@ -528,7 +756,16 @@ export async function startConversation(config: ConversationConfig): Promise<Con
       throw refusedTurn("lane_stopping");
     }
     controller.assertActive();
+    // This is the release edge for the durable recovery gate: the operator's
+    // next input, not a background wake, owns recovery. Persist it before
+    // clearing memory so a reconnect cannot resurrect the old block.
     stepping = true;
+    try {
+      await consumeBlockedRecovery();
+    } catch (error) {
+      stepping = false;
+      throw error;
+    }
     interrupted = false;
     abortRequested = false;
     activeSettled = new Promise<void>((resolve) => {
@@ -623,13 +860,19 @@ export async function startConversation(config: ConversationConfig): Promise<Con
       const interruption = new Promise<never>((_resolve, reject) => {
         interruptActive = () => reject(new TurnInterruptedError());
       });
-      const prompted = await Promise.race([providerPrompt, interruption]).catch((error) => {
-        if (interrupted) throw new TurnInterruptedError();
+      const prompted = await Promise.race([providerPrompt, interruption]).catch(async (error) => {
+        if (interrupted) {
+          const preserved = await checkpoint("Escape/Ctrl-C interrupted the provider turn");
+          throw new TurnInterruptedError(preserved);
+        }
         config.costAnomalyDetector?.assertNoBoundaryFailure();
         controller.assertNoBoundaryFailure();
         throw error;
       });
-      if (interrupted) throw new TurnInterruptedError();
+      if (interrupted) {
+        const preserved = await checkpoint("Escape/Ctrl-C interrupted the provider turn");
+        throw new TurnInterruptedError(preserved);
+      }
       config.costAnomalyDetector?.assertNoBoundaryFailure();
       controller.assertNoBoundaryFailure();
       const result = getOrThrow(prompted);
@@ -777,7 +1020,7 @@ export async function startConversation(config: ConversationConfig): Promise<Con
         if (stepping) {
           const settled = activeSettled;
           const activity = activeActivityCleanup;
-          requestAbort();
+          void requestAbort();
           activity?.cancelActive();
           if (settled !== undefined && activityChannel.config.closeDrainMs > 0) {
             await Promise.race([
@@ -800,6 +1043,7 @@ export async function startConversation(config: ConversationConfig): Promise<Con
           ]);
         }
       } finally {
+        offContinuationHook();
         activeActivityCleanup?.();
         activeActivityCleanup = undefined;
         if (ownsActivityChannel) await activityChannel.close();
@@ -816,6 +1060,7 @@ export async function startConversation(config: ConversationConfig): Promise<Con
 
   return {
     step,
+    blockContinuation,
     interrupt: async () => {
       if (!stepping) return false;
       interrupted = true;
@@ -830,6 +1075,7 @@ export async function startConversation(config: ConversationConfig): Promise<Con
     ...(config.subscribeBackgroundRuns !== undefined && {
       subscribeBackgroundRuns: config.subscribeBackgroundRuns,
     }),
+    recoveryBlocked: () => recoveryBlocked,
     runId,
     ledgerPath,
     whenSettled: () => activeSettled ?? Promise.resolve(),

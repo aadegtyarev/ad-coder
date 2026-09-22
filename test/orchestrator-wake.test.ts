@@ -371,6 +371,86 @@ test("(f) a wake during an active turn stays durably coalesced and drains on the
   await manager.close();
 });
 
+test("an interrupted recovery block keeps pending wakes durable until operator input", async () => {
+  let recoveryBlocked = true;
+  let turns = 0;
+  const pending = [
+    { runId: "run-574", kind: "paused" as const, firstAt: 1, lastAt: 1, count: 1, handled: false },
+  ];
+  const pump = new WakePump({
+    listPending: () => (pending[0]?.handled ? [] : pending),
+    markHandled: () => {
+      pending[0]!.handled = true;
+    },
+    turnActive: () => false,
+    recoveryBlocked: () => recoveryBlocked,
+    runTurn: async () => {
+      turns += 1;
+    },
+  });
+
+  pump.notifyChange();
+  await settle();
+  expect(turns).toBe(0);
+  expect(pending[0]!.handled).toBe(false);
+
+  // The next operator input releases the durable recovery condition.
+  recoveryBlocked = false;
+  pump.onTurnSettled();
+  await settle();
+  expect(turns).toBe(1);
+  expect(pending[0]!.handled).toBe(true);
+  await settle();
+  expect(turns).toBe(1);
+});
+
+test("wakes arriving after recovery release retain normal behavior", async () => {
+  let recoveryBlocked = true;
+  let turns = 0;
+  let pending: {
+    runId: string;
+    kind: "paused";
+    firstAt: number;
+    lastAt: number;
+    count: number;
+    handled: boolean;
+  }[] = [];
+  const pump = new WakePump({
+    listPending: () => pending.filter((wake) => !wake.handled),
+    markHandled: (_runId, wakes) => {
+      for (const wake of wakes) wake.handled = true;
+    },
+    turnActive: () => false,
+    recoveryBlocked: () => recoveryBlocked,
+    runTurn: async () => {
+      turns += 1;
+    },
+  });
+
+  pending = [
+    { runId: "run-574-after", kind: "paused", firstAt: 2, lastAt: 2, count: 1, handled: false },
+  ];
+  pump.notifyChange();
+  await settle();
+  expect(turns).toBe(0);
+
+  recoveryBlocked = false;
+  pump.onTurnSettled();
+  await settle();
+  expect(turns).toBe(1);
+  pending.push({
+    runId: "run-574-new",
+    kind: "paused",
+    firstAt: 3,
+    lastAt: 3,
+    count: 1,
+    handled: false,
+  });
+  pump.notifyChange();
+  await settle();
+  expect(turns).toBe(2);
+});
+
 test("(g) a racing runTurn failure is contained: one bounded stderr line, no hot loop, still drained", async () => {
   const targetDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-wake-g-")));
   const ownerId = crypto.randomUUID();
