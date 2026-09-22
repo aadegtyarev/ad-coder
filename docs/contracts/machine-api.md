@@ -28,6 +28,10 @@ It is the JSON projection of headless operations and TUI controls.
   changes the selected profile for subsequent dispatch through the standard
   precedence rules, reports the effective routing and declared price view, and
   never exposes credentials or provider response bodies.
+- `orchestrator.models` returns the active profile's reachable models, their
+  assigned roles, declared prices, and numbered selection view. Its select and
+  reset actions make or clear an orchestrator-only session override. They never
+  mutate the profile or silently reroute another role.
 - Deprecated public operation modes and `--json` fail with a typed migration
   error that names their `tui` or `api` replacement. Internal headless
   primitives remain implementation details, not CLI compatibility promises.
@@ -36,7 +40,8 @@ It is the JSON projection of headless operations and TUI controls.
 
 Test one-JSON-result output and stderr separation; parity for every TUI action;
 orchestrator conversation and recovery; profile selection and route visibility;
-and typed refusals for legacy modes and `--json`.
+model listing, override, and reset; and typed refusals for legacy modes and
+`--json`.
 
 ## Related surfaces
 

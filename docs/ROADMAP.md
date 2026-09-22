@@ -251,8 +251,10 @@ workflows — one substrate, swappable drivers.
   two JSON conventions. `api` mirrors TUI controls exactly, including shared
   orchestrator conversation, role/agent/workflow dispatch, skills, ceilings, run
   control, and profile list/show/select. Profile selection changes the
-  orchestrator route as part of the visible profile map. The headless workflow
-  primitives remain the implementation substrate behind both fronts.
+  orchestrator route as part of the visible profile map; a session-level `/model`
+  control can select another profile-reachable model for the orchestrator alone.
+  The headless workflow primitives remain the implementation substrate behind
+  both fronts.
 
 - **REQUIREMENT — background agent dispatch.** A TUI operator and the
   orchestrator can launch built-in, prompt-defined custom, or ad-hoc agents

@@ -40,6 +40,10 @@ This contract owns the operator-authored model route and credentials vocabulary.
   resulting role map and declared prices. A front cannot change only the
   orchestrator model outside profile selection or an already-defined explicit
   route override.
+- A session may select a reachable profile model as an explicit
+  orchestrator-only override. It is visible with its source and can be reset to
+  the profile route; it does not mutate `models.yaml` or change another role's
+  route.
 
 ## Configuration
 

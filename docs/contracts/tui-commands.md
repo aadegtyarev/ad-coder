@@ -24,11 +24,15 @@ This contract owns commands available to an operator in `ad-coder tui`.
   effective source without credentials or provider payloads. `/profiles` lists
   selectable profiles with syntax and example; `/profiles select <name>` changes
   the active session profile through the shared routing resolver.
-- `/orchestrator <message>` submits a message to the shared orchestrator; its
-  status and interruption controls expose the same durable task state as the
-  machine interface. The selected profile includes the orchestrator route, so an
-  operator can change the orchestrator's model by selecting a profile rather
-  than by editing an opaque front-local setting.
+- Ordinary submitted input is a message to the shared orchestrator. Its status
+  and interruption controls expose the same durable task state as the machine
+  interface; a slash command is never required to begin that conversation.
+- `/model` lists every model reachable through the active profile, with its
+  number, assigned roles, declared price, and the current orchestrator choice.
+  `/model <number>` makes that reachable model an explicit orchestrator-only
+  override for the active session. It does not rewrite the profile or alter
+  other role routes; an invalid number refuses before dispatch. A documented
+  reset restores the profile's orchestrator route.
 - A command with no required argument is local contextual help: it lists valid
   choices, syntax, and an example. It creates no provider call, orchestration
   request, run, wake, or event for the orchestrator.
@@ -41,7 +45,7 @@ This contract owns commands available to an operator in `ad-coder tui`.
 Test TUI/machine command parity, every no-argument help path, local-only help
 evidence, role/agent/workflow launch, skill selection durability, ceiling
 validation, orchestrator messaging, profile switching, and credential-free
-profile rendering.
+profile rendering; test model listing, override, and reset.
 
 ## Related surfaces
 
