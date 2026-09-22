@@ -4,8 +4,28 @@ import { type Context, err, FileError, ok, type Result } from "@earendil-works/p
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/harness/env/nodejs";
 import { ProjectStoreError } from "./types";
 
+interface OrderedAppend {
+  readonly content: string | Uint8Array;
+  readonly lastSequence: number;
+  readonly settle: (result: Result<void, FileError>) => void;
+}
+
+interface OrderedAppendState {
+  nextSequence: number;
+  readonly pending: Map<number, OrderedAppend>;
+}
+
 /** FileSystem adapter used by JsonlSessionRepo. It confines every mutation and fixes modes. */
 export class ProjectStoreFileSystem extends NodeExecutionEnv {
+  /**
+   * pi-agent-core assigns transaction sequence numbers before its asynchronous
+   * persistence callbacks reach the filesystem.  Two callbacks can therefore
+   * arrive in the reverse order even though this process owns the session.
+   * Keep each journal's committed prefix monotonic; an interrupted later
+   * callback remains uncommitted instead of poisoning every future resume.
+   */
+  private readonly orderedAppends = new Map<string, OrderedAppendState>();
+
   constructor(
     readonly storeRoot: string,
     private readonly jsonlRecordLimit = 0,
@@ -65,7 +85,45 @@ export class ProjectStoreFileSystem extends NodeExecutionEnv {
     const resolved = this.assertMutation(candidate);
     this.assertSafeExistingFile(resolved);
     this.assertJsonlRecords(content, resolved);
+    const sequence = this.transactionSequence(content);
+    if (sequence !== undefined) return await this.appendTransaction(resolved, content, sequence);
     return this.writeSecureFile(resolved, content, true);
+  }
+
+  /**
+   * Restore a complete journal whose transactions were durably appended out of
+   * sequence by an older runtime. Every record must parse as one contiguous
+   * transaction before anything is rewritten, so this reorders bytes without
+   * discarding an ambiguous or partial record.
+   */
+  repairOutOfOrderTransactions(candidate: string): boolean {
+    const resolved = this.assertMutation(candidate);
+    this.assertSafeExistingFile(resolved, true);
+    const lines = new TextDecoder().decode(this.readSafeFile(resolved)).trimEnd().split("\n");
+    const header = lines.shift();
+    if (header === undefined) return false;
+    const transactions = lines.map((line) => ({ line, sequence: this.transactionSequence(line) }));
+    const complete = transactions.filter(
+      (transaction): transaction is { line: string; sequence: { first: number; last: number } } =>
+        transaction.sequence !== undefined,
+    );
+    if (complete.length !== transactions.length) return false;
+    const ordered = [...complete].sort((left, right) => left.sequence.first - right.sequence.first);
+    if (ordered.every(({ line }, index) => line === transactions[index]?.line)) return false;
+    let expected = ordered[0]?.sequence?.first;
+    if (expected === undefined) return false;
+    for (const { sequence } of ordered) {
+      if (sequence?.first !== expected) return false;
+      expected = sequence.last + 1;
+    }
+    const result = this.writeSecureFile(
+      resolved,
+      `${header}\n${ordered.map(({ line }) => line).join("\n")}\n`,
+      false,
+    );
+    if (!result.ok) throw result.error;
+    this.orderedAppends.set(resolved, { nextSequence: expected, pending: new Map() });
+    return true;
   }
 
   override async renameFile(source: string, destination: string, context: Context) {
@@ -202,6 +260,93 @@ export class ProjectStoreFileSystem extends NodeExecutionEnv {
         );
       }
     }
+  }
+
+  private transactionSequence(
+    content: string | Uint8Array,
+  ): { first: number; last: number } | undefined {
+    try {
+      const parsed = JSON.parse(
+        typeof content === "string" ? content : new TextDecoder().decode(content),
+      );
+      const writes = Array.isArray(parsed) ? parsed : [parsed];
+      if (writes.length === 0) return undefined;
+      const sequences = writes.map((write) =>
+        typeof write === "object" && write !== null ? (write as { seq?: unknown }).seq : undefined,
+      );
+      if (
+        !sequences.every((sequence) => Number.isSafeInteger(sequence) && (sequence as number) >= 0)
+      )
+        return undefined;
+      const first = sequences[0] as number;
+      const last = sequences.at(-1) as number;
+      if (!sequences.every((sequence, index) => sequence === first + index)) return undefined;
+      return { first, last };
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async appendTransaction(
+    candidate: string,
+    content: string | Uint8Array,
+    sequence: { first: number; last: number },
+  ): Promise<Result<void, FileError>> {
+    const state = this.orderedAppends.get(candidate) ?? {
+      nextSequence: (this.lastCommittedSequence(candidate) ?? 0) + 1,
+      pending: new Map<number, OrderedAppend>(),
+    };
+    this.orderedAppends.set(candidate, state);
+    if (sequence.first < state.nextSequence)
+      return err(
+        new FileError(
+          "unknown",
+          `session journal transaction sequence ${sequence.first} was already committed`,
+          candidate,
+        ),
+      );
+    if (state.pending.has(sequence.first))
+      return err(
+        new FileError(
+          "unknown",
+          `session journal transaction sequence ${sequence.first} is already pending`,
+          candidate,
+        ),
+      );
+    return await new Promise<Result<void, FileError>>((settle) => {
+      state.pending.set(sequence.first, { content, lastSequence: sequence.last, settle });
+      this.flushTransactions(candidate, state);
+    });
+  }
+
+  private flushTransactions(candidate: string, state: OrderedAppendState): void {
+    for (;;) {
+      const pending = state.pending.get(state.nextSequence);
+      if (pending === undefined) return;
+      state.pending.delete(state.nextSequence);
+      const result = this.writeSecureFile(candidate, pending.content, true);
+      if (!result.ok) {
+        pending.settle(result);
+        return;
+      }
+      state.nextSequence = pending.lastSequence + 1;
+      pending.settle(result);
+    }
+  }
+
+  private lastCommittedSequence(candidate: string): number | undefined {
+    try {
+      const lines = new TextDecoder().decode(this.readSafeFile(candidate)).trimEnd().split("\n");
+      for (let index = lines.length - 1; index >= 0; index -= 1) {
+        const line = lines[index];
+        if (line === undefined || line.length === 0) continue;
+        const sequence = this.transactionSequence(line);
+        if (sequence !== undefined) return sequence.last;
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    return undefined;
   }
 
   private readSafeFile(candidate: string): Uint8Array {

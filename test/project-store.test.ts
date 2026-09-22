@@ -486,6 +486,106 @@ describe("ProjectStore", () => {
     });
   });
 
+  test("commits concurrent session transactions in sequence order", async () => {
+    const store = new ProjectStore(target());
+    const journal = path.join(store.layout.sessions, "ordered.jsonl");
+    const later = store.fileSystem.appendFile(
+      journal,
+      `${JSON.stringify({ kind: "value", op: "set", seq: 3, namespace: "test", key: "later" })}\n`,
+      BACKGROUND_CONTEXT,
+    );
+    const first = store.fileSystem.appendFile(
+      journal,
+      `${JSON.stringify({ kind: "value", op: "set", seq: 1, namespace: "test", key: "first" })}\n`,
+      BACKGROUND_CONTEXT,
+    );
+    const second = store.fileSystem.appendFile(
+      journal,
+      `${JSON.stringify({ kind: "value", op: "set", seq: 2, namespace: "test", key: "second" })}\n`,
+      BACKGROUND_CONTEXT,
+    );
+    await expect(Promise.all([later, first, second])).resolves.toEqual([
+      { ok: true, value: undefined },
+      { ok: true, value: undefined },
+      { ok: true, value: undefined },
+    ]);
+    expect(
+      fs
+        .readFileSync(journal, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => (JSON.parse(line) as { seq: number }).seq),
+    ).toEqual([1, 2, 3]);
+  });
+
+  test("resumes a complete journal whose older appends arrived out of order", async () => {
+    const root = target();
+    const store = new ProjectStore(root);
+    const created = await store.createSession("reordered_session");
+    const branch = await created.createBranch("main", null, BACKGROUND_CONTEXT);
+    await branch.appendCustomEntry("test", { ready: true }, BACKGROUND_CONTEXT);
+    await created.close(BACKGROUND_CONTEXT);
+    const [metadata] = await store.listSessions();
+    if (metadata === undefined) throw new Error("missing session metadata");
+    const records = fs
+      .readFileSync(metadata.path, "utf8")
+      .trim()
+      .split("\n")
+      .slice(1)
+      .flatMap((line) => {
+        const parsed = JSON.parse(line);
+        return Array.isArray(parsed) ? parsed : [parsed];
+      }) as Array<{ seq: number }>;
+    const last = records.at(-1)?.seq;
+    if (last === undefined) throw new Error("missing session transaction");
+    fs.appendFileSync(
+      metadata.path,
+      `${JSON.stringify({ kind: "value", op: "set", seq: last + 2, namespace: "test", key: "later" })}\n${JSON.stringify({ kind: "value", op: "set", seq: last + 1, namespace: "test", key: "first" })}\n`,
+    );
+    const resumed = await new ProjectStore(root).resumeSession("reordered_session");
+    await resumed.close(BACKGROUND_CONTEXT);
+    const sequences = fs
+      .readFileSync(metadata.path, "utf8")
+      .trim()
+      .split("\n")
+      .slice(1)
+      .flatMap((line) => {
+        const parsed = JSON.parse(line);
+        return Array.isArray(parsed) ? parsed : [parsed];
+      })
+      .map(({ seq }: { seq: number }) => seq);
+    expect(sequences).toEqual([...sequences].sort((left, right) => left - right));
+  });
+
+  test("does not rewrite a journal with overlapping transactions", async () => {
+    const root = target();
+    const store = new ProjectStore(root);
+    const created = await store.createSession("ambiguous_session");
+    const branch = await created.createBranch("main", null, BACKGROUND_CONTEXT);
+    await branch.appendCustomEntry("test", { ready: true }, BACKGROUND_CONTEXT);
+    await created.close(BACKGROUND_CONTEXT);
+    const [metadata] = await store.listSessions();
+    if (metadata === undefined) throw new Error("missing session metadata");
+    const records = fs
+      .readFileSync(metadata.path, "utf8")
+      .trim()
+      .split("\n")
+      .slice(1)
+      .flatMap((line) => {
+        const parsed = JSON.parse(line);
+        return Array.isArray(parsed) ? parsed : [parsed];
+      }) as Array<{ seq: number }>;
+    const duplicate = records.at(-1)?.seq;
+    if (duplicate === undefined) throw new Error("missing session transaction");
+    fs.appendFileSync(
+      metadata.path,
+      `${JSON.stringify({ kind: "value", op: "set", seq: duplicate, namespace: "test", key: "duplicate" })}\n`,
+    );
+    const before = fs.readFileSync(metadata.path, "utf8");
+    expect(store.fileSystem.repairOutOfOrderTransactions(metadata.path)).toBe(false);
+    expect(fs.readFileSync(metadata.path, "utf8")).toBe(before);
+  });
+
   test("rejects a pre-planted runtime symlink", () => {
     const root = target();
     const outside = target();

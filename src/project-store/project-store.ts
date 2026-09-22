@@ -133,7 +133,7 @@ export class ProjectStore {
   ): Promise<Session<ProjectSessionMetadata>> {
     return this.withLockedSession(id, context, async () => {
       const metadata = await this.findSession(id, context);
-      return this.sessions.open(metadata, context);
+      return await this.openSessionWithOrderedRecovery(metadata, context);
     });
   }
 
@@ -171,13 +171,38 @@ export class ProjectStore {
         throw new ProjectStoreError("unsafe_object", id, `duplicate session metadata: ${id}`);
       if (matches[0] === undefined)
         return this.sessions.create({ id, cwd: this.layout.targetDir }, context);
-      return this.sessions.open(matches[0], context);
+      return await this.openSessionWithOrderedRecovery(matches[0], context);
     });
   }
 
   async close(context: Context = BACKGROUND_CONTEXT): Promise<void> {
     await this.sessions.close(context);
     await this.fileSystem.cleanup(context);
+  }
+
+  private async openSessionWithOrderedRecovery(
+    metadata: ProjectSessionMetadata,
+    context: Context,
+  ): Promise<Session<ProjectSessionMetadata>> {
+    try {
+      return await this.sessions.open(metadata, context);
+    } catch (error) {
+      if (
+        !this.hasOutOfOrderTransactionError(error) ||
+        !this.fileSystem.repairOutOfOrderTransactions(metadata.path)
+      )
+        throw error;
+      return await this.sessions.open(metadata, context);
+    }
+  }
+
+  private hasOutOfOrderTransactionError(error: unknown): boolean {
+    let current = error;
+    while (current instanceof Error) {
+      if (current.message.startsWith("Non-monotonic storage sequence:")) return true;
+      current = current.cause;
+    }
+    return false;
   }
 
   async copyAttachment(
