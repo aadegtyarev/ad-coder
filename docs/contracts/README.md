@@ -20,6 +20,7 @@
 - `provider-failures.md` — model generation failures; read when classifying provider errors.
 - `quality.md` — project quality gates; read when changing checks or review evidence.
 - `release.md` — release evidence and metadata; read before merging or publishing a release.
+- `review-evidence.md` — independent review proof; read when changing verdicts or merge stamps.
 - `role-tools.md` — role and tool wiring; read when changing a role's tool access.
 - `security.md` — security boundaries; read when changing trust or external effects.
 - `session-manager.md` — managed sessions; read when changing SessionManager behaviour.
