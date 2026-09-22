@@ -31,12 +31,15 @@ context budget cannot hold the full branch.
 ## Failures
 
 - A failed or over-cap summarizer attempt retries at most three times by default;
-  the retry limit is configurable. Provider, admission, and strategy failures do
-  not silently fall back to the active role model.
-- After retries are spent, or when automatic compaction is disabled, the role
-  returns typed `context_limit_reached` before another oversized turn. It names
-  `/compact` and `/clear` (and their machine equivalents) as the available
-  recovery; it does not drop history or continue with a truncated context.
+  the retry limit is configurable. After retries, fallback to the active role's
+  model is enabled by default. It uses the summarizer prompt, dialogue-only input,
+  tool policy, and output cap — only the model route changes.
+- A successful fallback writes durable `compaction_fallback_used` evidence with
+  source route, fallback route, attempt count, and cost attribution, and is
+  immediately visible to operator and orchestrator. A disabled or failed fallback,
+  or disabled automatic compaction, returns typed `context_limit_reached` before
+  another oversized turn. It names `/compact` and `/clear` (and their machine
+  equivalents) as recovery; it does not drop history or continue truncated.
 - `/compact` runs the selected strategy explicitly. `/clear` explicitly starts a
   new conversation context while retaining durable session identity, ledger, and
   prior context as inaccessible historical state. Both actions are resumable and
@@ -48,9 +51,9 @@ context budget cannot hold the full branch.
 ## Configuration
 
 - Automatic enablement, threshold, retained history, output cap, retry limit,
-  strategy, summarizer role configuration, and cross-provider authorization are
-  configurable. A selected strategy or summarizer is refused when its applicable
-  limits cannot be enforced.
+  fallback enablement, strategy, summarizer role configuration, and cross-provider
+  authorization are configurable. A selected strategy or summarizer is refused
+  when its applicable limits cannot be enforced.
 
 ## Related surfaces
 
