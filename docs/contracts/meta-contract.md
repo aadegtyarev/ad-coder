@@ -22,17 +22,20 @@ governs.
 
 ## Content
 
-A contract describes current required behaviour only:
+A contract describes ratified required behaviour. It may define the target before
+implementation; a later code audit records and resolves the resulting drift.
+It contains only:
 
 - normal results, boundaries, and failures;
 - inputs, outputs, and preserved invariants where the surface has them;
 - available configuration and observable verification where they apply.
 
-Every rule needs observable evidence: a test, check, safe output, or another
-way to establish that it holds. An unverifiable wish is not a contract rule.
+Every rule names observable acceptance evidence: a test, check, safe output, or
+another way to establish it. An unverifiable wish is not a contract rule.
 
 A contract is not an implementation description. Code that differs from the
-contract is defective; the contract is not rewritten to match it.
+ratified contract is implementation drift; it is not rewritten merely to match
+the code. A deliberate requirement change updates the contract first.
 
 ## Links between surfaces
 
