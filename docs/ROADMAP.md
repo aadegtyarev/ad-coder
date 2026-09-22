@@ -530,6 +530,16 @@ workflows — one substrate, swappable drivers.
   malformed-response failures are separate durable events. The operator and
   orchestrator receive the same safe provider diagnostic and recovery action, and
   route fallback policy selects which classes may move to another ladder rung.
+- **REQUIREMENT — accepted-result routing calibration.** Learn from comparable
+  role/complexity outcomes including review, retries, time, billing, allowance,
+  capacity, and failures. With sufficient bounded evidence, reorder only already
+  authorized `provider:model` ladder rungs to optimize the actual scarce resource;
+  make each change visible, reversible, and independent of explicit pins.
+- **REQUIREMENT — seamless model handoff.** All route changes retain the durable
+  provider-neutral pi-ai context, role frame, tool/skill grants, workflow state,
+  queue, budget, and ledger identity. Delegate target-format conversion to pi-ai;
+  ad-coder owns atomic handoff lifecycle, target-window compaction, visibility,
+  and rollback. A switch never recreates a session or discards work.
 - **REQUIREMENT — complete session summaries.** A ledger-derived session summary
   includes all role/model tokens and cost totals plus every durable abnormal or
   degraded event. It is available locally and, only when an associated PR and an

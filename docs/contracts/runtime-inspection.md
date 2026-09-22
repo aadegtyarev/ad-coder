@@ -16,6 +16,11 @@ identity/capability information.
   revision, enabled module and capability catalogue, and concise action help.
   It distinguishes declared price information from provider-reported cost and
   reports the effective configuration source without credentials.
+- Its route projection reports declared versus calibration-adjusted ladder order,
+  evidence confidence, the scarce-resource measure, and available rollback;
+  it never exposes private task or account data.
+- Session inspection exposes recent and pending context handoffs with source and
+  target route, reason, compaction/conversion outcome, and safe recovery action.
 - A selected session's projection reports quality-bootstrap state, profile
   identity, gate status, and the source of any approval or decline. It never
   reports raw configuration content or installation command arguments.

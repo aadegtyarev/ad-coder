@@ -29,6 +29,10 @@ This contract owns preservation and recovery of every durable ad-coder state.
   workflow phase, role attribution, and ledger continuity. It resumes runnable
   work or schedules its next wake without requiring an operator to reconstruct
   context or choose a lost transition.
+- A checkpoint records a settled or pending context-handoff state: prior and
+  target route, reason, conversion/compaction evidence, and whether a request
+  was in flight. Resume completes or safely rolls back that handoff exactly once;
+  it never starts a blank conversation or duplicates a model request.
 - Restart recovery reconciles each in-flight model, tool, subprocess, and
   external-effect action with its durable intent and witness. A proven completed
   action is not repeated. An ambiguous action pauses with typed evidence and a

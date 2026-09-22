@@ -56,6 +56,12 @@ resolved. It does not own model routing; see [routing configuration](routing-con
   and [product changes](product-change.md).
 - Review-stamp requirement, covered path/glob scope, and narrow version-metadata
   reuse paths are settings; see [review evidence](review-evidence.md).
+- Calibration evidence thresholds, aggregation/recency policy, adaptive
+  in-ladder ordering, safety bounds, and rollback are settings; see
+  [routing calibration](routing-calibration.md).
+- Route-handoff timing, target-window compaction/recovery policy, conversion
+  reporting, and fallback rollback are settings; see
+  [routing configuration](routing-config.md).
 - Execution mode, destructive-command guard, protected roots, and a selected
   sandbox or optional LLM-guard provider are settings; see
   [execution boundary](execution-boundary.md).

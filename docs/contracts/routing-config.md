@@ -34,6 +34,21 @@ This contract owns the operator-authored model route and credentials vocabulary.
   explicit pinned route never falls back; no usable rung returns a typed refusal
   with ladder and recovery evidence. A fallback is reported during the session
   and in its summary.
+- Every route change — operator selection, ladder fallback, or calibration — uses
+  one core context-handoff operation at a turn boundary. It keeps the role's
+  durable conversation, system prompt, tools, skills, queued input, budget,
+  ledger identity, and workflow state; it never recreates a session or asks the
+  operator to repeat work merely because provider:model changed.
+- Context handoff delegates provider/model message conversion to pi-ai's
+  provider-neutral `Context` and its target adapter. Before dispatch it evaluates
+  the target context window and invokes the configured compaction/recovery path
+  when needed. Conversion losses or repairs that pi-ai reports, target route,
+  reason, context/compaction result, and cost attribution are durable visible
+  handoff evidence for the operator and orchestrator.
+- An in-flight request settles or is classified before handoff; durable queued
+  input remains accepted throughout. A failed handoff leaves the prior route and
+  recoverable state intact with a typed recovery action, never a half-switched
+  session.
 - Every routing role has a measurable profile cell. A newly introduced role may
   temporarily use its prior route with a visible warning; an absent cell for an
   established role is an error. `defaultComplexity` is routing fallback, not a
@@ -70,7 +85,9 @@ flags. See [configuration](config.md) for precedence and worker inheritance.
 
 Validate a route before dispatch, print its resolved source and role mapping,
 and test both direct and detached-worker resolution after changing YAML parsing,
-credentials, aliases, or profile selection.
+credentials, aliases, or profile selection. Test same-provider and cross-provider
+handoff, tool/thinking conversion, smaller target window and compaction, queued
+input, in-flight settlement, observable conversion, and failed-handoff rollback.
 
 ## Related surfaces
 
@@ -78,3 +95,5 @@ credentials, aliases, or profile selection.
 - [Routing calibration](routing-calibration.md) owns persisted routing overrides.
 - [Cost anomaly](cost-anomaly.md) owns billed-price comparison.
 - [Agent dispatch](agent-dispatch.md) owns ad-hoc model-choice authority.
+- [Compaction](compaction.md) owns context reduction.
+- [Resumability](resumability.md) owns durable handoff recovery.
