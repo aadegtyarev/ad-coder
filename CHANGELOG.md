@@ -11,6 +11,11 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.180.0] - 2026-09-22
+
+### Added
+- **The meta-contract says how the project's contracts are written (issue #570).** `docs/contracts/meta-contract.md` states, in the operator-approved wording, that a contract is a complete description of the required behaviour of one thing, that rules are grouped by theme inside it and live in exactly one contract, and that a contract keeps no history: no narrative, no dates, no change index — the reviewer reads the branch diff. Bringing the existing contracts to this form is the audit that follows.
+
 ## [0.176.0] - 2026-09-21
 
 ### Fixed
