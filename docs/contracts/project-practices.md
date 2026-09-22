@@ -1,7 +1,7 @@
 # Project practices contract
 
 This contract owns optional, portable bundles of project practices, such as
-documentation, contracts, decomposition, and quality setup.
+documentation, contracts, decomposition, quality setup, and error handling.
 
 ## Guarantees
 
@@ -44,5 +44,6 @@ replacement, and core operation after every practice is disabled.
 - [Documentation](documentation.md) owns documentation quality.
 - [Decomposition](decomposition.md) owns structural code separation.
 - [Quality bootstrap](quality-bootstrap.md) owns quality-gate setup.
+- [Error behaviour](errors.md) owns actionable failure handling.
 - [Configuration](config.md) owns setting precedence.
 - [Extension modules](extension-modules.md) owns optional module boundaries.

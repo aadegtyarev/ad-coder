@@ -501,7 +501,8 @@ workflows — one substrate, swappable drivers.
   not freeform prose. Trust perimeters are contracts. ad-coder ships this as an
   opinionated default so users don't reinvent docs/ chaos.
 - **REQUIREMENT — portable project practices.** Documentation, contract writing,
-  decomposition, and quality setup ship as named versioned practice bundles.
+  decomposition, quality setup, and actionable error handling ship as named
+  versioned practice bundles.
   `bootstrap` and `init` propose a preview from project evidence; the operator
   selects individual practices. A bundle is removable or replaceable without
   overwriting edited project assets, and its guidance follows the project's
