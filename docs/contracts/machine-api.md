@@ -14,7 +14,7 @@ It is the JSON projection of headless operations and TUI controls.
   sessions; `skills` lists, loads, and unloads; `limits` shows and sets ceilings;
   `profiles` lists, shows, and selects profiles; and `runs` lists, inspects,
   gracefully cancels, or where eligible force-cancels a durable run. `sessions`
-  lists and selects accessible sessions. `settings`
+  lists, selects, and renames accessible sessions. `settings`
   lists groups, reads effective values, and changes a validated scoped setting.
   `sessions.inspect` projects session/ledger state and
   `harness.about` projects identity/version/capabilities; `quality` exposes

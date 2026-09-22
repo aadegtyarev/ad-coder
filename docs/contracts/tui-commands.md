@@ -22,7 +22,8 @@ This contract owns commands available to an operator in `ad-coder tui`.
 - `/sessions` lists accessible sessions with number, title, target, state, and
   syntax/example; `/sessions select <number>` selects one through the shared
   manager. It queues selection after any active turn and makes later ordinary
-  input target the selected session.
+  input target the selected session. Its documented rename action assigns a
+  manual display title through the shared manager.
 - `/runs` lists runs in the selected session with state, owner, route, progress,
   and syntax/example. `/runs cancel <id>` requests graceful run-scoped
   cancellation; a documented force form is offered only for eligible runs and

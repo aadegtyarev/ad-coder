@@ -544,6 +544,10 @@ workflows — one substrate, swappable drivers.
   gracefully cancel one durable run without blocking input or ending its session.
   Force cancellation is an explicit configured escalation over a proven owned
   process, with checkpointed WIP retained for recovery.
+- **REQUIREMENT — economical session titles.** Extract titles locally from the
+  first user message by default. Optional semantic generation uses the resolved
+  Summarizer role with its default cache-off policy, low admission priority, and
+  no ability to block session input or work.
 - **REQUIREMENT — complete session summaries.** A ledger-derived session summary
   includes all role/model tokens and cost totals plus every durable abnormal or
   degraded event. It is available locally and, only when an associated PR and an
