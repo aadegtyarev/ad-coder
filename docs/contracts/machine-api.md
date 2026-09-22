@@ -12,8 +12,9 @@ It is the JSON projection of headless operations and TUI controls.
   message and reports durable task state; `agents` lists and starts named,
   generic, and ad-hoc agents; `workflows` lists, starts, and drives workflow
   sessions; `skills` lists, loads, and unloads; `limits` shows and sets ceilings;
-  `profiles` lists, shows, and selects profiles; and `runs` reads or controls a
-  durable run. `sessions` lists and selects accessible sessions. `settings`
+  `profiles` lists, shows, and selects profiles; and `runs` lists, inspects,
+  gracefully cancels, or where eligible force-cancels a durable run. `sessions`
+  lists and selects accessible sessions. `settings`
   lists groups, reads effective values, and changes a validated scoped setting.
   `sessions.inspect` projects session/ledger state and
   `harness.about` projects identity/version/capabilities; `quality` exposes
@@ -72,3 +73,4 @@ model listing, override, and reset; and typed refusals for legacy modes and
 - [Settings interface](settings-interface.md) owns grouped settings actions.
 - [Compaction](compaction.md) owns explicit context recovery.
 - [Project practices](project-practices.md) owns portable guidance lifecycle.
+- [Run control](run-control.md) owns run cancellation.

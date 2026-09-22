@@ -11,6 +11,9 @@ background work.
 - Background work has the same durable lifecycle, ledger, provider admission,
   cancellation, wake, and terminal outcome as foreground work. Its progress is a
   projection, never a reason to consume or block the interactive input lane.
+- A dispatched run accepts the shared graceful or eligible force-cancel action.
+  Cancellation preserves its recoverable WIP and does not cancel its parent
+  session or sibling runs; [run control](run-control.md) owns the action details.
 - A role, ad-hoc agent, and workflow run checkpoint enough state to resume after
   orderly session exit or unexpected process loss under [resumability](resumability.md).
 - An ad-hoc agent accepts an explicit task prompt without first creating a named
@@ -52,3 +55,4 @@ handling.
 - [Wake delivery](wake-delivery.md) owns completion notification.
 - [Resumability](resumability.md) owns recovery guarantees.
 - [Parallel lanes](parallel-lanes.md) owns concurrent-lane admission.
+- [Run control](run-control.md) owns cancellation semantics.

@@ -23,6 +23,10 @@ This contract owns commands available to an operator in `ad-coder tui`.
   syntax/example; `/sessions select <number>` selects one through the shared
   manager. It queues selection after any active turn and makes later ordinary
   input target the selected session.
+- `/runs` lists runs in the selected session with state, owner, route, progress,
+  and syntax/example. `/runs cancel <id>` requests graceful run-scoped
+  cancellation; a documented force form is offered only for eligible runs and
+  shows its preserved-state and recovery consequences before mutation.
 - `/status` shows the selected session's bounded state and ledger projection;
   `/about` shows harness name, version, enabled capabilities, and concise help.
   Both are local read-only controls with matching machine API actions.
@@ -80,6 +84,8 @@ Test grouped settings discovery, scoped mutation, source rendering, and API pari
 Test automatic and manual compaction, clear, retry exhaustion, and API parity.
 Test practice discovery, no-write preview, selective enablement, modified-asset
 removal refusal, and API parity.
+Test run listing, graceful/force cancellation, preserved queue/WIP, recovery, and
+API/orchestrator parity.
 
 ## Related surfaces
 
@@ -93,3 +99,4 @@ removal refusal, and API parity.
 - [Settings interface](settings-interface.md) owns grouped settings controls.
 - [Compaction](compaction.md) owns compact and clear semantics.
 - [Project practices](project-practices.md) owns portable guidance lifecycle.
+- [Run control](run-control.md) owns run cancellation.

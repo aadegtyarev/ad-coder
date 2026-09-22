@@ -540,6 +540,10 @@ workflows — one substrate, swappable drivers.
   queue, budget, and ledger identity. Delegate target-format conversion to pi-ai;
   ad-coder owns atomic handoff lifecycle, target-window compaction, visibility,
   and rollback. A switch never recreates a session or discards work.
+- **REQUIREMENT — run-scoped cancellation.** TUI, API, and orchestrator can
+  gracefully cancel one durable run without blocking input or ending its session.
+  Force cancellation is an explicit configured escalation over a proven owned
+  process, with checkpointed WIP retained for recovery.
 - **REQUIREMENT — complete session summaries.** A ledger-derived session summary
   includes all role/model tokens and cost totals plus every durable abnormal or
   degraded event. It is available locally and, only when an associated PR and an
