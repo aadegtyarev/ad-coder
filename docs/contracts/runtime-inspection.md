@@ -14,6 +14,9 @@ identity/capability information.
   revision, enabled module and capability catalogue, and concise action help.
   It distinguishes declared price information from provider-reported cost and
   reports the effective configuration source without credentials.
+- A selected session's projection reports quality-bootstrap state, profile
+  identity, gate status, and the source of any approval or decline. It never
+  reports raw configuration content or installation command arguments.
 - `/status` projects the selected TUI session; `/about` projects harness identity
   and capabilities. `sessions.inspect` and `harness.about` return the identical
   structured information through the machine API. They are local, read-only, and
@@ -40,3 +43,4 @@ identity/version/capability output, read-only evidence, and secret redaction.
 - [Machine API](machine-api.md) owns JSON transport.
 - [TUI operator commands](tui-commands.md) owns TUI controls.
 - [Role and tool wiring](role-tools.md) owns orchestrator tool registration.
+- [Quality bootstrap](quality-bootstrap.md) owns quality-profile lifecycle.

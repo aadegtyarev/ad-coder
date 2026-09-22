@@ -27,6 +27,7 @@
 - `provider-admission.md` — provider capacity admission; read when changing model dispatch.
 - `provider-failures.md` — model generation failures; read when classifying provider errors.
 - `quality.md` — project quality gates; read when changing checks or review evidence.
+- `quality-bootstrap.md` — project gate setup; read before first code mutation in a new stack.
 - `release.md` — release evidence and metadata; read before merging or publishing a release.
 - `review-evidence.md` — independent review proof; read when changing verdicts or merge stamps.
 - `runtime-inspection.md` — session/ledger diagnostics; read when changing status, usage, or about.

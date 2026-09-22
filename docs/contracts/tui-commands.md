@@ -32,6 +32,10 @@ This contract owns commands available to an operator in `ad-coder tui`.
 - `/estimates` shows the current full-cycle forecast and relevant aggregated
   planning feedback without mutating work. Its machine-equivalent action is
   equally read-only and presents the same bounded evidence.
+- `/quality` shows bootstrap and gate status with syntax/example. Its actions
+  propose, approve, decline, inventory, and revalidate a profile through shared
+  headless operations; approval is required before an action that installs tools
+  or writes quality configuration.
 - `/limits` shows effective ceilings and their source; its set action changes
   only the named configurable ceiling after validation. `/profile` shows the
   active profile, reachable models, role/agent mapping, declared prices, and

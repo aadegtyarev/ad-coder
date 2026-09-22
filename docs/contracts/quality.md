@@ -14,6 +14,13 @@ This contract owns the project's engineering quality checks and review criteria.
   before review. A red gate returns its captured output to the coder and prevents
   review or approved settlement until it is green. A review that cannot submit a
   verdict pauses as `review_not_run` and needs explicit operator action.
+- Target-project gate discovery and configuration follow
+  [quality bootstrap](quality-bootstrap.md). A configured profile is enabled by
+  default; its gates are the project-specific replacement for this repository's
+  own `bun run check` requirement.
+- A changed project stack, framework, component, or test surface invalidates the
+  relevant quality strategy until [quality bootstrap](quality-bootstrap.md)
+  revalidates it; existing green results do not waive that check.
 - `bun run stamp:check` is deliberately a pre-merge gate, not a declared in-run
   gate; [review evidence](review-evidence.md) owns its semantics.
 - Installation and release claims use a bounded integrity-checked smoke of the
@@ -46,3 +53,4 @@ This contract owns the project's engineering quality checks and review criteria.
 - [Decomposition](decomposition.md) owns module-boundary requirements.
 - [Review evidence](review-evidence.md) owns review verdicts and merge stamps.
 - [Release](release.md) owns release metadata and publication checks.
+- [Quality bootstrap](quality-bootstrap.md) owns project gate setup.

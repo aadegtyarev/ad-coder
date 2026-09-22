@@ -9,6 +9,10 @@ This contract owns the names and prompt sources of reusable roles.
   under the existing trusted-project-prompt boundary.
 - `generic` is a built-in role for a bounded arbitrary task. It appears beside
   named specialist roles in every operator and orchestrator role catalogue.
+- `quality-bootstrapper` is a built-in role that inventories approved project
+  tooling, applies an approved quality profile, and validates its gates. Research
+  selection remains the researcher's responsibility; installation authority is
+  resolved separately.
 - A prompt file with a new safe role-name stem creates a project-local custom
   role. Removing that file removes the custom role; removing an override restores
   the built-in role rather than deleting it.
@@ -41,3 +45,4 @@ policy separation from prompt text.
 - [Role tools](role-tools.md) owns executable grants.
 - [Agent dispatch](agent-dispatch.md) owns running roles.
 - [Security](security.md) owns trusted project prompt configuration.
+- [Quality bootstrap](quality-bootstrap.md) owns setup workflow semantics.

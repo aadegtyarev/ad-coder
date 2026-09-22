@@ -36,6 +36,9 @@ resolved. It does not own model routing; see [routing configuration](routing-con
   Its review settings resolve once and apply equally to stamp writing and checking.
 - Declared pipeline quality gates replace the built-in list as data, validate
   before dispatch, and have a positive non-zero output capture ceiling.
+- `quality.bootstrap.enabled` defaults to enabled. Its proposal/installation
+  authority, network research allowance, and saved project decision follow
+  standard settings precedence; a project setting overrides the profile value.
 - Set-valued configuration reports enabled/disabled state and count, including
   member ids only within the documented line budget. A missing renderer branch
   fails loudly by key rather than exposing an object representation or its value.
@@ -58,3 +61,4 @@ and detached-worker paths when adding a launch setting or changing precedence.
 - [Compaction](compaction.md), [wake delivery](wake-delivery.md), and
   [quality](quality.md) own their specific ceilings.
 - [Extension modules](extension-modules.md) owns optional module capabilities.
+- [Quality bootstrap](quality-bootstrap.md) owns project gate bootstrap.

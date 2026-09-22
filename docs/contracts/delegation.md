@@ -13,6 +13,10 @@ This contract owns how an orchestrator chooses an executor for bounded work.
   to assess a specification or work volume, and choose other specialised paths.
   It may not skip any role named by the effective required-role policy; when
   `review.required` is true, code changes always receive the required review.
+- Before first code mutation without a verified profile, it dispatches the
+  quality-bootstrap workflow rather than asking a coder to infer gates. The
+  researcher selects the stack profile; the specialised bootstrapper applies it
+  only after the operator's quality decision.
 - Role work is performed by roles. The coordinator does not replace a role with
   its own edits except for the explicitly recorded trivial direct-edit allowance
   in [operation modes](operation-modes.md).
@@ -47,3 +51,4 @@ between advisory and stamp-producing review.
 - [Product changes](product-change.md) owns issue and pull-request lifecycle.
 - [Configuration](config.md) owns required-role and context-threshold settings.
 - [Parallel lanes](parallel-lanes.md) owns concurrent mutable execution.
+- [Quality bootstrap](quality-bootstrap.md) owns quality setup delegation.

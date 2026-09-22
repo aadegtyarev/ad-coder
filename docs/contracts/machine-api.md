@@ -16,10 +16,11 @@ It is the JSON projection of headless operations and TUI controls.
   durable run. `sessions` lists and selects accessible sessions. `config` shows
   resolved configuration and changes a validated setting where that setting's
   owner permits it. `sessions.inspect` projects session/ledger state and
-  `harness.about` projects identity/version/capabilities; `estimates` returns
-  the current forecast and planning feedback read-only. The public names may be
-  refined only through the compatibility contract, not by adding a front-only
-  capability.
+  `harness.about` projects identity/version/capabilities; `quality` exposes
+  bootstrap status and its propose/approve/decline/inventory/revalidate actions;
+  `estimates` returns the current forecast and planning feedback read-only. The
+  public names may be refined only through the compatibility contract, not by
+  adding a front-only capability.
 - API requests use explicit fields rather than TUI command text. Their success,
   refusal, validation, run identity, durable state, and machine-readable error
   have the same semantics as their TUI counterpart. A read or list action makes
@@ -63,3 +64,4 @@ model listing, override, and reset; and typed refusals for legacy modes and
 - [Task estimation](task-estimation.md) owns forecasts and feedback.
 - [Parallel lanes](parallel-lanes.md) owns concurrent-lane semantics.
 - [Runtime inspection](runtime-inspection.md) owns status and about projections.
+- [Quality bootstrap](quality-bootstrap.md) owns quality setup actions.

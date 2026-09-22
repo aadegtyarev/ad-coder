@@ -277,6 +277,15 @@ workflows — one substrate, swappable drivers.
   bounded diagnostics. TUI/API also expose harness name, SemVer version, enabled
   module capabilities, and concise help through the same core projection.
 
+- **REQUIREMENT — quality bootstrap.** Quality setup defaults on. Once a stack
+  is detected and before initial code mutation, the researcher proposes a
+  language-appropriate tests/format/lint/static-analysis/build/security profile
+  and asks the operator. An approved specialised bootstrapper configures and
+  validates it; installation remains explicit authority. Offline research reports
+  the limitation and offers installed-tool inventory or operator-provided gates.
+  Changes to stack, framework, component, dependency class, or test surface mark
+  the profile stale and require the same strategy review before related code work.
+
 - **REQUIREMENT — background agent dispatch.** A TUI operator and the
   orchestrator can launch built-in, prompt-defined custom, or ad-hoc agents
   without blocking interactive input. Project prompt files create and remove
