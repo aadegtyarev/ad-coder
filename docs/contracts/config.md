@@ -48,6 +48,8 @@ resolved. It does not own model routing; see [routing configuration](routing-con
   see [documentation](documentation.md) and [project practices](project-practices.md).
 - Durable-state backend, checkpoint cadence, retention, integrity validation, and
   recovery limits are settings; see [resumability](resumability.md).
+- Pipeline change-context strategy, limits, widening triggers, redaction, and
+  full-context fallback are settings; see [pipeline change context](pipeline-change-context.md).
 - Execution mode, destructive-command guard, protected roots, and a selected
   sandbox or optional LLM-guard provider are settings; see
   [execution boundary](execution-boundary.md).

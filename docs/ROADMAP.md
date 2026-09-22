@@ -513,6 +513,11 @@ workflows — one substrate, swappable drivers.
   state and restoration entrypoint but never own the store. Checkpointed
   cross-entity transitions survive orderly exit, power loss, and harness failure;
   an unrecoverable operation pauses with evidence while the session remains usable.
+- **REQUIREMENT — adaptive pipeline change context.** The built-in pipeline starts
+  with the smallest safe context of workspace changes, then widens it when a role
+  asks, measurement/truncation requires it, or durable full-cycle evidence shows
+  that compact context costs more in retries or rework. Optimize accepted-result
+  cost rather than input tokens; full context is a visible normal fallback.
 - **Auditor role + refactor executor** — recognizing decomposition needs vs doing
   them safely, two tools. Auditor: a cold-read role triggered by a drift signal
   (size band, churn, drift-log-reaches-8) that surfaces decomposition candidates
