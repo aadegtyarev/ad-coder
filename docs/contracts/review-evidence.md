@@ -5,11 +5,14 @@ proposed delivery.
 
 ## Guarantees
 
-- Code, configuration, prompts, skills, tests, and contracts require independent
-  review when they are included in the project's review scope. Only prose that
-  establishes no rule is exempt. A structured verdict from the bundled pipeline
-  review stage or an independently dispatched reviewer satisfies this requirement;
-  an author or the authoring model family is not independent.
+- The default review scope covers all executable code, including `src/**`,
+  `test/**`, `scripts/**`, and `evals/**`, plus `docs/contracts/**`. Tests,
+  fixtures, and check scripts are code: changing them requires the same
+  independent review as changing implementation. A project may add paths or
+  replace the scope explicitly; only prose that establishes no rule is exempt.
+  A structured verdict from the bundled pipeline review stage or an independently
+  dispatched reviewer satisfies this requirement; an author or the authoring
+  model family is not independent.
 - The bundled pipeline requires a review stamp by default. The project may disable
   that requirement explicitly or apply its own review policy when the bundled
   workflow is disabled. A manual role launch is evidence only when it settles the
@@ -27,8 +30,9 @@ proposed delivery.
 - A review stamp is written only from a settled structured verdict. It records
   reviewed path patterns, exact covered-path digest manifest, base, verdict, role
   route, time, and run identifiers, and excludes stamp storage from coverage.
-  The default bundled-pipeline scope is source code and `docs/contracts/**`;
-  projects extend or replace it with explicit path or glob patterns.
+  The default bundled-pipeline scope is `src/**`, `test/**`, `scripts/**`,
+  `evals/**`, and `docs/contracts/**`; projects extend or replace it with explicit
+  path or glob patterns.
 - When the resolved policy requires a stamp, a missing, malformed,
   changes-requested, or coverage-stale newest stamp blocks delivery. A covered-path
   change requires a fresh review. Changes outside coverage do not invalidate it.

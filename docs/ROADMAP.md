@@ -537,9 +537,10 @@ workflows — one substrate, swappable drivers.
   PR creation, issue tracking, CI, and publication remain separable forge-module
   capabilities.
 - **REQUIREMENT — scoped review stamps.** The bundled pipeline requires a review
-  stamp by default, with an explicit opt-out. A stamp covers source code and
-  contracts by default and stores a covered-path manifest; projects may configure
-  additional globs. A direct version-only successor may reuse its parent's stamp
+  stamp by default, with an explicit opt-out. A stamp covers implementation,
+  tests, executable checks, and contracts by default and stores a covered-path
+  manifest; projects may configure additional globs. A direct version-only
+  successor may reuse its parent's stamp
   only under a narrow configured metadata policy; ad-coder permits `CHANGELOG.md`
   and `package.json` for that resolution step.
 - **Auditor role + refactor executor** — recognizing decomposition needs vs doing
