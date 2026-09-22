@@ -32,7 +32,7 @@ import { ProjectStore } from "../src/project-store/project-store";
 import { ProjectStoreError } from "../src/project-store/types";
 import type { Role } from "../src/role";
 import { defineRole } from "../src/role";
-import { RunInterruptedError } from "../src/runner/errors";
+import { EmptyTurnError, RunInterruptedError } from "../src/runner/errors";
 
 const CONTEXT_WINDOW = 200_000;
 const BUDGET = { maxTokens: 100_000, reserveTokens: 10_000, keepRecentTokens: 20_000 } as const;
@@ -165,6 +165,46 @@ test("an interrupted standalone role persists a resumable pause and releases its
   });
   expect(resumed.text).toContain("resumed after interruption");
   expect(store.readVersionedJson<{ status: string }>(checkpointPath).value.status).toBe("complete");
+});
+
+test("a failed empty provider turn settles its standalone run with safe recovery evidence", async () => {
+  const { faux, models, model, role } = fixture();
+  const runId = `empty-turn-${crypto.randomUUID()}`;
+  // This is the real failure shape from a provider adapter: the thrown source
+  // becomes a settled `assistant_error`, which `runRole` types as
+  // EmptyTurnError.  The standalone owner must close its durable record before
+  // it lets that error cross the CLI boundary.
+  faux.setResponses([
+    () => {
+      throw new Error("provider failed without a response");
+    },
+  ]);
+
+  await expect(
+    runRoleStandalone({
+      role,
+      model,
+      models,
+      targetDir,
+      task: "review the change",
+      runId,
+    }),
+  ).rejects.toBeInstanceOf(EmptyTurnError);
+
+  const store = new ProjectStore(targetDir);
+  const checkpointPath = path.join(store.layout.runs, `standalone-${runId}.json`);
+  expect(
+    store.readVersionedJson<{
+      status: string;
+      failure?: { code: string; message: string };
+    }>(checkpointPath).value,
+  ).toMatchObject({
+    status: "failed",
+    failure: {
+      code: "empty_turn",
+      message: expect.stringContaining("failed empty turn"),
+    },
+  });
 });
 
 test("a started standalone run records its own process identity in the checkpoint", async () => {
@@ -423,7 +463,7 @@ test("standalone role resumes the same durable run only after its exhausted budg
       status: string;
       cumulativeUsage: { toolTurns: number };
     }>(checkpointPath).value,
-  ).toMatchObject({ status: "running", cumulativeUsage: { toolTurns: 1 } });
+  ).toMatchObject({ status: "failed", cumulativeUsage: { toolTurns: 1 } });
 
   faux.setResponses([
     fauxAssistantMessage([

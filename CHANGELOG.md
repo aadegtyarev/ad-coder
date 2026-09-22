@@ -11,6 +11,15 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.4] - 2026-09-22
+
+### Fixed
+
+- **A failed standalone provider turn no longer remains `running`.** Empty
+  failed turns now persist their safe `empty_turn` diagnosis before the worker
+  exits; unknown failures settle as `internal_error` without storing provider
+  response text. A later retry clears the previous terminal diagnosis.
+
 ## [0.181.3] - 2026-09-22
 
 ### Fixed

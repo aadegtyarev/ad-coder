@@ -144,7 +144,12 @@ import {
 import { parseRegistryConfig } from "./registry/validate";
 import type { Role } from "./role";
 import { defineRole } from "./role";
-import { assertRunId, RunInterruptedError, resolveTargetDir } from "./runner/errors";
+import {
+  assertRunId,
+  EmptyTurnError,
+  RunInterruptedError,
+  resolveTargetDir,
+} from "./runner/errors";
 import { createRoleRunner } from "./runner/role-runner";
 import type { Tool } from "./runner/tool";
 import type { SessionLimits } from "./session-limits";
@@ -627,7 +632,13 @@ export async function runRoleStandalone(params: {
       StageLimitSnapshot,
       "elapsedMs" | "modelTurns" | "toolTurns" | "inputTokens" | "lastInputTokens" | "costUsd"
     >;
-    status: "running" | "paused" | "complete";
+    /**
+     * `failed` is terminal for THIS attempt, not a claim that the durable
+     * session is gone.  A provider error must never leave a dead process
+     * advertised as a live `running` role: the record is what `runs status`,
+     * resume, and recovery read after the launcher has exited.
+     */
+    status: "running" | "paused" | "complete" | "failed";
     /**
      * The process that owns (last owned) this run, recorded by the run's own
      * process at start and re-recorded by the process that resumes (issue
@@ -663,6 +674,13 @@ export async function runRoleStandalone(params: {
            */
           stopRequest?: { requestedAt: number; requesterPid: number };
         };
+    /**
+     * Safe terminal diagnosis for a failed attempt.  Do not persist a raw
+     * provider Error here: its message can contain a response body.  The
+     * explicitly audited EmptyTurnError carries authored-safe wording; all
+     * other errors keep only their stable `internal_error` classification.
+     */
+    failure?: { code: string; message: string };
   };
   const taskDigest = new Bun.CryptoHasher("sha256").update(params.task).digest("hex");
   let checkpoint: import("./project-store/types").VersionedState<Checkpoint>;
@@ -730,7 +748,7 @@ export async function runRoleStandalone(params: {
           `resume requires a larger ${String(key[prior.pause.reason])} or 0`,
         );
     }
-    const { pause: _pause, ...resumed } = prior;
+    const { pause: _pause, failure: _failure, ...resumed } = prior;
     checkpoint = store.writeVersionedJson(
       checkpointPath,
       {
@@ -884,6 +902,30 @@ export async function runRoleStandalone(params: {
       );
       if (stopRequest !== undefined) consumeRunStopRequest(store, runId);
     }
+    if (
+      !(error instanceof StageLimitError) &&
+      !(error instanceof RunInterruptedError) &&
+      !params.abortSignal?.aborted
+    ) {
+      // A provider (or harness) failure is a terminal result of this attempt.
+      // Before this closeout, an EmptyTurnError escaped this function and the
+      // checkpoint kept `running` forever, even though its process had exited.
+      // Keep the provider's actionable, authored wording only for the typed
+      // empty-turn class.  Unknown Error.message values may carry a provider
+      // body, prompt, or credentials, so their durable projection is fixed.
+      const failure =
+        error instanceof EmptyTurnError
+          ? { code: error.code, message: error.message }
+          : {
+              code: "internal_error",
+              message: "role attempt failed; inspect harness diagnostics and retry",
+            };
+      store.writeVersionedJson(
+        checkpointPath,
+        { ...checkpoint.value, status: "failed", failure },
+        checkpoint.version,
+      );
+    }
     throw error;
   }
   // runRole closes the session facade it was handed; reopen a fresh readable
@@ -902,7 +944,7 @@ export async function runRoleStandalone(params: {
     ...(result.stageCloseout !== undefined && { stageCloseout: result.stageCloseout }),
     observations: result.observations,
   };
-  const { pause: _pause, ...completed } = checkpoint.value;
+  const { pause: _pause, failure: _failure, ...completed } = checkpoint.value;
   store.writeVersionedJson(
     checkpointPath,
     { ...completed, status: "complete", result: durableResult },
