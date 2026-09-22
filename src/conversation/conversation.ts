@@ -93,6 +93,7 @@ export interface DurableBlockedRecovery {
   evidence: string;
   decision: { question: string; action: string };
   work: string;
+  consumed?: true;
   truncated?: true;
 }
 
@@ -437,9 +438,11 @@ export async function startConversation(config: ConversationConfig): Promise<Con
   );
   let recoveryBlocked =
     latestRecovery?.type === "custom" &&
-    (latestRecovery.customType === BLOCKED_RECOVERY_TYPE ||
-      ((latestRecovery.data as { state?: unknown; consumed?: unknown } | undefined)?.state ===
-        "WIP" &&
+    ((latestRecovery.customType === BLOCKED_RECOVERY_TYPE &&
+      (latestRecovery.data as { consumed?: unknown } | undefined)?.consumed !== true) ||
+      (latestRecovery.customType === CONTINUATION_CHECKPOINT_TYPE &&
+        (latestRecovery.data as { state?: unknown; consumed?: unknown } | undefined)?.state ===
+          "WIP" &&
         (latestRecovery.data as { consumed?: unknown } | undefined)?.consumed !== true));
 
   const base = toHarnessOptions(config.role, {
@@ -518,6 +521,26 @@ export async function startConversation(config: ConversationConfig): Promise<Con
     }
     await branch.appendCustomEntry(type, data, context);
   };
+  const consumeBlockedRecovery = async (): Promise<void> => {
+    if (!recoveryBlocked) return;
+    // The release is a journal transition, not a second in-memory/durable flag:
+    // a fresh start sees this newest BLOCKED_RECOVERY_TYPE record and reopens
+    // only because it is explicitly marked consumed.
+    await appendContinuationCheckpoint(
+      {
+        version: 1,
+        state: "blocked",
+        artifact: { type: BLOCKED_RECOVERY_TYPE, id: `${runId}:continuation-released` },
+        evidence: "operator input received",
+        decision: { question: "", action: "" },
+        work: "operator recovery released",
+        consumed: true,
+      } as unknown as JsonValue,
+      BLOCKED_RECOVERY_TYPE,
+    );
+    recoveryBlocked = false;
+  };
+
   const checkpoint = async (reason: string): Promise<DurableContinuationCheckpoint> => {
     const rawWork =
       continuationStatus?.status ?? "the foreground console turn (no status was reported)";
@@ -734,9 +757,15 @@ export async function startConversation(config: ConversationConfig): Promise<Con
     }
     controller.assertActive();
     // This is the release edge for the durable recovery gate: the operator's
-    // next input, not a background wake, owns recovery.
-    recoveryBlocked = false;
+    // next input, not a background wake, owns recovery. Persist it before
+    // clearing memory so a reconnect cannot resurrect the old block.
     stepping = true;
+    try {
+      await consumeBlockedRecovery();
+    } catch (error) {
+      stepping = false;
+      throw error;
+    }
     interrupted = false;
     abortRequested = false;
     activeSettled = new Promise<void>((resolve) => {

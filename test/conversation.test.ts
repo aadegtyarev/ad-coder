@@ -33,6 +33,8 @@ import {
 } from "../src/economics/cost-anomaly";
 import { MemoryLedgerSink } from "../src/ledger/ledger";
 import type { ToolActivityRecord } from "../src/observability/tool-activity";
+import type { PendingWake } from "../src/orchestration/background-runs";
+import { WakePump } from "../src/orchestration/wake";
 import { ProjectStore } from "../src/project-store/project-store";
 import type { Role } from "../src/role";
 import { defineRole } from "../src/role";
@@ -304,6 +306,176 @@ test("blocked recovery is stored separately and never consumed as WIP continuati
     await conversation.close();
     await store.close();
     fs.rmSync(target, { recursive: true, force: true });
+  }
+});
+
+test("operator input durably releases recovery so a same-session reconnect drains wakes", async () => {
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-recovery-release-"));
+  const { faux, models, model, role } = harnessFixture();
+  faux.setResponses([fauxAssistantMessage("operator reply")]);
+  const store = new ProjectStore(target);
+  const session = await store.openOrCreateSession("recovery-release-session");
+  const first = await startConversation({ role, targetDir: target, models, model, session });
+  try {
+    await first.blockContinuation?.(
+      {
+        version: 1,
+        state: "WIP",
+        artifact: {
+          type: CONTINUATION_CHECKPOINT_TYPE,
+          id: "recovery-release-session:continuation",
+        },
+        work: "work",
+        reason: "interrupted",
+        next: "resume",
+      },
+      "stopped",
+      "choose",
+      "send input",
+    );
+    await first.step("operator input");
+  } finally {
+    await first.close();
+  }
+
+  const reopenedSession = await store.resumeSession("recovery-release-session");
+  const reopened = await startConversation({
+    role,
+    targetDir: target,
+    models,
+    model,
+    session: reopenedSession,
+  });
+  try {
+    expect(reopened.recoveryBlocked?.()).toBe(false);
+    const pending: PendingWake[] = [
+      {
+        runId: "wake-after-release",
+        kind: "paused",
+        firstAt: 1,
+        lastAt: 1,
+        count: 1,
+        handled: false,
+      },
+    ];
+    let turns = 0;
+    const pump = new WakePump({
+      listPending: () => pending.filter((wake) => !wake.handled),
+      markHandled: () => {
+        pending[0]!.handled = true;
+      },
+      recoveryBlocked: () => reopened.recoveryBlocked?.() ?? false,
+      turnActive: () => false,
+      runTurn: async () => {
+        turns += 1;
+      },
+    });
+    await pump.startupScan();
+    expect(turns).toBe(1);
+    expect(pending[0]!.handled).toBe(true);
+  } finally {
+    await reopened.close();
+    await store.close();
+    fs.rmSync(target, { recursive: true, force: true });
+  }
+});
+
+test("durable recovery remains blocked across reconnect until operator input", async () => {
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-recovery-blocked-"));
+  const { faux, models, model, role } = harnessFixture();
+  faux.setResponses([fauxAssistantMessage("seed")]);
+  const store = new ProjectStore(target);
+  const session = await store.openOrCreateSession("recovery-blocked-session");
+  const first = await startConversation({ role, targetDir: target, models, model, session });
+  await first.step("seed");
+  await first.blockContinuation?.(
+    {
+      version: 1,
+      state: "WIP",
+      artifact: { type: CONTINUATION_CHECKPOINT_TYPE, id: "recovery-blocked-session:continuation" },
+      work: "work",
+      reason: "interrupted",
+      next: "resume",
+    },
+    "stopped",
+    "choose",
+    "send input",
+  );
+  await first.close();
+  await store.close();
+
+  const reopenedStore = new ProjectStore(target);
+  const reopenedSession = await reopenedStore.resumeSession("recovery-blocked-session");
+  const reopened = await startConversation({
+    role,
+    targetDir: target,
+    models,
+    model,
+    session: reopenedSession,
+  });
+  try {
+    expect(reopened.recoveryBlocked?.()).toBe(true);
+    const pending: PendingWake[] = [
+      {
+        runId: "wake-while-blocked",
+        kind: "paused",
+        firstAt: 1,
+        lastAt: 1,
+        count: 1,
+        handled: false,
+      },
+    ];
+    let turns = 0;
+    const pump = new WakePump({
+      listPending: () => pending.filter((wake) => !wake.handled),
+      markHandled: () => {
+        pending[0]!.handled = true;
+      },
+      recoveryBlocked: () => reopened.recoveryBlocked?.() ?? false,
+      turnActive: () => false,
+      runTurn: async () => {
+        turns += 1;
+      },
+    });
+    // A blocked startup intentionally leaves the pump idle without resolving
+    // startupScan; one microtask observes the guard without introducing a race.
+    pump.notifyChange();
+    await Promise.resolve();
+    expect(turns).toBe(0);
+    expect(pending[0]!.handled).toBe(false);
+  } finally {
+    await reopened.close();
+    await reopenedStore.close();
+    fs.rmSync(target, { recursive: true, force: true });
+  }
+});
+
+test("an unblocked conversation wake drains normally", async () => {
+  const { models, model, role } = harnessFixture();
+  const session = await new MemorySessionRepo().create({}, BACKGROUND_CONTEXT);
+  const conversation = await startConversation({ role, targetDir, models, model, session });
+  try {
+    expect(conversation.recoveryBlocked?.()).toBe(false);
+    const pending: PendingWake[] = [
+      { runId: "wake-normal", kind: "paused", firstAt: 1, lastAt: 1, count: 1, handled: false },
+    ];
+    let turns = 0;
+    const pump = new WakePump({
+      listPending: () => pending.filter((wake) => !wake.handled),
+      markHandled: () => {
+        pending[0]!.handled = true;
+      },
+      recoveryBlocked: () => conversation.recoveryBlocked?.() ?? false,
+      turnActive: () => false,
+      runTurn: async () => {
+        turns += 1;
+      },
+    });
+    await pump.startupScan();
+    expect(turns).toBe(1);
+    expect(pending[0]!.handled).toBe(true);
+  } finally {
+    await conversation.close();
   }
 });
 
