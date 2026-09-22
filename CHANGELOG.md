@@ -11,6 +11,14 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.17] - 2026-09-23
+
+### Fixed
+
+- **A killed standalone role no longer leaves an ownerless lease forever.**
+  Lock publication now exposes a complete PID/token identity atomically, and
+  resume recovers the empty legacy lease shape after bounded contention.
+
 ## [0.181.16] - 2026-09-23
 
 ### Added

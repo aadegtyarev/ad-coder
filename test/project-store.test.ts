@@ -331,6 +331,25 @@ describe("ProjectStore", () => {
     expect(fs.existsSync(coordination)).toBe(false);
   });
 
+  test("resume reclaims the empty legacy session lease left when its owner was killed", async () => {
+    const root = target();
+    const store = new ProjectStore(root, { lockRetry: { delaysMs: [1] } });
+    const session = await store.createSession("empty_lease_session");
+    await session.close(BACKGROUND_CONTEXT);
+    const lease = path.join(store.layout.tmp, "session-empty_lease_session.lease");
+    // Pre-0.181.16 created this O_EXCL pathname before it wrote the PID and
+    // token.  SIGKILL at that exact point left an empty lease which could not
+    // be recognised as either a live owner or a reclaimable dead owner.
+    fs.writeFileSync(lease, "", { mode: 0o600 });
+
+    const reopened = await new ProjectStore(root, { lockRetry: { delaysMs: [1] } }).resumeSession(
+      "empty_lease_session",
+    );
+    await reopened.close(BACKGROUND_CONTEXT);
+
+    expect(fs.existsSync(lease)).toBe(false);
+  });
+
   test("recovers legacy pid-only session locks after a killed standalone role", async () => {
     const root = target();
     const store = new ProjectStore(root);

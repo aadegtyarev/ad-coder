@@ -640,6 +640,14 @@ export class ProjectStore {
           if (this.reclaimLegacyLock(lockPath, legacyHolder)) continue;
         }
         const delay = this.lockRetryDelaysMs[attempt];
+        // Releases before 0.181.16 created the pathname first and wrote its
+        // identity second.  A killed owner in that tiny interval leaves an
+        // empty regular file: it carries neither a PID nor a token, so it
+        // cannot enter either stale-owner recovery branch above.  Only after
+        // the normal bounded contention schedule has elapsed may we reclaim
+        // that exact inert legacy shape.  New writers publish a populated
+        // inode atomically in `createLock`, so they never create this shape.
+        if (delay === undefined && this.reclaimEmptyLegacyLock(lockPath)) continue;
         if (delay === undefined)
           throw new ProjectStoreError("version_conflict", lockPath, "managed state is locked");
         Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay);
@@ -718,30 +726,78 @@ export class ProjectStore {
   ): () => void {
     this.assertDestination(lockPath);
     const ownedIdentity = { ...identity, token: identity.token ?? crypto.randomUUID() };
+    const temporary = path.join(
+      path.dirname(lockPath),
+      `.${path.basename(lockPath)}.${crypto.randomUUID()}.lock`,
+    );
     const fd = fs.openSync(
-      lockPath,
+      temporary,
       fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW,
       0o600,
     );
-    fs.writeFileSync(fd, `${JSON.stringify(ownedIdentity)}\n`);
-    fs.fsyncSync(fd);
-    return () => {
+    try {
+      fs.writeFileSync(fd, `${JSON.stringify(ownedIdentity)}\n`);
+      fs.fsyncSync(fd);
+      fs.linkSync(temporary, lockPath);
+    } finally {
+      fs.closeSync(fd);
       try {
-        this.withVersionedLockCoordination(lockPath, () => {
-          if (this.readLockToken(lockPath) !== ownedIdentity.token) return;
-          const released = `${lockPath}.release-${ownedIdentity.token}`;
-          try {
-            fs.renameSync(lockPath, released);
-          } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-            return;
-          }
-          fs.unlinkSync(released);
-        });
-      } finally {
-        fs.closeSync(fd);
+        fs.unlinkSync(temporary);
+      } catch {
+        // A failed cleanup leaves only an inert, random private temporary.
+        // Never let that hide the acquisition result or its typed conflict.
       }
+    }
+    return () => {
+      this.withVersionedLockCoordination(lockPath, () => {
+        if (this.readLockToken(lockPath) !== ownedIdentity.token) return;
+        const released = `${lockPath}.release-${ownedIdentity.token}`;
+        try {
+          fs.renameSync(lockPath, released);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+          return;
+        }
+        fs.unlinkSync(released);
+      });
     };
+  }
+
+  /**
+   * Recover the only ownerless legacy lock shape the old O_EXCL-then-write
+   * publisher could leave.  A non-empty or non-regular object is deliberately
+   * not guessed at: that remains a typed contention/refusal.
+   */
+  private reclaimEmptyLegacyLock(lockPath: string): boolean {
+    let stat: fs.Stats;
+    try {
+      stat = fs.lstatSync(lockPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw error;
+    }
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size !== 0)
+      return false;
+    const quarantine = `${lockPath}.reclaim-empty-${crypto.randomUUID()}`;
+    try {
+      fs.renameSync(lockPath, quarantine);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw error;
+    }
+    try {
+      const moved = fs.lstatSync(quarantine);
+      // A writer that had the old inode open can still finish after rename.
+      // Preserve that non-empty inode rather than deleting live ownership.
+      if (!moved.isFile() || moved.isSymbolicLink() || moved.nlink !== 1 || moved.size !== 0)
+        return false;
+      fs.unlinkSync(quarantine);
+      return true;
+    } finally {
+      // `quarantine` is intentionally retained if a raced old writer filled
+      // it.  It is evidence of an unsafe concurrent legacy protocol, never a
+      // substitute for a fresh lock at `lockPath`.
+    }
   }
 
   private processIdentity(): { pid: number; startTime: string } {
