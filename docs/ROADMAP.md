@@ -245,6 +245,13 @@ workflows — one substrate, swappable drivers.
   headless surface. Start with a sparse main-screen `plain` presentation; themes
   are visual-only, while a future Claude-like layout is an independently selected
   presentation profile.
+
+- **REQUIREMENT — background agent dispatch.** A TUI operator and the
+  orchestrator can launch built-in, prompt-defined custom, or ad-hoc agents
+  without blocking interactive input. Project prompt files create and remove
+  custom role identities; grants remain policy, not prompt side effects. A profile
+  supplies `agents.defaultModel` for custom/ad-hoc work, while the orchestrator
+  may choose any reachable profile model and the operator may require one.
 - **REQUIREMENT — breakpoint control (implemented).** Drivers can auto-advance
   through phases and pause before a chosen phase, then resume from durable state.
   The trusted `control run-until` action exposes this without requiring a caller

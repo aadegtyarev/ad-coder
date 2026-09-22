@@ -19,3 +19,5 @@ tools and the tool objects registered for the request that serves that role.
 
 - [Product structure](architecture.md).
 - [Skill selection](skills.md).
+- [Role catalog](role-catalog.md) owns prompt-defined identities.
+- [Agent dispatch](agent-dispatch.md) owns invocation and lifecycle.

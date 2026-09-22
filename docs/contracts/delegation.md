@@ -18,6 +18,9 @@ This contract owns how an orchestrator chooses an executor for bounded work.
 - `run_role` reviewer output is advisory. A review that must satisfy merge policy
   uses a pipeline review stage or standalone reviewer round as required by
   [review evidence](review-evidence.md).
+- A manual or orchestrated agent launch follows [agent dispatch](agent-dispatch.md).
+  Choosing a background execution path does not bypass scope, worktree, or review
+  requirements.
 
 ## Verification
 
@@ -28,4 +31,5 @@ separation, and the difference between advisory and stamp-producing review.
 
 - [Operation modes](operation-modes.md) owns the direct-edit allowance.
 - [Review evidence](review-evidence.md) owns review proof.
+- [Agent dispatch](agent-dispatch.md) owns role and ad-hoc launches.
 - [Product changes](product-change.md) owns issue and pull-request lifecycle.

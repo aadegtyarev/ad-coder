@@ -14,6 +14,9 @@ headless session state, not a second orchestration or machine interface.
 - A working turn never blocks editing, status, cancellation, exit, or input of a
   later message. Rendering preserves the editor buffer and cursor. Submitted
   messages retain visible FIFO order until accepted or explicitly refused.
+- The TUI can launch a role or ad-hoc agent without leaving the editor blocked.
+  It immediately renders the durable run identity and later projects shared
+  progress and outcome; it does not implement dispatch policy itself.
 - The default `plain` presentation is a sparse main-screen interface: scrollback
   remains available while differential rendering prevents progress noise and
   input corruption. Terminal mode, cursor, signal handlers, and bracketed-paste
@@ -43,3 +46,4 @@ absence of terminal bytes from JSON output.
 - [UI responsiveness](ui-responsiveness.md) owns interrupt availability.
 - [Session manager](session-manager.md) owns session state and recovery.
 - [Tool observability](tool-observability.md) owns activity events.
+- [Agent dispatch](agent-dispatch.md) owns background launch semantics.

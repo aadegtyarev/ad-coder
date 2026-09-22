@@ -31,6 +31,9 @@ This contract owns the operator-authored model route and credentials vocabulary.
   pairing rule.
 - Role-model overrides compose with the selected profile. An unknown override
   names both model and profile in a typed `unknown_model` error.
+- A profile declares `agents.defaultModel` for custom roles and ad-hoc agents.
+  The profile's reachable model set bounds every explicit operator or orchestrator
+  choice; a default or selected model outside that set is an error.
 
 ## Configuration
 
@@ -49,3 +52,4 @@ credentials, aliases, or profile selection.
 - [Configuration](config.md) owns shared precedence and worker transport.
 - [Routing calibration](routing-calibration.md) owns persisted routing overrides.
 - [Cost anomaly](cost-anomaly.md) owns billed-price comparison.
+- [Agent dispatch](agent-dispatch.md) owns ad-hoc model-choice authority.
