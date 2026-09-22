@@ -12,10 +12,12 @@
 - `ledger-report.md` — ledger reports; read when changing their API or output.
 - `meta-contract.md` — contract form; read when writing or editing a contract.
 - `operation-modes.md` — manual and automatic authority; read when changing modes.
+- `pause-causes.md` — durable failure evidence; read when changing paused workflow state.
 - `operator-flow.md` — operator experience; read when changing task interaction.
 - `orchestrator.md` — task orchestration; read when changing orchestration behaviour.
 - `product-change.md` — delivery of product changes; read before planning or reviewing one.
 - `provider-admission.md` — provider capacity admission; read when changing model dispatch.
+- `provider-failures.md` — model generation failures; read when classifying provider errors.
 - `quality.md` — project quality gates; read when changing checks or review evidence.
 - `release.md` — release evidence and metadata; read before merging or publishing a release.
 - `role-tools.md` — role and tool wiring; read when changing a role's tool access.
