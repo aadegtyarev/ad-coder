@@ -7,9 +7,17 @@ or published as an ad-coder release.
 
 - Classify a release by observable compatibility: incompatible public change is
   major, compatible capability is minor, and compatible correction is patch.
-- Every change merged into `main`, including documentation-only work, has a new
-  Semantic Version and matching dated changelog entry. A merged version is never
-  reused.
+- ad-coder follows Semantic Versioning 2.0.0 strictly. Its release branch carries
+  only final `MAJOR.MINOR.PATCH` versions; its `dev` branch carries a SemVer
+  prerelease of the next intended final version, `MAJOR.MINOR.PATCH-dev.N`.
+  Release and dev are distinct channels, and a published version is never reused.
+- Every change merged into either ad-coder release channel, including
+  documentation-only work, has a new matching dated changelog entry and version
+  valid under that channel's SemVer form.
+- Until ad-coder supports external users, maintainers may deliberately make a
+  breaking change without a transition path; its SemVer classification and the
+  changelog name it plainly. Once external support is declared, the fuller
+  compatibility obligations also apply.
 - The shipped binary reports the exact release version.
 - An installable release has a reproducible locked install and a bounded smoke
   test of the packed artifact.

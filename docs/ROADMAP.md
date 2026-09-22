@@ -308,6 +308,14 @@ workflows — one substrate, swappable drivers.
   alternatives such as sliding-window retention or future algorithms; static role
   frame and durable lifecycle remain outside every strategy.
 
+- **DECISION — release policy is pluggable, ad-coder uses strict SemVer.** The
+  core lets a project declare its own compatibility/version policy. ad-coder has
+  release and `dev` branches: release versions are final SemVer, while dev uses
+  the corresponding next-version SemVer prerelease channel. Neither GitHub nor a
+  particular branching model is a core requirement for another project.
+  Until the project supports external users, deliberate API and behaviour breaks
+  need no migration layer; they remain versioned and explicitly recorded.
+
 - **REQUIREMENT — layered execution boundary.** Default execution remains open
   host authority, with only a best-effort guard against unmistakably broad
   destructive commands; it is not isolation. Replace direct construction of
