@@ -70,6 +70,15 @@ import { SessionLimitController } from "../session-limits";
  * dotenv under `targetDir`. `targetDir` is the tools' starting directory, not a
  * sandbox.
  */
+export interface DurableContinuationStatus {
+  status?: string;
+  next?: string;
+}
+
+export const CONTINUATION_CHECKPOINT_TYPE = "console_continuation_checkpoint";
+const CONTINUATION_CHECKPOINT_MAX_BYTES = 2_048;
+const CONTINUATION_PREAMBLE_MAX_CHARS = 600;
+
 export interface ConversationConfig {
   role: Role;
   /** REQUIRED agent working directory; tools + ledger operate here, not in the harness cwd. */
@@ -136,6 +145,8 @@ export interface ConversationConfig {
   toolActivity?: Partial<ToolActivityConfig>;
   /** Optional headless source of content-free background lifecycle notices. */
   subscribeBackgroundRuns?: (consumer: BackgroundRunNoticeConsumer) => () => void;
+  /** Mutable status reported by the foreground orchestrator's report_status tool. */
+  continuationStatus?: DurableContinuationStatus;
 }
 
 /** A tool invocation observed during a single turn: names only, never args or content. */
@@ -418,6 +429,75 @@ export async function startConversation(config: ConversationConfig): Promise<Con
   }
 
   const lane: AgentLane = await harness.lane(config.laneName ?? "main", context);
+  const continuationStatus = config.continuationStatus;
+  const continuationBranch = config.laneName ?? "main";
+  const appendContinuationCheckpoint = async (data: {
+    version?: 1;
+    work?: string;
+    reason?: string;
+    next?: string;
+    consumed?: boolean;
+  }): Promise<void> => {
+    if (Buffer.byteLength(JSON.stringify(data), "utf8") > CONTINUATION_CHECKPOINT_MAX_BYTES) {
+      return;
+    }
+    const branch = await session.branch(continuationBranch, context);
+    if (branch === undefined) {
+      throw new Error(
+        `cannot persist continuation checkpoint: lane ${continuationBranch} does not exist`,
+      );
+    }
+    await branch.appendCustomEntry(CONTINUATION_CHECKPOINT_TYPE, data, context);
+  };
+  const checkpoint = async (reason: string): Promise<void> => {
+    const work =
+      continuationStatus?.status ?? "the foreground console turn (no status was reported)";
+    const next = continuationStatus?.next ?? "send the next prompt to resume";
+    await appendContinuationCheckpoint({
+      version: 1,
+      work: work.slice(0, 700),
+      reason,
+      next: next.slice(0, 700),
+    });
+  };
+  const offContinuationHook = harness.hooks.on(
+    "transform_context",
+    async (event) => {
+      const entries = await session.findEntries({ type: "custom", order: "desc" }, context);
+      const entry = entries.find(
+        (candidate) =>
+          candidate.type === "custom" && candidate.customType === CONTINUATION_CHECKPOINT_TYPE,
+      );
+      if (entry === undefined || entry.type !== "custom" || entry.data === undefined)
+        return undefined;
+      const data = entry.data as {
+        work?: unknown;
+        reason?: unknown;
+        next?: unknown;
+        consumed?: boolean;
+      };
+      if (data.consumed === true) return undefined;
+      const work = typeof data.work === "string" ? data.work : "the foreground console turn";
+      const reason = typeof data.reason === "string" ? data.reason : "the turn was interrupted";
+      const next = typeof data.next === "string" ? data.next : "send the next prompt to resume";
+      await appendContinuationCheckpoint({ consumed: true });
+      return {
+        messages: [
+          {
+            role: "user",
+            content:
+              `[Continuation preserved] Work: ${work}. Stopped because: ${reason}. Next: ${next}.`.slice(
+                0,
+                CONTINUATION_PREAMBLE_MAX_CHARS,
+              ),
+            timestamp: Date.now(),
+          },
+          ...event.messages,
+        ],
+      };
+    },
+    { id: "ad-coder-continuation" },
+  );
 
   const role = config.role;
   const ownsActivityChannel = config.activityChannel === undefined;
@@ -623,8 +703,11 @@ export async function startConversation(config: ConversationConfig): Promise<Con
       const interruption = new Promise<never>((_resolve, reject) => {
         interruptActive = () => reject(new TurnInterruptedError());
       });
-      const prompted = await Promise.race([providerPrompt, interruption]).catch((error) => {
-        if (interrupted) throw new TurnInterruptedError();
+      const prompted = await Promise.race([providerPrompt, interruption]).catch(async (error) => {
+        if (interrupted) {
+          await checkpoint("Escape/Ctrl-C interrupted the provider turn");
+          throw new TurnInterruptedError();
+        }
         config.costAnomalyDetector?.assertNoBoundaryFailure();
         controller.assertNoBoundaryFailure();
         throw error;
@@ -777,7 +860,7 @@ export async function startConversation(config: ConversationConfig): Promise<Con
         if (stepping) {
           const settled = activeSettled;
           const activity = activeActivityCleanup;
-          requestAbort();
+          void requestAbort();
           activity?.cancelActive();
           if (settled !== undefined && activityChannel.config.closeDrainMs > 0) {
             await Promise.race([
@@ -800,6 +883,7 @@ export async function startConversation(config: ConversationConfig): Promise<Con
           ]);
         }
       } finally {
+        offContinuationHook();
         activeActivityCleanup?.();
         activeActivityCleanup = undefined;
         if (ownsActivityChannel) await activityChannel.close();

@@ -11,6 +11,11 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.0] - 2026-09-22
+
+### Added
+- **Interrupted foreground console turns now leave a bounded durable continuation checkpoint (issue #574).** The next prompt receives a one-time continuation preamble, while the console explains what was stopped and what was preserved.
+
 ## [0.180.0] - 2026-09-22
 
 ### Added

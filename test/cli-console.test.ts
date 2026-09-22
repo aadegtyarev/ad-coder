@@ -546,6 +546,8 @@ test("reports a cooperative interruption separately from a provider failure", as
 
   expect(result).toEqual({ reason: "interrupted", completedTurns: 0 });
   expect(error.text()).toContain("console turn interrupted");
+  expect(error.text()).toContain("bounded continuation checkpoint preserved");
+  expect(error.text()).toContain("send the next prompt to resume the preserved work");
   expect(error.text()).not.toContain("console turn failed");
   expect(session.closes).toBe(1);
 });

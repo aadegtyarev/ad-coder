@@ -1263,7 +1263,10 @@ const ALL_KINDS: readonly TransitionKind[] = ["advance", "rework", "stop"];
 test("the console orchestrator status tool acknowledges without terminating the ordinary tool path", async () => {
   const fx = fixture();
   const pipeline = fx.buildConfig("exercise report_status");
-  const tool = buildReportStatusTool();
+  let reported: { status: string; next?: string } | undefined;
+  const tool = buildReportStatusTool((status, next) => {
+    reported = { status, ...(next === undefined ? {} : { next }) };
+  });
   const schema = tool.parameters as {
     required?: string[];
     properties?: Record<string, { pattern?: string }>;
@@ -1293,6 +1296,7 @@ test("the console orchestrator status tool acknowledges without terminating the 
     const result = await conversation.step("continue the work");
     expect(result.assistantText).toBe("continued after status");
     expect(result.toolCalls.map(({ toolName }) => toolName)).toEqual([REPORT_STATUS_TOOL_NAME]);
+    expect(reported).toEqual({ status: "still working" });
   } finally {
     await conversation.close();
   }

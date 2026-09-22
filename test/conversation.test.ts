@@ -19,7 +19,11 @@ import {
 import { ContextBudgetError } from "../src/context/budget";
 import type { Summarizer } from "../src/context/compactor";
 import { ContextCompactionLostError, SUMMARIZATION_PROMPT } from "../src/context/compactor";
-import { ConversationRefusedError, startConversation } from "../src/conversation/conversation";
+import {
+  CONTINUATION_CHECKPOINT_TYPE,
+  ConversationRefusedError,
+  startConversation,
+} from "../src/conversation/conversation";
 import {
   CostAnomalyBlockedError,
   CostAnomalyDetector,
@@ -107,6 +111,181 @@ test("a two-turn conversation retains history on the live session branch", async
     expect(assistants.length).toBeGreaterThanOrEqual(2);
   } finally {
     await conversation.close();
+  }
+});
+
+test("interruption checkpoints durable status and resumes once after reopening", async () => {
+  const durableTarget = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-continuation-")),
+  );
+  const { faux, models, model, role } = harnessFixture();
+  let providerStarted!: () => void;
+  const providerHasStarted = new Promise<void>((resolve) => {
+    providerStarted = resolve;
+  });
+  let releaseProvider!: () => void;
+  const providerRelease = new Promise<void>((resolve) => {
+    releaseProvider = resolve;
+  });
+  faux.setResponses([
+    async () => {
+      providerStarted();
+      await providerRelease;
+      return fauxAssistantMessage("late provider reply");
+    },
+    (context) => {
+      resumedPrompts.push(
+        context.messages
+          .filter((message) => message.role === "user")
+          .map((message) =>
+            typeof message.content === "string"
+              ? message.content
+              : message.content
+                  .filter((block) => block.type === "text")
+                  .map((block) => block.text)
+                  .join(""),
+          )
+          .join("\\n"),
+      );
+      return fauxAssistantMessage("resumed reply");
+    },
+    (context) => {
+      resumedPrompts.push(
+        context.messages
+          .filter((message) => message.role === "user")
+          .map((message) =>
+            typeof message.content === "string"
+              ? message.content
+              : message.content
+                  .filter((block) => block.type === "text")
+                  .map((block) => block.text)
+                  .join(""),
+          )
+          .join("\\n"),
+      );
+      return fauxAssistantMessage("second resumed reply");
+    },
+  ]);
+  const resumedPrompts: string[] = [];
+  const continuationStatus = {
+    status: "implement durable continuation",
+    next: "run the focused persistence tests",
+  };
+  const initialStore = new ProjectStore(durableTarget);
+  const initialSession = await initialStore.openOrCreateSession("continuation-session");
+  const first = await startConversation({
+    role,
+    targetDir: durableTarget,
+    models,
+    model,
+    runId: "continuation-session",
+    session: initialSession,
+    continuationStatus,
+  });
+  const interrupted = first.step("operator message before interruption");
+  void interrupted.catch(() => undefined);
+  await providerHasStarted;
+  expect(await first.interrupt?.()).toBe(true);
+  await expect(interrupted).rejects.toMatchObject({ code: "interrupted" });
+  releaseProvider();
+  await first.close();
+
+  const reopenedStore = new ProjectStore(durableTarget);
+  const reopenedSession = await reopenedStore.resumeSession("continuation-session");
+  const checkpointEntries = await reopenedSession.findEntries(
+    { type: "custom", order: "asc" },
+    BACKGROUND_CONTEXT,
+  );
+  const checkpoints = checkpointEntries.filter(
+    (entry) => entry.type === "custom" && entry.customType === CONTINUATION_CHECKPOINT_TYPE,
+  );
+  expect(checkpoints).toHaveLength(1);
+  const checkpoint = checkpoints[0];
+  if (checkpoint === undefined || checkpoint.type !== "custom") {
+    throw new Error("continuation checkpoint was not stored as a custom entry");
+  }
+  expect(Buffer.byteLength(JSON.stringify(checkpoint.data ?? {}), "utf8")).toBeLessThanOrEqual(
+    2_048,
+  );
+  expect(checkpoint.data).toMatchObject({
+    version: 1,
+    work: continuationStatus.status,
+    next: continuationStatus.next,
+  });
+
+  const reopened = await startConversation({
+    role,
+    targetDir: durableTarget,
+    models,
+    model,
+    runId: "continuation-session",
+    session: reopenedSession,
+  });
+  try {
+    await reopened.step("operator message after reopening");
+    expect(resumedPrompts).toHaveLength(1);
+    const firstResumedPrompt = resumedPrompts[0]!;
+    const continuationPreamble = "[Continuation preserved]";
+    expect(firstResumedPrompt).toContain(continuationPreamble);
+    expect(firstResumedPrompt).toContain(continuationStatus.status);
+    expect(firstResumedPrompt).toContain("operator message after reopening");
+    expect(firstResumedPrompt.indexOf(continuationPreamble)).toBeGreaterThanOrEqual(0);
+    expect(firstResumedPrompt.indexOf("operator message after reopening")).toBeGreaterThanOrEqual(
+      0,
+    );
+
+    await reopened.step("operator message after checkpoint consumption");
+    expect(resumedPrompts).toHaveLength(2);
+    const secondResumedPrompt = resumedPrompts[1]!;
+    expect(secondResumedPrompt).toContain("operator message after checkpoint consumption");
+    expect(secondResumedPrompt).not.toContain(continuationPreamble);
+    const consumedEntries = await reopenedSession.findEntries(
+      { type: "custom", order: "asc" },
+      BACKGROUND_CONTEXT,
+    );
+    expect(
+      consumedEntries.filter(
+        (entry) => entry.type === "custom" && entry.customType === CONTINUATION_CHECKPOINT_TYPE,
+      ),
+    ).toHaveLength(2);
+  } finally {
+    await reopened.close();
+    await reopenedStore.close();
+    fs.rmSync(durableTarget, { recursive: true, force: true });
+  }
+});
+
+test("a completed conversation turn does not create a continuation checkpoint", async () => {
+  const durableTarget = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-continuation-complete-")),
+  );
+  const { faux, models, model, role } = harnessFixture();
+  faux.setResponses([fauxAssistantMessage("completed reply")]);
+  const status = { status: "completed work", next: "nothing" };
+  const conversation = await startConversation({
+    role,
+    targetDir: durableTarget,
+    models,
+    model,
+    runId: "completed-session",
+    continuationStatus: status,
+  });
+  try {
+    await conversation.step("finish it");
+    await conversation.close();
+    const store = new ProjectStore(durableTarget);
+    const session = await store.resumeSession("completed-session");
+    const entries = await session.findEntries({ type: "custom", order: "asc" }, BACKGROUND_CONTEXT);
+    expect(
+      entries.some(
+        (entry) => entry.type === "custom" && entry.customType === CONTINUATION_CHECKPOINT_TYPE,
+      ),
+    ).toBe(false);
+    await session.close(BACKGROUND_CONTEXT);
+    await store.close();
+  } finally {
+    await conversation.close();
+    fs.rmSync(durableTarget, { recursive: true, force: true });
   }
 });
 

@@ -1074,7 +1074,7 @@ const TRIVIAL_EDIT_COVER_FRAMING = [
  * Build the console-only progress tool. It returns normally so the agent loop's
  * ordinary tool-call path continues with another model turn.
  */
-export function buildReportStatusTool(): Tool {
+export function buildReportStatusTool(onStatus?: (status: string, next?: string) => void): Tool {
   return defineTool({
     name: REPORT_STATUS_TOOL_NAME,
     description:
@@ -1094,7 +1094,8 @@ export function buildReportStatusTool(): Tool {
         }),
       ),
     }),
-    async execute() {
+    async execute(_toolCallId, params) {
+      onStatus?.(params.status, params.next);
       return {
         content: [{ type: "text", text: "status acknowledged; continuing" }],
         details: undefined,
@@ -1996,11 +1997,16 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
         }
       : undefined;
   const seedKit = roleKit("orchestrator");
+  const continuationStatus: { status?: string; next?: string } = {};
   const tools = buildOrchestratorTools(
     core,
     [
       ...(seed.pluginTools ?? []),
-      buildReportStatusTool(),
+      buildReportStatusTool((status, next) => {
+        continuationStatus.status = status;
+        if (next === undefined) delete continuationStatus.next;
+        else continuationStatus.next = next;
+      }),
       delegatedRoleTool,
       // Same condition as the delegated roles: pinned skills are already in
       // the prompt, so the loader would have nothing left to fetch.
@@ -2058,6 +2064,7 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
     activityChannel,
     ...(config.toolActivity !== undefined && { toolActivity: config.toolActivity }),
     ...(seed.compaction !== undefined && { compaction: seed.compaction }),
+    continuationStatus,
     // Guard the orchestrator's OWN direct edit/write calls ONLY (issue #388).
     // The cover rides along only when a reviewer is reachable; otherwise the
     // guard runs bare and its entries record `reviewer_unavailable` -- the

@@ -930,8 +930,10 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
             renderFailure(
               {
                 code: "interrupted",
-                message: "console turn interrupted",
-                action: "restart the console to resume the session",
+                message:
+                  "console turn interrupted: foreground console turn stopped; bounded continuation checkpoint preserved",
+                action:
+                  "send the next prompt to resume the preserved work (or give a new direction)",
                 retryable: true,
               },
               mode,
@@ -949,8 +951,10 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
             renderFailure(
               {
                 code: "interrupted",
-                message: "current turn interrupted",
-                action: "session remains available; enter the next prompt",
+                message:
+                  "current turn interrupted: foreground console turn stopped; bounded continuation checkpoint preserved",
+                action:
+                  "send the next prompt to resume the preserved work (or give a new direction)",
                 retryable: true,
               },
               mode,
