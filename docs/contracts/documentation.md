@@ -28,6 +28,6 @@ reader understand and use a product surface.
 
 ## Related surfaces
 
-- Contract form: `meta-contract.md`.
-- Quality gates: `quality.md`.
-- Release metadata: `compatibility.md`.
+- [Contract form](meta-contract.md).
+- [Quality gates](quality.md).
+- [Release metadata](release.md).

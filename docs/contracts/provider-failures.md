@@ -18,5 +18,5 @@ generation.
 
 ## Related surfaces
 
-- Public error behaviour: `errors.md`.
-- Provider capacity: `provider-admission.md`.
+- [Public error behaviour](errors.md).
+- [Provider capacity](provider-admission.md).

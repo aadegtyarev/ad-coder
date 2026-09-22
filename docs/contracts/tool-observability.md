@@ -34,6 +34,6 @@ This contract governs safe, truthful progress information for an active role.
 
 ## Related surfaces
 
-- Role and tool wiring: `role-tools.md`.
-- Durable wake delivery: `wake-delivery.md`.
-- Settings: `config.md`.
+- [Role and tool wiring](role-tools.md).
+- [Durable wake delivery](wake-delivery.md).
+- [Settings](config.md).

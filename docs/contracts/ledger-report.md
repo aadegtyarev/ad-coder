@@ -19,6 +19,6 @@ This contract governs read-only reports over run ledgers.
 
 ## Related surfaces
 
-- Command-line front: `cli.md`.
-- Public error behaviour: `errors.md`.
-- Delivery evidence: `quality.md`.
+- [Command-line front](cli.md).
+- [Public error behaviour](errors.md).
+- [Delivery evidence](product-change.md).

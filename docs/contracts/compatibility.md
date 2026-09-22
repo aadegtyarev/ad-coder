@@ -22,6 +22,6 @@ can observe across a compatible release.
 
 ## Related surfaces
 
-- Release process: `release.md`.
-- Error behaviour: `errors.md`.
-- Managed sessions: `session-manager.md`.
+- [Release process](release.md).
+- [Error behaviour](errors.md).
+- [Managed sessions](session-manager.md).

@@ -24,6 +24,6 @@ This contract governs shared provider-capacity admission for every LLM request.
 
 ## Related surfaces
 
-- Provider failure classification: `provider-failures.md`.
-- Settings: `config.md`.
-- Public error behaviour: `errors.md`.
+- [Provider failure classification](provider-failures.md).
+- [Settings](config.md).
+- [Public error behaviour](errors.md).

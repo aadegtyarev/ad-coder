@@ -25,5 +25,5 @@ or published as an ad-coder release.
 
 ## Related surfaces
 
-- Public compatibility: `compatibility.md`.
-- Project quality gates: `quality.md`.
+- [Public compatibility](compatibility.md).
+- [Project quality gates](quality.md).

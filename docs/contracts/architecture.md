@@ -18,6 +18,6 @@ the fronts and optional compositions built around it.
 
 ## Related surfaces
 
-- Command-line front: `cli.md`.
-- Role and tool wiring: `role-tools.md`.
-- Task orchestration: `orchestrator.md`.
+- [Command-line front](cli.md).
+- [Role and tool wiring](role-tools.md).
+- [Task orchestration](orchestrator.md).

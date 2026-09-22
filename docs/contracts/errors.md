@@ -27,7 +27,7 @@ workflow, provider, and tool callers.
 
 ## Related surfaces
 
-- Provider failures: `provider-failures.md`.
-- Durable pause causes: `pause-causes.md`.
-- Context compaction: `compaction.md`.
-- Public compatibility: `compatibility.md`.
+- [Provider failures](provider-failures.md).
+- [Durable pause causes](pause-causes.md).
+- [Context compaction](compaction.md).
+- [Public compatibility](compatibility.md).

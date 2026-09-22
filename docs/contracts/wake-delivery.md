@@ -22,6 +22,6 @@ not disable these safety limits.
 
 ## Related surfaces
 
-- Interactive rendering: `ui-responsiveness.md`.
-- Tool activity: `tool-observability.md`.
-- Task orchestration: `orchestrator.md`.
+- [Interactive rendering](ui-responsiveness.md).
+- [Tool activity](tool-observability.md).
+- [Task orchestration](orchestrator.md).

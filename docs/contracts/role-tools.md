@@ -17,5 +17,5 @@ tools and the tool objects registered for the request that serves that role.
 
 ## Related surfaces
 
-- Product structure: `architecture.md`.
-- Skill selection: `skills.md`.
+- [Product structure](architecture.md).
+- [Skill selection](skills.md).

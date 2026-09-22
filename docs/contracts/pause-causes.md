@@ -14,6 +14,6 @@ This contract governs safe failure evidence persisted with a paused workflow.
 
 ## Related surfaces
 
-- Public error behaviour: `errors.md`.
-- Wake delivery: `wake-delivery.md`.
-- Task orchestration: `orchestrator.md`.
+- [Public error behaviour](errors.md).
+- [Wake delivery](wake-delivery.md).
+- [Task orchestration](orchestrator.md).

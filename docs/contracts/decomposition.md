@@ -25,5 +25,5 @@ responsibilities.
 
 ## Related surfaces
 
-- Product changes: `product-change.md`.
-- Public compatibility: `compatibility.md`.
+- [Product changes](product-change.md).
+- [Public compatibility](compatibility.md).

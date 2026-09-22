@@ -24,4 +24,4 @@ interactive ad-coder front.
 
 ## Related surfaces
 
-- Wake delivery: `wake-delivery.md`.
+- [Wake delivery](wake-delivery.md).

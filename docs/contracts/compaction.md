@@ -38,6 +38,6 @@ context budget cannot hold the full branch.
 
 ## Related surfaces
 
-- Provider failures: `provider-failures.md`.
-- Provider capacity: `provider-admission.md`.
-- Settings: `config.md`.
+- [Provider failures](provider-failures.md).
+- [Provider capacity](provider-admission.md).
+- [Settings](config.md).
