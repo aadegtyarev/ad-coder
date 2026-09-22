@@ -16,6 +16,9 @@ This contract owns the names and prompt sources of reusable roles.
 - A prompt alone defines role identity and instruction. Tool grants, model route,
   budgets, and external-effect authority remain separately resolved policy; a
   custom prompt never obtains them implicitly.
+- A custom role and ad-hoc agent default to every enabled project tool except
+  workflow submission tools. `agents.defaultToolGrant` can replace that default;
+  a named grant remains visible in effective configuration.
 - Built-in and custom roles are independently selectable and disableable. A
   removed or disabled role is unavailable to both an operator and orchestrator
   with an actionable typed refusal.
@@ -23,7 +26,7 @@ This contract owns the names and prompt sources of reusable roles.
 ## Configuration
 
 Project role prompts follow the project prompt-root setting and trusted override
-rules. Custom-role default grants and enablement use standard settings precedence.
+rules. `agents.defaultToolGrant` and enablement use standard settings precedence.
 
 ## Verification
 

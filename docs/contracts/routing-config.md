@@ -31,8 +31,9 @@ This contract owns the operator-authored model route and credentials vocabulary.
   pairing rule.
 - Role-model overrides compose with the selected profile. An unknown override
   names both model and profile in a typed `unknown_model` error.
-- A profile declares `agents.defaultModel` for custom roles and ad-hoc agents.
-  The profile's reachable model set bounds every explicit operator or orchestrator
+- A profile may declare `agents.defaultModel` for custom roles and ad-hoc agents;
+  when absent it falls back to that profile's default orchestrator route. The
+  profile's reachable model set bounds every explicit operator or orchestrator
   choice; a default or selected model outside that set is an error.
 
 ## Configuration
