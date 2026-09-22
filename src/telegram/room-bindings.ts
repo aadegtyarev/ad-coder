@@ -30,7 +30,8 @@ export type TelegramRoomBindingErrorCode =
   | "invalid_binding"
   | "already_bound"
   | "not_bound"
-  | "immutable";
+  | "immutable"
+  | "unsupported_kind";
 
 const TELEGRAM_ROOM_BINDING_ERROR_DETAILS: Record<
   TelegramRoomBindingErrorCode,
@@ -51,6 +52,10 @@ const TELEGRAM_ROOM_BINDING_ERROR_DETAILS: Record<
   immutable: {
     message: "a fixed Telegram room binding cannot be changed",
     nextAction: "remove the fixed binding before creating a replacement",
+  },
+  unsupported_kind: {
+    message: "Telegram v1 supports only switchable room bindings",
+    nextAction: "use a switchable room binding; fixed rooms are reserved for a later Telegram mode",
   },
 };
 
@@ -169,6 +174,7 @@ export class TelegramRoomBindingStore {
     sessionId: string | null,
   ): TelegramRoomBinding {
     assertRoomId(roomId);
+    if (kind === "fixed") throw new TelegramRoomBindingError("unsupported_kind");
     if (this.bindings.has(roomId)) throw new TelegramRoomBindingError("already_bound");
     const record = assertRecord({ kind, sessionId });
     this.bindings.set(roomId, record);
@@ -179,7 +185,7 @@ export class TelegramRoomBindingStore {
     assertRoomId(roomId);
     const current = this.bindings.get(roomId);
     if (current === undefined) throw new TelegramRoomBindingError("not_bound");
-    if (current.kind === "fixed") throw new TelegramRoomBindingError("immutable");
+    if (current.kind === "fixed") throw new TelegramRoomBindingError("unsupported_kind");
     const next = { kind: current.kind, sessionId: assertSessionId(sessionId, false) } as const;
     this.bindings.set(roomId, next);
     return copy({ roomId, ...next });
@@ -189,6 +195,7 @@ export class TelegramRoomBindingStore {
     assertRoomId(roomId);
     const current = this.bindings.get(roomId);
     if (current === undefined) throw new TelegramRoomBindingError("not_bound");
+    if (current.kind === "fixed") throw new TelegramRoomBindingError("unsupported_kind");
     this.bindings.delete(roomId);
     return copy({ roomId, ...current });
   }

@@ -14,6 +14,10 @@ test("expected binding failures expose a safe typed actionable projection", () =
     ["already_bound", "use the existing binding or remove it before creating another"],
     ["not_bound", "create the Telegram room binding before attaching or removing it"],
     ["immutable", "remove the fixed binding before creating a replacement"],
+    [
+      "unsupported_kind",
+      "use a switchable room binding; fixed rooms are reserved for a later Telegram mode",
+    ],
   ] as const;
 
   for (const [code, nextAction] of cases) {
@@ -40,14 +44,29 @@ test("switchable rooms start unselected and can be attached", () => {
   expect(rooms.resolve("personal:42")?.sessionId).toBe(session);
 });
 
-test("fixed rooms are immutable but can be removed", () => {
-  const rooms = new TelegramRoomBindingStore();
-  rooms.create("group:7/topic:3", "fixed", session);
+test("fixed rooms remain schema-compatible but v1 operational methods refuse them", () => {
+  const fixed = {
+    version: 1 as const,
+    bindings: { "group:7/topic:3": { kind: "fixed" as const, sessionId: session } },
+  };
+  expect(parseTelegramRoomBindings(fixed)).toEqual(fixed);
+
+  const rooms = new TelegramRoomBindingStore(fixed);
+  expect(rooms.resolve("group:7/topic:3")).toEqual({
+    roomId: "group:7/topic:3",
+    kind: "fixed",
+    sessionId: session,
+  });
   expect(() => rooms.attach("group:7/topic:3", "sessbbbbbbbbbbbbbbb")).toThrow(
-    TelegramRoomBindingError,
+    new TelegramRoomBindingError("unsupported_kind"),
   );
-  expect(rooms.remove("group:7/topic:3").sessionId).toBe(session);
-  expect(rooms.resolve("group:7/topic:3")).toBeUndefined();
+  expect(() => rooms.remove("group:7/topic:3")).toThrow(
+    new TelegramRoomBindingError("unsupported_kind"),
+  );
+  expect(() => rooms.create("group:8/topic:4", "fixed", session)).toThrow(
+    new TelegramRoomBindingError("unsupported_kind"),
+  );
+  expect(rooms.resolve("group:7/topic:3")?.kind).toBe("fixed");
 });
 
 test("the schema is strict, versioned, and never emits targetDir", () => {
@@ -66,7 +85,9 @@ test("the schema is strict, versioned, and never emits targetDir", () => {
 
 test("fixed bindings require a selected session and malformed ids fail closed", () => {
   const rooms = new TelegramRoomBindingStore();
-  expect(() => rooms.create("fixed", "fixed", null)).toThrow(TelegramRoomBindingError);
+  expect(() => rooms.create("fixed", "fixed", null)).toThrow(
+    new TelegramRoomBindingError("unsupported_kind"),
+  );
   expect(() => rooms.create("bad\u0000room", "switchable", null)).toThrow(TelegramRoomBindingError);
   expect(() => parseTelegramRoomBindings({ version: 2, bindings: {} })).toThrow(
     TelegramRoomBindingError,

@@ -19,8 +19,10 @@ never by a hardcoded chat id.
   whether `sessionId` is mutable. `switchable` (personal chat) lets `attach`
   change it; `fixed` (a `(groupChatId, topicId)` room) sets it at creation and
   removes it at deletion. `sessionId: null` means nothing is selected. v1
-  implements only `switchable`; the schema already admits `fixed`, so a topic
-  mode is a second room kind, not a rewrite.
+  implements only `switchable`: its operational create, attach, and remove
+  methods refuse `fixed` with a typed unsupported-kind error. The schema still
+  admits and preserves `fixed`, so a topic mode is a second room kind, not a
+  rewrite.
 - 2026-09-16: Message handling, command dispatch, and event delivery depend on
   three room-level seams -- `resolveSession(room)`, `authorize(room, actor)`,
   `deliveryTargets(sessionId)` -- and no handler reads `chatId` directly or

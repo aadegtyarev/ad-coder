@@ -175,6 +175,11 @@ enforces that dated release headings go in non-increasing date order
 ## [0.149.0] - 2026-09-20
 
 ### Added
+- **Telegram room-binding API.** The library exports a versioned, secret-free
+  room-binding schema and strict parser/serializer plus an in-memory store.
+  Telegram v1 creates and mutates only `switchable` rooms; `fixed` remains
+  schema-forward-compatible but is refused by operational methods until the
+  later topic mode ships.
 - **The headless SessionManager (issue #365, layer 2 slice of #108).** One
   programmatic core (`src/session-manager/*`) per the 2026-09-14 ROADMAP
   decision: one shared durable Orchestrator conversation per project, safe
