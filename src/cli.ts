@@ -855,6 +855,12 @@ export async function runRoleStandalone(params: {
       ...(params.tools !== undefined && { tools: params.tools }),
       ...(params.abortSignal !== undefined && { abortSignal: params.abortSignal }),
     });
+    // `runRole` owns and closes only a session it opened itself.  Standalone
+    // already opened this facade so it could claim the durable lease before a
+    // runner exists; release that lease before reopening a readable facade
+    // below.  Otherwise a successful live role can contend with *itself* and
+    // report "managed state is locked" after it has done all of its work.
+    await session.close(BACKGROUND_CONTEXT);
   } catch (error) {
     try {
       await session.close(BACKGROUND_CONTEXT);

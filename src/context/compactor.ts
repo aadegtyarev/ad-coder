@@ -630,7 +630,7 @@ export async function produceSummary(
     }
     throw last;
   };
-  let summary: string;
+  let summary: string | undefined;
   let fallbackEvidence:
     | {
         compactionFallbackUsed: true;
@@ -703,6 +703,10 @@ export async function produceSummary(
       return undefined;
     }
   }
+  // The catch either returns/declines or supplies the fallback summary. Keep
+  // this defensive guard for TypeScript and for a future recovery branch that
+  // does neither: an absent summary must never be committed as text.
+  if (summary === undefined) return undefined;
   const { readFiles, modifiedFiles } = fileDetails(preparation.fileOps);
   const details = { readFiles, modifiedFiles, ...(fallbackEvidence ?? {}) };
   // Announced, for the same reason the failure above it is: a compaction that

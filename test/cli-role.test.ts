@@ -107,6 +107,13 @@ test("runRoleStandalone drives one faux turn and returns the assistant text plus
     status: "complete",
     result: { text: expect.stringContaining("looks good to me"), cost },
   });
+  // The standalone owner supplied the session to `runRole`, so it also must
+  // release that facade before it reopens the session to extract the result.
+  // A retained lease made a completed live role fail its own result-read and
+  // stranded the next `--resume-run` behind "managed state is locked".
+  expect(fs.existsSync(path.join(targetDir, ".ad-coder", "tmp", `session-${runId}.lease`))).toBe(
+    false,
+  );
   // The ledger recorded the turn, and the cost is summed from it.
   expect(ledgerSink.records().length).toBeGreaterThan(0);
 });
