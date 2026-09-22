@@ -283,6 +283,14 @@ workflows — one substrate, swappable drivers.
   Resume restores context and continuation state rather than making the operator
   reconstruct it. An in-flight action is reconciled from durable evidence; an
   ambiguous external effect pauses visibly instead of being duplicated or lost.
+
+- **REQUIREMENT — estimate, probe, then decompose.** Before work, the
+  orchestrator forecasts the entire selected development cycle, including its
+  roles, workflow, review/rework rounds, routes, and budget reserve. A capacity
+  or complexity signal permits one measured ceiling probe only when later roles
+  remain funded; otherwise it causes decomposition. Planner/coder/reviewer
+  complexity signals and review loops become durable, non-punitive feedback that
+  the orchestrator can query before later estimates.
 - **REQUIREMENT — breakpoint control (implemented).** Drivers can auto-advance
   through phases and pause before a chosen phase, then resume from durable state.
   The trusted `control run-until` action exposes this without requiring a caller

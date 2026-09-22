@@ -18,6 +18,9 @@ This contract owns commands available to an operator in `ad-coder tui`.
 - `/skills` lists reachable skills with applicability, syntax, and an example.
   `/skills load <id>` and `/skills unload <id>` alter the active session's
   explicit skill selection through the shared resolver and durable session state.
+- `/estimates` shows the current full-cycle forecast and relevant aggregated
+  planning feedback without mutating work. Its machine-equivalent action is
+  equally read-only and presents the same bounded evidence.
 - `/limits` shows effective ceilings and their source; its set action changes
   only the named configurable ceiling after validation. `/profile` shows the
   active profile, reachable models, role/agent mapping, declared prices, and
@@ -45,7 +48,8 @@ This contract owns commands available to an operator in `ad-coder tui`.
 Test TUI/machine command parity, every no-argument help path, local-only help
 evidence, role/agent/workflow launch, skill selection durability, ceiling
 validation, orchestrator messaging, profile switching, and credential-free
-profile rendering; test model listing, override, and reset.
+profile rendering; test model listing, override, reset, and read-only estimate
+feedback.
 
 ## Related surfaces
 

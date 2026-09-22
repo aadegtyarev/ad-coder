@@ -42,6 +42,7 @@
 - `stage-limit-calibration.md` — learned stage ceilings; read when changing their policy.
 - `telegram.md` — Telegram front; read when changing Telegram behaviour.
 - `terminal-ui.md` — interactive terminal front; read when changing TUI rendering or themes.
+- `task-estimation.md` — whole-cycle forecast and feedback; read when budgeting a dispatch.
 - `tool-observability.md` — tool activity; read when changing progress events or rendering.
 - `tui-commands.md` — TUI operator controls; read when changing interactive commands.
 - `ui-responsiveness.md` — interactive fronts; read when changing controls or waiting.

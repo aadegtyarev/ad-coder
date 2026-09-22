@@ -13,6 +13,9 @@ This contract owns evidence-based per-stage ceiling learning.
 - One observation does not rewrite a learned ceiling. A second confirming
   observation is required. A failed raised attempt receives no second automatic
   raise: classify it as a loop or oversized work, then stop or decompose.
+- Before a probe, the orchestrator checks the whole-cycle reserve. A probe that
+  would starve a required later role is not attempted and becomes decomposition
+  evidence rather than a route to an underfunded review or closeout.
 - A global stage-limit CLI override replaces that dimension for every role. A
   programmatic per-role limit is applied last and can alter one role. Global
   overrides are neither floors nor offsets.
@@ -30,3 +33,4 @@ stage-limit defaults.
 - [Configuration](config.md) owns limit setting resolution and reserve defaults.
 - [Autonomy](autonomy.md) owns whether and how a ceiling may be raised.
 - [Operator flow](operator-flow.md) owns exhaustion explanation to the operator.
+- [Task estimation](task-estimation.md) owns remaining-cycle reserve.

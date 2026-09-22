@@ -20,7 +20,8 @@ This contract owns operator authority, task budget, and ceiling adjustment.
   to change a learned value.
 - A silent raise is at most the configured factor from the intake value (default
   50%), happens once, never enables a zero-disabled ceiling, and excludes the
-  task's own budget. A further exhaustion is a decomposition signal.
+  task's own budget. It recomputes the whole-cycle reserve; a further exhaustion
+  or a raise that starves required later roles is a decomposition signal.
 - Above that factor, changing task budget, raising mode, cutting started scope,
   changing profile settings, deploys, publication, or acting in someone else's
   name require operator permission. The orchestrator never presents unfinished
@@ -32,10 +33,12 @@ This contract owns operator authority, task budget, and ceiling adjustment.
 ## Verification
 
 Test mode transitions, a silent and a permissioned raise, disabled ceilings,
-budget change refusal, and durable mandate and learned-limit records.
+reserve starvation, budget change refusal, and durable mandate and learned-limit
+records.
 
 ## Related surfaces
 
 - [Configuration](config.md) owns resolution of settings and ceilings.
 - [Stage-limit calibration](stage-limit-calibration.md) owns measured raise data.
 - [Orchestrator](orchestrator.md) owns task state and closeout.
+- [Task estimation](task-estimation.md) owns full-cycle forecast and feedback.
