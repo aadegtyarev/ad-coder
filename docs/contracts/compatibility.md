@@ -1,30 +1,27 @@
-# Compatibility and release contract
+# Compatibility contract
 
-For maintainers and reviewers, this contract answers: what may change without
-surprising existing users, and what evidence makes an installable release valid?
+This contract governs behaviour that existing users and persisted project state
+can observe across a compatible release.
 
-- 2026-09-21: Versioned managed-state lock files carry the holder pid and its
-  process start-time witness. Readers must require that witness before reclaiming
-  a lock; pid alone is not evidence because pid reuse can identify another live
-  process. Live contention remains bounded and ends in the existing typed
-  `version_conflict` refusal.
+## Guarantees
 
 - Public surfaces include exported library symbols and types, CLI commands,
-  options, exit behavior and machine JSON, configuration keys and defaults,
-  persisted schemas, workflow/plugin interfaces, and documented installation
+  options, exit behaviour and machine JSON, configuration keys and defaults,
+  persisted schemas, workflow and plugin interfaces, and documented installation
   paths. Name affected public surfaces in every change plan.
-- Preserve compatible behavior within a major version unless the operator approves
-  a breaking change. A removal or incompatible rename requires a migration path,
-  a visible deprecation period when feasible, and a major-version decision.
-- Classify the release with Semantic Versioning from observable compatibility, not
-  implementation size: incompatible public change is major, compatible capability
-  is minor, compatible correction is patch.
-- Every change merged into `main`, including documentation-only changes, has a
-  new Semantic Version and matching dated changelog entry. A PR that leaves the
-  version unchanged is blocking. Installable changes additionally require a
-  reproducible locked install and bounded packed-artifact smoke. The binary must
-  report the exact version; never reuse a version previously offered from `main`.
-- Before publication, inspect the exact tracked and packed file sets for credentials,
-  private keys, local runtime state, unexpected generated data, and licensing
-  mistakes. Publication stops on uncertainty; absence of an optional external
-  scanner is not evidence that the artifact is safe.
+- Preserve behaviour within a major version unless a breaking change is approved.
+- A removal or incompatible rename needs a migration path, a deprecation period
+  where feasible, and an approved major-version decision.
+- Versioned managed-state locks carry both holder PID and process start-time
+  witness. Reclaiming requires that witness; PID alone is insufficient.
+
+## Failures
+
+- Live managed-state lock contention is bounded and ends as typed
+  `version_conflict`, not an indefinite wait or unsafe reclaim.
+
+## Related surfaces
+
+- Release process: `release.md`.
+- Error behaviour: `errors.md`.
+- Managed sessions: `session-manager.md`.
