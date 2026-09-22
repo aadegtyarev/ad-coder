@@ -1117,7 +1117,7 @@ test("auto compaction consumes a distinct provider summary before the normal res
   }
 });
 
-/** The harness's own summarization prompt, as `pi-agent-core` sends it. */
+/** The upstream emergency compactor prompt, reached only after our routes fail. */
 const HARNESS_SUMMARY_PROMPT = "context summarization assistant";
 
 /** A role whose budget makes the harness threshold 1000 tokens on a 200k window. */
@@ -1169,16 +1169,28 @@ test("a dead summarizer falls back to the role's own model instead of ending the
 
     // Ours was asked first -- the fallback is a fallback, not the default path.
     expect(asked).toBeGreaterThan(0);
-    // And the fallback really happened, with the harness's own prompt and model.
-    expect(prompts.some((prompt) => prompt.includes(HARNESS_SUMMARY_PROMPT))).toBe(true);
+    // And the fallback really happened, with our own summarization prompt and
+    // the role's model: the bounded active-model fallback route in-hook.
+    expect(prompts.some((prompt) => prompt.startsWith(SUMMARIZATION_PROMPT))).toBe(true);
 
     const compactions = (
       await session.findEntries({ type: "compaction" }, BACKGROUND_CONTEXT)
     ).filter((entry) => entry.type === "compaction");
     expect(compactions.length).toBeGreaterThan(0);
-    // `fromHook: false` is the durable record of WHO summarized: the harness,
-    // because our handler declined.
-    expect(compactions.every((entry) => entry.fromHook === false)).toBe(true);
+    // `fromHook: true` identifies the ad-coder hook as the compactor. The
+    // primary route is dead, so that hook committed the bounded active-model
+    // fallback instead of handing control to pi-agent-core's own compactor.
+    expect(compactions.every((entry) => entry.fromHook === true)).toBe(true);
+    expect(
+      compactions.some(
+        (entry) =>
+          entry.details !== undefined &&
+          entry.details !== null &&
+          typeof entry.details === "object" &&
+          !Array.isArray(entry.details) &&
+          entry.details.compactionFallbackUsed === true,
+      ),
+    ).toBe(true);
     // Leak invariant: the thrown text can carry the evicted conversation, and
     // the compaction entry is durable.
     expect(JSON.stringify(compactions)).not.toContain(secret);
@@ -1187,13 +1199,14 @@ test("a dead summarizer falls back to the role's own model instead of ending the
   }
 });
 
-test("a harness compaction that fails outright ends the session with a reopen, not a retry", async () => {
+test("a failed primary and active-model fallback compaction ends the session with a reopen, not a retry", async () => {
   const { faux, models, model } = harnessFixture();
   const role = tightRole(model);
   const session = await new MemorySessionRepo().create({}, BACKGROUND_CONTEXT);
-  // Our summarizer declines (so the harness takes over) and the harness's own
-  // summary request is refused with a NON-retryable cause, so the operation
-  // settles as `summarization_failed` after one attempt.
+  // Every route fails: the cheap primary declines, the bounded active-role
+  // fallback returns a non-retryable error, and pi-agent-core's final
+  // emergency compactor is also refused. The operation must settle as
+  // `summarization_failed`, not loop or silently lose history.
   const summarizer: Summarizer = async () => {
     throw new Error("declined");
   };
@@ -1201,6 +1214,7 @@ test("a harness compaction that fails outright ends the session with a reopen, n
     Array.from(
       { length: 24 },
       () => (request: { systemPrompt?: string }) =>
+        request.systemPrompt?.startsWith(SUMMARIZATION_PROMPT) === true ||
         request.systemPrompt?.includes(HARNESS_SUMMARY_PROMPT) === true
           ? fauxAssistantMessage("", {
               stopReason: "error",

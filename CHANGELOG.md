@@ -11,6 +11,14 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.13] - 2026-09-23
+
+### Fixed
+
+- **Active-model compaction fallback is regression-tested as an ad-coder
+  compaction.** The test now asserts the durable fallback marker and the
+  hook-owned entry actually produced by the bounded route.
+
 ## [0.181.12] - 2026-09-23
 
 ### Fixed
