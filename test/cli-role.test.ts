@@ -71,6 +71,16 @@ function fixture() {
   return { faux, models, model, role };
 }
 
+function processStartTime(pid: number): string {
+  const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+  const startTime = stat
+    .slice(stat.lastIndexOf(")") + 2)
+    .trim()
+    .split(" ")[19];
+  if (startTime === undefined) throw new Error("missing process start time");
+  return startTime;
+}
+
 test("runRoleStandalone drives one faux turn and returns the assistant text plus a numeric cost", async () => {
   const { faux, models, model, role } = fixture();
   faux.setResponses([fauxAssistantMessage("looks good to me")]);
@@ -99,6 +109,36 @@ test("runRoleStandalone drives one faux turn and returns the assistant text plus
   });
   // The ledger recorded the turn, and the cost is summed from it.
   expect(ledgerSink.records().length).toBeGreaterThan(0);
+});
+
+test("standalone closeout merges a checkpoint advanced while its model turn is in flight", async () => {
+  const { faux, models, model, role } = fixture();
+  const runId = `checkpoint-race-${crypto.randomUUID()}`;
+  const store = new ProjectStore(targetDir);
+  const checkpointPath = path.join(store.layout.runs, `standalone-${runId}.json`);
+  // A progress observer writes the checkpoint before the provider dispatch.
+  // Simulate a second, durable observer completing while that dispatch is in
+  // flight. Before this regression fix, the normal closeout then tried to
+  // write its stale version and stranded the run as `running`.
+  faux.setResponses([
+    () => {
+      const current = store.readVersionedJson<Record<string, unknown>>(checkpointPath);
+      store.writeVersionedJson(checkpointPath, current.value, current.version);
+      return fauxAssistantMessage("durably settled");
+    },
+  ]);
+
+  const result = await runRoleStandalone({
+    role,
+    model,
+    models,
+    targetDir,
+    task: "review the raced checkpoint",
+    runId,
+  });
+
+  expect(result.text).toContain("durably settled");
+  expect(store.readVersionedJson<{ status: string }>(checkpointPath).value.status).toBe("complete");
 });
 
 test("standalone roles enforce the same stage budgets as pipeline roles", async () => {
@@ -165,6 +205,57 @@ test("an interrupted standalone role persists a resumable pause and releases its
   });
   expect(resumed.text).toContain("resumed after interruption");
   expect(store.readVersionedJson<{ status: string }>(checkpointPath).value.status).toBe("complete");
+});
+
+test("resume reclaims a new-format session lease left by a dead standalone worker", async () => {
+  const { faux, models, model, role } = fixture();
+  const runId = `dead-worker-${crypto.randomUUID()}`;
+  const task = "review after a worker died";
+  const abortController = new AbortController();
+  abortController.abort();
+
+  await expect(
+    runRoleStandalone({
+      role,
+      model,
+      models,
+      targetDir,
+      task,
+      runId,
+      abortSignal: abortController.signal,
+    }),
+  ).rejects.toBeInstanceOf(RunInterruptedError);
+
+  const store = new ProjectStore(targetDir);
+  const lease = path.join(store.layout.tmp, `session-${runId}.lease`);
+  const worker = Bun.spawn(["sleep", "60"], { stdout: "ignore", stderr: "ignore" });
+  const identity = {
+    pid: worker.pid,
+    startTime: processStartTime(worker.pid),
+    token: crypto.randomUUID(),
+  };
+  fs.writeFileSync(lease, `${JSON.stringify(identity)}\n`, { mode: 0o600 });
+  worker.kill();
+  await worker.exited;
+
+  faux.setResponses([fauxAssistantMessage("reconnected safely")]);
+  const resumed = await runRoleStandalone({
+    role,
+    model,
+    models,
+    targetDir,
+    task,
+    runId,
+    resumeExisting: true,
+  });
+
+  expect(resumed.text).toContain("reconnected safely");
+  expect(fs.existsSync(lease)).toBe(false);
+  expect(
+    store.readVersionedJson<{ status: string }>(
+      path.join(store.layout.runs, `standalone-${runId}.json`),
+    ).value.status,
+  ).toBe("complete");
 });
 
 test("a failed empty provider turn settles its standalone run with safe recovery evidence", async () => {

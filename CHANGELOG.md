@@ -11,6 +11,15 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.5] - 2026-09-22
+
+### Fixed
+
+- **A stale standalone checkpoint can no longer strand recovery.** Progress
+  and closeout updates now merge under the record lock, so an intervening
+  durable update cannot turn successful completion into a version-conflict
+  crash. Resume also remains proven against a dead versioned worker lease.
+
 ## [0.181.4] - 2026-09-22
 
 ### Fixed

@@ -790,6 +790,21 @@ export async function runRoleStandalone(params: {
     );
     session = await store.createSession(runId, BACKGROUND_CONTEXT);
   }
+  /**
+   * Runtime progress has more than one durable observer (turn admission,
+   * closeout, and recovery).  A later observer is allowed to have advanced
+   * the record by the time this caller settles, so merge under the store lock
+   * instead of turning an otherwise recoverable role into a stale-version
+   * failure.  Session ownership still makes the role a single writer in the
+   * semantic sense; this only serializes its independent durability paths.
+   */
+  const updateCheckpoint = (update: (current: Checkpoint) => Checkpoint): void => {
+    checkpoint = store.mutateVersionedJson<Checkpoint>(checkpointPath, (current) => {
+      if (current === undefined)
+        throw new ProjectStoreError("not_found", checkpointPath, "standalone checkpoint was lost");
+      return update(current.value);
+    });
+  };
   let result: Awaited<ReturnType<ReturnType<typeof createRoleRunner>["runRole"]>>;
   try {
     result = await createRoleRunner({
@@ -816,21 +831,17 @@ export async function runRoleStandalone(params: {
       stageLimitObserver: (snapshot) => {
         const { elapsedMs, modelTurns, toolTurns, inputTokens, lastInputTokens, costUsd } =
           snapshot;
-        checkpoint = store.writeVersionedJson(
-          checkpointPath,
-          {
-            ...checkpoint.value,
-            cumulativeUsage: {
-              elapsedMs,
-              modelTurns,
-              toolTurns,
-              inputTokens,
-              lastInputTokens,
-              costUsd,
-            },
+        updateCheckpoint((current) => ({
+          ...current,
+          cumulativeUsage: {
+            elapsedMs,
+            modelTurns,
+            toolTurns,
+            inputTokens,
+            lastInputTokens,
+            costUsd,
           },
-          checkpoint.version,
-        );
+        }));
       },
       ...(params.ledgerSink !== undefined && { ledgerSink: params.ledgerSink }),
       ...(params.tools !== undefined && { tools: params.tools }),
@@ -851,28 +862,24 @@ export async function runRoleStandalone(params: {
         );
       const { elapsedMs, modelTurns, toolTurns, inputTokens, lastInputTokens, costUsd } =
         error.snapshot;
-      store.writeVersionedJson(
-        checkpointPath,
-        {
-          ...checkpoint.value,
-          status: "paused",
-          cumulativeUsage: {
-            elapsedMs,
-            modelTurns,
-            toolTurns,
-            inputTokens,
-            lastInputTokens,
-            costUsd,
-          },
-          pause: {
-            code: "stage_limit",
-            reason: error.reason,
-            limit: error.limit,
-            observed: error.observed,
-          },
+      updateCheckpoint((current) => ({
+        ...current,
+        status: "paused",
+        cumulativeUsage: {
+          elapsedMs,
+          modelTurns,
+          toolTurns,
+          inputTokens,
+          lastInputTokens,
+          costUsd,
         },
-        checkpoint.version,
-      );
+        pause: {
+          code: "stage_limit",
+          reason: error.reason,
+          limit: error.limit,
+          observed: error.observed,
+        },
+      }));
     }
     if (error instanceof RunInterruptedError || params.abortSignal?.aborted === true) {
       // Issue #479: the pause names the signal that ended the run and, when a
@@ -882,24 +889,20 @@ export async function runRoleStandalone(params: {
       // victim that died before reaching this write.
       const signal = params.interruptSignal?.();
       const stopRequest = readRunStopRequest(store, runId);
-      store.writeVersionedJson(
-        checkpointPath,
-        {
-          ...checkpoint.value,
-          status: "paused",
-          pause: {
-            code: "interrupted",
-            ...(signal !== undefined && { signal }),
-            ...(stopRequest !== undefined && {
-              stopRequest: {
-                requestedAt: stopRequest.requestedAt,
-                requesterPid: stopRequest.requesterPid,
-              },
-            }),
-          },
+      updateCheckpoint((current) => ({
+        ...current,
+        status: "paused",
+        pause: {
+          code: "interrupted",
+          ...(signal !== undefined && { signal }),
+          ...(stopRequest !== undefined && {
+            stopRequest: {
+              requestedAt: stopRequest.requestedAt,
+              requesterPid: stopRequest.requesterPid,
+            },
+          }),
         },
-        checkpoint.version,
-      );
+      }));
       if (stopRequest !== undefined) consumeRunStopRequest(store, runId);
     }
     if (
@@ -920,11 +923,7 @@ export async function runRoleStandalone(params: {
               code: "internal_error",
               message: "role attempt failed; inspect harness diagnostics and retry",
             };
-      store.writeVersionedJson(
-        checkpointPath,
-        { ...checkpoint.value, status: "failed", failure },
-        checkpoint.version,
-      );
+      updateCheckpoint((current) => ({ ...current, status: "failed", failure }));
     }
     throw error;
   }
@@ -944,12 +943,10 @@ export async function runRoleStandalone(params: {
     ...(result.stageCloseout !== undefined && { stageCloseout: result.stageCloseout }),
     observations: result.observations,
   };
-  const { pause: _pause, failure: _failure, ...completed } = checkpoint.value;
-  store.writeVersionedJson(
-    checkpointPath,
-    { ...completed, status: "complete", result: durableResult },
-    checkpoint.version,
-  );
+  updateCheckpoint((current) => {
+    const { pause: _pause, failure: _failure, ...completed } = current;
+    return { ...completed, status: "complete", result: durableResult };
+  });
   return {
     text,
     cost: durableResult.cost,
