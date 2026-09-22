@@ -12,8 +12,8 @@ This contract owns optional modules around the ad-coder core.
   configuration schema, and headless adapter. Kinds include interactive fronts
   (TUI, API, Telegram, web, Matrix), VCS/workspace adapters, forge adapters
   (GitHub, GitLab, or another host), workflow/tool providers, event transports,
-  and lifecycle-hook providers. An enabled module exposes only its declared
-  capabilities.
+  lifecycle-hook providers, and execution-boundary providers. An enabled module
+  exposes only its declared capabilities.
 - Module selection is explicit configuration with visible effective source.
   An absent, disabled, invalid, or unavailable module removes only its own
   capabilities and produces a typed recovery action; it never disables core work
@@ -40,3 +40,4 @@ version rejection, and identical session/run identity across two enabled fronts.
 - [Machine API](machine-api.md) owns the built-in machine front.
 - [Worktree lifecycle](worktree-lifecycle.md) owns Git worktrees.
 - [Lifecycle hooks](hooks.md) owns hook-provider semantics.
+- [Execution boundary](execution-boundary.md) owns sandbox-provider semantics.

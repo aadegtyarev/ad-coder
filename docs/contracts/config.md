@@ -41,6 +41,9 @@ resolved. It does not own model routing; see [routing configuration](routing-con
   standard settings precedence; a project setting overrides the profile value.
 - Hook enablement, order, scope, and resource limits are declared settings with
   the same profile/project/launch precedence; see [lifecycle hooks](hooks.md).
+- Execution mode, destructive-command guard, protected roots, and a selected
+  sandbox or optional LLM-guard provider are settings; see
+  [execution boundary](execution-boundary.md).
 - Set-valued configuration reports enabled/disabled state and count, including
   member ids only within the documented line budget. A missing renderer branch
   fails loudly by key rather than exposing an object representation or its value.
@@ -66,3 +69,4 @@ both TUI and detached-worker paths when adding a setting or changing precedence.
 - [Quality bootstrap](quality-bootstrap.md) owns project gate bootstrap.
 - [Settings interface](settings-interface.md) owns settings discovery and editing.
 - [Lifecycle hooks](hooks.md) owns hook-specific settings.
+- [Execution boundary](execution-boundary.md) owns execution settings.

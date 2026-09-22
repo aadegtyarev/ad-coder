@@ -299,6 +299,14 @@ workflows — one substrate, swappable drivers.
   exact-once delivery. Trusted hook modules can observe, guard, or own a bounded
   transformation; ordering, enablement, failures, and resume are deterministic.
 
+- **REQUIREMENT — layered execution boundary.** Default execution remains open
+  host authority, with only a best-effort guard against unmistakably broad
+  destructive commands; it is not isolation. Replace direct construction of
+  `NodeExecutionEnv` in standalone and conversation paths with one
+  `ExecutionBoundary` factory for built-in and module tools. Then add a real
+  sandbox provider that fails closed if unavailable; an optional LLM guard may
+  follow it as policy assistance, never as the security boundary.
+
 - **REQUIREMENT — background agent dispatch.** A TUI operator and the
   orchestrator can launch built-in, prompt-defined custom, or ad-hoc agents
   without blocking interactive input. Project prompt files create and remove

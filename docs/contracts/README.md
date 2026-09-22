@@ -12,6 +12,7 @@
 - `delegation.md` — execution-path selection; read when dispatching work or lanes.
 - `documentation.md` — project documentation; read when changing project prose.
 - `errors.md` — error behaviour; read when adding a boundary failure.
+- `execution-boundary.md` — tool authority and sandbox seam; read when adding execution or guard policy.
 - `extension-modules.md` — optional integrations; read when adding a front, VCS, forge, or transport.
 - `hooks.md` — lifecycle extension points; read when adding SDK or harness hooks.
 - `ledger-report.md` — ledger reports; read when changing their API or output.

@@ -19,6 +19,9 @@ the fronts and optional compositions built around it.
   pipeline. A caller that selects a plugin can use its headless API directly.
 - A worker role is independently delegable whether or not a workflow module is
   enabled. The pipeline is an optional composition of roles, not their gateway.
+- Built-in and module tools receive execution capability through one core
+  execution-boundary factory. Fronts and run paths do not construct host tool
+  environments directly, so sandbox providers apply equally to every role.
 
 ## Related surfaces
 
@@ -28,3 +31,4 @@ the fronts and optional compositions built around it.
 - [Role and tool wiring](role-tools.md).
 - [Task orchestration](orchestrator.md).
 - [Terminal UI](terminal-ui.md).
+- [Execution boundary](execution-boundary.md).

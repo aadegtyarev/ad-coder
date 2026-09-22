@@ -15,9 +15,11 @@ This contract owns the trust and authority boundaries of an ad-coder run.
   outbound surfaces do, and require security review.
 - Research sends only bounded questions and non-secret facts through explicitly
   configured tools. Its destination and provenance are visible and durable.
-- `bash` has the invoking user's full authority. `--target-dir` sets its
-  starting directory; it is not sandboxing. File and project tools enforce
-  their own target paths, but that advisory boundary does not constrain bash.
+- `bash` has the invoking user's full authority in the default open execution
+  mode. `--target-dir` sets its starting directory; it is not sandboxing. File
+  and project tools enforce their own target paths, but that advisory boundary
+  does not constrain bash. [Execution boundary](execution-boundary.md) owns the
+  future enforceable execution seam and the limited destructive-command guard.
 
 ## Accepted risks
 
@@ -38,3 +40,4 @@ command filter.
 - [Role tools](role-tools.md) owns which tools a role receives.
 - [Configuration](config.md) owns persisted settings and credentials.
 - [Product changes](product-change.md) owns the review and delivery workflow.
+- [Execution boundary](execution-boundary.md) owns tool execution policy.
