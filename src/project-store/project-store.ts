@@ -137,6 +137,41 @@ export class ProjectStore {
     });
   }
 
+  /**
+   * Explicit recovery for a session whose complete JSONL transactions overlap.
+   * This never tries to select one conflicting record.  It preserves the raw
+   * journal in scratch/recovery and starts a fresh same-id continuation with a
+   * durable, machine-readable pointer to that evidence.
+   */
+  async clearAmbiguousSession(
+    id: string,
+    context: Context = BACKGROUND_CONTEXT,
+  ): Promise<Session<ProjectSessionMetadata>> {
+    return this.withLockedSession(id, context, async () => {
+      const metadata = await this.findSession(id, context);
+      const artifactPath = this.fileSystem.quarantineOverlappingTransactions(metadata.path);
+      if (artifactPath === undefined)
+        throw new ProjectStoreError(
+          "ambiguous_journal",
+          metadata.path,
+          "session journal is not a complete overlapping transaction set",
+        );
+      const replacement = await this.sessions.create({ id, cwd: this.layout.targetDir }, context);
+      const branch = await replacement.createBranch("main", null, context);
+      await branch.appendCustomEntry(
+        "ad-coder.session_recovery",
+        {
+          version: 1,
+          state: "cleared_ambiguous_journal",
+          artifact: { type: "ambiguous_journal", path: artifactPath },
+          recovery: "new_continuation",
+        },
+        context,
+      );
+      return replacement;
+    });
+  }
+
   async deleteSession(id: string, context: Context = BACKGROUND_CONTEXT): Promise<void> {
     this.validateId(id);
     const releaseCoordination = this.acquireLock(this.sessionCoordinationPath());
@@ -187,11 +222,20 @@ export class ProjectStore {
     try {
       return await this.sessions.open(metadata, context);
     } catch (error) {
-      if (
-        !this.hasOutOfOrderTransactionError(error) ||
-        !this.fileSystem.repairOutOfOrderTransactions(metadata.path)
-      )
-        throw error;
+      if (!this.hasOutOfOrderTransactionError(error)) throw error;
+      if (!this.fileSystem.repairOutOfOrderTransactions(metadata.path)) {
+        if (this.fileSystem.hasOverlappingTransactions(metadata.path))
+          throw new ProjectStoreError(
+            "ambiguous_journal",
+            metadata.path,
+            "session journal has overlapping committed transactions; inspect it or clear it for a new continuation",
+          );
+        throw new ProjectStoreError(
+          "corrupt_state",
+          metadata.path,
+          "session journal has a non-monotonic incomplete transaction",
+        );
+      }
       return await this.sessions.open(metadata, context);
     }
   }

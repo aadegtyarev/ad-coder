@@ -114,7 +114,9 @@ export type ProjectStoreErrorCode =
   | "unsafe_object"
   | "version_conflict"
   | "resource_limit"
-  | "corrupt_state";
+  | "corrupt_state"
+  /** Complete JSONL transactions claim the same durable sequence. */
+  | "ambiguous_journal";
 
 export class ProjectStoreError extends Error {
   override readonly name = "ProjectStoreError";

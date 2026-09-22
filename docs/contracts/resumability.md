@@ -41,6 +41,10 @@ This contract owns preservation and recovery of every durable ad-coder state.
   intact and pauses the affected state with a typed recovery path. It never
   starts a blank replacement session, silently resets budget or profile, or
   presents partial recovery as complete.
+- A journal whose complete committed transactions overlap is an ambiguity, not
+  an ordering fault. Resume leaves its bytes untouched and reports a typed
+  pause. Only an explicit clear may archive the exact journal and begin a
+  marked fresh continuation; it never guesses which conflicting record wins.
 - TUI and machine resume controls expose the same restored state, pending input,
   paused ambiguity, and available action. Resume is idempotent: repeated resume
   requests do not duplicate a run, wake, message, or external effect.

@@ -1,3 +1,4 @@
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { type Context, err, FileError, ok, type Result } from "@earendil-works/pi-agent-core";
@@ -124,6 +125,54 @@ export class ProjectStoreFileSystem extends NodeExecutionEnv {
     if (!result.ok) throw result.error;
     this.orderedAppends.set(resolved, { nextSequence: expected, pending: new Map() });
     return true;
+  }
+
+  /**
+   * Move (never rewrite) a journal with overlapping committed transactions to
+   * the private recovery area.  An overlap is not an ordering fault: choosing
+   * either record would silently discard durable state.  The caller can then
+   * create an explicitly operator-authorised fresh continuation while the
+   * exact original bytes remain available for inspection and bug reporting.
+   *
+   * Returns undefined unless every post-header line is a complete transaction
+   * and at least two transactions overlap.  In particular, partial/corrupt
+   * journals are deliberately left where they are.
+   */
+  quarantineOverlappingTransactions(candidate: string): string | undefined {
+    const resolved = this.assertMutation(candidate);
+    this.assertSafeExistingFile(resolved, true);
+    if (!this.hasOverlappingTransactions(resolved)) return undefined;
+    const recoveryDirectory = path.join(this.storeRoot, "scratch", "recovery");
+    this.assertMutation(recoveryDirectory);
+    fs.mkdirSync(recoveryDirectory, { recursive: true, mode: 0o700 });
+    fs.chmodSync(recoveryDirectory, 0o700);
+    this.assertSafeDirectory(recoveryDirectory);
+    const archived = path.join(
+      recoveryDirectory,
+      `${path.basename(resolved)}.${crypto.randomUUID()}.ambiguous.jsonl`,
+    );
+    // A rename is atomic on this store.  We do not copy then delete: after a
+    // crash there is always one intact original, never a half-written repair.
+    fs.renameSync(resolved, archived);
+    fs.chmodSync(archived, 0o600);
+    return archived;
+  }
+
+  hasOverlappingTransactions(candidate: string): boolean {
+    const resolved = this.assertMutation(candidate);
+    this.assertSafeExistingFile(resolved, true);
+    const lines = new TextDecoder().decode(this.readSafeFile(resolved)).trimEnd().split("\n");
+    const header = lines.shift();
+    if (header === undefined) return false;
+    const transactions = lines.map((line) => this.transactionSequence(line));
+    if (transactions.some((transaction) => transaction === undefined)) return false;
+    const ordered = (transactions as Array<{ first: number; last: number }>).sort(
+      (left, right) => left.first - right.first,
+    );
+    return ordered.some((transaction, index) => {
+      const previous = ordered[index - 1];
+      return previous !== undefined && transaction.first <= previous.last;
+    });
   }
 
   override async renameFile(source: string, destination: string, context: Context) {

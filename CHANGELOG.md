@@ -11,6 +11,15 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.10] - 2026-09-23
+
+### Fixed
+
+- **An ambiguous session journal now has a safe continuation path.** Resume
+  preserves overlapping committed transactions and reports a typed recovery;
+  an explicit clear archives the exact journal and records its location on a
+  fresh same-id continuation rather than silently choosing or deleting data.
+
 ## [0.181.9] - 2026-09-22
 
 ### Fixed
