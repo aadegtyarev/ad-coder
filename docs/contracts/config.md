@@ -50,6 +50,10 @@ resolved. It does not own model routing; see [routing configuration](routing-con
   recovery limits are settings; see [resumability](resumability.md).
 - Pipeline change-context strategy, limits, widening triggers, redaction, and
   full-context fallback are settings; see [built-in pipeline context](builtin-pipeline-context.md).
+- Route capacity ceilings, queue policy, adaptive learning/probing, routing-ladder
+  fallback policy, and forge delivery-summary publication are settings; see
+  [provider admission](provider-admission.md), [routing configuration](routing-config.md),
+  and [product changes](product-change.md).
 - Execution mode, destructive-command guard, protected roots, and a selected
   sandbox or optional LLM-guard provider are settings; see
   [execution boundary](execution-boundary.md).

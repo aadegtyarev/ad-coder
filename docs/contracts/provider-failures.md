@@ -6,8 +6,8 @@ generation.
 ## Guarantees
 
 - Rate and quota limits are distinct typed failures. They retain only bounded
-  HTTP status, provider-code token, and optional retry delay; response bodies and
-  message prose never cross the boundary.
+  HTTP status, provider-code token, optional retry delay, and declared safe
+  capacity hint; response bodies and message prose never cross the boundary.
 - Provider rejection, credential failure, unavailable provider, and empty or
   truncated generation remain distinguishable typed outcomes.
 - A generation with neither answer text nor tool call is a failure, not success.

@@ -519,6 +519,18 @@ workflows — one substrate, swappable drivers.
   that compact context costs more in retries or rework. Optimize accepted-result
   cost rather than input tokens; full context is a visible normal fallback. The
   pipeline itself is an optional bundled workflow module.
+- **REQUIREMENT — adaptive route capacity and fallback.** Admission scopes capacity
+  by secret-free provider account and model route, learns conservative effective
+  concurrency from limit evidence, and visibly reports adjustments. A role's
+  ordered `provider:model` ladder may cross providers; routing selects the first
+  usable permitted rung and records any fallback. Capacity evidence and fallback
+  never make a session unusable.
+- **REQUIREMENT — complete session summaries.** A ledger-derived session summary
+  includes all role/model tokens and cost totals plus every durable abnormal or
+  degraded event. It is available locally and, only when an associated PR and an
+  enabled forge delivery-summary capability exist, published to that PR. GitHub,
+  PR creation, issue tracking, CI, and publication remain separable forge-module
+  capabilities.
 - **Auditor role + refactor executor** — recognizing decomposition needs vs doing
   them safely, two tools. Auditor: a cold-read role triggered by a drift signal
   (size band, churn, drift-log-reaches-8) that surfaces decomposition candidates

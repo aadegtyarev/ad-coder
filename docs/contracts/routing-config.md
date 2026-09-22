@@ -21,10 +21,16 @@ This contract owns the operator-authored model route and credentials vocabulary.
   reference. It is not a routing inventory or authority to rewrite `models.yaml`;
   cache validity, fallback, and observed-price overlays belong to
   [cost anomaly](cost-anomaly.md).
-- A profile maps role or `role@complexity` to an ordered provider:model ladder;
-  the tier-specific row replaces that tier. Current dispatch serves the first
-  rung. A present unusable YAML file fails rather than falling back silently,
-  and the chosen source/profile is visible at startup and in configuration.
+- A profile maps role or `role@complexity` to an ordered `provider:model` ladder;
+  rungs may cross models and providers, and the tier-specific row replaces that
+  tier. Dispatch selects the first route usable under the configured fallback
+  policy and records every non-first selection with its evidence. A present
+  unusable YAML file fails rather than falling back silently, and the chosen
+  source/profile is visible at startup and in configuration.
+- Fallback policy may use capacity/cooldown, provider-failure class, model
+  availability, and configured budget/quality constraints. An explicit pinned
+  route never falls back; no usable rung returns a typed refusal with ladder and
+  recovery evidence. A fallback is reported during the session and in its summary.
 - Every routing role has a measurable profile cell. A newly introduced role may
   temporarily use its prior route with a visible warning; an absent cell for an
   established role is an error. `defaultComplexity` is routing fallback, not a

@@ -28,6 +28,10 @@ This contract owns how a product change is defined, coordinated, and closed.
   compact ledger view with run count, role routes, and provider-reported totals;
   detailed call data remains in the ledger. No core delivery path assumes a pull
   request, and a module never writes its bookkeeping into a target project.
+- When a project enables a forge delivery-summary capability and a change has an
+  associated pull request, the module publishes the ledger-derived session summary
+  there. Pull-request creation, issue tracking, CI observation, and summary
+  publication are independently selectable forge capabilities.
 - Completion requires applicable contracts, happy and failure evidence,
   documented recovery and compatibility effects, current release metadata, and
   independently reviewed work where [review evidence](review-evidence.md)
