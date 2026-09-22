@@ -29,6 +29,8 @@
 - `routing-config.md` — model routes and credentials; read when changing `models.yaml`.
 - `security.md` — security boundaries; read when changing trust or external effects.
 - `session-manager.md` — managed sessions; read when changing SessionManager behaviour.
+- `session-titles.md` — managed session names; read when changing title generation.
+- `session-transport.md` — local session socket boundary; read when changing transport.
 - `skill-authoring.md` — individual skills; read when authoring a skill.
 - `skills.md` — skill resolution and loading; read when changing skill behaviour.
 - `stage-limit-calibration.md` — learned stage ceilings; read when changing their policy.
