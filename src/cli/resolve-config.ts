@@ -87,7 +87,7 @@ export type ResolvableProvider = "deepseek" | "openrouter" | "openai-codex";
  * `maxTokensPercent` is the whole-turn ceiling; `reserveTokensPercent` is the
  * reply reserve; `keepRecentTokensPercent` is the recent tail the compactor
  * never evicts. `reserve + keepRecent` must stay below `maxTokens` (enforced by
- * `defineRole`), which the defaults satisfy (0.10 + 0.25 < 0.90).
+ * `defineRole`), which the defaults satisfy (0.10 + 0.25 < 0.80).
  */
 export type BudgetPercents = ContextBudgetPercents;
 export type ConfigurableRole =

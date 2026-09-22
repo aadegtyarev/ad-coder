@@ -235,9 +235,9 @@ export function selectRecentTail(
  *
  *   reserve(harness) = contextWindow - (maxTokens - reserve(budget))
  *
- * In the shipped default (maxTokens = 0.9 x window, reserve = 0.1 x window) the
- * harness reserve comes out at 0.2 x window, and both strategies fire at
- * 0.8 x window. `keepRecentTokens` maps verbatim -- it is the same idea in both
+ * In the shipped default (maxTokens = 0.8 x window, reserve = 0.1 x window) the
+ * harness reserve comes out at 0.3 x window, and both strategies fire at
+ * 0.7 x window. `keepRecentTokens` maps verbatim -- it is the same idea in both
  * (the recent tail a compaction never evicts).
  *
  * The clamp matters for a role paired at call time with a model smaller than

@@ -11,6 +11,14 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.7] - 2026-09-23
+
+### Fixed
+
+- **Automatic compaction now starts at the configured default.** The shipped
+  context budget begins durable compaction at 70% of a role's active context
+  window, rather than the previous 80%.
+
 ## [0.181.6] - 2026-09-22
 
 ### Fixed

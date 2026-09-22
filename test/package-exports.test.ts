@@ -321,7 +321,7 @@ test("the package is importable by its published name", () => {
   expect(typeof CHOOSE_TRANSITION_TOOL_NAME).toBe("string");
   expect(typeof SHOW_COST_TOOL_NAME).toBe("string");
   expect(DEFAULT_CONTEXT_WINDOW).toBe(200_000);
-  expect(DEFAULT_CONTEXT_BUDGET_PERCENTS.maxTokensPercent).toBe(0.9);
+  expect(DEFAULT_CONTEXT_BUDGET_PERCENTS.maxTokensPercent).toBe(0.8);
   expect(typeof deriveContextBudget).toBe("function");
   expect(typeof assertSummarizerWindow).toBe("function");
   const _budgetPercents: BudgetPercents | undefined = undefined;

@@ -6,6 +6,7 @@ import type {
 } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { createModels, fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
+import { deriveContextBudget } from "../src/context/budget";
 import type { CompactionHookResult } from "../src/context/compactor";
 import { produceSummary, selectRecentTail } from "../src/context/compactor";
 import type { CompactionFailure, ContextBudget, Summarizer } from "../src/index";
@@ -160,6 +161,19 @@ test("durableCompactionSettings maps the budget onto the harness threshold", () 
     keepRecentTokens: 50_000,
   });
   expect(200_000 - shipped.reserveTokens).toBe(180_000 - 20_000);
+});
+
+test("the shipped budget begins automatic compaction at 70 percent of the role window", () => {
+  const contextWindow = 200_000;
+  const resolved = deriveContextBudget(contextWindow);
+  const settings = durableCompactionSettings(resolved, contextWindow);
+
+  expect(resolved).toEqual({
+    maxTokens: 160_000,
+    reserveTokens: 20_000,
+    keepRecentTokens: 50_000,
+  });
+  expect(contextWindow - settings.reserveTokens).toBe(140_000);
 });
 
 test("durableCompactionSettings keeps a negative reserve impossible", () => {
