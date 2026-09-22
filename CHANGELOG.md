@@ -11,6 +11,14 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.11] - 2026-09-23
+
+### Fixed
+
+- **Standalone closeout is resumable.** A role that reaches its final-response
+  reserve now records a `stage_closeout` pause and its partial result instead
+  of falsely completing; resuming requires a raised exhausted ceiling.
+
 ## [0.181.10] - 2026-09-23
 
 ### Fixed

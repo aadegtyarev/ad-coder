@@ -82,6 +82,7 @@ import {
 } from "./orchestration/run-stop";
 import { createWorkflowSession } from "./orchestration/session";
 import {
+  STAGE_LIMIT_KEY,
   type StageCloseoutFact,
   StageLimitError,
   type StageLimitReason,
@@ -661,6 +662,18 @@ export async function runRoleStandalone(params: {
           observed: number;
         }
       | {
+          /**
+           * A final answer after the closeout reserve is an honest partial
+           * attempt, not completion.  The durable pause tells recovery which
+           * budget must grow before it can continue (issue #596).
+           */
+          code: "stage_closeout";
+          reason: StageCloseoutFact["reason"];
+          detail: string;
+          limit: number;
+          observed: number;
+        }
+      | {
           code: "interrupted";
           /**
            * Which signal ended the run (issue #479): an external stop is not
@@ -727,28 +740,17 @@ export async function runRoleStandalone(params: {
         prior.cumulativeUsage.inputTokens,
     };
     stageLimitInitial = cumulativeUsage;
-    if (prior.pause?.code === "stage_limit") {
-      const key: Record<StageLimitReason, keyof StageLimits | undefined> = {
-        duration: "maxDurationMs",
-        model_turns: "maxModelTurns",
-        tool_turns: "maxToolTurns",
-        input: "maxInputTokens",
-        cost: "maxCostUsd",
-        cost_in_flight: "maxCostUsd",
-        cost_unknown: "maxCostUsd",
-      };
-      const configured =
-        key[prior.pause.reason] === undefined
-          ? undefined
-          : params.stageLimits?.[key[prior.pause.reason] as keyof StageLimits];
+    if (prior.pause?.code === "stage_limit" || prior.pause?.code === "stage_closeout") {
+      const key = STAGE_LIMIT_KEY[prior.pause.reason];
+      const configured = params.stageLimits?.[key];
       if (configured !== 0 && (configured === undefined || configured <= prior.pause.limit))
         throw new ProjectStoreError(
           "invalid_config",
           checkpointPath,
-          `resume requires a larger ${String(key[prior.pause.reason])} or 0`,
+          `resume requires a larger ${key} or 0`,
         );
     }
-    const { pause: _pause, failure: _failure, ...resumed } = prior;
+    const { pause: _pause, failure: _failure, result: _result, ...resumed } = prior;
     checkpoint = store.writeVersionedJson(
       checkpointPath,
       {
@@ -805,6 +807,7 @@ export async function runRoleStandalone(params: {
       return update(current.value);
     });
   };
+  let latestStageLimitSnapshot: Readonly<StageLimitSnapshot> | undefined;
   let result: Awaited<ReturnType<ReturnType<typeof createRoleRunner>["runRole"]>>;
   try {
     result = await createRoleRunner({
@@ -827,8 +830,13 @@ export async function runRoleStandalone(params: {
       runId,
       session,
       ...(params.resumeExisting === true && { resumeActiveOperation: true }),
+      // Closeout deliberately lets the model settle a partial final answer.
+      // A resumed standalone run must therefore admit the original task as a
+      // continuation instead of replaying that settled partial result.
+      ...(params.resumeExisting === true && { resumePromptOnSettled: true }),
       ...(stageLimitInitial !== undefined && { stageLimitInitial }),
       stageLimitObserver: (snapshot) => {
+        latestStageLimitSnapshot = snapshot;
         const { elapsedMs, modelTurns, toolTurns, inputTokens, lastInputTokens, costUsd } =
           snapshot;
         updateCheckpoint((current) => ({
@@ -943,9 +951,38 @@ export async function runRoleStandalone(params: {
     ...(result.stageCloseout !== undefined && { stageCloseout: result.stageCloseout }),
     observations: result.observations,
   };
+  const closeout = result.stageCloseout;
   updateCheckpoint((current) => {
-    const { pause: _pause, failure: _failure, ...completed } = current;
-    return { ...completed, status: "complete", result: durableResult };
+    const { pause: _pause, failure: _failure, ...settled } = current;
+    if (closeout === undefined) return { ...settled, status: "complete", result: durableResult };
+
+    // A closeout controller has observed a snapshot before it can emit this
+    // fact (model/tool admission publishes one). Keep the defensive fallback
+    // so an adapter regression still leaves the run resumable rather than
+    // replacing a partial result with a dead `running` record.
+    const key = STAGE_LIMIT_KEY[closeout.reason];
+    const snapshot = latestStageLimitSnapshot;
+    const limit = snapshot?.[key] ?? params.stageLimits?.[key] ?? 0;
+    const observed =
+      closeout.reason === "duration"
+        ? (snapshot?.elapsedMs ?? current.cumulativeUsage.elapsedMs)
+        : closeout.reason === "model_turns"
+          ? (snapshot?.modelTurns ?? current.cumulativeUsage.modelTurns)
+          : closeout.reason === "tool_turns"
+            ? (snapshot?.toolTurns ?? current.cumulativeUsage.toolTurns)
+            : (snapshot?.inputTokens ?? current.cumulativeUsage.inputTokens);
+    return {
+      ...settled,
+      status: "paused",
+      result: durableResult,
+      pause: {
+        code: "stage_closeout",
+        reason: closeout.reason,
+        detail: closeout.detail,
+        limit,
+        observed,
+      },
+    };
   });
   return {
     text,

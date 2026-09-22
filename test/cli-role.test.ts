@@ -953,7 +953,43 @@ test("a standalone run that settles inside the closeout reserve relays the fact"
   const durable = JSON.parse(
     fs.readFileSync(path.join(targetDir, ".ad-coder", "runs", `standalone-${runId}.json`), "utf8"),
   ).value;
+  expect(durable.status).toBe("paused");
+  expect(durable.pause).toMatchObject({
+    code: "stage_closeout",
+    reason: "tool_turns",
+    limit: 2,
+    observed: 1,
+  });
   expect(durable.result.stageCloseout).toEqual(result.stageCloseout);
+
+  // Closeout has a usable partial answer, but never silently claims that the
+  // original task finished. A raised ceiling resumes the same durable session
+  // and admits a fresh continuation after the settled closeout turn.
+  faux.setResponses([fauxAssistantMessage("completed after the raised limit")]);
+  await expect(
+    runRoleStandalone({
+      role,
+      model,
+      models,
+      targetDir,
+      task: "review the closing change",
+      runId,
+      resumeExisting: true,
+      stageLimits: { maxToolTurns: 2, finalResponseReserveToolTurns: 1 },
+    }),
+  ).rejects.toBeInstanceOf(ProjectStoreError);
+  const resumed = await runRoleStandalone({
+    role,
+    model,
+    models,
+    targetDir,
+    task: "review the closing change",
+    runId,
+    resumeExisting: true,
+    stageLimits: { maxToolTurns: 4, finalResponseReserveToolTurns: 1 },
+  });
+  expect(resumed.text).toContain("completed after the raised limit");
+  expect(store_read(targetDir, runId).status).toBe("complete");
 });
 
 test("a normal standalone run carries no stageCloseout", async () => {
