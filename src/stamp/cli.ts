@@ -35,6 +35,18 @@ import {
 } from "./delivery-signature";
 import { checkReviewStamps, type ReviewStampFailure } from "./record-review-stamp";
 
+/**
+ * A ledger source is command input, not a harness failure.  Keeping this
+ * distinct from arbitrary filesystem errors lets both stamp fronts retain the
+ * normal usage projection when the caller omitted the target's ledger.
+ */
+export class StampLedgerSourceError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "StampLedgerSourceError";
+  }
+}
+
 /** Read ledger files leniently: one parseable record per line, blanks skipped. */
 export function readLedgerRecords(paths: readonly string[]): LedgerRecord[] {
   const records: LedgerRecord[] = [];
@@ -51,13 +63,15 @@ export function readLedgerRecords(paths: readonly string[]): LedgerRecord[] {
 export function ledgerRecordSources(targetDir: string, files: readonly string[]): string[] {
   if (files.length > 0) return files.map((file) => path.resolve(file));
   const base = path.join(targetDir, LEDGER_BASE_DIR);
-  if (!fs.existsSync(base)) throw new Error(`no ledger files exist under ${base}/`);
+  if (!fs.existsSync(base))
+    throw new StampLedgerSourceError(`no ledger files exist under ${base}/`);
   const entries = fs
     .readdirSync(base, { withFileTypes: true })
     .filter((entry) => entry.isFile() && entry.name.endsWith(".jsonl"))
     .map((entry) => path.join(base, entry.name))
     .sort();
-  if (entries.length === 0) throw new Error(`no *.jsonl ledger files exist under ${base}/`);
+  if (entries.length === 0)
+    throw new StampLedgerSourceError(`no *.jsonl ledger files exist under ${base}/`);
   return entries;
 }
 

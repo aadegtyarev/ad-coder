@@ -11,6 +11,14 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.15] - 2026-09-23
+
+### Fixed
+
+- **Missing stamp ledgers are command errors, not internal failures.** `stamp
+  delivery` and `stamp body-check` now name the absent target ledger and use
+  the normal human and machine usage-error projections.
+
 ## [0.181.14] - 2026-09-23
 
 ### Fixed
