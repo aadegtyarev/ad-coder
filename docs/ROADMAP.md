@@ -553,6 +553,11 @@ workflows — one substrate, swappable drivers.
   descriptor and renderer or cannot run; generic `Tool …` placeholders are never
   shown. Human path output shortens from the left while preserving filename and
   useful trailing directories; structured events retain complete safe identity.
+- **REQUIREMENT — durable non-blocking waiting.** A core `WaitService` waits for
+  runs, owned processes, timers, or enabled module-provided sources such as CI/PR
+  status without holding input or an orchestrator turn. Event delivery is preferred
+  to bounded polling; all outcomes resume through durable wakes and are controllable
+  identically by TUI, API, and orchestrator.
 - **REQUIREMENT — economical session titles.** Extract titles locally from the
   first user message by default. Optional semantic generation uses the resolved
   Summarizer role with its default cache-off policy, low admission priority, and

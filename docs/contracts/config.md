@@ -70,6 +70,8 @@ resolved. It does not own model routing; see [routing configuration](routing-con
   role policy, and subagent inheritance are settings; see [skills](skills.md).
 - Tool activity grouping, retention, output limits, and path-tail width are
   settings; see [tool observability](tool-observability.md).
+- Wait-source enablement, polling/backoff, timeout/stall, subscriptions,
+  concurrency, retention, and retry are settings; see [waiting](waiting.md).
 - Execution mode, destructive-command guard, protected roots, and a selected
   sandbox or optional LLM-guard provider are settings; see
   [execution boundary](execution-boundary.md).

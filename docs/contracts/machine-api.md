@@ -24,7 +24,8 @@ It is the JSON projection of headless operations and TUI controls.
   `estimates` returns the current forecast and planning feedback read-only. The
   `practices` resource lists, inspects, previews, enables, disables, updates,
   replaces, and removes portable project practices with the same guarded mutation
-  semantics as TUI. The
+  semantics as TUI. `waits` lists, creates, inspects, cancels, and retries
+  supported durable condition waits through the same service. The
   public names may be refined only through the compatibility contract, not by
   adding a front-only capability.
 - API requests use explicit fields rather than TUI command text. Their success,
@@ -74,3 +75,4 @@ model listing and override/reset.
 - [Project practices](project-practices.md) owns portable guidance lifecycle.
 - [Run control](run-control.md) owns run cancellation.
 - [Skills](skills.md) owns skill controls.
+- [Waiting](waiting.md) owns condition waits.

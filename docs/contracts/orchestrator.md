@@ -22,7 +22,8 @@ execution. Roles execute work, while stages are workflow phases.
 - Long-running work has durable event- or timer-based wake delivery. The product,
   not an orchestrator turn, polls sources without push support. A wait names its
   object and condition, has a finite timeout, reports unavailable conditions
-  separately, and is interrupted immediately by an operator message.
+  separately, and is interrupted immediately by an operator message. [Waiting](waiting.md)
+  owns the shared wait operation and adapters.
 - The orchestrator writes its material decisions, starts, waits, and next steps
   to the operator-facing session as they occur. A wake produces a short summary
   of the event, available data or error, and intended follow-up. It remains WIP
@@ -56,3 +57,4 @@ cited artefacts for every report claim.
 - [Wake delivery](wake-delivery.md) owns durable wake mechanics.
 - [Resumability](resumability.md) owns continuation after exit or interruption.
 - [Operation modes](operation-modes.md) owns manual and automatic decision scope.
+- [Waiting](waiting.md) owns condition lifecycle.

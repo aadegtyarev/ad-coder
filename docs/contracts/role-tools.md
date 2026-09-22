@@ -15,6 +15,9 @@ tools and the tool objects registered for the request that serves that role.
 - The orchestrator receives the settings read/set tools declared by
   [settings interface](settings-interface.md); their authority and mutation path
   are identical to the operator-facing controls.
+- The orchestrator receives the wait list/create/inspect/cancel/retry tools
+  declared by [waiting](waiting.md). Their source adapters, durable lifecycle,
+  and bounds are identical to operator-facing controls.
 
 ## Verification
 
@@ -29,3 +32,4 @@ tools and the tool objects registered for the request that serves that role.
 - [Agent dispatch](agent-dispatch.md) owns invocation and lifecycle.
 - [Runtime inspection](runtime-inspection.md) owns inspector semantics.
 - [Settings interface](settings-interface.md) owns settings tool semantics.
+- [Waiting](waiting.md) owns wait semantics.

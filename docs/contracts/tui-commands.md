@@ -28,6 +28,9 @@ This contract owns commands available to an operator in `ad-coder tui`.
   and syntax/example. `/runs cancel <id>` requests graceful run-scoped
   cancellation; a documented force form is offered only for eligible runs and
   shows its preserved-state and recovery consequences before mutation.
+- `/waits` lists pending and settled waits with source, condition, deadline, and
+  syntax/example. Its create, inspect, cancel, and supported retry actions use
+  the shared wait service; creating a wait never blocks the input editor.
 - `/status` shows the selected session's bounded state and ledger projection;
   `/about` shows harness name, version, enabled capabilities, and concise help.
   Both are local read-only controls with matching machine API actions.
@@ -90,6 +93,8 @@ Test skill catalogue/manual/ranked/adaptive modes, budgeted list rendering,
 explicit child inheritance, role denial, durable selection, and API parity.
 Test run listing, graceful/force cancellation, preserved queue/WIP, recovery, and
 API/orchestrator parity.
+Test wait creation/listing, no-argument local help, timeout/cancellation, restored
+pending waits, available input, and API/orchestrator parity.
 
 ## Related surfaces
 
@@ -105,3 +110,4 @@ API/orchestrator parity.
 - [Project practices](project-practices.md) owns portable guidance lifecycle.
 - [Run control](run-control.md) owns run cancellation.
 - [Skills](skills.md) owns skill controls.
+- [Waiting](waiting.md) owns condition waits.

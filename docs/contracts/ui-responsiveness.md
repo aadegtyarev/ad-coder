@@ -16,8 +16,9 @@ interactive ad-coder front.
 - Interrupting an active foreground turn promptly returns control and preserves
   its conversation and unrelated detached work. Cancelling detached work uses
   an explicit run-scoped action. Terminal modes and signal handlers are restored.
-- A synchronous watch has configured polling, total-timeout, and stall-timeout
-  bounds. It returns on state change, completion, stall, cancellation, or timeout.
+- A wait/watch has configured polling, total-timeout, and stall-timeout bounds.
+  It returns control immediately and later settles as state change, completion,
+  stall, cancellation, or timeout through the shared wait service.
 - An interactive front serializes background output with foreground output,
   renders each wake's concise orchestrator summary and next action, then restores
   its editor without corruption or loss of typed input.
@@ -32,3 +33,4 @@ interactive ad-coder front.
 
 - [Wake delivery](wake-delivery.md).
 - [Terminal UI](terminal-ui.md).
+- [Waiting](waiting.md).
