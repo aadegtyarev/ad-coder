@@ -5,11 +5,11 @@ resolved. It does not own model routing; see [routing configuration](routing-con
 
 ## Guarantees
 
-- Any behaviour a reasonable user may want to change is a setting with an
-  efficient default. Resolution is built-in default, user profile, project
-  override, then explicit launch parameter. The effective configuration makes
-  each value and its source visible; a human `config show` row is
-  `name=value (source)`, and JSON reports the same resolved state.
+- Every parameter or flag that changes behaviour is a setting with an efficient
+  default; no behaviour-changing source constant or CLI-only switch is allowed.
+  Resolution is built-in default, user profile, project override, then explicit
+  launch override. The effective configuration makes each value and source
+  visible through the grouped settings interface.
 - Numeric resource limits default to `0` and `0` disables them, unless their
   owning contract declares a positive safety ceiling or an immediate-action
   meaning. Values that change behaviour are not hidden source constants.
@@ -51,8 +51,8 @@ substitutes an unpinned provider for an explicit selection.
 
 ## Verification
 
-`ad-coder api config show` exposes effective values and source. Exercise both TUI
-and detached-worker paths when adding a launch setting or changing precedence.
+`ad-coder api settings` exposes effective values and source by group. Exercise
+both TUI and detached-worker paths when adding a setting or changing precedence.
 
 ## Related surfaces
 
@@ -62,3 +62,4 @@ and detached-worker paths when adding a launch setting or changing precedence.
   [quality](quality.md) own their specific ceilings.
 - [Extension modules](extension-modules.md) owns optional module capabilities.
 - [Quality bootstrap](quality-bootstrap.md) owns project gate bootstrap.
+- [Settings interface](settings-interface.md) owns settings discovery and editing.

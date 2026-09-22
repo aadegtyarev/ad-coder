@@ -36,6 +36,9 @@ This contract owns commands available to an operator in `ad-coder tui`.
   propose, approve, decline, inventory, and revalidate a profile through shared
   headless operations; approval is required before an action that installs tools
   or writes quality configuration.
+- `/settings` lists setting groups rather than every key. `/settings <group>`
+  lists that group, while its get/set actions expose profile or project scope,
+  current value, and effective source through the shared settings registry.
 - `/limits` shows effective ceilings and their source; its set action changes
   only the named configurable ceiling after validation. `/profile` shows the
   active profile, reachable models, role/agent mapping, declared prices, and
@@ -66,6 +69,7 @@ validation, orchestrator messaging, profile switching, and credential-free
 profile rendering; test model listing, override, reset, and read-only estimate
 feedback; test session listing and idle/active-turn selection; test parallel-lane
 availability and admission parity; test session status and harness-about parity.
+Test grouped settings discovery, scoped mutation, source rendering, and API parity.
 
 ## Related surfaces
 
@@ -76,3 +80,4 @@ availability and admission parity; test session status and harness-about parity.
 - [Routing configuration](routing-config.md) owns model and price data.
 - [Autonomy](autonomy.md) owns delegated authority.
 - [Runtime inspection](runtime-inspection.md) owns status and about content.
+- [Settings interface](settings-interface.md) owns grouped settings controls.

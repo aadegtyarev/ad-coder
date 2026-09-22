@@ -12,6 +12,9 @@ tools and the tool objects registered for the request that serves that role.
 - The orchestrator receives the read-only runtime-inspection tools declared by
   [runtime inspection](runtime-inspection.md). Their output remains bounded and
   uses the same redaction as the operator-facing projection.
+- The orchestrator receives the settings read/set tools declared by
+  [settings interface](settings-interface.md); their authority and mutation path
+  are identical to the operator-facing controls.
 
 ## Verification
 
@@ -25,3 +28,4 @@ tools and the tool objects registered for the request that serves that role.
 - [Role catalog](role-catalog.md) owns prompt-defined identities.
 - [Agent dispatch](agent-dispatch.md) owns invocation and lifecycle.
 - [Runtime inspection](runtime-inspection.md) owns inspector semantics.
+- [Settings interface](settings-interface.md) owns settings tool semantics.

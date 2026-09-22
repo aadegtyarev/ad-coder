@@ -286,6 +286,13 @@ workflows — one substrate, swappable drivers.
   Changes to stack, framework, component, dependency class, or test surface mark
   the profile stale and require the same strategy review before related code work.
 
+- **REQUIREMENT — complete, navigable settings.** Every behaviour-changing flag
+  or parameter is a declared short setting with validation, default, group, and
+  visible effective source. Profile and project files configure the same registry
+  with project precedence. TUI/API list groups first, then a requested group's
+  settings, so discovery and editing stay navigable rather than rendering a
+  single unbounded configuration page.
+
 - **REQUIREMENT — background agent dispatch.** A TUI operator and the
   orchestrator can launch built-in, prompt-defined custom, or ad-hoc agents
   without blocking interactive input. Project prompt files create and remove

@@ -13,9 +13,9 @@ It is the JSON projection of headless operations and TUI controls.
   generic, and ad-hoc agents; `workflows` lists, starts, and drives workflow
   sessions; `skills` lists, loads, and unloads; `limits` shows and sets ceilings;
   `profiles` lists, shows, and selects profiles; and `runs` reads or controls a
-  durable run. `sessions` lists and selects accessible sessions. `config` shows
-  resolved configuration and changes a validated setting where that setting's
-  owner permits it. `sessions.inspect` projects session/ledger state and
+  durable run. `sessions` lists and selects accessible sessions. `settings`
+  lists groups, reads effective values, and changes a validated scoped setting.
+  `sessions.inspect` projects session/ledger state and
   `harness.about` projects identity/version/capabilities; `quality` exposes
   bootstrap status and its propose/approve/decline/inventory/revalidate actions;
   `estimates` returns the current forecast and planning feedback read-only. The
@@ -65,3 +65,4 @@ model listing, override, and reset; and typed refusals for legacy modes and
 - [Parallel lanes](parallel-lanes.md) owns concurrent-lane semantics.
 - [Runtime inspection](runtime-inspection.md) owns status and about projections.
 - [Quality bootstrap](quality-bootstrap.md) owns quality setup actions.
+- [Settings interface](settings-interface.md) owns grouped settings actions.

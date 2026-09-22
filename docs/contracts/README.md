@@ -41,6 +41,7 @@
 - `session-manager.md` — managed sessions; read when changing SessionManager behaviour.
 - `session-titles.md` — managed session names; read when changing title generation.
 - `session-transport.md` — local session socket boundary; read when changing transport.
+- `settings-interface.md` — grouped settings controls; read when adding a behaviour setting.
 - `skill-authoring.md` — individual skills; read when authoring a skill.
 - `skills.md` — skill resolution and loading; read when changing skill behaviour.
 - `stage-limit-calibration.md` — learned stage ceilings; read when changing their policy.
