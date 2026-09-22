@@ -9,7 +9,9 @@ identity/capability information.
   session. It reports session/task/run/lane/wake state; effective profile and
   ceilings; queued input count; and ledger usage grouped by role and model with
   total tokens, cache tokens where recorded, tool counts, provider-reported cost,
-  and totals. Missing ledger fields remain absent rather than invented.
+  and totals. It distinguishes billed, estimated, and unpriced amounts; reports
+  current price-source, variance, and catalogue-degradation summaries without
+  inventing missing ledger fields.
 - The inspector also reports harness name, SemVer version, optional build
   revision, enabled module and capability catalogue, and concise action help.
   It distinguishes declared price information from provider-reported cost and

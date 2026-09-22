@@ -316,6 +316,14 @@ workflows — one substrate, swappable drivers.
   Until the project supports external users, deliberate API and behaviour breaks
   need no migration layer; they remain versioned and explicitly recorded.
 
+- **REQUIREMENT — price reconciliation preserves availability.** Provider/model
+  catalogue prices and explicit configured prices are references. Provider-billed
+  observations create a separately inspectable calculation overlay, without
+  rewriting either source. A configurable provider/model variance band produces
+  prominent notices and session-end reporting, never a price-driven dispatch
+  block or hidden reroute. Catalogue-refresh failure is visible and falls back to
+  valid cache, configured, or observed data; otherwise accounting is unpriced.
+
 - **REQUIREMENT — layered execution boundary.** Default execution remains open
   host authority, with only a best-effort guard against unmistakably broad
   destructive commands; it is not isolation. Replace direct construction of

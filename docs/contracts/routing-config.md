@@ -12,10 +12,15 @@ This contract owns the operator-authored model route and credentials vocabulary.
   an environment-variable name or the reserved literal `oauth`; oauth delegates
   to the provider's OAuth factory and does not expose a token as an environment
   variable. `ad-coder auth` supports every declared env-var provider.
-- Model rows declare input and output price and may declare cache prices,
-  context window, output `maxTokens`, and provider-native `id`. The row key is
-  the route name; native id is sent to the provider and scopes ledger and charge
+- Model rows may declare input, output, and cache price references, context
+  window, output `maxTokens`, and provider-native `id`. Providers may declare a
+  default price-variance tolerance; a model may replace it. The row key is the
+  route name; native id is sent to the provider and scopes ledger and charge
   records. Native ids are unique within a provider.
+- A refreshable external catalogue may supply an otherwise absent price
+  reference. It is not a routing inventory or authority to rewrite `models.yaml`;
+  cache validity, fallback, and observed-price overlays belong to
+  [cost anomaly](cost-anomaly.md).
 - A profile maps role or `role@complexity` to an ordered provider:model ladder;
   the tier-specific row replaces that tier. Current dispatch serves the first
   rung. A present unusable YAML file fails rather than falling back silently,

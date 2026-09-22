@@ -41,6 +41,9 @@ resolved. It does not own model routing; see [routing configuration](routing-con
   standard settings precedence; a project setting overrides the profile value.
 - Hook enablement, order, scope, and resource limits are declared settings with
   the same profile/project/launch precedence; see [lifecycle hooks](hooks.md).
+- Cost-reference precedence, catalogue refresh/cache policy, observed-price
+  overlay aggregation and retention, variance notices, and provider/model
+  tolerances are settings; see [cost anomaly](cost-anomaly.md).
 - Execution mode, destructive-command guard, protected roots, and a selected
   sandbox or optional LLM-guard provider are settings; see
   [execution boundary](execution-boundary.md).
