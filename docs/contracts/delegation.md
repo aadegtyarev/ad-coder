@@ -25,9 +25,10 @@ This contract owns how an orchestrator chooses an executor for bounded work.
 - Parallel mutable work follows [parallel lanes](parallel-lanes.md); it is
   available only through the Git workspace adapter and never shares a worktree
   or branch. Independent read-only research may still run without Git.
-- `run_role` reviewer output is advisory. A review that must satisfy merge policy
-  uses a pipeline review stage or standalone reviewer round as required by
-  [review evidence](review-evidence.md).
+- An ad-hoc reviewer result is advisory unless it settles the shared structured
+  verdict and scoped stamp operation. A review that must satisfy delivery policy
+  uses the bundled pipeline review stage or an independently dispatched reviewer
+  through [review evidence](review-evidence.md).
 - A manual or orchestrated agent launch follows [agent dispatch](agent-dispatch.md).
   Choosing a background execution path does not bypass scope, worktree, or review
   requirements.
