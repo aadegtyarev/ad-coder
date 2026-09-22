@@ -42,7 +42,7 @@ absence of terminal bytes from JSON output.
 
 ## Related surfaces
 
-- [CLI](cli.md) owns the machine command interface.
+- [Machine API](machine-api.md) owns the machine command interface.
 - [UI responsiveness](ui-responsiveness.md) owns interrupt availability.
 - [Session manager](session-manager.md) owns session state and recovery.
 - [Tool observability](tool-observability.md) owns activity events.

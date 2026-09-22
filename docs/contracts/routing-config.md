@@ -35,6 +35,11 @@ This contract owns the operator-authored model route and credentials vocabulary.
   when absent it falls back to that profile's default orchestrator route. The
   profile's reachable model set bounds every explicit operator or orchestrator
   choice; a default or selected model outside that set is an error.
+- A profile selection is available to every front and the machine API. It is
+  explicit session or launch state, resolves before dispatch, and reports the
+  resulting role map and declared prices. A front cannot change only the
+  orchestrator model outside profile selection or an already-defined explicit
+  route override.
 
 ## Configuration
 

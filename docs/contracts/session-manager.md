@@ -6,7 +6,8 @@ This contract owns the headless `SessionManager` API for shared durable sessions
 
 - Owner state, outside target projects, maps a validated driver key to a project
   key and project record. A project has one shared durable orchestrator session;
-  console, Telegram, and future fronts are views of it, not separate sessions.
+  TUI, machine API, Telegram, and future fronts are views of it, not separate
+  sessions.
 - A project key is one safe slug path component. Allow roots are normalized and
   realpathed at construction; every filesystem use re-realpaths and verifies
   segment-aware containment after the syscall. A symlink swap or outside path
@@ -27,12 +28,12 @@ This contract owns the headless `SessionManager` API for shared durable sessions
 - The API declares list, create, bind, resolve, rename, and handoff. Fronts only
   translate it; no front owns a private copy of manager state or a front-only
   action.
-- `console --resume [id]` validates the id before path use and requires both its
+- TUI and machine resume actions validate an id before path use and require both its
   session and ledger. Without an id it selects the newest qualifying orchestrator
   ledger. It settles an interrupted active operation before accepting new input,
   retains the recovered answer with that operation, and attributes recovery cost
   distinctly in durable ledger data.
-- Input submitted during an active console turn keeps FIFO position until
+- Input submitted during an active orchestrator turn keeps FIFO position until
   settlement. If it cannot be accepted before the bounded settle period or
   shutdown, it fails explicitly with its source rather than disappearing.
 

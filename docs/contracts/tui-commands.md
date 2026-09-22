@@ -21,7 +21,14 @@ This contract owns commands available to an operator in `ad-coder tui`.
 - `/limits` shows effective ceilings and their source; its set action changes
   only the named configurable ceiling after validation. `/profile` shows the
   active profile, reachable models, role/agent mapping, declared prices, and
-  effective source without credentials or provider payloads.
+  effective source without credentials or provider payloads. `/profiles` lists
+  selectable profiles with syntax and example; `/profiles select <name>` changes
+  the active session profile through the shared routing resolver.
+- `/orchestrator <message>` submits a message to the shared orchestrator; its
+  status and interruption controls expose the same durable task state as the
+  machine interface. The selected profile includes the orchestrator route, so an
+  operator can change the orchestrator's model by selecting a profile rather
+  than by editing an opaque front-local setting.
 - A command with no required argument is local contextual help: it lists valid
   choices, syntax, and an example. It creates no provider call, orchestration
   request, run, wake, or event for the orchestrator.
@@ -33,12 +40,13 @@ This contract owns commands available to an operator in `ad-coder tui`.
 
 Test TUI/machine command parity, every no-argument help path, local-only help
 evidence, role/agent/workflow launch, skill selection durability, ceiling
-validation, and credential-free profile rendering.
+validation, orchestrator messaging, profile switching, and credential-free
+profile rendering.
 
 ## Related surfaces
 
 - [Terminal UI](terminal-ui.md) owns interactive rendering.
-- [CLI](cli.md) owns machine command transport.
+- [Machine API](machine-api.md) owns machine resources and JSON envelopes.
 - [Agent dispatch](agent-dispatch.md) owns launches.
 - [Skills](skills.md) owns selection semantics.
 - [Routing configuration](routing-config.md) owns model and price data.

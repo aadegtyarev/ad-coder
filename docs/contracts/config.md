@@ -42,7 +42,7 @@ substitutes an unpinned provider for an explicit selection.
 
 ## Verification
 
-`ad-coder config show` exposes effective values and source. Exercise both console
+`ad-coder api config show` exposes effective values and source. Exercise both TUI
 and detached-worker paths when adding a launch setting or changing precedence.
 
 ## Related surfaces

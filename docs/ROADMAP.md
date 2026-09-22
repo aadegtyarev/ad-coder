@@ -246,6 +246,14 @@ workflows — one substrate, swappable drivers.
   are visual-only, while a future Claude-like layout is an independently selected
   presentation profile.
 
+- **DECISION — one machine API.** Replace public `drive`, `run_role`, and related
+  operation-mode commands with `ad-coder api`; remove `--json` rather than carry
+  two JSON conventions. `api` mirrors TUI controls exactly, including shared
+  orchestrator conversation, role/agent/workflow dispatch, skills, ceilings, run
+  control, and profile list/show/select. Profile selection changes the
+  orchestrator route as part of the visible profile map. The headless workflow
+  primitives remain the implementation substrate behind both fronts.
+
 - **REQUIREMENT — background agent dispatch.** A TUI operator and the
   orchestrator can launch built-in, prompt-defined custom, or ad-hoc agents
   without blocking interactive input. Project prompt files create and remove
