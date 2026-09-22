@@ -16,9 +16,9 @@ import * as path from "node:path";
  * disturb.
  *
  * So the absence is asserted here, directly. The claim is the one
- * `docs/contracts/config.md` states for #513: `models.yaml` is the ONLY routing
- * source, and the routed JSON inventory is gone from the code rather than merely
- * unselected. Every assertion below was measured against a tree with the
+ * `docs/contracts/routing-config.md` owns: `models.yaml` is the only stored
+ * routing source, and the routed JSON inventory is gone from the code rather
+ * than merely unselected. Every assertion below was measured against a tree with the
  * surface put back before it was claimed; the counts are in the commit message.
  */
 
@@ -135,6 +135,9 @@ test("the append-only logs state the retirement a revert would delete (#513)", (
   // gone, so that is what is pinned.
   const changelog = fs.readFileSync(path.join(REPO_ROOT, "CHANGELOG.md"), "utf8");
   expect(changelog).toContain("is gone from the code, not merely unselected");
-  const contract = fs.readFileSync(path.join(REPO_ROOT, "docs/contracts/config.md"), "utf8");
-  expect(contract).toContain("is the ONLY routing source");
+  const contract = fs.readFileSync(
+    path.join(REPO_ROOT, "docs/contracts/routing-config.md"),
+    "utf8",
+  );
+  expect(contract).toContain("is the only stored routing source");
 });

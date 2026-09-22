@@ -11,6 +11,14 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.4] - 2026-09-22
+
+### Fixed
+
+- **The retired-JSON-inventory regression check follows the routing contract.**
+  It now verifies the current routing owner instead of the shared settings
+  contract that intentionally links to it.
+
 ## [0.181.3] - 2026-09-22
 
 ### Fixed
