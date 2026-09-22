@@ -1,0 +1,27 @@
+# Contract index
+
+- `architecture.md` — product structure; read when adding or moving a capability.
+- `cli.md` — command-line front; read when changing commands, flags, or output.
+- `compaction.md` — context compaction; read when changing context retention.
+- `compatibility.md` — public compatibility and releases; read before a public change.
+- `config.md` — settings and defaults; read when behaviour is configurable.
+- `cost-anomaly.md` — unexpected provider prices; read when changing cost controls.
+- `decomposition.md` — code decomposition; read before splitting implementation.
+- `documentation.md` — project documentation; read when changing project prose.
+- `errors.md` — error behaviour; read when adding a boundary failure.
+- `ledger-report.md` — ledger reports; read when changing their API or output.
+- `meta-contract.md` — contract form; read when writing or editing a contract.
+- `operation-modes.md` — manual and automatic authority; read when changing modes.
+- `operator-flow.md` — operator experience; read when changing task interaction.
+- `orchestrator.md` — task orchestration; read when changing orchestration behaviour.
+- `product-change.md` — delivery of product changes; read before planning or reviewing one.
+- `provider-admission.md` — provider capacity admission; read when changing model dispatch.
+- `quality.md` — project quality gates; read when changing checks or review evidence.
+- `security.md` — security boundaries; read when changing trust or external effects.
+- `session-manager.md` — managed sessions; read when changing SessionManager behaviour.
+- `skill-authoring.md` — individual skills; read when authoring a skill.
+- `skills.md` — skill resolution and loading; read when changing skill behaviour.
+- `stage-limit-calibration.md` — learned stage ceilings; read when changing their policy.
+- `telegram.md` — Telegram front; read when changing Telegram behaviour.
+- `tool-observability.md` — tool activity; read when changing progress events or rendering.
+- `ui-responsiveness.md` — interactive fronts; read when changing controls or waiting.
