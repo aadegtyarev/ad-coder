@@ -319,10 +319,16 @@ describe("ProjectStore", () => {
     const session = await store.createSession("stale_session");
     await session.close(BACKGROUND_CONTEXT);
     const lease = path.join(store.layout.tmp, "session-stale_session.lease");
-    fs.writeFileSync(lease, `${JSON.stringify({ pid: 999_999 })}\n`, { mode: 0o600 });
+    // Simulate a killed standalone role whose PID has already been reused by
+    // this test process. A PID-only lease check would reject resume forever.
+    const deadOwner = { pid: process.pid, startTime: "0", token: crypto.randomUUID() };
+    fs.writeFileSync(lease, `${JSON.stringify(deadOwner)}\n`, { mode: 0o600 });
+    const coordination = path.join(store.layout.tmp, "session-coordination.lock");
+    fs.writeFileSync(coordination, `${JSON.stringify(deadOwner)}\n`, { mode: 0o600 });
     const reopened = await new ProjectStore(root).resumeSession("stale_session");
     await reopened.close(BACKGROUND_CONTEXT);
     expect(fs.existsSync(lease)).toBe(false);
+    expect(fs.existsSync(coordination)).toBe(false);
   });
 
   test("cleanup skips a session leased by another store", async () => {
