@@ -1,81 +1,39 @@
 # Tool observability contract
 
-For users, machine clients, frontends, and tool authors, this contract answers:
-how can someone understand what an active role is doing without exposing sensitive
-arguments or drowning in implementation noise?
+This contract governs safe, truthful progress information for an active role.
 
-- Tool activity is emitted by the headless core as structured lifecycle events;
-  CLI, TUI, JSON, and external frontends only render or transport those events.
-- A long-running role reports semantic progress such as `Read`, `Search`, `Edit`,
-  `Run`, `Web`, `Inspect image`, and `Skill`, including completion or failure. A heartbeat
-  remains the fallback when no new activity is available.
-- Human output groups repeated activity into a compact, incrementally updated summary. It does not print every
-  low-level event or force the user to infer that the process is still alive.
-- 2026-09-21 (issue #569): A `load_skill` activity is classified as `Skill`, and
-  its projected skill id remains the renderer subject, so human output reads `Skill <skill-id>`.
-- Machine mode exposes a stable event schema and keeps final-result stdout unpolluted. Consumers can correlate
-  events with the role, run, turn, tool call, and parent operation without parsing prose.
-- 2026-09-16: Event projections are bounded, and they name the SUBJECT a tool is acting on: the path read
-  or written, the command run, the URL fetched, the query searched, the line counts an edit moves -- what the
-  operator needs to see a role going the wrong way before it gets there. A path is not a secret to the person
-  whose repository it is, and anyone able to start ad-coder can already read every file on the machine -- the
-  former rule replaced such values with "unknown", which protected nothing and hid the only thing worth watching.
-- Projections never include the CONTENT a tool returns or carries: file bodies, command output, response
-  bodies, prompts. That is where a secret the operator never asked for actually surfaces. Credential-shaped
-  VALUES inside a projected command or URL are replaced (`echo API_KEY=***`) while the shape stays readable,
-  because terminal scrollback gets screenshotted and pasted.
-- Tool lifecycle reporting is truthful: requested, started, completed, failed, cancelled, and timed out are
-  distinct. Missing instrumentation never fabricates completion, and dropped events are counted visibly.
-- Detached background pipelines may additionally emit owner-scoped,
-  content-free bounded lifecycle pages through a headless subscription. These
-  notices are tail-only hints, expose pending or dropped events visibly, and
-  always preserve explicit cursor polling as reconnect recovery. Console notice
-  callbacks are rendering-only: they never enqueue conversational input or call a
-  model/session turn, and JSON notices stay on complete stderr lines.
-- 2026-09-19 (issue #387): State notices are turn-initiating for the orchestrator,
-  while activity notices stay rendering-only. The turn-initiating set is `paused`,
-  `operator_attention`, `failed`, `timed_out`, `completed`, and `stage_changed` (a
-  step of the pipeline finished); `requested`, `started`, `cancelled`, and
-  everything on the tool-activity channel remain rendering-only. Wake records are
-  durable (surviving a busy, restarting, or gone console), coalesced per (run,
-  kind) with handled/unhandled state, and drained into bounded turns (at most
-  `maxWakesPerTurn` windows per turn) on a dedicated durable path between
-  orchestrator turns. The notice callbacks themselves remain rendering-only;
-  wake delivery is separate from them.
-- 2026-09-20: The projected `skillId` is the identity the role REACHED FOR --
-  the request as it was made -- and it stays raw once the loader accepts more
-  than one spelling of it. Since the 2026-09-20 catalogue-address rule
-  (docs/contracts/skills.md, issue #524) the loader takes both the bare id and
-  the `<id>@<version>` row the catalogue prints, so a capture can carry either,
-  and a consumer comparing against a catalogue id normalizes at the COMPARISON
-  rather than having the projection rewrite the request: the field answers
-  "which skill did the role name", which is a fact about the role. The
-  skill-trigger scorer is the first such consumer -- it credits a load named as
-  the advertised row on the `@` boundary with a non-empty version suffix, the
-  same rule the loader applies, so the two cannot drift into disagreeing about
-  what the operator's role actually did. Measured in review of #524: comparing
-  the raw projection to the bare expected id scored every address-shaped load a
-  MISS, which would have reported this fix as a regression in the evals.
-- 2026-09-19: A `load_skill` event projects the skill id it TARGETED as `skillId` -- an IDENTIFIER in the
-  same class as the tool name the record already carries, never call arguments, never task text, never
-  payload -- so the ledger rule "tool NAMES and COUNTS only -- never call arguments" (src/ledger/types.ts)
-  stays true, and this is a bounded additive field on the projection, not a payload carrier. The
-  skill-trigger verification must attribute a load to a skill without the ledger carrying payloads, so an
-  unreadable target projects the explicit marker "unknown": an unattributable load is a finding, never a pass.
-- 2026-09-17: The rendered activity line names the SUBJECT, the WORKER, and the
-  PRICE. A compound command is identified by its first meaningful command
-  (`git status`, not a 120-character prefix) with a visible `…` marker when
-  anything is cut, one call is ONE line that updates in place while it runs
-  rather than a `started` line followed by a result line, role and model are
-  named once a second role appears and hidden while only one works (never a
-  literal `activity`), and every line where tokens or cost are known shows the
-  stage spend so far alongside the remaining-capacity projection.
-- 2026-09-17 (issue #231): The `bash` built-in tool reaches every role with a project-owned boundary description
-  attached -- what it is FOR (the escape hatch for what no specialised tool covers: builds, installs, git state,
-  processes) and NOT for (read/write/edit and the project search tools own their domains; edits go through `edit`,
-  whose failure output names the region to re-read). The description is attached to the built-in tool object rather
-  than shipped as a wrapping custom tool -- a custom tool named `bash` collides with the built-in
-  (`tool_name_collision`), so wrapping is not a vehicle here. This is a mechanism, not a prompt rule: the boundary
-  travels with the tool schema on every request, not in a prompt a model must remember mid-task.
-- Every configurable grouping, refresh, retention, and output limit has an
-  efficient default and remains overridable under the configuration contract.
+## Guarantees
+
+- The headless core emits structured tool lifecycle events. CLI, TUI, JSON, and
+  external fronts render or transport them without inventing lifecycle state.
+- Long-running work reports semantic activity such as `Read`, `Search`, `Edit`,
+  `Run`, `Web`, `Inspect image`, and `Skill`; a heartbeat is the fallback.
+- Requested, started, completed, failed, cancelled, and timed-out states remain
+  distinct. Missing or dropped instrumentation never fabricates completion.
+- Machine output has a stable event schema and leaves final-result stdout clean.
+  Events correlate to role, run, turn, tool call, and parent operation.
+- Human output groups repeated events into compact incremental summaries rather
+  than printing every low-level event or hiding that work is active.
+
+## Safe projections
+
+- A projection identifies the tool subject: a path, command, URL, query, line
+  count, or skill identifier. It never contains returned file bodies, command
+  output, response bodies, prompts, task text, or tool arguments.
+- Credential-shaped values in a projected command or URL are redacted while its
+  useful shape remains readable.
+- A `load_skill` projection carries the raw accepted `skillId`, including a
+  versioned catalogue address. Consumers normalize only when comparing it.
+- A rendered activity line names the useful subject. Once several roles work it
+  also names role and model; when known it shows current stage spend and capacity.
+
+## Configuration
+
+- Grouping, refresh, retention, and output limits have efficient defaults and
+  remain configurable.
+
+## Related surfaces
+
+- Role and tool wiring: `role-tools.md`.
+- Durable wake delivery: `wake-delivery.md`.
+- Settings: `config.md`.
