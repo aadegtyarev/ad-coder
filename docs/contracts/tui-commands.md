@@ -36,6 +36,10 @@ This contract owns commands available to an operator in `ad-coder tui`.
   propose, approve, decline, inventory, and revalidate a profile through shared
   headless operations; approval is required before an action that installs tools
   or writes quality configuration.
+- `/compact` explicitly compacts the selected session's eligible dialogue using
+  its configured strategy. `/clear` explicitly clears that conversation context
+  while retaining the durable session and ledger; both show scope and recovery
+  consequences before mutation and have matching machine actions.
 - `/settings` lists setting groups rather than every key. `/settings <group>`
   lists that group, while its get/set actions expose profile or project scope,
   current value, and effective source through the shared settings registry.
@@ -70,6 +74,7 @@ profile rendering; test model listing, override, reset, and read-only estimate
 feedback; test session listing and idle/active-turn selection; test parallel-lane
 availability and admission parity; test session status and harness-about parity.
 Test grouped settings discovery, scoped mutation, source rendering, and API parity.
+Test automatic and manual compaction, clear, retry exhaustion, and API parity.
 
 ## Related surfaces
 
@@ -81,3 +86,4 @@ Test grouped settings discovery, scoped mutation, source rendering, and API pari
 - [Autonomy](autonomy.md) owns delegated authority.
 - [Runtime inspection](runtime-inspection.md) owns status and about content.
 - [Settings interface](settings-interface.md) owns grouped settings controls.
+- [Compaction](compaction.md) owns compact and clear semantics.

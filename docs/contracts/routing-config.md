@@ -23,8 +23,9 @@ This contract owns the operator-authored model route and credentials vocabulary.
 - Every routing role has a measurable profile cell. A newly introduced role may
   temporarily use its prior route with a visible warning; an absent cell for an
   established role is an error. `defaultComplexity` is routing fallback, not a
-  task assessment. The summarizer is a routing role and accepts a one-run model
-  override.
+  task assessment. The summarizer has the same model, effort, price, window,
+  cache, and tool-grant resolution as another role, but is selected only by
+  compaction policy.
 - Coder and Reviewer use different model families at the same complexity when
   the inventory permits. If no second family exists, use distinct appropriate
   variants and record the unsatisfied constraint; an Auditor is not part of this

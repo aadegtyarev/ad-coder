@@ -299,6 +299,13 @@ workflows — one substrate, swappable drivers.
   exact-once delivery. Trusted hook modules can observe, guard, or own a bounded
   transformation; ordering, enablement, failures, and resume are deterministic.
 
+- **REQUIREMENT — pluggable compaction strategies.** The current summary strategy
+  compacts dialogue only through the independently routed summarizer role at 70%
+  of the active role's window, with a one-third-window summary cap and bounded
+  retry. Refactor selection behind `CompactionStrategy` before adding alternatives
+  such as sliding-window retention or future algorithms; static role frame and
+  durable lifecycle remain outside every strategy.
+
 - **REQUIREMENT — layered execution boundary.** Default execution remains open
   host authority, with only a best-effort guard against unmistakably broad
   destructive commands; it is not isolation. Replace direct construction of

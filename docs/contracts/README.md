@@ -4,7 +4,7 @@
 - `agent-dispatch.md` — named and ad-hoc agent runs; read when launching background work.
 - `autonomy.md` — authority and budget control; read when changing autonomous actions.
 - `cli.md` — command-line front; read when changing commands, flags, or output.
-- `compaction.md` — context compaction; read when changing context retention.
+- `compaction.md` — context compaction; read when changing context retention or summarizer routing.
 - `compatibility.md` — public compatibility and releases; read before a public change.
 - `config.md` — settings and defaults; read when behaviour is configurable.
 - `cost-anomaly.md` — unexpected provider prices; read when changing cost controls.

@@ -18,6 +18,7 @@ It is the JSON projection of headless operations and TUI controls.
   `sessions.inspect` projects session/ledger state and
   `harness.about` projects identity/version/capabilities; `quality` exposes
   bootstrap status and its propose/approve/decline/inventory/revalidate actions;
+  `sessions.compact` and `sessions.clear` perform explicit context recovery;
   `estimates` returns the current forecast and planning feedback read-only. The
   public names may be refined only through the compatibility contract, not by
   adding a front-only capability.
@@ -66,3 +67,4 @@ model listing, override, and reset; and typed refusals for legacy modes and
 - [Runtime inspection](runtime-inspection.md) owns status and about projections.
 - [Quality bootstrap](quality-bootstrap.md) owns quality setup actions.
 - [Settings interface](settings-interface.md) owns grouped settings actions.
+- [Compaction](compaction.md) owns explicit context recovery.

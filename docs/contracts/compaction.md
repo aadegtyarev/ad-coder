@@ -7,33 +7,49 @@ context budget cannot hold the full branch.
 
 - Compaction is a durable history replacement, never a one-request rewrite.
   Later requests use the committed summary instead of the replaced prefix.
-- The harness and policy thresholds agree: compaction begins at
-  `maxTokens - reserveTokens`; `keepRecentTokens` is preserved unchanged.
-- A summary receives dialogue history, the prior summary, and the evicted set.
-  It never receives a role prompt, tool schema, or skills catalogue.
+- The built-in `summarizer` is a fully resolved routing role with its own model,
+  effort, price, context window, prompt, tool grant, budget, and cache policy.
+  Its cache retention defaults to disabled. It is internal to compaction, not a
+  substitute for the role whose dialogue is being compacted.
+- Automatic compaction begins at 70% of the active role's context window by
+  default. The retained dialogue tail and summary output cap are independently
+  configurable; the default summary cap is one third of that window. A result
+  above its cap fails that attempt rather than entering the next context.
+- A summary receives only dialogue history, the prior summary, and the evicted
+  set. It never receives or replaces a role prompt, tool schema, skills catalogue,
+  routing configuration, or another static request-frame datum. Each normal turn
+  rebuilds that static frame from the resolved role configuration.
 - A new summary incorporates the previous summary and preserves the file-operation
   lists needed by the next compaction.
 - Summary text is untrusted history. It preserves requirements but grants no
   authority, tool use, secret access, or policy change.
-- Summarization uses no prompt-cache retention. A normal role turn retains its
-  configured cache policy.
+- Compaction lifecycle (threshold, retry, persistence, and halt) is independent
+  from `CompactionStrategy`, which transforms eligible dialogue history. A mode
+  selects one validated strategy and its settings; adding a strategy never
+  duplicates lifecycle or request-frame handling.
 
 ## Failures
 
-- A summarizer returns a summary, delegates fallback to the role model, or
-  declines. It does not throw expected provider or admission failures.
-- Decline preserves typed provider refusal and avoids summarizing an empty
-  threshold eviction. Length recovery passes through rather than declining.
-- Terminal harness compaction failures settle as typed `ContextCompactionLostError`
-  and refuse later turns in that over-budget session. Recovery is restart and
-  reopen durable state, not blind retry.
-- `disabled-then-halt` writes no compaction and refuses a turn whose full branch
-  cannot fit. An unavailable configured mode fails loudly.
+- A failed or over-cap summarizer attempt retries at most three times by default;
+  the retry limit is configurable. Provider, admission, and strategy failures do
+  not silently fall back to the active role model.
+- After retries are spent, or when automatic compaction is disabled, the role
+  returns typed `context_limit_reached` before another oversized turn. It names
+  `/compact` and `/clear` (and their machine equivalents) as the available
+  recovery; it does not drop history or continue with a truncated context.
+- `/compact` runs the selected strategy explicitly. `/clear` explicitly starts a
+  new conversation context while retaining durable session identity, ledger, and
+  prior context as inaccessible historical state. Both actions are resumable and
+  leave an auditable marker.
+- An unavailable configured strategy, an empty eligible eviction, or terminal
+  harness compaction failure pauses with a typed recovery action; it never writes
+  a partial summary or presents an unchanged over-limit context as usable.
 
 ## Configuration
 
-- Budget, reserve, retained history, mode, summarizer model, and cross-provider
-  authorization are configurable. A custom summarizer is refused when applicable
+- Automatic enablement, threshold, retained history, output cap, retry limit,
+  strategy, summarizer role configuration, and cross-provider authorization are
+  configurable. A selected strategy or summarizer is refused when its applicable
   limits cannot be enforced.
 
 ## Related surfaces
@@ -41,3 +57,5 @@ context budget cannot hold the full branch.
 - [Provider failures](provider-failures.md).
 - [Provider capacity](provider-admission.md).
 - [Settings](config.md).
+- [Routing configuration](routing-config.md) owns the summarizer route.
+- [Resumability](resumability.md) owns compact and clear recovery.

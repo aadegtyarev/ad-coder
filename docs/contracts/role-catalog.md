@@ -13,6 +13,8 @@ This contract owns the names and prompt sources of reusable roles.
   tooling, applies an approved quality profile, and validates its gates. Research
   selection remains the researcher's responsibility; installation authority is
   resolved separately.
+- `summarizer` is a built-in internal role for context compaction. It has normal
+  role configuration but is not a general operator-dispatch target.
 - A prompt file with a new safe role-name stem creates a project-local custom
   role. Removing that file removes the custom role; removing an override restores
   the built-in role rather than deleting it.
@@ -46,3 +48,4 @@ policy separation from prompt text.
 - [Agent dispatch](agent-dispatch.md) owns running roles.
 - [Security](security.md) owns trusted project prompt configuration.
 - [Quality bootstrap](quality-bootstrap.md) owns setup workflow semantics.
+- [Compaction](compaction.md) owns summarizer invocation.
