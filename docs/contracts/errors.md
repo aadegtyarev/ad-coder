@@ -27,6 +27,14 @@ workflow, provider, and tool callers.
   remain available to programmatic callers.
 - A catch recovers, adds safe context, translates at a boundary, or releases a
   resource. Silent catches and success-shaped fallbacks are forbidden.
+- A failure may refuse or pause only its affected operation; it never makes the
+  session unusable. The durable session, accepted input queue, completed results,
+  ledger, safe diagnostics, and recovery controls remain available for retry,
+  a new request, route change, or harness restart.
+- Before reporting a terminal operation failure or process boundary, persist every
+  recoverable state transition atomically. A crash, cancellation, malformed
+  provider response, or diagnostic-report failure must not discard accepted
+  session data or replace it with an empty session.
 - A diagnostic report is an operator-controlled bounded artifact containing the
   error code, causal chain, sanitized stack, version, enabled capabilities,
   relevant safe state, and reproducible action. It excludes secrets and private
@@ -37,7 +45,8 @@ workflow, provider, and tool callers.
 
 - Tests cover expected error text, state, retry safety, recovery instructions,
   unexpected-error diagnostic content, redaction, and report generation as
-  public behaviour.
+  public behaviour; test failed operations, restart, and resume retain session
+  data and leave a new-input path available.
 - Timeout, cancellation, and retry behaviour are explicit and configurable;
   retry is never inferred for a potentially non-idempotent operation.
 
@@ -48,4 +57,5 @@ workflow, provider, and tool callers.
 - [Context compaction](compaction.md).
 - [Public compatibility](compatibility.md).
 - [Runtime inspection](runtime-inspection.md).
+- [Resumability](resumability.md).
 - [Project practices](project-practices.md).
