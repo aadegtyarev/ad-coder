@@ -27,10 +27,13 @@ This contract owns the operator-authored model route and credentials vocabulary.
   policy and records every non-first selection with its evidence. A present
   unusable YAML file fails rather than falling back silently, and the chosen
   source/profile is visible at startup and in configuration.
-- Fallback policy may use capacity/cooldown, provider-failure class, model
-  availability, and configured budget/quality constraints. An explicit pinned
-  route never falls back; no usable rung returns a typed refusal with ladder and
-  recovery evidence. A fallback is reported during the session and in its summary.
+- Fallback policy may use capacity/cooldown, selected provider-failure classes,
+  model availability, and configured budget/quality constraints. Each class is
+  independently allowed or denied: for example, a role may fall back after rate
+  limit but not after exhausted subscription or reauthentication-required. An
+  explicit pinned route never falls back; no usable rung returns a typed refusal
+  with ladder and recovery evidence. A fallback is reported during the session
+  and in its summary.
 - Every routing role has a measurable profile cell. A newly introduced role may
   temporarily use its prior route with a visible warning; an absent cell for an
   established role is an error. `defaultComplexity` is routing fallback, not a

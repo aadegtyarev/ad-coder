@@ -525,6 +525,11 @@ workflows — one substrate, swappable drivers.
   ordered `provider:model` ladder may cross providers; routing selects the first
   usable permitted rung and records any fallback. Capacity evidence and fallback
   never make a session unusable.
+- **REQUIREMENT — actionable provider status.** Capacity, rate, credit, subscription
+  allowance and reset period, reauthentication, permission, availability, and
+  malformed-response failures are separate durable events. The operator and
+  orchestrator receive the same safe provider diagnostic and recovery action, and
+  route fallback policy selects which classes may move to another ladder rung.
 - **REQUIREMENT — complete session summaries.** A ledger-derived session summary
   includes all role/model tokens and cost totals plus every durable abnormal or
   degraded event. It is available locally and, only when an associated PR and an

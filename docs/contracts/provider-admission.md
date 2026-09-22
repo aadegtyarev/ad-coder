@@ -20,6 +20,12 @@ This contract governs shared provider-capacity admission for every LLM request.
 - A provider limit releases its permit and opens one scope-wide cooldown until a
   bounded retry hint or configured delay expires. Queued requests do not probe
   during cooldown and resume fairly afterwards.
+- Admission treats capacity/concurrency and request-rate evidence as different
+  controls. Capacity adjusts only the affected route's concurrency; rate limits
+  apply their reported time window or cooldown and do not masquerade as a lower
+  concurrency ceiling. Credit, subscription, login, permission, and provider
+  availability outcomes are passed to provider-failure classification, not hidden
+  in an admission queue.
 - The effective route limit adapts to provider capacity evidence. A declared
   provider limit is adopted exactly; otherwise a confirmed model-specific limit
   response lowers the effective concurrency conservatively, never above the
