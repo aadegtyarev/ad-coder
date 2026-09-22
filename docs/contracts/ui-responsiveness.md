@@ -6,21 +6,27 @@ interactive ad-coder front.
 ## Guarantees
 
 - Model calls, tools, subprocesses, workflow steps, watches, and retries never
-  prevent documented interrupt, cancel, status, and exit controls. Long work
-  exposes a cancellable handle and bounded progress or stall signals.
+  prevent input, documented interrupt, cancel, status, or exit controls. Long
+  work exposes a cancellable handle and bounded progress or stall signals.
+- The input editor is continuously available. A submitted message enters the
+  durable FIFO session queue; if no orchestrator turn is active it starts the
+  next turn immediately, otherwise it is delivered to the next turn after the
+  active one settles. No front drops, overwrites, or requires the operator to
+  retype a queued message.
 - Interrupting an active foreground turn promptly returns control and preserves
   its conversation and unrelated detached work. Cancelling detached work uses
   an explicit run-scoped action. Terminal modes and signal handlers are restored.
 - A synchronous watch has configured polling, total-timeout, and stall-timeout
   bounds. It returns on state change, completion, stall, cancellation, or timeout.
-- An interactive front serializes a background wake turn with foreground output,
-  renders its start and settled result, then restores its editor without output
-  corruption or loss of typed input.
+- An interactive front serializes background output with foreground output,
+  renders each wake's concise orchestrator summary and next action, then restores
+  its editor without corruption or loss of typed input.
 
 ## Verification
 
-- Tests use slow and never-completing dependencies to prove available controls,
-  finite shutdown, and isolation between operations.
+- Tests use slow and never-completing dependencies to prove continuously
+  available input and controls, FIFO next-turn delivery, finite shutdown, and
+  isolation between operations.
 
 ## Related surfaces
 

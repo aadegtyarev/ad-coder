@@ -23,6 +23,11 @@ execution. Roles execute work, while stages are workflow phases.
   not an orchestrator turn, polls sources without push support. A wait names its
   object and condition, has a finite timeout, reports unavailable conditions
   separately, and is interrupted immediately by an operator message.
+- The orchestrator writes its material decisions, starts, waits, and next steps
+  to the operator-facing session as they occur. A wake produces a short summary
+  of the event, available data or error, and intended follow-up. It remains WIP
+  and never reports the task complete until the durable outcome is actually
+  closed or blocked.
 - Claims about a run cite an artefact; otherwise they are hypotheses. Reports do
   not prestate verdicts, paraphrase a refusal or abort as success, or call an
   unchecked check green. Green CI comes from its step list, not a badge.
@@ -40,9 +45,9 @@ the task for escalation, plan change, or decision; it never loops silently.
 
 ## Verification
 
-Exercise intake, durable recovery, event wake, timeout, operator interruption,
-and both successful and failed closeout. Inspect cited artefacts for every report
-claim.
+Exercise intake, durable recovery, event wake, timer wake, visible next-action
+summary, operator interruption, and both successful and failed closeout. Inspect
+cited artefacts for every report claim.
 
 ## Related surfaces
 

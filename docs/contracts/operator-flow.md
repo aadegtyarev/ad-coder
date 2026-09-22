@@ -30,14 +30,18 @@ mechanics of routing, pausing, or background delivery.
 - Interactive busy output identifies current activity, worker where applicable,
   and spend so far without repeating identical terminal lines. A pause notice is
   shown once per occurrence; JSON progress remains complete structured lines.
+- The orchestrator makes material decisions and next actions visible while work
+  remains active. A background result or its timer wake is summarized briefly:
+  what changed, whether data or an error is available, and the intended next
+  action. A progress report is never presented as task completion.
 - Learned routing and ceiling corrections persist to project-local overrides,
   never silently overwrite the reusable user baseline.
 
 ## Verification
 
 Test vague-brief clarification, all budget responses, route-banner suppression,
-non-blocking milestones, actionable pauses, pause de-duplication, and the three
-exhaustion classifications.
+non-blocking milestones, wake summaries, actionable pauses, pause de-duplication,
+and the three exhaustion classifications.
 
 ## Related surfaces
 

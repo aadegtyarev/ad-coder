@@ -33,9 +33,11 @@ This contract owns the headless `SessionManager` API for shared durable sessions
   ledger. It settles an interrupted active operation before accepting new input,
   retains the recovered answer with that operation, and attributes recovery cost
   distinctly in durable ledger data.
-- Input submitted during an active orchestrator turn keeps FIFO position until
-  settlement. If it cannot be accepted before the bounded settle period or
-  shutdown, it fails explicitly with its source rather than disappearing.
+- Input is accepted into a durable FIFO queue regardless of whether an
+  orchestrator turn is active. With no active turn, the queue starts delivery
+  immediately; otherwise the oldest message is delivered to the next turn after
+  settlement. If shutdown prevents delivery, every retained message fails
+  explicitly with its source rather than disappearing.
 
 ## Failures
 
@@ -46,7 +48,8 @@ provider bodies.
 ## Verification
 
 Test containment and symlink races, invalid bindings, concurrent creation,
-two-sided handoff, resume selection and settlement, and queued-input refusal.
+two-sided handoff, resume selection and settlement, immediate idle delivery,
+FIFO next-turn delivery, and queued-input refusal at shutdown.
 
 ## Related surfaces
 

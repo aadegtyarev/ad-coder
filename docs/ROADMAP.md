@@ -270,6 +270,13 @@ workflows — one substrate, swappable drivers.
   Every role, ad-hoc agent, pipeline, and workflow outcome wakes the orchestrator
   by default, including manually started work; the operator can disable only that
   observation, not durable run evidence or their own status.
+
+- **REQUIREMENT — continuously available conversation.** The TUI editor never
+  blocks: submitted messages enter durable FIFO state, start a turn immediately
+  when idle, and otherwise reach the next turn. Run and timer wakes make the
+  orchestrator print a short event/data-or-error/next-action summary. Material
+  decisions are visible throughout WIP; a task is not reported complete before
+  its durable closeout.
 - **REQUIREMENT — breakpoint control (implemented).** Drivers can auto-advance
   through phases and pause before a chosen phase, then resume from durable state.
   The trusted `control run-until` action exposes this without requiring a caller
