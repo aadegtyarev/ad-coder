@@ -82,6 +82,8 @@ export interface RunConsoleParams {
   interrupted?: () => boolean;
   /** Exact operator command shown after an empty provider turn. */
   authenticationCommand?: string;
+  /** Maximum in-turn recovery calls after Escape; default is the contract's 3. */
+  maxContinuations?: number;
   /**
    * The project's cost-anomaly detector. The SAME object the run uses, so a
    * block raised mid-turn is liftable by `/cost release` without leaving the
@@ -705,6 +707,7 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
     params.escapeSequenceTimeoutMs ?? DEFAULT_CONSOLE_ESCAPE_SEQUENCE_TIMEOUT_MS;
   const controlDrainMs = params.controlDrainMs ?? DEFAULT_CONSOLE_CONTROL_DRAIN_MS;
   const settleWaitMs = params.settleWaitMs ?? DEFAULT_CONSOLE_SETTLE_WAIT_MS;
+  const maxContinuations = params.maxContinuations ?? 3;
   if (!Number.isInteger(maxInputBytes) || maxInputBytes <= 0) {
     throw new RangeError("maxInputBytes must be a positive integer");
   }
@@ -718,6 +721,8 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
     throw new RangeError("controlDrainMs must be a non-negative safe integer");
   if (!Number.isSafeInteger(settleWaitMs) || settleWaitMs < 0)
     throw new RangeError("settleWaitMs must be a non-negative safe integer");
+  if (!Number.isSafeInteger(maxContinuations) || maxContinuations < 0)
+    throw new RangeError("maxContinuations must be a non-negative safe integer");
 
   let reason: ConsoleExitReason = "eof";
   let completedTurns = 0;
@@ -947,20 +952,56 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
           if (mode === "formatted") params.output.write("ad-coder> ");
           return;
         } else if (isInstanceOf(error, TurnInterruptedError)) {
+          const checkpoint = error.checkpoint;
+          const next = checkpoint?.next ?? "send the next prompt to resume the preserved work";
+          const preserved =
+            checkpoint === undefined
+              ? "a durable continuation checkpoint (state WIP; artifact identity: console_continuation_checkpoint)"
+              : `state WIP; artifact ${checkpoint.artifact.type}/${checkpoint.artifact.id}; preserved work: ${checkpoint.work}; next: ${next}`;
           params.error.write(
             renderFailure(
               {
                 code: "interrupted",
-                message:
-                  "current turn interrupted: foreground console turn stopped; bounded continuation checkpoint preserved",
+                message: `current turn interrupted: foreground console turn stopped; ${preserved}`,
                 action:
-                  "send the next prompt to resume the preserved work (or give a new direction)",
+                  checkpoint !== undefined && maxContinuations > 0
+                    ? "automatic bounded continuation is starting; if it cannot proceed, send the next prompt to resume the preserved work"
+                    : next,
                 retryable: true,
               },
               mode,
             ),
           );
-          if (mode === "formatted") params.output.write("ad-coder> ");
+          if (checkpoint !== undefined && maxContinuations > 0) {
+            // The provider call is allowed to settle before the wake call. This
+            // reuses the conversation's durable checkpoint hook and lane-busy
+            // guard instead of creating a second scheduler.
+            await params.session.whenSettled();
+            try {
+              rawResult = await runMonitoredStep(
+                "Continue the preserved work from the durable checkpoint.",
+              );
+              renderStepSuccess(rawResult);
+            } catch (continuationError) {
+              params.error.write(
+                renderFailure(
+                  {
+                    code: "interrupted",
+                    message:
+                      "bounded continuation could not proceed; task remains WIP in the durable checkpoint",
+                    action: "send the next prompt to resume the preserved work, or make a decision",
+                    retryable: true,
+                  },
+                  mode,
+                ),
+              );
+              if (mode === "json") {
+                params.error.write(
+                  `${JSON.stringify({ type: "continuation_blocked", cause: describeErrorClass(continuationError) })}\n`,
+                );
+              }
+            }
+          } else if (mode === "formatted") params.output.write("ad-coder> ");
           return;
         } else if (isInstanceOf(error, SessionLimitError)) {
           params.error.write(

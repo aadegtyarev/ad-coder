@@ -552,6 +552,50 @@ test("reports a cooperative interruption separately from a provider failure", as
   expect(session.closes).toBe(1);
 });
 
+test("an Escape interruption wakes one bounded continuation without another prompt", async () => {
+  let calls = 0;
+  const session = fakeSession({
+    result: (input, turn) => {
+      calls++;
+      return {
+        runId: `run-${turn}`,
+        step: `turn:${turn}`,
+        status: "ok",
+        assistantText: `reply ${input}`,
+        toolCalls: [],
+        droppedRecords: 0,
+      };
+    },
+  });
+  const originalStep = session.step.bind(session);
+  session.step = async (input) => {
+    if (calls === 0) {
+      session.inputs.push(input);
+      calls++;
+      throw new TurnInterruptedError({
+        version: 1,
+        state: "WIP",
+        artifact: { type: "console_continuation_checkpoint", id: "session:continuation" },
+        work: "finish the task",
+        reason: "escape",
+        next: "run the next action",
+      });
+    }
+    return originalStep(input);
+  };
+  const result = await runConsole({
+    session,
+    input: ttyFrom("operator prompt\\n"),
+    output: new Capture(),
+    error: new Capture(),
+  });
+  expect(result.completedTurns).toBe(1);
+  expect(session.inputs).toEqual([
+    "operator prompt\\n",
+    "Continue the preserved work from the durable checkpoint.",
+  ]);
+});
+
 test("a spent compaction stops the console with --resume, never with 'retry'", async () => {
   const error = new Capture();
   // A session whose summarizer failed its bounded attempts: no later turn can

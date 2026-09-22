@@ -23,6 +23,7 @@ import {
   CONTINUATION_CHECKPOINT_TYPE,
   ConversationRefusedError,
   startConversation,
+  truncateContinuationUtf8,
 } from "../src/conversation/conversation";
 import {
   CostAnomalyBlockedError,
@@ -253,6 +254,14 @@ test("interruption checkpoints durable status and resumes once after reopening",
     await reopenedStore.close();
     fs.rmSync(durableTarget, { recursive: true, force: true });
   }
+});
+
+test("continuation UTF-8 truncation keeps emoji valid and byte-bounded", () => {
+  const bounded = truncateContinuationUtf8("🧭".repeat(900), 64);
+  expect(bounded.truncated).toBe(true);
+  expect(Buffer.byteLength(bounded.value, "utf8")).toBeLessThanOrEqual(64);
+  expect(bounded.value).toContain("[truncated]");
+  expect(() => JSON.stringify({ next: bounded.value })).not.toThrow();
 });
 
 test("a completed conversation turn does not create a continuation checkpoint", async () => {

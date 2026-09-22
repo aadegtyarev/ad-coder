@@ -5,6 +5,7 @@ import type {
   AgentLane,
   Context,
   ExecutionToolContext,
+  JsonValue,
   Session,
 } from "@earendil-works/pi-agent-core";
 import { AgentHarness, BACKGROUND_CONTEXT, getOrThrow } from "@earendil-works/pi-agent-core";
@@ -75,9 +76,38 @@ export interface DurableContinuationStatus {
   next?: string;
 }
 
+export interface DurableContinuationCheckpoint {
+  version: 1;
+  state: "WIP";
+  artifact: { type: typeof CONTINUATION_CHECKPOINT_TYPE; id: string };
+  work: string;
+  reason: string;
+  next: string;
+  truncated?: true;
+}
+
 export const CONTINUATION_CHECKPOINT_TYPE = "console_continuation_checkpoint";
 const CONTINUATION_CHECKPOINT_MAX_BYTES = 2_048;
 const CONTINUATION_PREAMBLE_MAX_CHARS = 600;
+
+export function truncateContinuationUtf8(
+  value: string,
+  maxBytes: number,
+): {
+  value: string;
+  truncated: boolean;
+} {
+  if (Buffer.byteLength(value, "utf8") <= maxBytes) return { value, truncated: false };
+  const marker = "… [truncated]";
+  const markerBytes = Buffer.byteLength(marker, "utf8");
+  if (maxBytes < markerBytes) return { value: ".".repeat(maxBytes), truncated: true };
+  const room = maxBytes - markerBytes;
+  let end = Math.min(value.length, room);
+  while (end > 0 && Buffer.byteLength(value.slice(0, end), "utf8") > room) end--;
+  while (end > 0 && value.charCodeAt(end - 1) >= 0xd800 && value.charCodeAt(end - 1) <= 0xdbff)
+    end--;
+  return { value: `${value.slice(0, end)}${marker}`.slice(0, maxBytes), truncated: true };
+}
 
 export interface ConversationConfig {
   role: Role;
@@ -239,7 +269,7 @@ export class SessionNotAcquiredError extends Error {
 
 export class TurnInterruptedError extends Error {
   readonly code = "interrupted" as const;
-  constructor() {
+  constructor(readonly checkpoint?: DurableContinuationCheckpoint) {
     super("interrupted");
     this.name = "TurnInterruptedError";
   }
@@ -431,15 +461,13 @@ export async function startConversation(config: ConversationConfig): Promise<Con
   const lane: AgentLane = await harness.lane(config.laneName ?? "main", context);
   const continuationStatus = config.continuationStatus;
   const continuationBranch = config.laneName ?? "main";
-  const appendContinuationCheckpoint = async (data: {
-    version?: 1;
-    work?: string;
-    reason?: string;
-    next?: string;
-    consumed?: boolean;
-  }): Promise<void> => {
-    if (Buffer.byteLength(JSON.stringify(data), "utf8") > CONTINUATION_CHECKPOINT_MAX_BYTES) {
-      return;
+  const appendContinuationCheckpoint = async (data: JsonValue): Promise<void> => {
+    // Every field is bounded before serialization. This is deliberately not a
+    // byte-count-and-drop guard: dropping the record would turn valid Unicode
+    // progress into a lost task.
+    const encoded = JSON.stringify(data);
+    if (Buffer.byteLength(encoded, "utf8") > CONTINUATION_CHECKPOINT_MAX_BYTES) {
+      throw new Error("continuation checkpoint exceeded its byte bound after truncation");
     }
     const branch = await session.branch(continuationBranch, context);
     if (branch === undefined) {
@@ -449,16 +477,34 @@ export async function startConversation(config: ConversationConfig): Promise<Con
     }
     await branch.appendCustomEntry(CONTINUATION_CHECKPOINT_TYPE, data, context);
   };
-  const checkpoint = async (reason: string): Promise<void> => {
-    const work =
+  const checkpoint = async (reason: string): Promise<DurableContinuationCheckpoint> => {
+    const rawWork =
       continuationStatus?.status ?? "the foreground console turn (no status was reported)";
-    const next = continuationStatus?.next ?? "send the next prompt to resume";
-    await appendContinuationCheckpoint({
+    const rawNext = continuationStatus?.next ?? "continue from the durable checkpoint";
+    const work = truncateContinuationUtf8(rawWork, 512);
+    const next = truncateContinuationUtf8(rawNext, 512);
+    const boundedReason = truncateContinuationUtf8(reason, 384);
+    const checkpointId = `${runId}:continuation`;
+    const record: DurableContinuationCheckpoint = {
       version: 1,
-      work: work.slice(0, 700),
-      reason,
-      next: next.slice(0, 700),
-    });
+      state: "WIP",
+      artifact: { type: CONTINUATION_CHECKPOINT_TYPE, id: checkpointId },
+      work: work.value,
+      reason: boundedReason.value,
+      next: next.value,
+      ...((work.truncated || next.truncated || boundedReason.truncated) && { truncated: true }),
+    };
+    // The fixed metadata plus the three bounded fields fits today, but retain a
+    // truthful minimal record if a future serializer adds overhead.
+    if (Buffer.byteLength(JSON.stringify(record), "utf8") > CONTINUATION_CHECKPOINT_MAX_BYTES) {
+      record.version = 1;
+      record.work = "foreground console turn";
+      record.reason = "turn interrupted";
+      record.next = "continue from durable checkpoint [truncated]";
+      record.truncated = true;
+    }
+    await appendContinuationCheckpoint(record as unknown as JsonValue);
+    return record;
   };
   const offContinuationHook = harness.hooks.on(
     "transform_context",
@@ -705,14 +751,17 @@ export async function startConversation(config: ConversationConfig): Promise<Con
       });
       const prompted = await Promise.race([providerPrompt, interruption]).catch(async (error) => {
         if (interrupted) {
-          await checkpoint("Escape/Ctrl-C interrupted the provider turn");
-          throw new TurnInterruptedError();
+          const preserved = await checkpoint("Escape/Ctrl-C interrupted the provider turn");
+          throw new TurnInterruptedError(preserved);
         }
         config.costAnomalyDetector?.assertNoBoundaryFailure();
         controller.assertNoBoundaryFailure();
         throw error;
       });
-      if (interrupted) throw new TurnInterruptedError();
+      if (interrupted) {
+        const preserved = await checkpoint("Escape/Ctrl-C interrupted the provider turn");
+        throw new TurnInterruptedError(preserved);
+      }
       config.costAnomalyDetector?.assertNoBoundaryFailure();
       controller.assertNoBoundaryFailure();
       const result = getOrThrow(prompted);
