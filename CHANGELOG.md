@@ -11,6 +11,18 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.1] - 2026-09-22
+
+### Fixed
+- **Foreground-resume durability remains covered after wake handling.** Regression
+  coverage now verifies that a terminal foreground resume replaces its prior
+  background pause and that a fresh re-pause during wake settlement receives its
+  own wake turn.
+
+### Removed
+- **The remaining legacy Claude adapters.** The unused `.claude/adapters/`
+  files are removed with the already-retired `.claude` runtime.
+
 ## [0.181.0] - 2026-09-22
 
 ### Added

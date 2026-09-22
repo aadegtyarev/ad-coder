@@ -42,7 +42,11 @@ function readRecord(
   targetDir: string,
   runId: string,
 ): Record<string, unknown> & {
-  value: { wake?: { entries: WakeEntry[] } };
+  value: {
+    lifecycle?: string;
+    pause?: { code?: string };
+    wake?: { entries: WakeEntry[] };
+  };
 } {
   const raw = JSON.parse(
     fs.readFileSync(
@@ -130,11 +134,14 @@ test("(a) a paused run wakes the orchestrator via durable state, then marks the 
   // Fixed, code-built: never the run's raw task string.
   expect(prompt).not.toContain(task);
 
-  // After the turn the record marks it handled.
+  // Handling the wake acknowledges delivery, but does not alter the durable
+  // paused lifecycle or its safe pause payload.
   const after = readRecord(targetDir, runId).value;
   const handled = after.wake!.entries.find((w) => w.kind === "paused");
   expect(handled?.handled).toBe(true);
   expect(handled?.handledAt).toBeTypeOf("number");
+  expect(after.lifecycle).toBe("paused");
+  expect(after.pause?.code).toBe("stage_limit");
 
   await manager.close();
 });
@@ -621,6 +628,40 @@ test("(h) a wake landing during a front turn is drained after it, never racing c
   expect(turns.every((t) => t.rejected !== true)).toBe(true);
 
   await session.close();
+});
+
+test("a wake handled after resume cannot hide a re-paused lifecycle", async () => {
+  const targetDir = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-wake-repause-")),
+  );
+  const ownerId = crypto.randomUUID();
+  const manager = new BackgroundRunManager(
+    async (_task, runId) => {
+      throw new PipelinePauseError(runId, stageLimitPause(1), { steps: 1, totalCost: 0.01 });
+    },
+    {},
+    targetDir,
+    ownerId,
+  );
+  const { runId } = manager.start("repause during wake");
+  await manager.wait(runId);
+  let wakeTurns = 0;
+  const pump = new WakePump({
+    listPending: () => manager.pendingWakes(),
+    markHandled: (id, wakes) => manager.markWakesHandled(id, wakes),
+    runTurn: async () => {
+      wakeTurns += 1;
+      if (wakeTurns === 1)
+        manager.projectForegroundPause(runId, stageLimitPause(2), { steps: 2, totalCost: 0.02 });
+    },
+  });
+  await pump.startupScan();
+  expect(wakeTurns).toBe(2);
+  expect(manager.status(runId).lifecycle).toBe("paused");
+  expect(manager.pendingWakes().filter((wake) => wake.runId === runId)).toHaveLength(0);
+  await settle();
+  expect(wakeTurns).toBe(2);
+  await manager.close();
 });
 
 test("(i) distinct windows of a kind survive a blind merge: a post-mark pause stays wakeable", async () => {
