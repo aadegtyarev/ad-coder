@@ -318,6 +318,8 @@ export interface ConversationSession {
   toolActivitySnapshot?(): ToolActivitySnapshot;
   /** Optional content-free pipeline notices; subscribing never starts a model turn. */
   subscribeBackgroundRuns?(consumer: BackgroundRunNoticeConsumer): () => void;
+  /** True while durable interrupted/blocked recovery awaits the next operator input. */
+  recoveryBlocked?(): boolean;
   /** Settled turns initiated by the wake pump, for the owning interactive front. */
   subscribeWakeTurns?(
     consumer: (
@@ -423,6 +425,22 @@ export async function startConversation(config: ConversationConfig): Promise<Con
   const acquiredSession = config.session ?? (await store?.openOrCreateSession(runId, context));
   if (acquiredSession === undefined) throw new SessionNotAcquiredError(runId);
   const session: Session = acquiredSession;
+  // Recovery is durable: reconnects inherit the same gate until an operator
+  // input starts. Only the newest recovery record is authoritative; the
+  // continuation hook appends a consumed marker when that input is applied.
+  const recoveryEntries = await session.findEntries({ type: "custom", order: "desc" }, context);
+  const latestRecovery = recoveryEntries.find(
+    (entry) =>
+      entry.type === "custom" &&
+      (entry.customType === CONTINUATION_CHECKPOINT_TYPE ||
+        entry.customType === BLOCKED_RECOVERY_TYPE),
+  );
+  let recoveryBlocked =
+    latestRecovery?.type === "custom" &&
+    (latestRecovery.customType === BLOCKED_RECOVERY_TYPE ||
+      ((latestRecovery.data as { state?: unknown; consumed?: unknown } | undefined)?.state ===
+        "WIP" &&
+        (latestRecovery.data as { consumed?: unknown } | undefined)?.consumed !== true));
 
   const base = toHarnessOptions(config.role, {
     session,
@@ -527,6 +545,7 @@ export async function startConversation(config: ConversationConfig): Promise<Con
       record.truncated = true;
     }
     await appendContinuationCheckpoint(record as unknown as JsonValue);
+    recoveryBlocked = true;
     return record;
   };
   const blockContinuation = async (
@@ -561,6 +580,7 @@ export async function startConversation(config: ConversationConfig): Promise<Con
       record.truncated = true;
     }
     await appendContinuationCheckpoint(record as unknown as JsonValue, BLOCKED_RECOVERY_TYPE);
+    recoveryBlocked = true;
     return record;
   };
   const offContinuationHook = harness.hooks.on(
@@ -713,6 +733,9 @@ export async function startConversation(config: ConversationConfig): Promise<Con
       throw refusedTurn("lane_stopping");
     }
     controller.assertActive();
+    // This is the release edge for the durable recovery gate: the operator's
+    // next input, not a background wake, owns recovery.
+    recoveryBlocked = false;
     stepping = true;
     interrupted = false;
     abortRequested = false;
@@ -1023,6 +1046,7 @@ export async function startConversation(config: ConversationConfig): Promise<Con
     ...(config.subscribeBackgroundRuns !== undefined && {
       subscribeBackgroundRuns: config.subscribeBackgroundRuns,
     }),
+    recoveryBlocked: () => recoveryBlocked,
     runId,
     ledgerPath,
     whenSettled: () => activeSettled ?? Promise.resolve(),

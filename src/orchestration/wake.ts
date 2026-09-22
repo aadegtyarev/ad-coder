@@ -99,6 +99,8 @@ export interface WakePumpDeps {
   maxWakesPerTurn?: number;
   /** True while a front / wake turn is running; the pump must defer, never race it. */
   turnActive?: () => boolean;
+  /** True while durable interrupted/blocked recovery awaits operator input. */
+  recoveryBlocked?: () => boolean;
 }
 
 /**
@@ -145,9 +147,10 @@ export class WakePump {
     queueMicrotask(() => {
       this.scheduled = false;
       // A front turn owns the conversation right now; defer rather than race it.
-      // The wake stays durably unhandled and drains on the next nudge (a new
-      // notice or the front turn's settle) -- never lost, never hot-looped.
-      if (this.deps.turnActive?.()) return;
+      // Durable interrupted/blocked recovery also owns the lane until the next
+      // operator input. The wake stays durably unhandled and drains on that
+      // input's settle -- never lost, never hot-looped.
+      if (this.deps.turnActive?.() || this.deps.recoveryBlocked?.()) return;
       void this.drain();
     });
   }

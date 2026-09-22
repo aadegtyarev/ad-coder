@@ -2158,6 +2158,7 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
       for (const consumer of wakeTurnConsumers) consumer({ phase: "settled", result });
     },
     turnActive: () => turnBusy,
+    recoveryBlocked: () => conversation.recoveryBlocked?.() === true,
     maxWakesPerTurn: core.backgroundRuns.backgroundLimits.maxWakesPerTurn,
   });
   const unsubscribeWakes = core.backgroundRuns.subscribe(() => wakePump.notifyChange());
