@@ -21,9 +21,9 @@ This contract owns ad-coder's command-line front and its human/machine boundary.
   newlines; it is never a console-control script. TTY bracketed paste and
   `/task <path>` likewise submit one whole message. `maxInputBytes` bounds the
   complete message, not a line.
-- An interactive console projects its own wake turn as started and then renders
-  its sanitized settled result before restoring the prompt. JSON and role/drive
-  fronts receive no extra console lines.
+- `tui` is the sole interactive human command. The former `console` command is
+  removed rather than retained as a second interactive implementation. Machine
+  commands retain their stable JSON protocol and never load terminal UI code.
 - `stamp delivery`, `stamp check`, and `stamp body-check` are read-only fronts
   over the delivery and review evidence contracts. Argument errors are usage
   failures; a stale or missing gate condition is structured `gate_failed` with
@@ -32,11 +32,12 @@ This contract owns ad-coder's command-line front and its human/machine boundary.
 ## Verification
 
 Test registry-derived help, TTY and piped input, human and JSON output separation,
-ledger creation, timeout, wake rendering, and stamp command read-only behaviour.
+ledger creation, timeout, TUI command selection, and stamp command read-only behaviour.
 
 ## Related surfaces
 
 - [Review evidence](review-evidence.md) owns stamp validity.
 - [Product changes](product-change.md) owns delivery signature content.
-- [Session manager](session-manager.md) owns console resume and background state.
+- [Terminal UI](terminal-ui.md) owns interactive terminal rendering.
+- [Session manager](session-manager.md) owns session resume and background state.
 - [Run control](run-control.md) owns targeted process stopping.

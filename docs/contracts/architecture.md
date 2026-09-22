@@ -21,3 +21,4 @@ the fronts and optional compositions built around it.
 - [Command-line front](cli.md).
 - [Role and tool wiring](role-tools.md).
 - [Task orchestration](orchestrator.md).
+- [Terminal UI](terminal-ui.md).

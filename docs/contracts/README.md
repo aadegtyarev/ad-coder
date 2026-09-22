@@ -36,6 +36,7 @@
 - `skills.md` — skill resolution and loading; read when changing skill behaviour.
 - `stage-limit-calibration.md` — learned stage ceilings; read when changing their policy.
 - `telegram.md` — Telegram front; read when changing Telegram behaviour.
+- `terminal-ui.md` — interactive terminal front; read when changing TUI rendering or themes.
 - `tool-observability.md` — tool activity; read when changing progress events or rendering.
 - `ui-responsiveness.md` — interactive fronts; read when changing controls or waiting.
 - `wake-delivery.md` — background wake turns; read when changing durable notifications.

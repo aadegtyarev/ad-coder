@@ -13,9 +13,9 @@ interactive ad-coder front.
   an explicit run-scoped action. Terminal modes and signal handlers are restored.
 - A synchronous watch has configured polling, total-timeout, and stall-timeout
   bounds. It returns on state change, completion, stall, cancellation, or timeout.
-- A formatted console serializes a background wake turn with foreground output,
-  renders its start and settled result, then restores its prompt without output
-  corruption.
+- An interactive front serializes a background wake turn with foreground output,
+  renders its start and settled result, then restores its editor without output
+  corruption or loss of typed input.
 
 ## Verification
 
@@ -25,3 +25,4 @@ interactive ad-coder front.
 ## Related surfaces
 
 - [Wake delivery](wake-delivery.md).
+- [Terminal UI](terminal-ui.md).

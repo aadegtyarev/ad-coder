@@ -238,6 +238,13 @@ workflows — one substrate, swappable drivers.
   repository or in `.ad-coder/` runtime state. After a verified merge, the
   publisher safely removes only its own clean, inactive worktree from a parent
   context; it retains and reports anything it cannot prove safe to remove.
+
+- **DECISION — terminal front.** Replace the line-oriented `console` front with
+  `tui`, implemented directly on `@earendil-works/pi-tui` alongside the existing
+  `@earendil-works/pi-ai` stack. Keep machine commands and JSON as a separate
+  headless surface. Start with a sparse main-screen `plain` presentation; themes
+  are visual-only, while a future Claude-like layout is an independently selected
+  presentation profile.
 - **REQUIREMENT — breakpoint control (implemented).** Drivers can auto-advance
   through phases and pause before a chosen phase, then resume from durable state.
   The trusted `control run-until` action exposes this without requiring a caller
