@@ -13,6 +13,7 @@
 - `documentation.md` — project documentation; read when changing project prose.
 - `errors.md` — error behaviour; read when adding a boundary failure.
 - `extension-modules.md` — optional integrations; read when adding a front, VCS, forge, or transport.
+- `hooks.md` — lifecycle extension points; read when adding SDK or harness hooks.
 - `ledger-report.md` — ledger reports; read when changing their API or output.
 - `machine-api.md` — JSON machine interface; read when changing non-interactive controls.
 - `meta-contract.md` — contract form; read when writing or editing a contract.

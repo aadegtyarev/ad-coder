@@ -39,6 +39,8 @@ resolved. It does not own model routing; see [routing configuration](routing-con
 - `quality.bootstrap.enabled` defaults to enabled. Its proposal/installation
   authority, network research allowance, and saved project decision follow
   standard settings precedence; a project setting overrides the profile value.
+- Hook enablement, order, scope, and resource limits are declared settings with
+  the same profile/project/launch precedence; see [lifecycle hooks](hooks.md).
 - Set-valued configuration reports enabled/disabled state and count, including
   member ids only within the documented line budget. A missing renderer branch
   fails loudly by key rather than exposing an object representation or its value.
@@ -63,3 +65,4 @@ both TUI and detached-worker paths when adding a setting or changing precedence.
 - [Extension modules](extension-modules.md) owns optional module capabilities.
 - [Quality bootstrap](quality-bootstrap.md) owns project gate bootstrap.
 - [Settings interface](settings-interface.md) owns settings discovery and editing.
+- [Lifecycle hooks](hooks.md) owns hook-specific settings.

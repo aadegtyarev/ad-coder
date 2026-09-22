@@ -293,6 +293,12 @@ workflows — one substrate, swappable drivers.
   settings, so discovery and editing stay navigable rather than rendering a
   single unbounded configuration page.
 
+- **REQUIREMENT — SDK-first lifecycle hooks.** Standard harness lifecycle events
+  are exposed as versioned extension hooks. A selected SDK's native hooks are
+  adapted where present; ad-coder supplies only the missing event points, with
+  exact-once delivery. Trusted hook modules can observe, guard, or own a bounded
+  transformation; ordering, enablement, failures, and resume are deterministic.
+
 - **REQUIREMENT — background agent dispatch.** A TUI operator and the
   orchestrator can launch built-in, prompt-defined custom, or ad-hoc agents
   without blocking interactive input. Project prompt files create and remove
