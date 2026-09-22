@@ -6,6 +6,7 @@ project document usable by a human, and which checks block an unclear change?
 Documentation is a product surface. A change is not complete when its prose is
 technically true but costly for its intended reader to understand.
 
+- Project documentation is written in English.
 - State the intended reader and the question the document answers. Put the
   shortest usable path first; rationale and internals follow by progressive
   disclosure.

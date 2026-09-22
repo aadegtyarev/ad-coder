@@ -1,38 +1,77 @@
-# Мета-контракт
+# Meta-contract
 
-Контракт — это описание требуемого поведения одной вещи целиком: модуля, границы, интерфейса,
-инструмента. Он отвечает на вопрос «как это должно быть», а не «как это появилось» и не «что уже
-сделано». Читатель, не знающий истории проекта, должен по контракту понять требуемое поведение
-и сделать по нему работу.
+A contract specifies the required behaviour of one product surface. A reader
+who does not know the project's history must be able to understand that
+surface's boundary, guarantees, and failures, then verify a change to it.
 
-Правила объявил оператор. Нарушение всегда блокирующее.
+Breaking any rule in this document blocks a change to a contract or to code it
+governs.
 
-## Контракт описывает целое
+## Boundary and ownership
 
-- Описание полное: нормальное поведение, края и отказы. Правило, о котором читатель не может
-  узнать из контракта, контрактом не установлено.
-- Контракт описывает требуемое, а не текущее. Это не отчёт о реализации: то, что код сегодня
-  делает иначе, — нарушение контракта, а не повод переписать контракт.
-- Выполнение проверяемо. У правила есть наблюдаемое свидетельство, по которому видно, что оно
-  выполнено, и тот, кто это проверяет. Требование, которое нельзя проверить, правилом не является.
-- Контракт обязателен целиком: нарушение любого пункта блокирует.
+- A surface is a part of the product that can be read, changed, and verified
+  independently: settings, the CLI, errors, or the Telegram front, for example.
+- One contract owns one complete surface. A surface may have several topics;
+  having two topics is not by itself a reason to split the document.
+- Split a topic into its own contract when it has an independent consumer, set
+  of invariants, configuration, failures, or verification.
+- Every normative rule has one owner: one contract. Repeating a rule, or a
+  variant of it, in another contract is forbidden.
+- When a boundary is disputed, the contract that defines the behaviour owns it.
+  Other documents link to that owner only.
 
-## Группировка
+## Content
 
-- Один контракт — одна вещь целиком. Внутри правила сгруппированы по темам, у каждой темы своё
-  название; правило, которому темы не находится, — это либо недостающая тема, либо правило из
-  другого контракта.
-- Правило живёт ровно в одном контракте. Пересечение двух контрактов — признак неверно
-  проведённой границы, а не повод повторить правило в обоих.
-- Вещь, у которой оказалось две темы, разрезается на два контракта: каждый описывает своё целое.
+A contract describes current required behaviour only:
 
-## Контракт не хранит историю
+- normal results, boundaries, and failures;
+- inputs, outputs, and preserved invariants where the surface has them;
+- available configuration and observable verification where they apply.
 
-- В контракте только действующие правила. Повествования о том, как к ним пришли, в нём нет:
-  прошлые версии, ошибки, споры и миграции живут в Git.
-- Ни дат, ни индекса изменений в контракте нет. Когда правило установлено и что менялось, видно
-  из Git: ревьювер, проверяя изменения, смотрит диф ветки целиком.
-- Краткое обоснование допустимо, если оно ограничивает решение сегодня; рассказ «почему мы так
-  решили» — нет.
-- Замена правила не описывается словами. Правило переписывается в действующем виде, прежний текст
-  остаётся в истории Git.
+Every rule needs observable evidence: a test, check, safe output, or another
+way to establish that it holds. An unverifiable wish is not a contract rule.
+
+A contract is not an implementation description. Code that differs from the
+contract is defective; the contract is not rewritten to match it.
+
+## Links between surfaces
+
+- A link to another contract names only the surface and its owner: “Settings:
+  `config.md`.”
+- The linking contract does not restate, narrow, or override the owner's rule.
+  A reader opens the named contract to apply that rule.
+- An operation may link to several surfaces, but its normative parts stay with
+  their owners. A new document does not become their copy.
+
+## Form and size
+
+A contract starts with one sentence defining its boundary. It then includes
+only the applicable sections from this set:
+
+- `Guarantees`;
+- `Failures`;
+- `Configuration`;
+- `Verification`;
+- `Related surfaces`.
+
+One list item expresses one rule. A paragraph does not combine independent
+norms or replace a list with long narrative. Write short lines and prose that
+can be read in one sitting.
+
+A normal contract is at most 120 lines. Before changing a document that nears
+160 lines, reconsider its independent surfaces; an exception needs an explicit
+review justification.
+
+`docs/contracts/README.md` is a navigational index: one line per contract with
+its surface and the condition for reading it. The index contains no normative
+rules.
+
+## No history
+
+Contracts contain no dates, issue numbers, release notes, migrations, former
+behaviour, disputes, or decision chronology. Those belong in Git, the
+CHANGELOG, and the ROADMAP.
+
+A short rationale is allowed only when it directly constrains a choice that is
+available now. When a rule changes, replace it with its current wording; its
+previous version remains in Git history.

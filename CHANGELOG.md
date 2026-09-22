@@ -11,6 +11,13 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.2] - 2026-09-22
+
+### Changed
+- **Contract documentation now has a concise governing shape.** The
+  meta-contract defines independent surface ownership, owner-only cross-links,
+  compact contract structure, and English as the project documentation language.
+
 ## [0.181.1] - 2026-09-22
 
 ### Removed
