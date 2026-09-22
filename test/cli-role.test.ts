@@ -2,6 +2,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import {
   createModels,
@@ -263,6 +264,55 @@ test("resume reclaims a new-format session lease left by a dead standalone worke
       path.join(store.layout.runs, `standalone-${runId}.json`),
     ).value.status,
   ).toBe("complete");
+});
+
+test("a competing resume leaves the paused checkpoint owned by the original run", async () => {
+  const { models, model, role } = fixture();
+  const runId = `live-owner-${crypto.randomUUID()}`;
+  const task = "review after a competing resume";
+  const abortController = new AbortController();
+  abortController.abort();
+
+  await expect(
+    runRoleStandalone({
+      role,
+      model,
+      models,
+      targetDir,
+      task,
+      runId,
+      abortSignal: abortController.signal,
+    }),
+  ).rejects.toBeInstanceOf(RunInterruptedError);
+
+  const store = new ProjectStore(targetDir);
+  const checkpointPath = path.join(store.layout.runs, `standalone-${runId}.json`);
+  const before = store.readVersionedJson<{
+    status: string;
+    process?: RunProcessIdentity;
+    pause?: { code: string };
+  }>(checkpointPath).value;
+  // Model the first launcher still draining after its external stop.  The
+  // second CLI invocation must not claim its checkpoint merely because it was
+  // asked to resume; the managed session lease is the ownership boundary.
+  const original = await store.resumeSession(runId);
+  try {
+    await expect(
+      runRoleStandalone({
+        role,
+        model,
+        models,
+        targetDir,
+        task,
+        runId,
+        resumeExisting: true,
+      }),
+    ).rejects.toMatchObject({ code: "version_conflict" });
+  } finally {
+    await original.close(BACKGROUND_CONTEXT);
+  }
+
+  expect(store.readVersionedJson<typeof before>(checkpointPath).value).toEqual(before);
 });
 
 test("a failed empty provider turn settles its standalone run with safe recovery evidence", async () => {

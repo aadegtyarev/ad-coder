@@ -750,23 +750,34 @@ export async function runRoleStandalone(params: {
           `resume requires a larger ${key} or 0`,
         );
     }
-    const { pause: _pause, failure: _failure, result: _result, ...resumed } = prior;
-    checkpoint = store.writeVersionedJson(
-      checkpointPath,
-      {
-        ...resumed,
-        cumulativeUsage,
-        status: "running",
-        // The resuming process takes over the run: the recorded pid must be
-        // its own, or `runs stop` would aim at the dead predecessor's pid
-        // (issue #479). Resuming past a stop request answers it; the witness
-        // is consumed so it cannot brand a later unrelated interruption.
-        process: selfProcessIdentity(),
-      },
-      checkpoint.version,
-    );
-    consumeRunStopRequest(store, runId);
+    // Claim the durable session *before* publishing that this process owns the
+    // run.  An operator can issue `--resume-run` while the original process is
+    // still draining after an external stop.  In that case the live lease must
+    // refuse the second launcher without letting it overwrite the checkpoint's
+    // process identity with a process that never ran.  Once the predecessor is
+    // actually dead, `resumeSession` reclaims its versioned lease safely.
     session = await store.resumeSession(runId, BACKGROUND_CONTEXT);
+    try {
+      const { pause: _pause, failure: _failure, result: _result, ...resumed } = prior;
+      checkpoint = store.writeVersionedJson(
+        checkpointPath,
+        {
+          ...resumed,
+          cumulativeUsage,
+          status: "running",
+          // The resuming process takes over the run: the recorded pid must be
+          // its own, or `runs stop` would aim at the dead predecessor's pid
+          // (issue #479). Resuming past a stop request answers it; the witness
+          // is consumed so it cannot brand a later unrelated interruption.
+          process: selfProcessIdentity(),
+        },
+        checkpoint.version,
+      );
+      consumeRunStopRequest(store, runId);
+    } catch (error) {
+      await session.close(BACKGROUND_CONTEXT);
+      throw error;
+    }
   } else {
     checkpoint = store.writeVersionedJson(
       checkpointPath,
