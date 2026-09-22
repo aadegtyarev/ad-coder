@@ -510,6 +510,8 @@ workflows — one substrate, swappable drivers.
   revert-and-restore proof), and LSP/AST moves (rename/extract, safe by
   construction) preferred over LLM regeneration. Large decompositions reshape the
   shared barrel/multiple modules, so they are NOT parallel-safe.
+  The practice basis is recorded in
+  [refactoring-practices.md](refactoring-practices.md).
 
 - **Profiles + complexity-aware model routing** — DONE (src/profiles/ + runPipeline routing).
   These are two independent axes. A **profile** is a named replaceable execution
