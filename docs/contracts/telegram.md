@@ -13,7 +13,7 @@ This contract owns Telegram-specific rooms, routing, rendering, and trust.
   guessing or dropping content. A pending decision routes its own reply and is
   cleared after resolution; Telegram reply threading never selects a session.
 - Free text is an interactive turn; `/run` starts a visibly distinct background
-  pipeline. Slash commands and console controls share schema, argument validation,
+  pipeline. Slash commands and TUI controls share schema, argument validation,
   and help. Missing required arguments never trigger a default mutation.
 - `/sessions` and the matching dashboard control list accessible sessions;
   selecting one uses the shared manager and has the same active-turn handoff

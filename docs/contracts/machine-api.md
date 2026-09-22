@@ -48,16 +48,14 @@ It is the JSON projection of headless operations and TUI controls.
   mutate the profile or silently reroute another role.
 - Session and run resume actions expose the same recovery outcome as TUI,
   including restored context/state, queued messages, and typed paused ambiguity.
-- Deprecated public operation modes and `--json` fail with a typed migration
-  error that names their `tui` or `api` replacement. Internal headless
-  primitives remain implementation details, not CLI compatibility promises.
+- Internal headless primitives remain implementation details, not CLI
+  compatibility promises.
 
 ## Verification
 
 Test one-JSON-result output and stderr separation; parity for every TUI action;
 orchestrator conversation and recovery; profile selection and route visibility;
-model listing, override, and reset; and typed refusals for legacy modes and
-`--json`.
+model listing and override/reset.
 
 ## Related surfaces
 
