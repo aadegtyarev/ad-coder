@@ -17,6 +17,10 @@ This contract owns the headless `SessionManager` API for shared durable sessions
 - Creation exists only in the core, is exclusive and idempotent, rejects existing
   non-empty directories, has a finite configurable volume limit, and executes
   `git init` as argv against the validated realpath.
+- Project-store lock retry defaults to delays of 10, 20, 40, and 80 milliseconds:
+  acquire immediately, then retry once after each delay. A supplied schedule is
+  a non-empty array of positive safe integer milliseconds; invalid keys or values
+  fail before acquisition. A proven dead holder is reclaimed without waiting.
 - Standalone lease detection is read-only. The manager never steals a live
   standalone session; a completed handoff requires both durable handoff events
   and the standalone owner's release before adoption of its session id.

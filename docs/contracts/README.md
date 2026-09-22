@@ -15,6 +15,7 @@
 - `meta-contract.md` — contract form; read when writing or editing a contract.
 - `operation-modes.md` — manual and automatic authority; read when changing modes.
 - `pause-causes.md` — durable failure evidence; read when changing paused workflow state.
+- `pipeline-diff-projection.md` — bounded pipeline diffs; read when changing diff handoff.
 - `operator-flow.md` — operator experience; read when changing task interaction.
 - `orchestrator.md` — task orchestration; read when changing orchestration behaviour.
 - `product-change.md` — delivery of product changes; read before planning or reviewing one.
@@ -38,3 +39,4 @@
 - `tool-observability.md` — tool activity; read when changing progress events or rendering.
 - `ui-responsiveness.md` — interactive fronts; read when changing controls or waiting.
 - `wake-delivery.md` — background wake turns; read when changing durable notifications.
+- `work-decomposition.md` — workflow follow-up splitting; read when changing automatic slices.

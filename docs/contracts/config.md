@@ -6,9 +6,10 @@ resolved. It does not own model routing; see [routing configuration](routing-con
 ## Guarantees
 
 - Any behaviour a reasonable user may want to change is a setting with an
-  efficient default. The effective configuration makes each value and its source
-  visible; a human `config show` row is `name=value (source)`, and JSON reports
-  the same resolved state.
+  efficient default. Resolution is built-in default, user profile, project
+  override, then explicit launch parameter. The effective configuration makes
+  each value and its source visible; a human `config show` row is
+  `name=value (source)`, and JSON reports the same resolved state.
 - Numeric resource limits default to `0` and `0` disables them, unless their
   owning contract declares a positive safety ceiling or an immediate-action
   meaning. Values that change behaviour are not hidden source constants.
@@ -29,6 +30,9 @@ resolved. It does not own model routing; see [routing configuration](routing-con
   Its review settings resolve once and apply equally to stamp writing and checking.
 - Declared pipeline quality gates replace the built-in list as data, validate
   before dispatch, and have a positive non-zero output capture ceiling.
+- Set-valued configuration reports enabled/disabled state and count, including
+  member ids only within the documented line budget. A missing renderer branch
+  fails loudly by key rather than exposing an object representation or its value.
 
 ## Failures
 

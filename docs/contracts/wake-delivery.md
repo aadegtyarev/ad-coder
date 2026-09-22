@@ -14,6 +14,12 @@ background run changes state.
 - Owner-scoped background notices are content-free, bounded tail hints. Explicit
   cursor polling remains the reconnect path and exposes pending or dropped events.
 
+## Configuration
+
+Wake retention and draining use mandatory positive bounds: maximum retained wake
+windows per run and maximum drained per turn. They are configurable but zero does
+not disable these safety limits.
+
 ## Related surfaces
 
 - Interactive rendering: `ui-responsiveness.md`.
