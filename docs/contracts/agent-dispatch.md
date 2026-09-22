@@ -23,6 +23,10 @@ background work.
   target, budget, ceilings, and external-effect authority. The orchestrator may
   choose any model reachable in the selected profile; an operator may require a
   particular reachable model. An unavailable requested model fails loudly.
+- A dispatch records resolved skill addresses/digests, discovery mode, policy
+  source, and inheritance provenance. An operator or orchestrator may pass an
+  explicit skill subset to one child or eligible descendants; role policy and
+  skill trust still apply.
 - Every terminal outcome is published to the orchestrator according to
   [orchestrator run observation](orchestrator-run-observation.md), independently
   of the initiating front.
@@ -56,3 +60,4 @@ handling.
 - [Resumability](resumability.md) owns recovery guarantees.
 - [Parallel lanes](parallel-lanes.md) owns concurrent-lane admission.
 - [Run control](run-control.md) owns cancellation semantics.
+- [Skills](skills.md) owns skill composition.

@@ -1,51 +1,70 @@
 # Skills contract
 
-This contract owns skill discovery, selection, loading, and prompt integration.
-Skills are trusted versioned instruction bundles, not an unbounded prompt directory.
+This contract owns discovery, selection, loading, and role/subagent composition
+of portable skill bundles.
 
 ## Guarantees
 
-- Built-in skills ship with ad-coder; `.ad-coder/skills/<id>/` adds or overrides
-  trusted project skills. Selected content has an id, version, source tier, and
-  SHA-256 digest visible in effective configuration.
-- Skills resolve as exactly one mode: the role catalogue default, an explicit
-  `--skills` pin, or explicit off (`--no-skills` or persistent capability
-  setting). Explicit flags win over the setting; off suppresses every skill.
-- Unknown, malformed, duplicate, escaping, oversized, pinned, or loaded skills
-  fail before provider dispatch. Bounded trusted directories are enumerated;
-  this is not a claim to scan arbitrary filesystem content.
-- A catalogue lists only skills reachable by a role and its resolved composition.
-  It renders `id@version` and description; the loader accepts that exact address
-  or bare id, refuses an unlisted version distinctly, and answers at most once
-  per turn.
-- The catalogue is the always-read trigger surface. Full instructions reach a
-  prompt only through a load, pin, or justified `always` paste. When a listed
-  skill describes the work, loading and following it is mandatory.
-- `always` defaults false and is limited to text a role cannot understand its
-  situation without. `requires` names resolved workflow modules or registered
-  tool capabilities; an unmet requirement hides the skill from catalogue, paste,
-  and configuration. An always skill is pasted rather than catalogued.
-- Per-turn skill count and byte limits apply consistently to all source tiers.
-  A loaded skill may not restate a role prompt, and role prompts may not name a
-  tool the role was not granted.
-- Every role prompt, including the summarizer, uses the same prompt loader and
-  project override mechanism. Pipeline snapshots do not claim resume-stable
-  selection until that is explicitly implemented.
+- The core resolves bundled, profile, project, and enabled external skill sources
+  through one bounded registry. Each entry exposes source identity, address,
+  digest, standard name/description, trust state, and availability; duplicate
+  names remain distinguishable by address rather than silently overriding.
+- A session chooses one discovery mode: `manual`, `catalog`, `ranked`, or
+  `adaptive`. `manual` exposes no optional skill until explicitly selected;
+  `catalog` presents all reachable metadata and lets the model load any entry;
+  `ranked` presents a bounded declared-scoring shortlist while retaining a tool to
+  list and load the full reachable registry; `adaptive` selects catalog or ranked
+  from configured context budget and registry size. An operator may override the
+  effective mode for a session.
+- Metadata is the only always-present skill context. Full `SKILL.md` instructions
+  load only through explicit operator/orchestrator selection, role-required policy,
+  or model/tool activation. Resources load on demand. The core never eagerly pastes
+  every instruction bundle merely because a model has a large context window.
+- A role policy independently declares reachable, default-selected, required, and
+  denied skills. Required skills load before the turn; default-selected skills are
+  offered by the selected discovery mode. A fixed role cannot bypass its deny list;
+  an ad-hoc agent may receive an explicit allowed subset but never gains tool
+  authority from a skill.
+- Operator and orchestrator may select skills for a session, one dispatch, an
+  ad-hoc subagent, or all eligible child dispatches. Explicit dispatch selection
+  records source and inheritance scope, composes with fixed-role policy, and is
+  visible before launch. A child receives only its resolved selection, not an
+  implicit copy of every parent instruction.
+- Every resolved selection is durable across resume: addresses, digests, mode,
+  policy source, loaded instructions, and inheritance provenance restore before
+  the next turn. A changed or missing source pauses only its affected operation
+  with recovery choices; it never substitutes a same-named skill silently.
+- Unknown, malformed, escaping, untrusted, unavailable, or over-budget skill
+  selection refuses before provider dispatch. Limits apply to metadata catalogue,
+  per-turn instructions, resources, and list output independently; an omitted
+  entry states the applicable limit rather than looking absent.
+- Skill loading and use are ledgered with safe address/digest and token attribution.
+  The selector's shortlist, scoring source, and final model/operator choice are
+  inspectable; vector or embedding retrieval is an optional selector module, not a
+  hidden provider call or a prerequisite for catalog/manual use.
 
 ## Configuration
 
-Skills are enabled by default. Persistent capability settings and CLI pins or
-off switches follow [configuration](config.md) precedence and worker transport.
+Skill source enablement and precedence, trust, discovery mode, metadata/context
+budgets, ranking selector, role allow/default/required/deny policy, subagent
+inheritance, and load/resource limits follow standard settings precedence.
+`adaptive` is the default: it favours a complete catalogue when its metadata fits
+the role's budget and a ranked shortlist otherwise. Manual selection remains
+available for constrained local routes.
 
 ## Verification
 
-Test source precedence, selection modes, role scope, composition requirements,
-address resolution, limits, and no-skills behaviour. Use the on-demand skill
-trigger evaluation for shipped descriptions; it measures target loads, absent
-non-target loads, and attributable tool activity.
+Test standard-source discovery and duplicate addresses, all discovery modes and
+budget transitions, full-registry escape from a shortlist, explicit/manual load,
+role policy, subagent inheritance, no implicit tool grant, durable resume/digest
+mismatch, selector observability, resource containment, and TUI/API/orchestrator
+parity.
 
 ## Related surfaces
 
-- [Skill authoring](skill-authoring.md) owns an individual skill's content.
+- [Skill authoring](skill-authoring.md) owns one skill's format and content.
+- [Role catalog](role-catalog.md) owns fixed role identity.
+- [Agent dispatch](agent-dispatch.md) owns child launches.
 - [Role tools](role-tools.md) owns tool grants.
-- [Tool observability](tool-observability.md) owns activity evidence.
+- [Resumability](resumability.md) owns durable recovery.
+- [Settings interface](settings-interface.md) owns operator controls.

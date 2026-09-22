@@ -1,40 +1,41 @@
 # Skill authoring contract
 
-This contract owns the shape and writing rules of one skill under
-`prompts/skills/<id>/` or `.ad-coder/skills/<id>/`.
+This contract owns the portable Agent Skills format and writing rules for one
+ad-coder skill.
 
 ## Guarantees
 
-- A skill directory has `skill.json` and `instructions.md`. The manifest id
-  matches its directory and declares version, trigger description, and every
-  role that can perform the task; optional `always` and `requires` follow the
-  [skills](skills.md) contract.
-- A manifest is at most 4 KiB, instructions at most 16 KiB, and a role loads at
-  most four skills per turn. Exceeding a limit fails loudly rather than evicting
-  unspecified content.
-- A description names the capability, says “Use when” with the work situation,
-  and includes likely operator wording. It is at most 1,536 characters, specific
-  enough to trigger and narrow enough to avoid unrelated loads. Changing it
-  changes the skill version.
-- `instructions.md` starts with the project-wide mandatory-instruction statement
-  in its own paragraph. It teaches a concrete method, failure prevention, and
-  stopping rule; it does not duplicate the role prompt or pad recurring context.
-- The role prompt owns obligations that always apply. The harness owns an
-  obligation tied to a lifecycle event. A skill owns technique: it is optional to
-  load but binding when its description matches. Do not use `always` to carry an
-  obligation that must survive a missed load.
-- Write for progressive disclosure: descriptions are cheap catalogue entries,
-  while loaded instructions recur on later session turns and therefore carry a
-  continuing token cost.
+- A skill is a directory containing `SKILL.md`. That file begins with YAML
+  frontmatter and Markdown instructions. Required standard fields are `name`
+  (lowercase kebab-case, at most 64 characters) and `description` (non-empty,
+  at most 1024 characters); unsupported frontmatter is preserved as metadata,
+  not used as ad-coder policy.
+- A skill may contain focused `scripts/`, `references/`, and `assets/` resources.
+  Instructions use relative paths, keep reference chains shallow, and load a
+  resource only when it serves the active task. A script's output, not its source,
+  is the default context contribution.
+- Description states both capability and concrete “Use when” triggers, including
+  likely operator wording. It is the universal discovery surface; activation
+  conditions do not live only in the body.
+- The body gives a concise imperative method, required inputs/outputs, failure
+  prevention, and completion check. It does not duplicate a role prompt, a
+  contract, or a tool grant. Move specialized examples and long reference material
+  into focused resources.
+- A skill grants no tool, external-effect, or role authority. Role eligibility,
+  mandatory use, and load policy are separately configured by ad-coder, so the
+  same standard skill remains portable to another harness.
+- A content digest, source identity, and optional author-supplied version identify
+  a resolved skill. Changing instructions or resources changes the digest; an
+  absent version is valid and never replaced with an invented one.
 
 ## Verification
 
-Validate manifest schema, id, size limits, mandatory opening, and description
-budget. Review trigger wording and run the on-demand target/non-target trigger
-evaluation when changing a shipped skill's applicability.
+Validate standard frontmatter, path/name agreement, description budget, resource
+containment, digest, and referenced-resource reachability. Evaluate target and
+non-target discovery, instruction loading, and completion checks with real tasks.
 
 ## Related surfaces
 
-- [Skills](skills.md) owns resolver and loading behaviour.
-- [Role tools](role-tools.md) owns role tool availability.
-- [Quality](quality.md) owns project checks.
+- [Skills](skills.md) owns discovery, selection, and role composition.
+- [Role tools](role-tools.md) owns tool grants.
+- [Security](security.md) owns trusted-source policy.

@@ -544,6 +544,11 @@ workflows — one substrate, swappable drivers.
   gracefully cancel one durable run without blocking input or ending its session.
   Force cancellation is an explicit configured escalation over a proven owned
   process, with checkpointed WIP retained for recovery.
+- **REQUIREMENT — portable adaptive skills.** Adopt standard `SKILL.md` bundles
+  and progressive disclosure. A configurable manual/catalog/ranked/adaptive
+  selector serves constrained and large context windows; roles and dispatches
+  compose explicit allowed/required/inherited skill sets without granting tools.
+  Selection is durable and inspectable. Research is in [skill-practices.md](skill-practices.md).
 - **REQUIREMENT — economical session titles.** Extract titles locally from the
   first user message by default. Optional semantic generation uses the resolved
   Summarizer role with its default cache-off policy, low admission priority, and

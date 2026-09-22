@@ -11,7 +11,8 @@ It is the JSON projection of headless operations and TUI controls.
 - API resources mirror operator controls exactly: `orchestrator` accepts a
   message and reports durable task state; `agents` lists and starts named,
   generic, and ad-hoc agents; `workflows` lists, starts, and drives workflow
-  sessions; `skills` lists, loads, and unloads; `limits` shows and sets ceilings;
+  sessions; `skills` lists, inspects, selects, loads, unloads, and sets discovery
+  mode; `limits` shows and sets ceilings;
   `profiles` lists, shows, and selects profiles; and `runs` lists, inspects,
   gracefully cancels, or where eligible force-cancels a durable run. `sessions`
   lists, selects, and renames accessible sessions. `settings`
@@ -74,3 +75,4 @@ model listing, override, and reset; and typed refusals for legacy modes and
 - [Compaction](compaction.md) owns explicit context recovery.
 - [Project practices](project-practices.md) owns portable guidance lifecycle.
 - [Run control](run-control.md) owns run cancellation.
+- [Skills](skills.md) owns skill controls.

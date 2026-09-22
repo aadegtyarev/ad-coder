@@ -31,9 +31,10 @@ This contract owns commands available to an operator in `ad-coder tui`.
 - `/status` shows the selected session's bounded state and ledger projection;
   `/about` shows harness name, version, enabled capabilities, and concise help.
   Both are local read-only controls with matching machine API actions.
-- `/skills` lists reachable skills with applicability, syntax, and an example.
-  `/skills load <id>` and `/skills unload <id>` alter the active session's
-  explicit skill selection through the shared resolver and durable session state.
+- `/skills` lists discovery mode, budget, resolved selection, and reachable skills
+  with applicability, syntax, and an example. Its actions inspect, list, load,
+  unload, and set a session discovery mode through the shared resolver and durable
+  session state; dispatch controls expose explicit child-skill selection and scope.
 - `/estimates` shows the current full-cycle forecast and relevant aggregated
   planning feedback without mutating work. Its machine-equivalent action is
   equally read-only and presents the same bounded evidence.
@@ -85,6 +86,8 @@ Test grouped settings discovery, scoped mutation, source rendering, and API pari
 Test automatic and manual compaction, clear, retry exhaustion, and API parity.
 Test practice discovery, no-write preview, selective enablement, modified-asset
 removal refusal, and API parity.
+Test skill catalogue/manual/ranked/adaptive modes, budgeted list rendering,
+explicit child inheritance, role denial, durable selection, and API parity.
 Test run listing, graceful/force cancellation, preserved queue/WIP, recovery, and
 API/orchestrator parity.
 
@@ -101,3 +104,4 @@ API/orchestrator parity.
 - [Compaction](compaction.md) owns compact and clear semantics.
 - [Project practices](project-practices.md) owns portable guidance lifecycle.
 - [Run control](run-control.md) owns run cancellation.
+- [Skills](skills.md) owns skill controls.

@@ -66,6 +66,8 @@ resolved. It does not own model routing; see [routing configuration](routing-con
   retention are settings; see [run control](run-control.md).
 - Session-title strategy, extraction limits, and optional Summarizer generation
   are settings; see [session titles](session-titles.md).
+- Skill sources/trust, discovery/ranking mode, metadata and loading budgets,
+  role policy, and subagent inheritance are settings; see [skills](skills.md).
 - Execution mode, destructive-command guard, protected roots, and a selected
   sandbox or optional LLM-guard provider are settings; see
   [execution boundary](execution-boundary.md).

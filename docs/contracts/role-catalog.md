@@ -24,6 +24,9 @@ This contract owns the names and prompt sources of reusable roles.
 - A prompt alone defines role identity and instruction. Tool grants, model route,
   budgets, and external-effect authority remain separately resolved policy; a
   custom prompt never obtains them implicitly.
+- Fixed-role skill eligibility and required/default selection are resolved policy,
+  not prompt prose. A role may restrict or require named skills; an ad-hoc agent
+  receives only the explicitly resolved skill subset.
 - A custom role and ad-hoc agent default to every enabled project tool except
   workflow submission tools. `agents.defaultToolGrant` can replace that default;
   a named grant remains visible in effective configuration.
@@ -49,3 +52,4 @@ policy separation from prompt text.
 - [Security](security.md) owns trusted project prompt configuration.
 - [Quality bootstrap](quality-bootstrap.md) owns setup workflow semantics.
 - [Compaction](compaction.md) owns summarizer invocation.
+- [Skills](skills.md) owns selection and inheritance.
