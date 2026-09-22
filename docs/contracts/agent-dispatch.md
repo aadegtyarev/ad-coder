@@ -18,6 +18,9 @@ background work.
   target, budget, ceilings, and external-effect authority. The orchestrator may
   choose any model reachable in the selected profile; an operator may require a
   particular reachable model. An unavailable requested model fails loudly.
+- Every terminal outcome is published to the orchestrator according to
+  [orchestrator run observation](orchestrator-run-observation.md), independently
+  of the initiating front.
 - An ad-hoc agent and a custom role use the profile's `agents.defaultModel` when
   no explicit choice is supplied. A selected model remains subject to provider
   admission, cost controls, and all granted-authority boundaries.

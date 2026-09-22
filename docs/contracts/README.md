@@ -18,6 +18,7 @@
 - `pause-causes.md` — durable failure evidence; read when changing paused workflow state.
 - `pipeline-diff-projection.md` — bounded pipeline diffs; read when changing diff handoff.
 - `operator-flow.md` — operator experience; read when changing task interaction.
+- `orchestrator-run-observation.md` — orchestrator visibility of run outcomes; read when changing manual-run delivery.
 - `orchestrator.md` — task orchestration; read when changing orchestration behaviour.
 - `product-change.md` — delivery of product changes; read before planning or reviewing one.
 - `provider-admission.md` — provider capacity admission; read when changing model dispatch.
@@ -40,6 +41,7 @@
 - `telegram.md` — Telegram front; read when changing Telegram behaviour.
 - `terminal-ui.md` — interactive terminal front; read when changing TUI rendering or themes.
 - `tool-observability.md` — tool activity; read when changing progress events or rendering.
+- `tui-commands.md` — TUI operator controls; read when changing interactive commands.
 - `ui-responsiveness.md` — interactive fronts; read when changing controls or waiting.
 - `wake-delivery.md` — background wake turns; read when changing durable notifications.
 - `work-decomposition.md` — workflow follow-up splitting; read when changing automatic slices.

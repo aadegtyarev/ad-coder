@@ -252,6 +252,14 @@ workflows — one substrate, swappable drivers.
   custom role identities; grants remain policy, not prompt side effects. A profile
   supplies `agents.defaultModel` for custom/ad-hoc work, while the orchestrator
   may choose any reachable profile model and the operator may require one.
+
+- **REQUIREMENT — operator command parity and run observation.** The TUI exposes
+  every orchestrator execution action, plus local help, profile, ceiling, and
+  skill-selection controls. The machine JSON API exposes the same capabilities
+  and semantics. Argument-less controls are local help rather than model work.
+  Every role, ad-hoc agent, pipeline, and workflow outcome wakes the orchestrator
+  by default, including manually started work; the operator can disable only that
+  observation, not durable run evidence or their own status.
 - **REQUIREMENT — breakpoint control (implemented).** Drivers can auto-advance
   through phases and pause before a chosen phase, then resume from durable state.
   The trusted `control run-until` action exposes this without requiring a caller

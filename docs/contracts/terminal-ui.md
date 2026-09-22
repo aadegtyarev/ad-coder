@@ -47,3 +47,5 @@ absence of terminal bytes from JSON output.
 - [Session manager](session-manager.md) owns session state and recovery.
 - [Tool observability](tool-observability.md) owns activity events.
 - [Agent dispatch](agent-dispatch.md) owns background launch semantics.
+- [TUI operator commands](tui-commands.md) owns controls and local help.
+- [Orchestrator run observation](orchestrator-run-observation.md) owns result delivery.

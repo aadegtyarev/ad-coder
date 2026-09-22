@@ -7,6 +7,8 @@ This contract owns the names and prompt sources of reusable roles.
 - Built-in roles ship with ad-coder and retain their stable names and default
   prompt sources. A project prompt with a built-in name overrides that prompt
   under the existing trusted-project-prompt boundary.
+- `generic` is a built-in role for a bounded arbitrary task. It appears beside
+  named specialist roles in every operator and orchestrator role catalogue.
 - A prompt file with a new safe role-name stem creates a project-local custom
   role. Removing that file removes the custom role; removing an override restores
   the built-in role rather than deleting it.
