@@ -338,6 +338,43 @@ test("a summarizer that recovers summarizes the next preparation", async () => {
   expect(committed(result).summary).toContain("SUMMARY");
 });
 
+test("compaction caps oversized summaries, retries three times, then uses the active-model fallback", async () => {
+  let primaryCalls = 0;
+  let fallbackCalls = 0;
+  const primary: Summarizer = async () => {
+    primaryCalls += 1;
+    return Array.from({ length: 4_000 }, (_, index) => `fact-${index}`).join(" ");
+  };
+  const fallback: Summarizer = async () => {
+    fallbackCalls += 1;
+    return "brief retained state";
+  };
+  const { result, writes } = await captureStderr(() =>
+    driveHook(preparation({ messagesToSummarize: [big()], retainedTail: [small("tail")] }), {
+      budget: budget(),
+      summarizer: primary,
+      fallbackSummarizer: fallback,
+      summarizerScope: { provider: "cheap", model: "summary" },
+      fallbackScope: { provider: "active", model: "reviewer" },
+      summaryMaxTokens: 10,
+      summarizerRetryLimit: 3,
+    }),
+  );
+
+  expect(primaryCalls).toBe(3);
+  expect(fallbackCalls).toBe(1);
+  expect(committed(result).summary).toContain("brief retained state");
+  expect(committed(result).details).toMatchObject({
+    compactionFallbackUsed: true,
+    compactionFallbackSource: "cheap/summary",
+    compactionFallbackRoute: "active/reviewer",
+    compactionFallbackAttempts: 3,
+  });
+  expect(writes).toContain(
+    "compaction fallback used (cheap/summary -> active/reviewer, attempts 3)",
+  );
+});
+
 test("describeCompactionFailure renders names and numbers only", () => {
   const secret = "s".repeat(2000);
   const failure: CompactionFailure = {
@@ -581,6 +618,20 @@ test("createSummarizer asks for no prompt cache on its one-shot request", async 
   const summarizer = createSummarizer(models, faux.getModel() as Model<Api>);
   expect(await summarizer([small("source")])).toBe("brief");
   expect(faux.state.callCount).toBe(1);
+});
+
+test("createSummarizer passes its configured output cap to the provider", async () => {
+  const faux = fauxProvider({ provider: "summary", models: [{ id: "cheap" }] });
+  const models = createModels();
+  models.setProvider(faux.provider);
+  faux.setResponses([
+    (_context, options) => {
+      expect(options?.maxTokens).toBe(123);
+      return fauxAssistantMessage([{ type: "text", text: "brief" }]);
+    },
+  ]);
+  const summarizer = createSummarizer(models, faux.getModel() as Model<Api>, 123);
+  expect(await summarizer([small("source")])).toBe("brief");
 });
 
 test("createSummarizer rejects custom messages and empty provider output", async () => {

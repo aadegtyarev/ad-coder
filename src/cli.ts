@@ -2547,6 +2547,22 @@ function buildConfigOptions(
   ) {
     fail(`invalid --compaction-mode: ${compactionMode}`);
   }
+  const compactionSummaryMaxTokens = parsePositiveIntegerFlag(
+    "--compaction-summary-max-tokens",
+    flags["--compaction-summary-max-tokens"],
+  );
+  const compactionSummarizerRetryLimit = parsePositiveIntegerFlag(
+    "--compaction-summarizer-retry-limit",
+    flags["--compaction-summarizer-retry-limit"],
+  );
+  const compactionFallback = flags["--compaction-fallback-to-role-model"];
+  if (
+    compactionFallback !== undefined &&
+    compactionFallback !== "true" &&
+    compactionFallback !== "false"
+  ) {
+    fail(`invalid --compaction-fallback-to-role-model: ${compactionFallback}`);
+  }
   const researchPurpose = flags["--research-purpose"];
   if (
     researchPurpose !== undefined &&
@@ -2742,6 +2758,11 @@ function buildConfigOptions(
       summarizerModel: flags["--summarizer-model"],
     }),
     ...(compactionMode !== undefined && { compactionMode }),
+    ...(compactionSummaryMaxTokens !== undefined && { compactionSummaryMaxTokens }),
+    ...(compactionSummarizerRetryLimit !== undefined && { compactionSummarizerRetryLimit }),
+    ...(compactionFallback !== undefined && {
+      compactionFallbackToRoleModel: compactionFallback === "true",
+    }),
     ...(researchPurpose !== undefined && { researchPurpose }),
     ...(researchBriefValues[0] !== undefined && {
       researchBrief: {
@@ -3521,6 +3542,21 @@ const PIPELINE_OPTIONS: CommandDefinition["options"] = [
     name: "--compaction-mode",
     value: "<mode>",
     description: "Set auto or disabled-then-halt context handling.",
+  },
+  {
+    name: "--compaction-summary-max-tokens",
+    value: "<n>",
+    description: "Cap one durable summary; defaults to one third of the active context window.",
+  },
+  {
+    name: "--compaction-summarizer-retry-limit",
+    value: "<n>",
+    description: "Attempts on the selected summarizer before active-model fallback; defaults to 3.",
+  },
+  {
+    name: "--compaction-fallback-to-role-model",
+    value: "<boolean>",
+    description: "Retry an exhausted summarizer with the active role model; defaults to true.",
   },
   {
     name: "--pipeline-context",

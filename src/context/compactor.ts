@@ -37,6 +37,12 @@ export interface CompactionPolicy {
   summarizer?: Summarizer;
   summarizerModel?: Model<Api>;
   allowCrossProviderSummarization?: boolean;
+  /** Maximum accepted summary size in tokens; defaults to one third of the active window. */
+  summaryMaxTokens?: number;
+  /** Attempts on the configured summarizer before trying the active role model. */
+  summarizerRetryLimit?: number;
+  /** Defaults on: retry an exhausted summarizer route with the active role model. */
+  fallbackToRoleModel?: boolean;
 }
 
 /** Enforce the accepted one-shot summarization boundary for a configured run. */
@@ -106,7 +112,11 @@ export class SummarizerUnavailableError extends Error {
 }
 
 /** Build a one-shot, no-tool summarizer over the caller's existing Models boundary. */
-export function createSummarizer(models: Models, model: Model<Api>): Summarizer {
+export function createSummarizer(
+  models: Models,
+  model: Model<Api>,
+  summaryMaxTokens?: number,
+): Summarizer {
   return async (messages, previousSummary) => {
     const providerMessages = standardMessages(messages);
     // The previous summary rides the SYSTEM prompt, never the message list: it
@@ -139,7 +149,10 @@ export function createSummarizer(models: Models, model: Model<Api>): Summarizer 
       // prompt cache on the largest input a run produces -- paying the cache
       // WRITE premium for an entry with no possible reader. A role turn is the
       // opposite case and keeps its configured retention (see `src/role.ts`).
-      { cacheRetention: "none" },
+      {
+        cacheRetention: "none",
+        ...(summaryMaxTokens !== undefined && { maxTokens: summaryMaxTokens }),
+      },
     );
     if (response.stopReason === "error" || response.stopReason === "aborted") {
       throw new SummarizerUnavailableError(
@@ -167,7 +180,13 @@ export function resolveCompactionPolicy(
   policy: CompactionPolicy | undefined,
   models: Models,
   roleModel: Model<Api>,
-): Required<Pick<CompactionPolicy, "mode">> & CompactionPolicy {
+): Required<
+  Pick<
+    CompactionPolicy,
+    "mode" | "summaryMaxTokens" | "summarizerRetryLimit" | "fallbackToRoleModel"
+  >
+> &
+  CompactionPolicy {
   const mode = policy?.mode ?? "auto";
   if (mode === "cache-aware") {
     throw new Error('context compaction mode "cache-aware" is not supported yet');
@@ -175,7 +194,28 @@ export function resolveCompactionPolicy(
   if (mode !== "auto" && mode !== "disabled-then-halt") {
     throw new Error(`unknown context compaction mode "${String(mode)}"`);
   }
-  if (mode === "disabled-then-halt") return { mode };
+  if (mode === "disabled-then-halt") {
+    return {
+      mode,
+      summaryMaxTokens: Math.floor(roleModel.contextWindow / 3),
+      summarizerRetryLimit: 3,
+      fallbackToRoleModel: true,
+    };
+  }
+  const summaryMaxTokens = policy?.summaryMaxTokens ?? Math.floor(roleModel.contextWindow / 3);
+  if (
+    !Number.isSafeInteger(summaryMaxTokens) ||
+    summaryMaxTokens <= 0 ||
+    summaryMaxTokens > roleModel.contextWindow
+  ) {
+    throw new Error(
+      `summaryMaxTokens must be a positive safe integer no greater than the active context window ${roleModel.contextWindow}`,
+    );
+  }
+  const summarizerRetryLimit = policy?.summarizerRetryLimit ?? 3;
+  if (!Number.isSafeInteger(summarizerRetryLimit) || summarizerRetryLimit < 1) {
+    throw new Error("summarizerRetryLimit must be a positive safe integer");
+  }
   const summarizerModel = policy?.summarizerModel ?? roleModel;
   if (
     summarizerModel.provider !== roleModel.provider &&
@@ -188,7 +228,10 @@ export function resolveCompactionPolicy(
   return {
     mode,
     summarizerModel,
-    summarizer: policy?.summarizer ?? createSummarizer(models, summarizerModel),
+    summaryMaxTokens,
+    summarizerRetryLimit,
+    fallbackToRoleModel: policy?.fallbackToRoleModel ?? true,
+    summarizer: policy?.summarizer ?? createSummarizer(models, summarizerModel, summaryMaxTokens),
     ...(policy?.allowCrossProviderSummarization === true && {
       allowCrossProviderSummarization: true,
     }),
@@ -481,6 +524,11 @@ export interface DurableCompactionDeps {
   budget: ContextBudget;
   /** Names only: recorded on a failure so it says WHICH model refused (issue #391). */
   summarizerScope?: { provider: string; model: string };
+  /** The active role fallback, used after configured-route attempts are exhausted. */
+  fallbackSummarizer?: Summarizer;
+  fallbackScope?: { provider: string; model: string };
+  summaryMaxTokens?: number;
+  summarizerRetryLimit?: number;
 }
 
 /**
@@ -548,10 +596,53 @@ export async function produceSummary(
     );
     return reason === "threshold" ? { decline: true } : undefined;
   }
+  const summaryMaxTokens = deps.summaryMaxTokens;
+  const retryLimit = deps.summarizerRetryLimit ?? 3;
+  const withinCap = (summary: string): string => {
+    if (summaryMaxTokens === undefined) return summary;
+    // `estimateTokens` deliberately treats a partial assistant message as
+    // incomplete (it lacks provider metadata), while a text-only user message
+    // has the same content-token estimate and is a complete AgentMessage.
+    const tokens = estimateTokens({ role: "user", content: summary, timestamp: 0 });
+    if (tokens > summaryMaxTokens) {
+      throw new SummarizerUnavailableError(
+        "oversized",
+        // This model is only used for typed names in the error. The caller
+        // records the configured route separately, so use the real model when
+        // it exists and never manufacture a provider identifier.
+        {
+          provider: deps.summarizerScope?.provider ?? "unknown",
+          id: deps.summarizerScope?.model ?? "unknown",
+        } as Model<Api>,
+        `summary measured ${tokens} tokens exceeds cap ${summaryMaxTokens}`,
+      );
+    }
+    return summary;
+  };
+  const attempt = async (summarizer: Summarizer, attempts: number): Promise<string> => {
+    let last: unknown;
+    for (let count = 0; count < attempts; count += 1) {
+      try {
+        return withinCap(await summarizer(messages, preparation.previousSummary));
+      } catch (error) {
+        last = error;
+      }
+    }
+    throw last;
+  };
   let summary: string;
+  let fallbackEvidence:
+    | {
+        compactionFallbackUsed: true;
+        compactionFallbackSource: string;
+        compactionFallbackRoute: string;
+        compactionFallbackAttempts: number;
+      }
+    | undefined;
   try {
-    summary = await deps.summarizer(messages, preparation.previousSummary);
+    summary = await attempt(deps.summarizer, retryLimit);
   } catch (error) {
+    let terminalError = error;
     // Attributed, not quoted: the error's class, its short machine tokens and
     // its numeric status survive; its message does not, because a provider
     // error's text can carry the request it rejected and the evicted head IS
@@ -559,7 +650,7 @@ export async function produceSummary(
     // warning on an attempt bound, so a session that failed 63 times left two
     // lines behind and the rest of the story lived only in a token number.
     const failure: CompactionFailure = {
-      attempt: 1,
+      attempt: retryLimit,
       ...attributeFailure(error),
       ...(deps.summarizerScope !== undefined && {
         provider: deps.summarizerScope.provider,
@@ -569,7 +660,28 @@ export async function produceSummary(
       thresholdTokens: threshold,
     };
     const measured = `(measured ${preparation.tokensBefore} tokens, threshold ${threshold})`;
-    if (isProviderUnavailable(error)) {
+    if (deps.fallbackSummarizer !== undefined) {
+      try {
+        summary = await attempt(deps.fallbackSummarizer, retryLimit);
+        process.stderr.write(
+          `ad-coder: compaction fallback used (${deps.summarizerScope?.provider ?? "unknown"}/` +
+            `${deps.summarizerScope?.model ?? "unknown"} -> ${deps.fallbackScope?.provider ?? "unknown"}/` +
+            `${deps.fallbackScope?.model ?? "unknown"}, attempts ${retryLimit}) ${measured}\n`,
+        );
+        fallbackEvidence = {
+          compactionFallbackUsed: true,
+          compactionFallbackSource: `${deps.summarizerScope?.provider ?? "unknown"}/${deps.summarizerScope?.model ?? "unknown"}`,
+          compactionFallbackRoute: `${deps.fallbackScope?.provider ?? "unknown"}/${deps.fallbackScope?.model ?? "unknown"}`,
+          compactionFallbackAttempts: retryLimit,
+        };
+      } catch (fallbackError) {
+        terminalError = fallbackError;
+      }
+    }
+    if (summary !== undefined) {
+      // The fallback ran through the same cap check and is durable like any
+      // other hook result; fall through to the common commit path below.
+    } else if (isProviderUnavailable(terminalError)) {
       // The provider is refusing, so the role's own turn will be refused the
       // same way. Summarizing with the role's model could only replace the
       // typed admission refusal with a harness fault, so decline: the run
@@ -580,15 +692,19 @@ export async function produceSummary(
           `not summarizing with the role's own model, which needs the same provider ${measured}\n`,
       );
       return { decline: true };
+    } else {
+      process.stderr.write(
+        `ad-coder: compaction summarizer failed (${describeCompactionFailure(failure)}); ` +
+          `configured fallback did not produce a capped summary ${measured}\n`,
+      );
+      // Legacy direct hook callers without an explicitly configured fallback
+      // retain pi-agent-core's fallback behavior. Every normal runner attaches
+      // the explicit, capped active-role fallback above.
+      return undefined;
     }
-    process.stderr.write(
-      `ad-coder: compaction summarizer failed (${describeCompactionFailure(failure)}); ` +
-        `the harness summarizes with the role's own model instead ${measured}\n`,
-    );
-    return undefined;
   }
   const { readFiles, modifiedFiles } = fileDetails(preparation.fileOps);
-  const details = { readFiles, modifiedFiles };
+  const details = { readFiles, modifiedFiles, ...(fallbackEvidence ?? {}) };
   // Announced, for the same reason the failure above it is: a compaction that
   // happens silently cannot be distinguished afterwards from one that never
   // needed to happen. That mattered the moment a calibration task tried to

@@ -18,6 +18,7 @@ import {
   COMPACTION_SAFETY_PROMPT,
   type ContextCompactionLostError,
   compactionLostErrorFrom,
+  createSummarizer,
   resolveCompactionPolicy,
 } from "../context/compactor";
 import { assertContextFitsBudget, assertTurnFitsBudget } from "../context/preflight";
@@ -494,6 +495,12 @@ export async function startConversation(config: ConversationConfig): Promise<Con
           model: compaction.summarizerModel.id,
         },
       }),
+      ...(compaction.fallbackToRoleModel && {
+        fallbackSummarizer: createSummarizer(models, config.model, compaction.summaryMaxTokens),
+        fallbackScope: { provider: config.model.provider, model: config.model.id },
+      }),
+      summaryMaxTokens: compaction.summaryMaxTokens,
+      summarizerRetryLimit: compaction.summarizerRetryLimit,
     });
   }
 

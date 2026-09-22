@@ -18,6 +18,10 @@ enforces that dated release headings go in non-increasing date order
 - **Automatic compaction now starts at the configured default.** The shipped
   context budget begins durable compaction at 70% of a role's active context
   window, rather than the previous 80%.
+- **Compaction summaries are now bounded and recoverable.** Summary output is
+  capped at one third of the active context window by default; the cap, three
+  summarizer attempts, and active-model fallback are configurable and visible
+  in effective configuration.
 
 ## [0.181.6] - 2026-09-22
 
