@@ -57,3 +57,4 @@ and detached-worker paths when adding a launch setting or changing precedence.
 - [Routing calibration](routing-calibration.md) owns portable routing evidence.
 - [Compaction](compaction.md), [wake delivery](wake-delivery.md), and
   [quality](quality.md) own their specific ceilings.
+- [Extension modules](extension-modules.md) owns optional module capabilities.

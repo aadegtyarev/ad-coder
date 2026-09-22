@@ -23,4 +23,5 @@ same-user front access on every supported transport platform.
 ## Related surfaces
 
 - [Session manager](session-manager.md) owns bindings and manager operations.
+- [Extension modules](extension-modules.md) owns transport-module boundaries.
 - [Security](security.md) owns the broader trust boundary.

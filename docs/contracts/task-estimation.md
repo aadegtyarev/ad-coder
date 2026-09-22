@@ -15,6 +15,10 @@ feedback.
   role's ceiling recomputes the remaining-cycle reserve; a raise that starves
   required later roles is an estimate failure and a decomposition signal, not a
   quiet transfer of their budget.
+- A parallel parent forecast reserves every lane independently and adds an
+  integration and final-review reserve. A proposed lane that cannot be funded
+  from the parent's remaining reserve queues, decomposes, or refuses; it never
+  borrows an undisclosed sibling budget.
 - Planner estimate mismatch, an explicit `too_complex` signal from planner,
   coder, or reviewer, repeated review findings, and pipeline review loops become
   durable estimation observations. They feed the one-probe-or-decompose

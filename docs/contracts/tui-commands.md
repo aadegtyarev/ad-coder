@@ -15,6 +15,14 @@ This contract owns commands available to an operator in `ad-coder tui`.
   an example; `/roles <name> <task>` launches that role. `/agent <prompt>`
   launches an ad-hoc agent. `/workflows` lists reachable workflow modules,
   including the pipeline; `/workflows <name> <task>` launches one.
+- Role, agent, and workflow launch controls list whether isolated parallel lanes
+  are available. Their parallel form requests a mutable scope and follows the
+  same shared admission as the machine API; it is refused outside the Git
+  workspace adapter rather than running unisolated.
+- `/sessions` lists accessible sessions with number, title, target, state, and
+  syntax/example; `/sessions select <number>` selects one through the shared
+  manager. It queues selection after any active turn and makes later ordinary
+  input target the selected session.
 - `/skills` lists reachable skills with applicability, syntax, and an example.
   `/skills load <id>` and `/skills unload <id>` alter the active session's
   explicit skill selection through the shared resolver and durable session state.
@@ -49,7 +57,8 @@ Test TUI/machine command parity, every no-argument help path, local-only help
 evidence, role/agent/workflow launch, skill selection durability, ceiling
 validation, orchestrator messaging, profile switching, and credential-free
 profile rendering; test model listing, override, reset, and read-only estimate
-feedback.
+feedback; test session listing and idle/active-turn selection; test parallel-lane
+availability and admission parity.
 
 ## Related surfaces
 

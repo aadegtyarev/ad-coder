@@ -18,9 +18,9 @@ This contract owns how an orchestrator chooses an executor for bounded work.
   in [operation modes](operation-modes.md).
 - A dispatch includes goal, acceptance criterion, scope and file bounds, budget,
   ceilings, and task shape. Scope widening is a new dispatch, not a silent edit.
-- Parallelize only independent work. Two mutable lanes may not share a branch,
-  version, or file; each lane has its own branch, worktree, pull request, and
-  console ownership.
+- Parallel mutable work follows [parallel lanes](parallel-lanes.md); it is
+  available only through the Git workspace adapter and never shares a worktree
+  or branch. Independent read-only research may still run without Git.
 - `run_role` reviewer output is advisory. A review that must satisfy merge policy
   uses a pipeline review stage or standalone reviewer round as required by
   [review evidence](review-evidence.md).
@@ -46,3 +46,4 @@ between advisory and stamp-producing review.
 - [Agent dispatch](agent-dispatch.md) owns role and ad-hoc launches.
 - [Product changes](product-change.md) owns issue and pull-request lifecycle.
 - [Configuration](config.md) owns required-role and context-threshold settings.
+- [Parallel lanes](parallel-lanes.md) owns concurrent mutable execution.

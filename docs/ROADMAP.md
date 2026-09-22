@@ -256,6 +256,21 @@ workflows — one substrate, swappable drivers.
   The headless workflow primitives remain the implementation substrate behind
   both fronts.
 
+- **REQUIREMENT — modular core and shared session choice.** TUI, API, Telegram,
+  future web and Matrix fronts, VCS/workspace adapters, forge adapters such as
+  GitHub or GitLab, workflows, tools, and event transports are optional modules
+  around one headless core. They share durable session/run identities and cannot
+  own private lifecycles. The SessionManager lists and switches accessible project
+  sessions for TUI, API, and Telegram; switching waits for an active turn rather
+  than cancelling it, and subsequent input uses the selected session.
+
+- **REQUIREMENT — isolated parallel lanes.** With the Git workspace adapter,
+  the operator or orchestrator can launch independent role or workflow lanes in
+  separate managed worktrees and branches. Admission proves disjoint mutable
+  scope or requires an explicit bounded merge plan and integration lane; all
+  lanes retain independent budgets, review, resume, and outcome. A non-Git
+  workspace permits parallel research but one mutable lane only.
+
 - **REQUIREMENT — background agent dispatch.** A TUI operator and the
   orchestrator can launch built-in, prompt-defined custom, or ad-hoc agents
   without blocking interactive input. Project prompt files create and remove

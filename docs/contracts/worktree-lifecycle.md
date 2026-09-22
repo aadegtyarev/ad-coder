@@ -1,7 +1,7 @@
 # Managed worktree lifecycle contract
 
-This contract owns worktrees created and cleaned by ad-coder or ad-coder-dev.
-It does not govern arbitrary developer worktrees.
+This contract owns worktrees created and cleaned by the optional Git workspace
+adapter. It does not govern arbitrary developer worktrees or non-Git workspaces.
 
 ## Guarantees
 
@@ -47,3 +47,5 @@ branch pruning, and retained diagnostics after every failed safety check.
 - [Delegation](delegation.md) owns independent mutable lanes.
 - [Configuration](config.md) owns setting precedence.
 - [Security](security.md) owns filesystem and shell authority.
+- [Extension modules](extension-modules.md) owns optional-adapter boundaries.
+- [Parallel lanes](parallel-lanes.md) owns concurrent-lane admission.

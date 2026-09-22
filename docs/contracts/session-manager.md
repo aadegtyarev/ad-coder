@@ -16,8 +16,10 @@ This contract owns the headless `SessionManager` API for shared durable sessions
   read against current allow roots. An invalid binding is a surfaced failure, not
   a silent deletion or automatic project creation.
 - Creation exists only in the core, is exclusive and idempotent, rejects existing
-  non-empty directories, has a finite configurable volume limit, and executes
-  `git init` as argv against the validated realpath.
+  non-empty directories, and has a finite configurable volume limit. It asks the
+  selected workspace adapter to initialise the validated realpath: the Git
+  adapter uses argv `git init`; a non-Git adapter creates no repository. An
+  unavailable selected adapter fails before creation completes.
 - Project-store lock retry defaults to delays of 10, 20, 40, and 80 milliseconds:
   acquire immediately, then retry once after each delay. A supplied schedule is
   a non-empty array of positive safe integer milliseconds; invalid keys or values
@@ -28,6 +30,11 @@ This contract owns the headless `SessionManager` API for shared durable sessions
 - The API declares list, create, bind, resolve, rename, and handoff. Fronts only
   translate it; no front owns a private copy of manager state or a front-only
   action.
+- The manager lists accessible sessions and selects one for a requesting front.
+  Selection changes that front's durable binding only after its active turn
+  settles, never cancels or reassigns existing work. The selected session's
+  identity, title, target, and resumable state are then projected by every front;
+  free input and controls route to it until another explicit selection.
 - TUI and machine resume actions validate an id before path use and require both its
   session and ledger. Without an id it selects the newest qualifying orchestrator
   ledger. It settles an interrupted active operation before accepting new input,
@@ -47,9 +54,11 @@ provider bodies.
 
 ## Verification
 
-Test containment and symlink races, invalid bindings, concurrent creation,
-two-sided handoff, resume selection and settlement, immediate idle delivery,
-FIFO next-turn delivery, and queued-input refusal at shutdown.
+Test containment and symlink races, invalid bindings, concurrent creation with
+Git and non-Git adapters, unavailable-adapter refusal, two-sided handoff, session
+list/select during idle and active turns, resume selection and settlement,
+immediate idle delivery, FIFO next-turn delivery, and queued-input refusal at
+shutdown.
 
 ## Related surfaces
 
@@ -57,3 +66,4 @@ FIFO next-turn delivery, and queued-input refusal at shutdown.
 - [Resumability](resumability.md) owns checkpoint and recovery semantics.
 - [Session titles](session-titles.md) owns display-name generation and sanitizing.
 - [CLI](cli.md) owns command rendering; [Telegram](telegram.md) owns its front.
+- [TUI operator commands](tui-commands.md) owns interactive selection controls.

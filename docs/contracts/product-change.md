@@ -17,20 +17,17 @@ This contract owns how a product change is defined, coordinated, and closed.
 - Keep a change coherent and minimal. Apply [decomposition](decomposition.md)
   when responsibility boundaries demand it; separate structural moves from
   behaviour changes.
-- A working tree has one writer. Concurrent mutable work uses separate
-  worktrees; managed worktree creation and cleanup follow
-  [worktree lifecycle](worktree-lifecycle.md). `--target-dir` is not isolation
-  (see [security](security.md)).
-- Claim an issue before work starts using an assignee, `in-progress` label, and
-  identifying comment. Link the pull request to close it on merge, or close it
-  immediately afterwards.
-- This repository's pull request carries the generated delivery signature, not
-  hand-written cost data. The signature is a compact ledger projection with run
-  count, role routes, and provider-reported totals; detailed call data remains
-  in the ledger. Its fixed renderer and body check reject a missing or stale
-  block. These delivery hooks are enabled only by this repository's committed
-  `ad-coder.stamps.json` marker and never write ad-coder bookkeeping into a
-  target project.
+- A mutable workspace has one writer. A Git worktree adapter may provide separate
+  worktrees for concurrent mutable work; without such an adapter, concurrent
+  writes are refused rather than claimed isolated. `--target-dir` is not
+  isolation (see [security](security.md)).
+- An enabled forge or tracker module owns claiming and closing external work
+  items. A project may require one through configuration; the core does not
+  require GitHub, a pull request, or an external tracker to define a change.
+- A forge module may render and verify delivery evidence. Its projection is a
+  compact ledger view with run count, role routes, and provider-reported totals;
+  detailed call data remains in the ledger. No core delivery path assumes a pull
+  request, and a module never writes its bookkeeping into a target project.
 - Completion requires applicable contracts, happy and failure evidence,
   documented recovery and compatibility effects, current release metadata, and
   independently reviewed work where [review evidence](review-evidence.md)
@@ -38,11 +35,12 @@ This contract owns how a product change is defined, coordinated, and closed.
 
 ## Verification
 
-The plan and pull request identify affected contracts, acceptance evidence, and
-the issue. Use the checks and review path required by the linked contracts.
+The plan identifies affected contracts and acceptance evidence. Use the checks,
+review path, and enabled-tracker policy required by linked contracts.
 
 ## Related surfaces
 
 - [Quality](quality.md) owns engineering checks and criteria.
 - [Review evidence](review-evidence.md) owns reviewer verdicts and stamps.
 - [Release](release.md) owns version and publication evidence.
+- [Extension modules](extension-modules.md) owns forge and VCS boundaries.

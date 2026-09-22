@@ -7,6 +7,10 @@ the fronts and optional compositions built around it.
 
 - Every capability lives in a programmatic core. The TUI, CLI, APIs, and other
   fronts adapt that core; they do not own independent product behaviour.
+- Fronts, VCS/workspace adapters, forge hosts, event transports, tools, and
+  workflows are optional extension modules around that core. No selected module
+  is a prerequisite for another unless its declared capability explicitly says
+  so; Git and GitHub are not core dependencies.
 - Every capability is reachable programmatically and through a documented
   non-interactive machine interface. No capability is interactive-front-only.
 - Workflow modules register by name and are independently selectable. A disabled
@@ -20,6 +24,7 @@ the fronts and optional compositions built around it.
 
 - [Command-line front](cli.md).
 - [Machine API](machine-api.md).
+- [Extension modules](extension-modules.md).
 - [Role and tool wiring](role-tools.md).
 - [Task orchestration](orchestrator.md).
 - [Terminal UI](terminal-ui.md).

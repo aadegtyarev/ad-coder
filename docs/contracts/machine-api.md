@@ -13,14 +13,18 @@ It is the JSON projection of headless operations and TUI controls.
   generic, and ad-hoc agents; `workflows` lists, starts, and drives workflow
   sessions; `skills` lists, loads, and unloads; `limits` shows and sets ceilings;
   `profiles` lists, shows, and selects profiles; and `runs` reads or controls a
-  durable run. `config` shows resolved configuration and changes a validated
-  setting where that setting's owner permits it. `estimates` returns the current
-  forecast and planning feedback read-only. The public names may be refined only
-  through the compatibility contract, not by adding a front-only capability.
+  durable run. `sessions` lists and selects accessible sessions. `config` shows
+  resolved configuration and changes a validated setting where that setting's
+  owner permits it. `estimates` returns the current forecast and planning
+  feedback read-only. The public names may be refined only through the
+  compatibility contract, not by adding a front-only capability.
 - API requests use explicit fields rather than TUI command text. Their success,
   refusal, validation, run identity, durable state, and machine-readable error
   have the same semantics as their TUI counterpart. A read or list action makes
   no provider call or orchestration wake.
+- Agent and workflow starts may request an isolated parallel lane with a mutable
+  scope. The API returns the same admission, queue, refusal, and lane identity
+  as TUI; it never substitutes an unisolated mutable run.
 - `orchestrator.send` submits a task message to the project's shared
   orchestrator session. It supports the same current manual/auto mandate,
   profile selection, ceiling settings, interruption, and durable recovery as
@@ -55,3 +59,4 @@ model listing, override, and reset; and typed refusals for legacy modes and
 - [Orchestrator](orchestrator.md) owns task lifecycle.
 - [Resumability](resumability.md) owns recovery semantics.
 - [Task estimation](task-estimation.md) owns forecasts and feedback.
+- [Parallel lanes](parallel-lanes.md) owns concurrent-lane semantics.

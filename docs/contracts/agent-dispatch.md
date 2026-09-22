@@ -27,9 +27,9 @@ background work.
   no explicit choice is supplied. A selected model remains subject to provider
   admission, cost controls, and all granted-authority boundaries.
 - Independent agents may run concurrently only when their targets and mutable
-  scope satisfy [delegation](delegation.md). A launch that would conflict is
-  queued or refused with a recovery action; it is never silently serialized behind
-  an unrelated interactive turn.
+  scope satisfy [parallel lanes](parallel-lanes.md). A launch that would conflict
+  is queued or refused with a recovery action; it is never silently serialized
+  behind an unrelated interactive turn.
 
 ## Configuration
 
@@ -51,3 +51,4 @@ handling.
 - [Provider admission](provider-admission.md) owns capacity.
 - [Wake delivery](wake-delivery.md) owns completion notification.
 - [Resumability](resumability.md) owns recovery guarantees.
+- [Parallel lanes](parallel-lanes.md) owns concurrent-lane admission.

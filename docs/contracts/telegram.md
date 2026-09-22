@@ -15,6 +15,9 @@ This contract owns Telegram-specific rooms, routing, rendering, and trust.
 - Free text is an interactive turn; `/run` starts a visibly distinct background
   pipeline. Slash commands and console controls share schema, argument validation,
   and help. Missing required arguments never trigger a default mutation.
+- `/sessions` and the matching dashboard control list accessible sessions;
+  selecting one uses the shared manager and has the same active-turn handoff
+  semantics as TUI and machine API. It never creates a Telegram-private session.
 - Attaching transfers interactive ownership after the active turn settles; it does
   not cancel submitted work. The dashboard is a pinned state-change-only message.
   Catch-up cards and bounded paginated session/run views show summaries, never raw
@@ -31,13 +34,14 @@ This contract owns Telegram-specific rooms, routing, rendering, and trust.
 
 ## Verification
 
-Test room kinds, explicit routing and pending replies, attach during a turn,
-command parity, dashboard update bounds, pagination, notification coalescing,
-allowlist refusal, and incomplete configuration.
+Test room kinds, explicit routing and pending replies, attach and session switch
+during a turn, command parity, dashboard update bounds, pagination, notification
+coalescing, allowlist refusal, and incomplete configuration.
 
 ## Related surfaces
 
 - [Session manager](session-manager.md) owns shared session lifecycle.
 - [Operator flow](operator-flow.md) owns general decision and milestone policy.
 - [Configuration](config.md) owns capability resolution.
+- [Extension modules](extension-modules.md) owns optional-front boundaries.
 - [Security](security.md) owns credential and authority rules.
