@@ -7,8 +7,9 @@ feedback.
 
 - Before dispatch, the orchestrator forecasts the full proposed development
   cycle, not merely its first role. The forecast names selected workflow and
-  roles, reachable routes, configured ceilings, expected review/rework rounds,
-  and total budget reserve with declared price inputs.
+  roles, required roles, deliberately skipped roles and rationale, reachable
+  routes, configured ceilings, expected review/rework rounds, and total budget
+  reserve with declared price inputs.
 - A dispatch may start only when its budget can fund that forecast or its
   shortfall is visible and resolved under the autonomy contract. Raising one
   role's ceiling recomputes the remaining-cycle reserve; a raise that starves

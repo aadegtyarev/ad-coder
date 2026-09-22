@@ -17,11 +17,12 @@ direct-edit exception.
 - Before the first mutation or dispatch, classify complexity, execution path,
   and deciding property; inspection may precede this. The classification rides
   dispatch and replaces routing fallback complexity.
-- Code changes are delegated to the coder except for a recorded trivial edit:
-  one function, no call sites, uniquely determined, at most one file and five
-  total added-plus-removed lines accumulated until reviewer cover. The machine
-  measures this bound. A reachable reviewer covers any code edit; otherwise
-  durable `reviewer_unavailable` evidence records the exception.
+- Code changes are delegated to the coder unless effective
+  `orchestration.directEdits` explicitly permits a reviewed direct edit. “Small”
+  is an orchestrator judgement recorded with scope and rationale, not a false
+  promise derived from line or file counts. Every permitted direct edit receives
+  independent review; an unavailable reviewer pauses the change rather than
+  waiving review.
 - The resolved delegation surface and routes are generated from configuration,
   never hand-written prompt prose. Static guidance on choosing a path belongs in
   the role-selection skill.
@@ -29,8 +30,8 @@ direct-edit exception.
 ## Verification
 
 Test manual and auto decisions, durable automatic-decision records, root/child
-decomposition stop, pre-mutation classification, direct-edit measurement, and
-reviewer-unavailable recording.
+decomposition stop, pre-mutation classification, direct-edit policy and
+rationale, mandatory review, and required-reviewer pause.
 
 ## Related surfaces
 
@@ -38,3 +39,4 @@ reviewer-unavailable recording.
 - [Delegation](delegation.md) owns execution-path dispatch.
 - [Routing configuration](routing-config.md) owns resolved role routes.
 - [Review evidence](review-evidence.md) owns reviewer proof.
+- [Configuration](config.md) owns direct-edit and review settings.

@@ -22,6 +22,12 @@ resolved. It does not own model routing; see [routing configuration](routing-con
   persistent setting and explicit launch parameter; the latter wins. A set-valued
   capability supports selecting and excluding members. A capability that cannot
   be disabled at both layers needs an explicit safety or cost exception.
+- `orchestration.directEdits` is `off` or `reviewed`; `reviewed` permits the
+  orchestrator's recorded small-edit judgement only with independent review.
+  Required roles and the context-output delegation threshold are independently
+  configurable. Profile values supply defaults and project values override them;
+  effective values and sources are visible before dispatch and in configuration
+  output.
 - Explicit launch selections cross every detached-worker boundary verbatim:
   capability choices, routing/config paths, profile or registry selections,
   credential path, and provider pin. Absent flags remain absent; a credential

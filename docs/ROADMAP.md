@@ -291,6 +291,15 @@ workflows — one substrate, swappable drivers.
   remain funded; otherwise it causes decomposition. Planner/coder/reviewer
   complexity signals and review loops become durable, non-punitive feedback that
   the orchestrator can query before later estimates.
+
+- **REQUIREMENT — policy-bounded execution choice.** Project settings override
+  profile defaults for direct edits, required roles, required review, and the
+  large-output delegation threshold. Direct edits are `off` or `reviewed`; the
+  latter requires independent review and records the orchestrator's judgement
+  rather than treating diff size as a safety proof. It may select only useful
+  roles (for example, direct researcher or conflict-resolution coder) but cannot
+  omit required review. It delegates high-output work to a specialist or `generic`
+  agent to retain a compact orchestration context.
 - **REQUIREMENT — breakpoint control (implemented).** Drivers can auto-advance
   through phases and pause before a chosen phase, then resume from durable state.
   The trusted `control run-until` action exposes this without requiring a caller

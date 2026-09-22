@@ -11,7 +11,8 @@ This contract owns operator authority, task budget, and ceiling adjustment.
 - Intake asks once about mode when no prior choice exists. An active auto mandate
   is not repeatedly re-asked as though authority had not been granted.
 - Within the agreed budget, the orchestrator may dispatch, retry a failed step,
-  read artefacts, lower mode, and use explicitly enabled automatic actions.
+  read artefacts, make a policy-bounded direct edit, lower mode, and use
+  explicitly enabled automatic actions.
   It may merge a green pull request and file tickets only when their default-on
   settings remain enabled.
 - Raising a stage ceiling is one measured step. It affects only the exhausted
@@ -42,3 +43,4 @@ records.
 - [Stage-limit calibration](stage-limit-calibration.md) owns measured raise data.
 - [Orchestrator](orchestrator.md) owns task state and closeout.
 - [Task estimation](task-estimation.md) owns full-cycle forecast and feedback.
+- [Delegation](delegation.md) owns role and workflow selection.
