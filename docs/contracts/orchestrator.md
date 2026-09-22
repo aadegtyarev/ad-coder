@@ -54,4 +54,5 @@ cited artefacts for every report claim.
 - [Autonomy](autonomy.md) owns authority, mode, budgets, and ceiling raises.
 - [Delegation](delegation.md) owns execution-path selection.
 - [Wake delivery](wake-delivery.md) owns durable wake mechanics.
+- [Resumability](resumability.md) owns continuation after exit or interruption.
 - [Operation modes](operation-modes.md) owns manual and automatic decision scope.

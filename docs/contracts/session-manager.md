@@ -54,5 +54,6 @@ FIFO next-turn delivery, and queued-input refusal at shutdown.
 ## Related surfaces
 
 - [Session transport](session-transport.md) owns same-user socket access.
+- [Resumability](resumability.md) owns checkpoint and recovery semantics.
 - [Session titles](session-titles.md) owns display-name generation and sanitizing.
 - [CLI](cli.md) owns command rendering; [Telegram](telegram.md) owns its front.

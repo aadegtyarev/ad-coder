@@ -32,6 +32,8 @@ It is the JSON projection of headless operations and TUI controls.
   assigned roles, declared prices, and numbered selection view. Its select and
   reset actions make or clear an orchestrator-only session override. They never
   mutate the profile or silently reroute another role.
+- Session and run resume actions expose the same recovery outcome as TUI,
+  including restored context/state, queued messages, and typed paused ambiguity.
 - Deprecated public operation modes and `--json` fail with a typed migration
   error that names their `tui` or `api` replacement. Internal headless
   primitives remain implementation details, not CLI compatibility promises.
@@ -50,3 +52,4 @@ model listing, override, and reset; and typed refusals for legacy modes and
 - [Session manager](session-manager.md) owns shared session state.
 - [Routing configuration](routing-config.md) owns profile content and routes.
 - [Orchestrator](orchestrator.md) owns task lifecycle.
+- [Resumability](resumability.md) owns recovery semantics.

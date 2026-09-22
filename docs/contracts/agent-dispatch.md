@@ -11,6 +11,8 @@ background work.
 - Background work has the same durable lifecycle, ledger, provider admission,
   cancellation, wake, and terminal outcome as foreground work. Its progress is a
   projection, never a reason to consume or block the interactive input lane.
+- A role, ad-hoc agent, and workflow run checkpoint enough state to resume after
+  orderly session exit or unexpected process loss under [resumability](resumability.md).
 - An ad-hoc agent accepts an explicit task prompt without first creating a named
   role. It is durable and attributable as an ad-hoc dispatch, but does not add a
   role to the catalog or alter later dispatches.
@@ -48,3 +50,4 @@ handling.
 - [Routing configuration](routing-config.md) owns profile model availability.
 - [Provider admission](provider-admission.md) owns capacity.
 - [Wake delivery](wake-delivery.md) owns completion notification.
+- [Resumability](resumability.md) owns recovery guarantees.

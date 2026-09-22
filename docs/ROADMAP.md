@@ -277,6 +277,12 @@ workflows — one substrate, swappable drivers.
   orchestrator print a short event/data-or-error/next-action summary. Material
   decisions are visible throughout WIP; a task is not reported complete before
   its durable closeout.
+
+- **REQUIREMENT — universal resume.** Every orchestrator, role, agent, workflow,
+  queue, timer, and wake state survives orderly exit and process interruption.
+  Resume restores context and continuation state rather than making the operator
+  reconstruct it. An in-flight action is reconciled from durable evidence; an
+  ambiguous external effect pauses visibly instead of being duplicated or lost.
 - **REQUIREMENT — breakpoint control (implemented).** Drivers can auto-advance
   through phases and pause before a chosen phase, then resume from durable state.
   The trusted `control run-until` action exposes this without requiring a caller
