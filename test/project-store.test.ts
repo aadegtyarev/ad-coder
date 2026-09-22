@@ -557,7 +557,7 @@ describe("ProjectStore", () => {
     expect(sequences).toEqual([...sequences].sort((left, right) => left - right));
   });
 
-  test("does not rewrite a journal with overlapping transactions", async () => {
+  test("pauses an overlapping journal until an explicit clear preserves it", async () => {
     const root = target();
     const store = new ProjectStore(root);
     const created = await store.createSession("ambiguous_session");
@@ -584,6 +584,35 @@ describe("ProjectStore", () => {
     const before = fs.readFileSync(metadata.path, "utf8");
     expect(store.fileSystem.repairOutOfOrderTransactions(metadata.path)).toBe(false);
     expect(fs.readFileSync(metadata.path, "utf8")).toBe(before);
+    // A normal resume is read-only.  It returns a typed ambiguity instead of
+    // inventing an ordering that would lose one of the colliding records.
+    await expect(new ProjectStore(root).resumeSession("ambiguous_session")).rejects.toMatchObject({
+      code: "ambiguous_journal",
+      path: metadata.path,
+    });
+    expect(fs.readFileSync(metadata.path, "utf8")).toBe(before);
+
+    // Clear is an explicit operator recovery action. It moves the exact bytes
+    // out of the active sessions directory and records their safe location on
+    // the new same-id continuation; it never rewrites or drops the evidence.
+    const recovered = await new ProjectStore(root).clearAmbiguousSession("ambiguous_session");
+    const recovery = (await recovered.findEntries({ type: "custom" }, BACKGROUND_CONTEXT)).find(
+      (entry) => entry.type === "custom" && entry.customType === "ad-coder.session_recovery",
+    );
+    expect(recovery).toMatchObject({
+      type: "custom",
+      data: {
+        state: "cleared_ambiguous_journal",
+        recovery: "new_continuation",
+        artifact: { type: "ambiguous_journal" },
+      },
+    });
+    if (recovery?.type !== "custom") throw new Error("missing durable recovery entry");
+    const artifact = (recovery.data as { artifact: { path: string } }).artifact.path;
+    expect(artifact).toContain(path.join(".ad-coder", "scratch", "recovery"));
+    expect(fs.readFileSync(artifact, "utf8")).toBe(before);
+    await recovered.close(BACKGROUND_CONTEXT);
+    await expect(new ProjectStore(root).resumeSession("ambiguous_session")).resolves.toBeDefined();
   });
 
   test("rejects a pre-planted runtime symlink", () => {
