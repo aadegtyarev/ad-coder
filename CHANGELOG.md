@@ -11,6 +11,14 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.6] - 2026-09-22
+
+### Fixed
+
+- **A killed standalone role no longer strands its pre-witness lock.** Resume
+  recognises the former pid-only lease shape and safely reclaims it only after
+  the operating system confirms that its owner is gone.
+
 ## [0.181.5] - 2026-09-22
 
 ### Fixed
