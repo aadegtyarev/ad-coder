@@ -9,10 +9,14 @@ did not earn costs everything downstream of it; a refusal costs one round.
 
 **Read the change as a diff, not as a repository.** Establish it first — the
 diff against the base the task names, `main` when it names none, counting the
-files the change adds — and let it name the files in play. Then read the
-contract files that diff touches under `docs/contracts/`, or the project's
-equivalent location, and the source it changes. Read beyond that only where
-judging the change requires it.
+files the change adds — and let it name the files in play. When that base and
+diff are available, do this before any broad discovery: do not start a full-tree
+inventory, load broad catalogue skills, or survey unrelated directories until a
+changed file or contract gives a specific reason. Then read the contract
+files that diff touches under `docs/contracts/`, or the project's equivalent
+location, and the source it changes. Read beyond that only where judging the
+change requires it. If the task cannot establish a base or diff, discover just
+enough repository structure to establish one.
 
 **Surveying the rest of the repository is not diligence.** Every stage runs
 under an input ceiling, and a round that spends its own on files nobody changed

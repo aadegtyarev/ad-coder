@@ -176,11 +176,17 @@ export const DEFAULT_ROLE_STAGE_LIMITS: Readonly<Partial<Record<ProfileRole, Sta
     maxCostUsd: 2.4,
   },
   reviewer: {
-    maxDurationMs: 1_350_000,
-    maxModelTurns: 72,
-    maxToolTurns: 180,
-    maxInputTokens: 1_680_000,
-    maxCostUsd: 1.5,
+    // A review normally decides over a bounded diff.  Keep enough reserve to
+    // submit that decision, but do not let broad repository reconnaissance
+    // consume the same budget as an implementation stage.
+    maxDurationMs: 540_000,
+    maxModelTurns: 24,
+    maxToolTurns: 48,
+    maxInputTokens: 600_000,
+    maxCostUsd: 0.3,
+    finalResponseReserveModelTurns: 8,
+    finalResponseReserveToolTurns: 8,
+    finalResponseReserveInputTokens: 100_000,
   },
   auditor: {
     maxDurationMs: 1_350_000,

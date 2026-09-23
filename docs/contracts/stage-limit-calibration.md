@@ -103,3 +103,18 @@ reserve defaults and the real per-role surface.
 The lesson worth keeping: a default that is read from a constant cannot drift, and a default typed
 into prose will. The three surfaces that drifted were exactly the three that spelled the numbers
 out by hand.
+
+## 2026-09-23: bounded standalone reviewer closeout
+
+A standalone GLM reviewer given a one-commit error-classification diff spent
+449 seconds, 16 model turns and 21 tool turns on repository-wide discovery,
+then was stopped before it submitted a verdict. The old reviewer ceiling
+(72 turns, 180 tools, 1.35m ms, 1.68m input) could not have protected that
+review for another implementation-sized interval. This is one incident, so the
+new reviewer defaults are a bounded probe rather than a permanent measurement:
+540000 ms, 24 model turns, 48 tool turns, 600000 input tokens and $0.30, with
+8 turns, 8 tools and 100000 input tokens reserved for closeout. The values are
+ordinary `roleStageLimits` and remain fully configurable. A submission tool is
+still admitted after closeout; a run that has no verdict is durably paused with
+`stage_closeout` and resumes only after the exhausted ceiling is raised or
+disabled. Confirm a same-shape outcome before changing this probe again.
