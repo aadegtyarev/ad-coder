@@ -16,6 +16,7 @@ const matchingDist = JSON.stringify({
   tarball: "https://registry.npmjs.org/ad-coder-dev/-/ad-coder-dev-0.181.21.tgz",
   integrity: `sha512-${createHash("sha512").update(tarballBytes).digest("base64")}`,
 });
+const matchingDistPretty = JSON.stringify(JSON.parse(matchingDist), null, 2);
 
 test("registry readiness requires the exact published coordinates", () => {
   expect(
@@ -106,6 +107,52 @@ test("registry readiness accepts one complete JSON string amid npm warning lines
       fetchTarball: async () => ({ ok: true, status: 200, bytes: tarballBytes }),
     }),
   ).resolves.toEqual({ attempts: 1 });
+});
+
+test("registry readiness accepts npm's pretty multiline dist object amid warning lines", async () => {
+  const run: RegistryCommandRunner = async (argv) =>
+    argv[3] === "dist"
+      ? reply(`npm warn cli old runtime\n${matchingDistPretty}\nnpm warn config ignored\n`)
+      : reply('"0.181.22"');
+  await expect(
+    waitForRegistryReadiness({
+      packageName: "ad-coder-dev",
+      version: "0.181.22",
+      maxAttempts: 1,
+      delayMs: 0,
+      run,
+      fetchTarball: async () => ({ ok: true, status: 200, bytes: tarballBytes }),
+    }),
+  ).resolves.toEqual({ attempts: 1 });
+});
+
+test("registry readiness rejects partial, multiple, array-wrapped, and secret-bearing dist JSON", async () => {
+  const secret = "registry-token-must-not-appear";
+  for (const stdout of [
+    matchingDistPretty.slice(0, -1),
+    `${matchingDistPretty}\n${matchingDistPretty}`,
+    `[${matchingDistPretty}]`,
+    `${matchingDistPretty}\n"second-value"`,
+    `{"tarball":"${secret}"`,
+  ]) {
+    let fetched = false;
+    const failure = await waitForRegistryReadiness({
+      packageName: "ad-coder-dev",
+      version: "0.181.22",
+      maxAttempts: 1,
+      delayMs: 0,
+      run: async (argv) => (argv[3] === "dist" ? reply(stdout) : reply('"0.181.22"')),
+      fetchTarball: async () => {
+        fetched = true;
+        return { ok: true, status: 200, bytes: tarballBytes };
+      },
+    }).catch((error: unknown) => error);
+    expect(fetched).toBe(false);
+    expect(failure).toBeInstanceOf(RegistryPropagationPendingError);
+    const message = (failure as RegistryPropagationPendingError).message;
+    expect(message).toContain("tarball metadata was missing or invalid");
+    expect(message).not.toContain(secret);
+  }
 });
 
 test("registry readiness does not report success until the advertised tarball downloads", async () => {
