@@ -11,6 +11,16 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.34] - 2026-09-23
+
+### Fixed
+
+- **Standalone role resumes no longer require repeating the exact task text
+  (issue #619).** `role <name> --resume-run <id>` uses the explicit durable run
+  identity and its existing session; checkpoints continue to retain only a task
+  digest. Supplying a task remains an exact digest assertion, so mismatched
+  resumes are still refused.
+
 ## [0.181.33] - 2026-09-23
 
 ### Fixed

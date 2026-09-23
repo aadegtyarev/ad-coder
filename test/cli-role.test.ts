@@ -218,6 +218,61 @@ test("an interrupted standalone role persists a resumable pause and releases its
   expect(store.readVersionedJson<{ status: string }>(checkpointPath).value.status).toBe("complete");
 });
 
+test("a standalone resume uses its durable run identity without repeating private task text", async () => {
+  const { faux, models, model, role } = fixture();
+  const runId = `id-only-resume-${crypto.randomUUID()}`;
+  const abortController = new AbortController();
+  abortController.abort();
+
+  await expect(
+    runRoleStandalone({
+      role,
+      model,
+      models,
+      targetDir,
+      task: "review the private original task",
+      runId,
+      abortSignal: abortController.signal,
+    }),
+  ).rejects.toBeInstanceOf(RunInterruptedError);
+
+  faux.setResponses([fauxAssistantMessage("resumed by durable identity")]);
+  await expect(
+    runRoleStandalone({ role, model, models, targetDir, runId, resumeExisting: true }),
+  ).resolves.toMatchObject({ text: "resumed by durable identity" });
+});
+
+test("a supplied standalone resume task remains an exact digest assertion", async () => {
+  const { models, model, role } = fixture();
+  const runId = `task-mismatch-${crypto.randomUUID()}`;
+  const abortController = new AbortController();
+  abortController.abort();
+
+  await expect(
+    runRoleStandalone({
+      role,
+      model,
+      models,
+      targetDir,
+      task: "review the original change",
+      runId,
+      abortSignal: abortController.signal,
+    }),
+  ).rejects.toBeInstanceOf(RunInterruptedError);
+
+  await expect(
+    runRoleStandalone({
+      role,
+      model,
+      models,
+      targetDir,
+      task: "review a different change",
+      runId,
+      resumeExisting: true,
+    }),
+  ).rejects.toMatchObject({ message: "standalone checkpoint task does not match" });
+});
+
 test("a fresh process killed between standalone start intent and session creation resumes once", async () => {
   const { faux, models, model, role } = fixture();
   const runId = `start-intent-${crypto.randomUUID()}`;
@@ -1488,7 +1543,7 @@ test("a bounded standalone reviewer pauses for closeout, then resumes without re
 test("interrupted standalone resume advice does not demand adjusted limits", () => {
   expect(
     formatStandaloneResumeInstruction({ role: "reviewer", runId: "run-1", adjustLimits: false }),
-  ).toBe("ad-coder: resume with role reviewer <same-task> --resume-run run-1\n");
+  ).toBe("ad-coder: resume with role reviewer --resume-run run-1\n");
   expect(
     formatStandaloneResumeInstruction({ role: "reviewer", runId: "run-1", adjustLimits: true }),
   ).toContain("and adjusted limits");
