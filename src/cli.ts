@@ -90,7 +90,13 @@ import {
   type StageLimits,
 } from "./orchestration/stage-limits";
 import { isSubmissionToolName } from "./orchestration/submission-tools";
-import type { Complexity, PipelineConfig, RoleSpec, WorkflowPhase } from "./orchestration/types";
+import type {
+  Complexity,
+  PipelineConfig,
+  RoleSpec,
+  Verdict,
+  WorkflowPhase,
+} from "./orchestration/types";
 import { PipelinePauseError } from "./orchestration/types";
 import {
   buildSubmitVerdictTool,
@@ -616,6 +622,8 @@ export async function runRoleStandalone(params: {
    * can be long after this call started.
    */
   interruptSignal?: () => "SIGINT" | "SIGTERM" | undefined;
+  /** A reviewer handoff persisted before submit_verdict acknowledges success. */
+  verdictCapture?: VerdictCapture;
 }): Promise<{
   text: string;
   cost: number;
@@ -652,6 +660,8 @@ export async function runRoleStandalone(params: {
      * those -- without a pid there is nothing addressable to signal.
      */
     process?: RunProcessIdentity;
+    /** A validated reviewer submission, acknowledged durably before tool success. */
+    verdict?: Verdict;
     result?: {
       text: string;
       cost: number;
@@ -711,6 +721,51 @@ export async function runRoleStandalone(params: {
         | undefined
     : never;
   let session: Session;
+  const updateCheckpoint = (update: (current: Checkpoint) => Checkpoint): void => {
+    checkpoint = store.mutateVersionedJson<Checkpoint>(checkpointPath, (current) => {
+      if (current === undefined)
+        throw new ProjectStoreError("not_found", checkpointPath, "standalone checkpoint was lost");
+      return update(current.value);
+    });
+  };
+  let latestStageLimitSnapshot: Readonly<StageLimitSnapshot> | undefined;
+  const finishPersistedVerdict = async (): Promise<{
+    text: string;
+    cost: number;
+    ledgerPath: string | undefined;
+    observations: import("./runner/runner").RoleObservations;
+  }> => {
+    const readable = await store.resumeSession(runId, BACKGROUND_CONTEXT);
+    let text: string;
+    try {
+      text = await extractFinalText(readable, BACKGROUND_CONTEXT);
+    } finally {
+      await readable.close(BACKGROUND_CONTEXT);
+    }
+    const usage = checkpoint.value.cumulativeUsage;
+    const observations: import("./runner/runner").RoleObservations = {
+      provider: params.model.provider,
+      model: params.model.id,
+      durationMs: usage.elapsedMs,
+      input: usage.inputTokens,
+      cachedInput: 0,
+      freshInput: usage.inputTokens,
+      output: 0,
+      costUsd: usage.costUsd,
+      requestBytes: { systemPrompt: 0, prompt: 0, toolDefinitions: 0, total: 0 },
+      readFiles: [],
+      readFilesTotal: 0,
+      readFilesTruncated: 0,
+      diffBytes: 0,
+      contextStrategy: "auto",
+    };
+    const durableResult = { text, cost: usage.costUsd, observations };
+    updateCheckpoint((current) => {
+      const { pause: _pause, failure: _failure, ...completed } = current;
+      return { ...completed, status: "complete", result: durableResult };
+    });
+    return { text, cost: durableResult.cost, ledgerPath: undefined, observations };
+  };
   if (params.resumeExisting === true) {
     checkpoint = store.readVersionedJson<Checkpoint>(checkpointPath);
     const prior = checkpoint.value;
@@ -732,12 +787,31 @@ export async function runRoleStandalone(params: {
         checkpointPath,
         "standalone checkpoint task does not match",
       );
-    if (prior.status === "complete")
+    if (prior.status === "complete" && prior.verdict === undefined)
       throw new ProjectStoreError(
         "invalid_config",
         checkpointPath,
         "standalone role is already complete",
       );
+    // A validated reviewer verdict is terminal. Never spend another provider
+    // turn merely because a limit or host interruption followed its tool ack.
+    if (prior.verdict !== undefined && params.verdictCapture !== undefined) {
+      params.verdictCapture.verdict = prior.verdict;
+      delete params.verdictCapture.error;
+      if (prior.status === "complete" && prior.result !== undefined)
+        return {
+          text: prior.result.text,
+          cost: prior.result.cost,
+          ledgerPath: prior.result.ledgerPath,
+          observations: prior.result.observations,
+          ...(prior.result.stageCloseout !== undefined && {
+            stageCloseout: prior.result.stageCloseout,
+          }),
+        };
+      session = await store.resumeSession(runId, BACKGROUND_CONTEXT);
+      await session.close(BACKGROUND_CONTEXT);
+      return await finishPersistedVerdict();
+    }
     const cumulativeUsage = {
       ...prior.cumulativeUsage,
       lastInputTokens:
@@ -808,22 +882,11 @@ export async function runRoleStandalone(params: {
     );
     session = await store.createSession(runId, BACKGROUND_CONTEXT);
   }
-  /**
-   * Runtime progress has more than one durable observer (turn admission,
-   * closeout, and recovery).  A later observer is allowed to have advanced
-   * the record by the time this caller settles, so merge under the store lock
-   * instead of turning an otherwise recoverable role into a stale-version
-   * failure.  Session ownership still makes the role a single writer in the
-   * semantic sense; this only serializes its independent durability paths.
-   */
-  const updateCheckpoint = (update: (current: Checkpoint) => Checkpoint): void => {
-    checkpoint = store.mutateVersionedJson<Checkpoint>(checkpointPath, (current) => {
-      if (current === undefined)
-        throw new ProjectStoreError("not_found", checkpointPath, "standalone checkpoint was lost");
-      return update(current.value);
-    });
-  };
-  let latestStageLimitSnapshot: Readonly<StageLimitSnapshot> | undefined;
+  if (params.verdictCapture !== undefined) {
+    params.verdictCapture.persistVerdict = async (verdict) => {
+      updateCheckpoint((current) => ({ ...current, verdict }));
+    };
+  }
   let result: Awaited<ReturnType<ReturnType<typeof createRoleRunner>["runRole"]>>;
   try {
     result = await createRoleRunner({
@@ -883,6 +946,9 @@ export async function runRoleStandalone(params: {
     } catch {
       // The runner normally owns closeout; this covers failures before harness creation.
     }
+    // A limit/host failure after a durably accepted verdict cannot turn the
+    // completed review into a missing verdict or cause a second provider run.
+    if (params.verdictCapture?.verdict !== undefined) return await finishPersistedVerdict();
     if (error instanceof StageLimitError) {
       if (error.snapshot === undefined)
         throw new ProjectStoreError(
@@ -2995,6 +3061,7 @@ async function roleCommand(
       ...(config.providerAdmissionController !== undefined && {
         providerAdmissionController: config.providerAdmissionController,
       }),
+      ...(keepsVerdictTool && { verdictCapture }),
       abortSignal: abortController.signal,
       // The pause names the signal that ended the run (issue #479); only the
       // handlers above know which one fired.

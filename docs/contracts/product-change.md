@@ -157,3 +157,10 @@ canonical backlog instead of hiding it in a completion summary.
   (`plannerRetryTask`, src/orchestration/plan.ts): the plan-so-far travels with
   the task, and the requirement -- the restart, or the validator's own
   correction -- is phrased about what the new session holds.
+- 2026-09-23: **An accepted structured reviewer verdict is terminal, even when
+  a later closeout or host failure interrupts the role.** The front persists
+  the validated verdict before `submit_verdict` reports success. A resumed
+  standalone review settles and stamps that same outcome without another
+  provider call or a second verdict submission; replaying the same reviewer
+  run id is stamp-idempotent. A verdict accepted before a ceiling is not a
+  missing verdict merely because the closing prose was not produced.

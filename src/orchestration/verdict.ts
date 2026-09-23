@@ -168,6 +168,8 @@ function bounded(
 export interface VerdictCapture {
   verdict?: Verdict;
   error?: OrchestrationError;
+  /** Durable acknowledgement supplied by a front which outlives this process. */
+  persistVerdict?: (verdict: Verdict) => Promise<void>;
 }
 
 /**
@@ -609,13 +611,12 @@ export function buildSubmitVerdictTool(
         // capture, so the pipeline reads the final submission of the round.
         // `delete` (not `= undefined`) clears the sibling under
         // exactOptionalPropertyTypes, where the field is not typed `| undefined`.
-        capture.verdict = parseVerdict(
-          params,
-          detail,
-          expected,
-          priorFindings,
-          removedTestInventory,
-        );
+        const verdict = parseVerdict(params, detail, expected, priorFindings, removedTestInventory);
+        // A successful tool result is an acknowledgement the model may rely
+        // on. Durable fronts publish the validated object before it, not only
+        // after the surrounding provider turn settles.
+        await capture.persistVerdict?.(verdict);
+        capture.verdict = verdict;
         delete capture.error;
         return { content: [{ type: "text", text: "verdict recorded" }], details: undefined };
       } catch (error) {
