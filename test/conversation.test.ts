@@ -9,7 +9,9 @@ import {
 } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import {
+  createAssistantMessageEventStream,
   createModels,
+  createProvider,
   fauxAssistantMessage,
   fauxProvider,
   fauxThinking,
@@ -561,6 +563,68 @@ test("a statusless generic assistant error is provider-unavailable through conve
   }
 });
 
+test("a statusless failed answer with billed input is not provider-unavailable through conversation", async () => {
+  const model = {
+    id: "billed-failure-1",
+    name: "Billed Failure",
+    api: "billed-failure",
+    provider: "billed-failure",
+    baseUrl: "http://localhost:0",
+    reasoning: false,
+    input: ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: CONTEXT_WINDOW,
+    maxTokens: 16384,
+  } as Model<Api>;
+  const stream = () => {
+    const message = fauxAssistantMessage("", {
+      stopReason: "error",
+      errorMessage: "No response body",
+    });
+    message.usage = {
+      input: 11,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 11,
+      cost: { input: 0.001, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.001 },
+    };
+    const events = createAssistantMessageEventStream();
+    events.push({ type: "start", partial: { ...message, content: [], stopReason: "pending" } });
+    events.end(message);
+    return events;
+  };
+  const provider = createProvider({
+    id: "billed-failure",
+    auth: { apiKey: { name: "BilledFailure", resolve: async () => ({ auth: {} }) } },
+    models: [model],
+    api: { stream, streamSimple: stream },
+  });
+  const models = createModels();
+  models.setProvider(provider);
+  const role = defineRole(
+    {
+      name: "coder",
+      provider: "billed-failure",
+      modelId: model.id,
+      systemPrompt: "You code.",
+      activeToolNames: ["bash", "read", "write", "edit"],
+      cacheRetention: "none",
+      contextBudget: { maxTokens: 100_000, reserveTokens: 10_000, keepRecentTokens: 20_000 },
+    },
+    model,
+  );
+  const session = await new MemorySessionRepo().create({}, BACKGROUND_CONTEXT);
+  const conversation = await startConversation({ role, targetDir, models, model, session });
+  try {
+    const outcome = await conversation.step("do it").catch((error: unknown) => error);
+    expect(outcome).not.toBeInstanceOf(ProviderUnavailableError);
+    expect(outcome).toMatchObject({ code: "empty_turn" });
+  } finally {
+    await conversation.close();
+  }
+});
+
 test("a message-embedded non-credential provider failure keeps its bounded cause on the empty-turn error through conversation (#418)", async () => {
   const { faux, models, model, role } = harnessFixture();
   const session = await new MemorySessionRepo().create({}, BACKGROUND_CONTEXT);
@@ -795,7 +859,7 @@ test("a conversation settles a session's interrupted operation before it prompts
   expect(durableText()).toContain("after resume");
 });
 
-test("#428: a session killed mid-assistant-effect replays safely and its resumed turn settles as provider-unavailable", async () => {
+test("#428: a session killed mid-assistant-effect replays safely and its resumed turn settles", async () => {
   // MEASUREMENT NOTE (filled after the red run).
   const { faux, models, model, role } = harnessFixture();
   // The kill happens while the ASSISTANT effect is pending: pi-agent-core
@@ -852,31 +916,32 @@ test("#428: a session killed mid-assistant-effect replays safely and its resumed
   }
   const linesBefore = durableText().split("\n").length;
 
-  const resumed = await startConversation({ role, targetDir, models, model, runId });
+  const resumedLedger = new MemoryLedgerSink();
+  const resumed = await startConversation({
+    role,
+    targetDir,
+    models,
+    model,
+    runId,
+    ledgerSink: resumedLedger,
+  });
   try {
     const started = Date.now();
     const cause = await resumed.step("hello after restart").catch((error) => error);
     const elapsedMs = Date.now() - started;
-    // MEASURED CURRENT BEHAVIOR (2026-09-19, issue #428), pinned as the red
-    // run found it. The vendor replays the orphaned operation recorded at
-    // `assistant.effect_pending` with no provider call (synthetic settle),
-    // so the resumed turn proceeds normally into the harness -- and then the
-    // recovery settles the replayed generation as a statusless generic
-    // assistant_error. It is not an authentication problem: no provider
-    // response arrived, so it is a typed, retryable unavailable outcome rather
-    // than a stuck lane or misleading credential advice.
-    expect(cause).toBeInstanceOf(ProviderUnavailableError);
-    expect((cause as { code: string }).code).toBe("provider_unavailable");
-    expect((cause as Error).message).toContain("select another configured model or provider");
+    // The vendor replays the orphaned operation recorded at
+    // `assistant.effect_pending`, then attempts the new operator turn. The
+    // faux provider reports input usage for that failed new request, so the
+    // zero-usage provider_unavailable classification does not apply here.
+    expect(resumedLedger.records().at(-1)?.usage.input).toBeGreaterThan(0);
+    expect((cause as { code: string }).code).toBe("empty_turn");
     // The typed error still locates the run for programmatic callers.
     expect((cause as { runId: string }).runId).toBe(runId);
-    // And it fails immediately, before any provider call the same way the
-    // two-process diagnosis (/tmp/fx428) measured it:
+    // Recovery and the failed new turn both settle promptly.
     expect(elapsedMs).toBeLessThan(5000);
     // DURABLE RESULT: the replayed orphan operation is still recorded
     // (`assistant.effect_pending` stays as history), the resumed run gains
-    // records (the synthetic settle writes -- so the earlier "no records at
-    // all" reading was wrong), and the last settled status is `failed`, not
+    // records, and the last settled status is `failed`, not
     // the kill's `running` -- the lane does not STICK on the killed state.
     expect(durableText()).toContain("assistant.effect_pending");
     expect(durableText().split("\n").length).toBeGreaterThan(linesBefore);

@@ -184,6 +184,29 @@ export function isStatuslessAssistantError(
   return harnessCode === "assistant_error" && cause === undefined && hasZeroUsage;
 }
 
+/** A failed assistant turn is unbilled only when every reported usage field is zero. */
+export function hasZeroAssistantUsage(
+  usage:
+    | {
+        input?: number;
+        cacheRead?: number;
+        cacheWrite?: number;
+        output?: number;
+        reasoning?: number;
+        cost?: { total?: number };
+      }
+    | undefined,
+): boolean {
+  return (
+    (usage?.input ?? 0) === 0 &&
+    (usage?.cacheRead ?? 0) === 0 &&
+    (usage?.cacheWrite ?? 0) === 0 &&
+    (usage?.output ?? 0) === 0 &&
+    (usage?.reasoning ?? 0) === 0 &&
+    (usage?.cost?.total ?? 0) === 0
+  );
+}
+
 /**
  * A provider response settled as a deferred suspension instead of a settled
  * turn: the conveniences this boundary serves (single-turn `runRole`, one

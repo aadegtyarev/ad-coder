@@ -656,6 +656,28 @@ test("a statusless SDK failure exposes only an authored diagnostic", async () =>
   expect((thrown as Error).message).not.toContain("private.example");
 });
 
+test("a statusless failed answer with billed input is not provider-unavailable through runRole", async () => {
+  const message = fauxAssistantMessage("", {
+    stopReason: "error",
+    errorMessage: "No response body",
+  });
+  message.usage = {
+    input: 11,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 11,
+    cost: { input: 0.001, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.001 },
+  };
+  const { models, model, role } = usageFixture([message]);
+  const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-billed-failure-"));
+  const outcome = await runRole({ role, targetDir, models, model, prompt: "do it" }).catch(
+    (error: unknown) => error,
+  );
+  expect(outcome).not.toBeInstanceOf(ProviderUnavailableError);
+  expect(outcome).toMatchObject({ result: { status: "failed" } });
+});
+
 test("statusless diagnostic extraction rejects uncontrolled provider prose", () => {
   expect(providerFailureDiagnosticFrom({ message: "No response body" })).toBe(
     "response_body_missing",

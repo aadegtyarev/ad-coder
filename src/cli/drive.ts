@@ -225,6 +225,10 @@ export async function driveWorkflow(params: DriveWorkflowParams): Promise<Pipeli
         }
         const stepCost = costForRange(ledgerSink, costBefore, ledgerSink.records().length);
         output.write(`cost: $${stepCost.toFixed(8)}\n`);
+        // This callback receives only a completed StepResult. A typed
+        // runRole failure, including ProviderUnavailableError, is converted
+        // by RunCoordinator.prepareStep into a durable pause before onStep is
+        // called; the pause path below renders its cause and recovery action.
         const warning = silentNoopWarning(result.text, stepCost);
         if (warning !== undefined) {
           error.write(warning);
