@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import {
   type RegistryCommandRunner,
   RegistryPropagationPendingError,
+  registryReadinessTarget,
   waitForRegistryReadiness,
 } from "../scripts/wait-registry-readiness";
 
@@ -14,6 +15,44 @@ const tarballBytes = new TextEncoder().encode("tarball");
 const matchingDist = JSON.stringify({
   tarball: "https://registry.npmjs.org/ad-coder-dev/-/ad-coder-dev-0.181.21.tgz",
   integrity: `sha512-${createHash("sha512").update(tarballBytes).digest("base64")}`,
+});
+
+test("registry readiness requires the exact published coordinates", () => {
+  expect(
+    registryReadinessTarget(["--package-name", "ad-coder-dev", "--version", "0.181.47-dev.137"]),
+  ).toEqual({ packageName: "ad-coder-dev", version: "0.181.47-dev.137" });
+  expect(registryReadinessTarget(["--package-name", "ad-coder", "--version", "0.181.47"])).toEqual({
+    packageName: "ad-coder",
+    version: "0.181.47",
+  });
+  for (const argv of [
+    [],
+    ["--package-name", "ad-coder", "--version"],
+    ["--package-name", "ad-coder", "--version", ""],
+    ["--package-name", "ad-coder\nforged=true", "--version", "0.181.47"],
+  ])
+    expect(() => registryReadinessTarget(argv)).toThrow();
+});
+
+test("release workflow preserves dev and stable publish coordinates for readiness", () => {
+  const workflow = Bun.file(new URL("../.github/workflows/release.yml", import.meta.url)).text();
+  return workflow.then((source) => {
+    const actionsExpression = "$" + "{{";
+    expect(source).toContain("if: steps.channel.outputs.dev == 'true'");
+    expect(source).toContain(
+      `bun run scripts/dev-package.ts "${actionsExpression} steps.channel.outputs.tag }}"`,
+    );
+    expect(source).toContain("id: package");
+    expect(source).toContain('const { name, version } = require("./package.json")');
+    expect(source).toContain(`--package-name "${actionsExpression} steps.package.outputs.name }}"`);
+    expect(source).toContain(`--version "${actionsExpression} steps.package.outputs.version }}"`);
+    expect(source.indexOf("id: package")).toBeLessThan(
+      source.indexOf("bun run scripts/publish-registry-package.ts --tag latest"),
+    );
+    expect(source.indexOf("id: package")).toBeLessThan(
+      source.indexOf("bun run scripts/publish-registry-package.ts\n"),
+    );
+  });
 });
 
 test("registry readiness waits for both the exact version and latest dist-tag", async () => {

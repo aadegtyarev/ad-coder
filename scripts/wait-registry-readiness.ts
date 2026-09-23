@@ -8,8 +8,6 @@
  * this script polls only reads and names a bounded timeout explicitly.
  */
 import { createHash } from "node:crypto";
-import * as fs from "node:fs";
-import * as path from "node:path";
 
 export interface RegistryCommandResult {
   exitCode: number;
@@ -41,6 +39,33 @@ export interface RegistryReadinessOptions {
 
 export interface RegistryReadiness {
   attempts: number;
+}
+
+export interface RegistryReadinessTarget {
+  packageName: string;
+  version: string;
+}
+
+/**
+ * The release manifest may be temporary (the dev channel rewrites it before
+ * publish), so readiness must receive the exact coordinates captured by the
+ * workflow before npm runs. Never fall back to the checkout manifest here.
+ */
+export function registryReadinessTarget(argv: string[]): RegistryReadinessTarget {
+  if (argv.length !== 4 || argv[0] !== "--package-name" || argv[2] !== "--version")
+    throw new Error("usage: wait-registry-readiness.ts --package-name <name> --version <version>");
+  const packageName = argv[1];
+  const version = argv[3];
+  if (
+    !packageName ||
+    packageName.length > 214 ||
+    /[\r\n]/u.test(packageName) ||
+    !version ||
+    version.length > 256 ||
+    /[\r\n]/u.test(version)
+  )
+    throw new Error("published package name and version must be non-empty, bounded single lines");
+  return { packageName, version };
 }
 
 export class RegistryPropagationPendingError extends Error {
@@ -252,19 +277,10 @@ async function npmRunner(argv: string[]): Promise<RegistryCommandResult> {
 }
 
 async function main(): Promise<void> {
-  const manifest = JSON.parse(
-    fs.readFileSync(path.join(process.cwd(), "package.json"), "utf8"),
-  ) as {
-    name?: unknown;
-    version?: unknown;
-  };
-  if (typeof manifest.name !== "string" || typeof manifest.version !== "string")
-    throw new Error(
-      "package.json must contain string name and version before registry readiness can be checked",
-    );
+  const target = registryReadinessTarget(process.argv.slice(2));
   const result = await waitForRegistryReadiness({
-    packageName: manifest.name,
-    version: manifest.version,
+    packageName: target.packageName,
+    version: target.version,
     maxAttempts: positiveInteger(
       "REGISTRY_READY_ATTEMPTS",
       process.env.REGISTRY_READY_ATTEMPTS,
@@ -285,7 +301,7 @@ async function main(): Promise<void> {
     },
   });
   process.stdout.write(
-    `npm registry ready: ${manifest.name}@${manifest.version} resolves exactly and is latest (${result.attempts} attempt${result.attempts === 1 ? "" : "s"})\n`,
+    `npm registry ready: ${target.packageName}@${target.version} resolves exactly and is latest (${result.attempts} attempt${result.attempts === 1 ? "" : "s"})\n`,
   );
 }
 
