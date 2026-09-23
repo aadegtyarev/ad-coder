@@ -43,11 +43,11 @@ by `docs/BACKLOG.md`.
 
 ### One role
 
-`runRole` drives one validated role with target-rooted tools and a numeric ledger;
-the target is a working directory, not a sandbox. The standalone `role` front
-streams bounded activity, removes pipeline submission tools, and checkpoints
-identity, task digest, usage, pauses. Resume validates identity/task and an
-increased exhausted limit. SIGINT/SIGTERM persist a resumable `interrupted` pause.
+`runRole` drives one role with target-rooted tools and a numeric ledger.
+Standalone `role` streams activity, removes pipeline submissions, and checkpoints
+identity, task, usage, and pauses. Resume validates them and a raised limit;
+SIGINT/SIGTERM write `interrupted`. It writes `starting` before session creation;
+recovery verifies ownership, takes the lease, and never repeats a provider operation.
 
 Incremental reviewer context projects tracked diffs and validated untracked
 UTF-8 files under one byte ceiling; credential-like lines are redacted before

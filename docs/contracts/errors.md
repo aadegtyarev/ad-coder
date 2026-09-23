@@ -16,6 +16,12 @@ CLI; explicit resume records the safe lost-owner witness before replacing the
 process identity, then reconciles the saved lane instead of blindly repeating an
 unknown external action.
 
+A standalone checkpoint in `starting` means its intent was durable but its
+session may not yet exist. It is neither a provider failure nor a running
+provider operation. Explicit resume reuses the same strict process-identity
+proof before it opens-or-creates the session, so a killed launcher at that
+boundary cannot cause a duplicate prompt (2026-09-23, issue #616).
+
 For library, CLI, workflow, provider, and tool authors, this contract answers: how
 does a failed operation remain understandable and actionable to humans and stable
 for machines?

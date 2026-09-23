@@ -218,6 +218,87 @@ test("an interrupted standalone role persists a resumable pause and releases its
   expect(store.readVersionedJson<{ status: string }>(checkpointPath).value.status).toBe("complete");
 });
 
+test("a fresh process killed between standalone start intent and session creation resumes once", async () => {
+  const { faux, models, model, role } = fixture();
+  const runId = `start-intent-${crypto.randomUUID()}`;
+  const task = "recover a role stopped before its session exists";
+  const ready = path.join(targetDir, `${runId}.ready`);
+  // The child records the durable start intent, then stops at the exact
+  // checkpoint-to-session boundary. Its argv deliberately carries the same
+  // role/target witnesses the strict #615 owner check requires.
+  const child = Bun.spawn(
+    [
+      process.execPath,
+      "--eval",
+      `import * as fs from "node:fs";
+import { createModels, fauxProvider } from "@earendil-works/pi-ai";
+import { defineRole } from ${JSON.stringify(path.join(import.meta.dir, "..", "src", "role.ts"))};
+import { runRoleStandalone } from ${JSON.stringify(path.join(import.meta.dir, "..", "src", "cli.ts"))};
+const faux = fauxProvider({ provider: "faux", models: [{ id: "faux-1", contextWindow: 200000 }] });
+const models = createModels();
+models.setProvider(faux.provider);
+const model = faux.getModel();
+const role = defineRole({ name: "reviewer", provider: "faux", modelId: model.id, systemPrompt: "You review.", activeToolNames: ["read", "bash"], cacheRetention: "none", contextBudget: { maxTokens: 100000, reserveTokens: 10000, keepRecentTokens: 20000 } }, model);
+await runRoleStandalone({ role, model, models, targetDir: process.env.START_INTENT_TARGET, processTargetDir: process.env.START_INTENT_TARGET, task: process.env.START_INTENT_TASK, runId: process.env.START_INTENT_RUN, beforeSessionCreate: async () => { fs.writeFileSync(process.env.START_INTENT_READY, "ready"); await new Promise(() => {}); } });`,
+      "role",
+      "reviewer",
+      "--target-dir",
+      targetDir,
+    ],
+    {
+      stdout: "ignore",
+      stderr: "ignore",
+      env: {
+        ...process.env,
+        START_INTENT_TARGET: targetDir,
+        START_INTENT_TASK: task,
+        START_INTENT_RUN: runId,
+        START_INTENT_READY: ready,
+      },
+    },
+  );
+  try {
+    const deadline = Date.now() + 10_000;
+    while (!fs.existsSync(ready)) {
+      if (Date.now() > deadline) throw new Error("timed out waiting for durable start intent");
+      await Bun.sleep(25);
+    }
+    const store = new ProjectStore(targetDir);
+    const checkpointPath = path.join(store.layout.runs, `standalone-${runId}.json`);
+    expect(store.readVersionedJson<{ status: string }>(checkpointPath).value.status).toBe(
+      "starting",
+    );
+    expect(inspectStandaloneRun(targetDir, runId)).toMatchObject({
+      status: "recorded",
+      recordedStatus: "starting",
+    });
+    expect((await store.listSessions()).some((session) => session.id === runId)).toBe(false);
+    child.kill("SIGKILL");
+    await child.exited;
+
+    faux.setResponses([fauxAssistantMessage("started exactly once after recovery")]);
+    const recovered = await runRoleStandalone({
+      role,
+      model,
+      models,
+      targetDir,
+      task,
+      runId,
+      resumeExisting: true,
+    });
+    expect(recovered.text).toContain("started exactly once after recovery");
+    expect(store.readVersionedJson<{ status: string }>(checkpointPath).value.status).toBe(
+      "complete",
+    );
+  } finally {
+    try {
+      child.kill("SIGKILL");
+    } catch {
+      // The expected path already reaped it.
+    }
+  }
+});
+
 test("resume reclaims a new-format session lease left by a dead standalone worker", async () => {
   const { faux, models, model, role } = fixture();
   const runId = `dead-worker-${crypto.randomUUID()}`;

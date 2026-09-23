@@ -15,6 +15,13 @@ Rules for ad-coder's command-line front. A violation is always blocking.
   `owner_unknown` when the host cannot prove the identity. It never signals,
   writes, or attributes a lost owner to provider or compaction failure.
 
+- 2026-09-23 (issue #616): a standalone role writes a durable `starting` state
+  before it creates its session or dispatches a provider operation. A resume of
+  that state requires the same positive owner-loss evidence as any other
+  takeover, then atomically opens-or-creates the one session under its lease.
+  `runs inspect` exposes `starting` as recorded state with that recovery action;
+  it is not a running provider turn.
+
 - 2026-09-11: The CLI is a THIN front over the programmatic core (see
   `architecture.md`). Its whole command surface — every command, every option,
   every positional argument, each with a one-line description — is declared in
