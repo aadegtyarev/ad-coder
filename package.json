@@ -1,6 +1,6 @@
 {
   "name": "ad-coder",
-  "version": "0.181.34",
+  "version": "0.181.40",
   "description": "A small, explicit multi-provider agent harness: roles over pi-agent-core, per-role/step cost ledger, in-house context management, and a plan->[security]->code<->review pipeline.",
   "license": "MIT",
   "author": "Alexander Degtyarev <adegtyarev.ap@gmail.com>",

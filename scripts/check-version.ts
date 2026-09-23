@@ -170,6 +170,10 @@ function envBranchName(env: Record<string, string | undefined>): string | null {
  * minus, and every ref already an ancestor of the base (merged or stale). Git
  * and env are injected so tests need no real branches and no network;
  * unavailable git or an unreadable ref is a named failure, never a silent pass.
+ * `refs/remotes/origin/HEAD` is not itself a branch when it is a symbolic ref:
+ * it is an alias for another listed origin tracking ref, so it is removed only
+ * after Git resolves that exact alias to a listed target. A direct (non-symbolic)
+ * origin/HEAD ref remains a normal claim.
  */
 export function readOpenClaims(
   git: GitRun,
@@ -209,8 +213,19 @@ export function readOpenClaims(
   if (symref === null) return { ok: false, message: GIT_UNAVAILABLE };
   const local = symref.exitCode === 0 ? symref.stdout.trim() : "";
   const branch = local.length > 0 ? local : envBranchName(env);
+  const remoteHead = git(["symbolic-ref", "-q", "refs/remotes/origin/HEAD"]);
+  if (remoteHead === null) return { ok: false, message: GIT_UNAVAILABLE };
+  const remoteHeadTarget = remoteHead.exitCode === 0 ? remoteHead.stdout.trim() : null;
+  const originHeadIsAlias =
+    remoteHeadTarget?.startsWith("refs/remotes/origin/") === true &&
+    refs.includes("refs/remotes/origin/HEAD") &&
+    refs.includes(remoteHeadTarget);
   const claims: OpenClaim[] = [];
   for (const ref of refs) {
+    // `origin/HEAD` has no independent branch ownership: its symbolic target
+    // is already evaluated below. Do not suppress a direct ref or an alias
+    // whose target cannot be enumerated; either remains conservative.
+    if (originHeadIsAlias && ref === "refs/remotes/origin/HEAD") continue;
     if (
       branch !== null &&
       (ref === `refs/heads/${branch}` || ref === `refs/remotes/origin/${branch}`)

@@ -11,6 +11,15 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.40] - 2026-09-23
+
+### Fixed
+
+- **The version ladder no longer treats symbolic `origin/HEAD` as a second
+  foreign branch claim.** The gate resolves that alias and evaluates its
+  already-listed remote-tracking target once; a direct or unresolved ref stays
+  conservative and is still evaluated as a claim.
+
 ## [0.181.34] - 2026-09-23
 
 ### Fixed
