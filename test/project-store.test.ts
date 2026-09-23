@@ -94,6 +94,34 @@ describe("ProjectStore", () => {
     await expect(second.deleteSession("session_one")).rejects.toMatchObject({ code: "not_found" });
   });
 
+  test("releases session coordination before cleaning up a failed open", async () => {
+    const store = new ProjectStore(target(), { lockRetry: { delaysMs: [1] } });
+    const session = await store.createSession("failed_open");
+    await session.close(BACKGROUND_CONTEXT);
+    const lease = path.join(store.layout.tmp, "session-failed_open.lease");
+    const coordination = path.join(store.layout.tmp, "session-coordination.lock");
+    const storeWithLeaseHook = store as unknown as {
+      acquireSessionLease(id: string): () => void;
+    };
+    const acquireLease = storeWithLeaseHook.acquireSessionLease.bind(store);
+    let cleanupCalled = false;
+    storeWithLeaseHook.acquireSessionLease = (id) => {
+      const release = acquireLease(id);
+      return () => {
+        cleanupCalled = true;
+        expect(fs.existsSync(coordination)).toBe(false);
+        release();
+      };
+    };
+
+    await expect(store.createSession("failed_open")).rejects.toMatchObject({
+      code: "already_exists",
+    });
+    expect(cleanupCalled).toBe(true);
+    expect(fs.existsSync(lease)).toBe(false);
+    expect(fs.existsSync(coordination)).toBe(false);
+  });
+
   test("rejects final session symlinks and hard links before listing or resuming", async () => {
     const root = target();
     const store = new ProjectStore(root);
@@ -329,6 +357,25 @@ describe("ProjectStore", () => {
     await reopened.close(BACKGROUND_CONTEXT);
     expect(fs.existsSync(lease)).toBe(false);
     expect(fs.existsSync(coordination)).toBe(false);
+  });
+
+  test("resume reclaims the empty legacy session lease left when its owner was killed", async () => {
+    const root = target();
+    const store = new ProjectStore(root, { lockRetry: { delaysMs: [1] } });
+    const session = await store.createSession("empty_lease_session");
+    await session.close(BACKGROUND_CONTEXT);
+    const lease = path.join(store.layout.tmp, "session-empty_lease_session.lease");
+    // Pre-0.181.16 created this O_EXCL pathname before it wrote the PID and
+    // token.  SIGKILL at that exact point left an empty lease which could not
+    // be recognised as either a live owner or a reclaimable dead owner.
+    fs.writeFileSync(lease, "", { mode: 0o600 });
+
+    const reopened = await new ProjectStore(root, { lockRetry: { delaysMs: [1] } }).resumeSession(
+      "empty_lease_session",
+    );
+    await reopened.close(BACKGROUND_CONTEXT);
+
+    expect(fs.existsSync(lease)).toBe(false);
   });
 
   test("recovers legacy pid-only session locks after a killed standalone role", async () => {

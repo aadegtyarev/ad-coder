@@ -11,6 +11,30 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.18] - 2026-09-23
+
+### Fixed
+
+- **A failed session open releases coordination before its lease.** Cleanup
+  follows a stable lock order while preserving the original typed open error
+  and releasing the failed session's lease.
+
+## [0.181.17] - 2026-09-23
+
+### Fixed
+
+- **A killed standalone role no longer leaves an ownerless lease forever.**
+  Lock publication now exposes a complete PID/token identity atomically, and
+  resume recovers the empty legacy lease shape after bounded contention.
+
+## [0.181.16] - 2026-09-23
+
+### Added
+
+- **Machine-facing stop and stamp APIs are public.** Embedders can now request
+  a verified single-run stop and render delivery or review-stamp gates through
+  the package root, without invoking CLI parsing or output handling.
+
 ## [0.181.15] - 2026-09-23
 
 ### Fixed
