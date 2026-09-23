@@ -1274,6 +1274,47 @@ test("a dead summarizer falls back to the role's own model instead of ending the
   }
 });
 
+test("disabled role-model fallback never reaches the harness emergency summarizer", async () => {
+  const { faux, models, model } = harnessFixture();
+  const session = await new MemorySessionRepo().create({}, BACKGROUND_CONTEXT);
+  const prompts: string[] = [];
+  let summaryAttempts = 0;
+  const summarizer: Summarizer = async () => {
+    summaryAttempts += 1;
+    throw new Error("configured summary route failed");
+  };
+  faux.setResponses(
+    Array.from({ length: 12 }, () => (request: { systemPrompt?: string }) => {
+      prompts.push(request.systemPrompt ?? "");
+      return fauxAssistantMessage("reply");
+    }),
+  );
+  const conversation = await startConversation({
+    role: tightRole(model),
+    targetDir,
+    models,
+    model,
+    session,
+    compaction: {
+      mode: "auto",
+      summarizer,
+      fallbackToRoleModel: false,
+      summarizerRetryLimit: 2,
+    },
+  });
+  try {
+    for (let turn = 0; turn < 6; turn++) {
+      await conversation.step(`${turn}:${"x".repeat(900)}`);
+    }
+    expect(summaryAttempts).toBeGreaterThan(0);
+    expect(prompts.every((prompt) => !prompt.startsWith(SUMMARIZATION_PROMPT))).toBe(true);
+    expect(prompts.every((prompt) => !prompt.includes(HARNESS_SUMMARY_PROMPT))).toBe(true);
+    expect(await session.findEntries({ type: "compaction" }, BACKGROUND_CONTEXT)).toEqual([]);
+  } finally {
+    await conversation.close();
+  }
+});
+
 test("a failed primary and active-model fallback compaction ends the session with a reopen, not a retry", async () => {
   const { faux, models, model } = harnessFixture();
   const role = tightRole(model);

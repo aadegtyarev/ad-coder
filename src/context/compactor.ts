@@ -549,12 +549,10 @@ export interface DurableCompactionDeps {
  * They are the cacheable prefix, and rewriting them is what would cost the
  * prompt cache on every turn (the operator's cost rule for this fix).
  *
- * A summarizer failure is NOT a thrown error here: the handler returns nothing,
- * which hands the decision back to the harness, which generates the summary
- * with the ROLE's model instead. That keeps the run alive when the cheap
- * summarizer is what failed (a daily limit, an outage, an over-window input),
- * and the line below says so. It never loops: the harness bounds its own
- * attempts per compaction operation and settles the run when they are spent.
+ * A summarizer failure is NOT thrown through the hook. The configured route is
+ * retried and, when enabled, the active-model fallback is tried under the same
+ * output cap. An explicitly disabled fallback declines compaction rather than
+ * silently asking the harness to call the role model.
  */
 export function attachDurableCompaction(hooks: Hooks, deps: DurableCompactionDeps): () => void {
   return hooks.on("before_compaction", (event) => produceSummary(event, deps), { id: HOOK_ID });
@@ -619,13 +617,29 @@ export async function produceSummary(
     }
     return summary;
   };
-  const attempt = async (summarizer: Summarizer, attempts: number): Promise<string> => {
+  const attempt = async (
+    summarizer: Summarizer,
+    attempts: number,
+    scope: { provider: string; model: string } | undefined,
+  ): Promise<string> => {
     let last: unknown;
     for (let count = 0; count < attempts; count += 1) {
       try {
         return withinCap(await summarizer(messages, preparation.previousSummary));
       } catch (error) {
         last = error;
+        const failure: CompactionFailure = {
+          attempt: count + 1,
+          ...attributeFailure(error),
+          ...(scope !== undefined && { provider: scope.provider, model: scope.model }),
+          measuredTokens: preparation.tokensBefore,
+          thresholdTokens: threshold,
+        };
+        process.stderr.write(
+          `ad-coder: compaction summarizer attempt ${failure.attempt}/${attempts} failed ` +
+            `(${describeCompactionFailure(failure)}, measured ${failure.measuredTokens} tokens, ` +
+            `threshold ${failure.thresholdTokens})\n`,
+        );
       }
     }
     throw last;
@@ -640,15 +654,13 @@ export async function produceSummary(
       }
     | undefined;
   try {
-    summary = await attempt(deps.summarizer, retryLimit);
+    summary = await attempt(deps.summarizer, retryLimit, deps.summarizerScope);
   } catch (error) {
     let terminalError = error;
     // Attributed, not quoted: the error's class, its short machine tokens and
     // its numeric status survive; its message does not, because a provider
     // error's text can carry the request it rejected and the evicted head IS
-    // conversation. Written on EVERY failure -- the pre-#444 handler gated its
-    // warning on an attempt bound, so a session that failed 63 times left two
-    // lines behind and the rest of the story lived only in a token number.
+    // conversation. Each attempt was announced in the retry loop above.
     const failure: CompactionFailure = {
       attempt: retryLimit,
       ...attributeFailure(error),
@@ -662,7 +674,7 @@ export async function produceSummary(
     const measured = `(measured ${preparation.tokensBefore} tokens, threshold ${threshold})`;
     if (deps.fallbackSummarizer !== undefined) {
       try {
-        summary = await attempt(deps.fallbackSummarizer, retryLimit);
+        summary = await attempt(deps.fallbackSummarizer, retryLimit, deps.fallbackScope);
         process.stderr.write(
           `ad-coder: compaction fallback used (${deps.summarizerScope?.provider ?? "unknown"}/` +
             `${deps.summarizerScope?.model ?? "unknown"} -> ${deps.fallbackScope?.provider ?? "unknown"}/` +
@@ -697,10 +709,12 @@ export async function produceSummary(
         `ad-coder: compaction summarizer failed (${describeCompactionFailure(failure)}); ` +
           `configured fallback did not produce a capped summary ${measured}\n`,
       );
-      // Legacy direct hook callers without an explicitly configured fallback
-      // retain pi-agent-core's fallback behavior. Every normal runner attaches
-      // the explicit, capped active-role fallback above.
-      return undefined;
+      // `undefined` invokes pi-agent-core's emergency structural fallback.
+      // That path is allowed only when the operator enabled role-model fallback;
+      // otherwise it silently defeats fallbackToRoleModel=false. A threshold
+      // decline can continue below the physical window, while an overflow
+      // decline settles as compaction_declined.
+      return deps.fallbackSummarizer === undefined ? { decline: true } : undefined;
     }
   }
   // The catch either returns/declines or supplies the fallback summary. Keep

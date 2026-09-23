@@ -40,20 +40,19 @@ its context budget. It binds every role turn, whether it runs through `runRole`
   (`<read-files>` / `<modified-files>`), because the NEXT compaction reads those
   lists back off the entry's `details`.
 - The hook has exactly three answers, and which one it gives IS the policy.
-  (a) A summary, which the harness commits. (b) Nothing (`undefined`), for a
-  summarizer that failed on its own route: the harness then generates the
-  summary with the role's own model, so a daily-limited, oversized or briefly
-  unreachable cheap summarizer costs tokens instead of bricking the session.
-  This is bounded by the harness, not by ad-coder: the harness retries a
-  structural attempt under its own retry policy and settles the run when the
-  attempts are spent, so ad-coder keeps no attempt counter and must never
-  change the shared policy. (c) `{decline: true}`, for the two cases where a
-  fallback would misreport: the provider is unavailable (a typed admission or
-  quota refusal must reach the caller intact), or a THRESHOLD compaction has
-  nothing evictable, where the harness would spend a model call summarizing an
-  empty set. A decline is not free -- on an overflow or manual compaction it
-  settles the run as `compaction_declined` -- so pi-agent-core's length
-  recovery is passed THROUGH, never declined (issue #368).
+  (a) A summary, which the harness commits. A failed configured summarizer is
+  retried up to its configured limit and, when enabled, retried with the role's
+  model under the configured output cap. (b) Nothing (`undefined`) allows
+  pi-agent-core's emergency structural generation after both enabled routes
+  fail, or when an overflow or manual compaction has no evictable messages;
+  its length recovery must remain available (issue #368). (c) `{decline: true}`
+  when role-model fallback is explicitly disabled and the configured route
+  fails, the provider is unavailable (a typed admission or quota refusal must
+  reach the caller intact), or a THRESHOLD compaction has nothing evictable.
+  `undefined` with fallback disabled would silently invoke the role's model.
+  A decline on an overflow or manual compaction settles the run as
+  `compaction_declined`; on a threshold the run may continue beneath the model's
+  physical window.
 - A hook must not THROW. The harness's structural generation is outside the
   catch that recognises its own cancellation, so a raw provider error raised
   from here is wrapped as a harness fault and destroys the typed refusal it was

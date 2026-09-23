@@ -11,6 +11,15 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.29] - 2026-09-23
+
+### Fixed
+
+- **Disabling the compaction fallback now prevents an unconfigured role-model
+  summary.** A failed configured summarizer declines the hook when fallback is
+  off; each failed attempt reports only its route, error class and numeric
+  context, without provider prose or conversation content.
+
 ## [0.181.28] - 2026-09-23
 
 ### Fixed
