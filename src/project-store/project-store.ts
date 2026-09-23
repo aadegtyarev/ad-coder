@@ -979,14 +979,20 @@ export class ProjectStore {
     const releaseCoordination = this.acquireVersionedLock(this.sessionCoordinationPath());
     let release: (() => void) | undefined;
     let session: Session<T> | undefined;
+    let openingFailed = false;
+    let openingError: unknown;
     try {
       release = this.acquireSessionLease(id);
       session = await open();
     } catch (error) {
-      release?.();
-      throw error;
+      openingFailed = true;
+      openingError = error;
     } finally {
       releaseCoordination();
+    }
+    if (openingFailed) {
+      release?.();
+      throw openingError;
     }
     if (release === undefined || session === undefined) {
       release?.();

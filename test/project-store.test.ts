@@ -94,6 +94,34 @@ describe("ProjectStore", () => {
     await expect(second.deleteSession("session_one")).rejects.toMatchObject({ code: "not_found" });
   });
 
+  test("releases session coordination before cleaning up a failed open", async () => {
+    const store = new ProjectStore(target(), { lockRetry: { delaysMs: [1] } });
+    const session = await store.createSession("failed_open");
+    await session.close(BACKGROUND_CONTEXT);
+    const lease = path.join(store.layout.tmp, "session-failed_open.lease");
+    const coordination = path.join(store.layout.tmp, "session-coordination.lock");
+    const storeWithLeaseHook = store as unknown as {
+      acquireSessionLease(id: string): () => void;
+    };
+    const acquireLease = storeWithLeaseHook.acquireSessionLease.bind(store);
+    let cleanupCalled = false;
+    storeWithLeaseHook.acquireSessionLease = (id) => {
+      const release = acquireLease(id);
+      return () => {
+        cleanupCalled = true;
+        expect(fs.existsSync(coordination)).toBe(false);
+        release();
+      };
+    };
+
+    await expect(store.createSession("failed_open")).rejects.toMatchObject({
+      code: "already_exists",
+    });
+    expect(cleanupCalled).toBe(true);
+    expect(fs.existsSync(lease)).toBe(false);
+    expect(fs.existsSync(coordination)).toBe(false);
+  });
+
   test("rejects final session symlinks and hard links before listing or resuming", async () => {
     const root = target();
     const store = new ProjectStore(root);
