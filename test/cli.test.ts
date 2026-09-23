@@ -9,6 +9,7 @@ import { renderAuthEvent, runAuthCommand } from "../src/cli/auth";
 import { SessionNotAcquiredError } from "../src/conversation/conversation";
 import type { DurableRunRecord } from "../src/orchestration/control-plane";
 import { ProjectStore } from "../src/project-store/project-store";
+import { ProviderUnavailableError } from "../src/runner/errors";
 import { UpdateError } from "../src/update/updater";
 
 const REPO_ROOT = path.resolve(import.meta.dir, "..");
@@ -2017,6 +2018,23 @@ test("a machine front projects an update failure with its code, retryability, an
 
   // An unrecognized failure never leaks its text into the machine record.
   expect(projectCliError(new Error("secret internals"))).toEqual({ code: "internal_error" });
+  const unavailable = new ProviderUnavailableError("run-9f2a");
+  expect(projectCliError(unavailable)).toEqual({
+    code: "provider_unavailable",
+    detail: "run-9f2a",
+    text: unavailable.message,
+    retryable: true,
+    nextAction: "retry the run, or select another configured model or provider",
+  });
+  expect(projectCliError(new ProviderUnavailableError("run-9f2a", "fetch_failed"))).toMatchObject({
+    code: "provider_unavailable",
+    diagnosticCode: "fetch_failed",
+  });
+  expect(
+    renderCliError(new ProviderUnavailableError("run-9f2a", "fetch_failed")).match(
+      /retry the run/g,
+    ),
+  ).toHaveLength(1);
 });
 
 test("a human front states the update failure and its recovery action on one line", () => {

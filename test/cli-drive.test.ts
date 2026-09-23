@@ -5,7 +5,9 @@ import * as path from "node:path";
 import { Readable, Writable } from "node:stream";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import {
+  createAssistantMessageEventStream,
   createModels,
+  createProvider,
   fauxAssistantMessage,
   fauxProvider,
   fauxToolCall,
@@ -616,6 +618,50 @@ test("a silent no-op turn fails with an actionable typed error", async () => {
   expect(error.text()).toContain("empty_turn");
   expect(error.text()).toContain("codex login");
 });
+
+test("drive reports a statusless provider failure as a resumable typed pause", async () => {
+  const fx = fixture();
+  const coder = fx.role("coder", "You code.");
+  const reviewer = reviewerRole(fx);
+  // Use an exact-usage stream: the faux provider estimates prompt input on
+  // every response, even a transport failure that carried no provider usage.
+  const stream = () => {
+    const failed = fauxAssistantMessage("", { stopReason: "error", errorMessage: "fetch failed" });
+    const events = createAssistantMessageEventStream();
+    events.push({ type: "error", reason: "error", error: failed });
+    events.end(failed);
+    return events;
+  };
+  fx.models.setProvider(
+    createProvider({
+      id: "faux",
+      auth: { apiKey: { name: "Faux", resolve: async () => ({ auth: {} }) } },
+      models: [fx.model],
+      api: { stream, streamSimple: stream },
+    }),
+  );
+  const ledgerSink = new MemoryLedgerSink();
+  const session = createWorkflowSession(config(fx, { coder, reviewer }, ledgerSink));
+  const error = new Capture();
+
+  const result = await driveWorkflow({
+    session,
+    ledgerSink,
+    auto: true,
+    input: Readable.from(""),
+    output: new Capture(),
+    error,
+  }).catch((cause: unknown) => cause);
+
+  expect(result).toBeInstanceOf(PipelinePauseError);
+  expect(result).toMatchObject({
+    code: "pipeline_paused",
+    pause: { phase: "code", code: "stage_failed", cause: { code: "provider_unavailable" } },
+  });
+  expect(error.text()).toContain("provider_unavailable");
+  expect(error.text()).not.toContain("verify authentication");
+  expect(error.text()).not.toContain("fetch failed");
+}, 15_000);
 
 test("silentNoopWarning fires only on empty text AND zero cost", () => {
   expect(silentNoopWarning("", 0)).toContain("codex login");

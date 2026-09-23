@@ -47,9 +47,13 @@ import {
   assertUniqueToolNames,
   EmptyTurnError,
   GenerationTruncatedError,
+  hasZeroAssistantUsage,
+  isStatuslessAssistantError,
   ProviderQuotaError,
   ProviderRejectionError,
+  ProviderUnavailableError,
   providerErrorCauseFrom,
+  providerFailureDiagnosticFrom,
   providerQuotaFrom,
   providerRejectionStatusFrom,
   resolveTargetDir,
@@ -809,6 +813,11 @@ export async function startConversation(config: ConversationConfig): Promise<Con
     // sink; only `close` (below) closes it, exactly once.
     const ledger = new Ledger({ runId, role: role.name, step: stepName, sink });
     const offLedger = ledger.attach(harness.hooks);
+    let observedBilledUsage = false;
+    const offUsage = harness.hooks.on("after_response", (event) => {
+      if (!hasZeroAssistantUsage(event.message.usage)) observedBilledUsage = true;
+      return undefined;
+    });
     const seen: ConversationToolCall[] = [];
     const offEvents = harness.events.on("tool_end", (event) => {
       seen.push({ toolName: event.toolName, toolCallId: event.toolCallId });
@@ -965,6 +974,13 @@ export async function startConversation(config: ConversationConfig): Promise<Con
                 message: finalMessage.errorMessage,
               }),
             });
+          const hasZeroUsage = !observedBilledUsage;
+          if (isStatuslessAssistantError(result.error?.code, cause, hasZeroUsage))
+            throw new ProviderUnavailableError(
+              runId,
+              providerFailureDiagnosticFrom(result.error) ??
+                providerFailureDiagnosticFrom({ message: finalMessage?.errorMessage }),
+            );
           throw new EmptyTurnError(runId, result.error?.code, cause?.status, cause?.code);
         }
         // A settled-SUCCESS turn with no answer text is still not a completed
@@ -1008,6 +1024,7 @@ export async function startConversation(config: ConversationConfig): Promise<Con
       };
     } finally {
       offLedger();
+      offUsage();
       offEvents();
       offActivity();
       if (activeActivityCleanup === offActivity) activeActivityCleanup = undefined;

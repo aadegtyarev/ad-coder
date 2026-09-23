@@ -53,9 +53,13 @@ import {
   ConfiguredToolsUnavailableError,
   EmptyTurnError,
   GenerationTruncatedError,
+  hasZeroAssistantUsage,
+  isStatuslessAssistantError,
   ProviderQuotaError,
   ProviderRejectionError,
+  ProviderUnavailableError,
   providerErrorCauseFrom,
+  providerFailureDiagnosticFrom,
   providerLimitFrom,
   providerQuotaFrom,
   providerRejectionStatusFrom,
@@ -719,6 +723,7 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
   }
   const compaction = resolveCompactionPolicy(explicitPolicy, models, params.model);
   const usage = { freshInput: 0, cachedInput: 0, output: 0, reasoning: 0, costUsd: 0 };
+  let observedBilledUsage = false;
   // Issue #469: responses whose `reasoning` exceeded `output` are absorbed here,
   // not discarded; the counters below become the persisted clamp observation.
   const reasoningClamp = { count: 0, maxExcessTokens: 0 };
@@ -861,6 +866,7 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
   });
   harness.hooks.on("after_response", (event) => {
     try {
+      if (!hasZeroAssistantUsage(event.message.usage)) observedBilledUsage = true;
       const freshInput = boundedUsageInteger(event.message.usage.input, "input");
       const cachedInput = boundedUsageInteger(event.message.usage.cacheRead, "cacheRead");
       const output = boundedUsageInteger(event.message.usage.output, "output");
@@ -1080,7 +1086,7 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
         const admissionFailure = admissionFailureFrom(result.error, params.model.provider);
         if (admissionFailure !== undefined) throw admissionFailure;
       }
-      if (text.trim() === "" && usage.freshInput + usage.cachedInput + usage.output === 0) {
+      if (text.trim() === "" && !observedBilledUsage) {
         // A settled failure with no text and no usage has two very different
         // causes, and the transcript cannot tell them apart. When the provider
         // named a client-error status it ANSWERED and refused the request, so
@@ -1110,6 +1116,12 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
               message: finalMessage.errorMessage,
             }),
           });
+        if (isStatuslessAssistantError(result.error?.code, cause, true))
+          throw new ProviderUnavailableError(
+            runId,
+            providerFailureDiagnosticFrom(result.error) ??
+              providerFailureDiagnosticFrom({ message: finalMessage?.errorMessage }),
+          );
         throw new EmptyTurnError(runId, result.error?.code, cause?.status, cause?.code);
       }
       if (text.trim() === "") {

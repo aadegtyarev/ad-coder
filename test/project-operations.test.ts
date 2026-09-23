@@ -65,6 +65,7 @@ import { defineRole } from "../src/role";
 import {
   ConfiguredToolsUnavailableError,
   EmptyTurnError,
+  ProviderUnavailableError,
   RunnerError,
   SuspendedRunError,
 } from "../src/runner/errors";
@@ -751,6 +752,7 @@ test("a harness-side stage failure is worded as harness work and carries its cau
       "git diff HEAD failed (128)",
     ],
     [new EmptyTurnError("failed-code", "assistant_error"), "empty_turn", undefined],
+    [new ProviderUnavailableError("failed-code"), "provider_unavailable", undefined],
     [
       new CostAnomalyBlockedError("faux", "faux-1", {
         at: 0,

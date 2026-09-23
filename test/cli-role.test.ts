@@ -36,7 +36,7 @@ import { ProjectStore } from "../src/project-store/project-store";
 import { ProjectStoreError } from "../src/project-store/types";
 import type { Role } from "../src/role";
 import { defineRole } from "../src/role";
-import { EmptyTurnError, RunInterruptedError } from "../src/runner/errors";
+import { ProviderUnavailableError, RunInterruptedError } from "../src/runner/errors";
 
 const CONTEXT_WINDOW = 200_000;
 const BUDGET = { maxTokens: 100_000, reserveTokens: 10_000, keepRecentTokens: 20_000 } as const;
@@ -406,13 +406,13 @@ test("a competing resume leaves the paused checkpoint owned by the original run"
   expect(store.readVersionedJson<typeof before>(checkpointPath).value).toEqual(before);
 });
 
-test("a failed empty provider turn settles its standalone run with safe recovery evidence", async () => {
+test("a statusless provider failure settles its standalone run with safe recovery evidence", async () => {
   const { faux, models, model, role } = fixture();
   const runId = `empty-turn-${crypto.randomUUID()}`;
   // This is the real failure shape from a provider adapter: the thrown source
-  // becomes a settled `assistant_error`, which `runRole` types as
-  // EmptyTurnError.  The standalone owner must close its durable record before
-  // it lets that error cross the CLI boundary.
+  // becomes a settled `assistant_error` with no provider status or code. The
+  // standalone owner must close its durable record before it lets that error
+  // cross the CLI boundary.
   faux.setResponses([
     () => {
       throw new Error("provider failed without a response");
@@ -428,7 +428,7 @@ test("a failed empty provider turn settles its standalone run with safe recovery
       task: "review the change",
       runId,
     }),
-  ).rejects.toBeInstanceOf(EmptyTurnError);
+  ).rejects.toBeInstanceOf(ProviderUnavailableError);
 
   const store = new ProjectStore(targetDir);
   const checkpointPath = path.join(store.layout.runs, `standalone-${runId}.json`);
@@ -440,8 +440,8 @@ test("a failed empty provider turn settles its standalone run with safe recovery
   ).toMatchObject({
     status: "failed",
     failure: {
-      code: "empty_turn",
-      message: expect.stringContaining("failed empty turn"),
+      code: "provider_unavailable",
+      message: expect.stringContaining("without a usable answer or HTTP status"),
     },
   });
 });

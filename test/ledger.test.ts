@@ -229,6 +229,22 @@ test("an error-stopped response carries a bounded providerError, never the body 
   expect(JSON.stringify(row)).not.toContain("errorMessage");
 });
 
+test("a statusless transport failure leaves an authored diagnostic in the ledger", async () => {
+  const sink = new MemoryLedgerSink();
+  const { hooks, registered } = fakeHooks();
+  new Ledger({ runId: "run1", role: "coder", step: "code", sink }).attach(hooks);
+  const handler = registered[0]?.handler;
+  if (handler === undefined) throw new Error("handler was not registered");
+  const failedMessage = settled(usage(0, 0, 0));
+  failedMessage.stopReason = "error";
+  failedMessage.errorMessage = "connect ETIMEDOUT private.example:443 token=never-publish-me";
+  await handler({ runId: "run-1", lane: "main", message: failedMessage }, FAKE_CONTEXT);
+  const row = sink.records()[0];
+  expect(row?.providerDiagnostic).toBe("connection_timeout");
+  expect(JSON.stringify(row)).not.toContain("private.example");
+  expect(JSON.stringify(row)).not.toContain("never-publish-me");
+});
+
 test("a settled response with no provider error carries no providerError key", async () => {
   const sink = new MemoryLedgerSink();
   const { hooks, registered } = fakeHooks();

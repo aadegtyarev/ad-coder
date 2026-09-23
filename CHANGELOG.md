@@ -11,6 +11,17 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.24] - 2026-09-23
+
+### Fixed
+
+- **A provider that returns no response after its own retries no longer looks
+  like an authentication failure.** The safe `provider_unavailable` outcome
+  tells the operator to retry or select another configured route, includes a
+  fixed diagnostic code for recognised SDK transport and finish-reason errors,
+  and keeps raw provider text out of public state. Real credential-bearing
+  empty turns remain unchanged.
+
 ## [0.181.23] - 2026-09-23
 
 ### Fixed
