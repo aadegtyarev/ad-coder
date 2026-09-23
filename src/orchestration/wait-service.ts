@@ -1,6 +1,6 @@
 import * as crypto from "node:crypto";
 import type { ProjectStore } from "../project-store/project-store";
-import { ProjectStoreError } from "../project-store/types";
+import { ProjectStoreError, type VersionedState } from "../project-store/types";
 
 /** The durable schema version, independent of ProjectStore's CAS envelope. */
 export const WAIT_RECORD_VERSION = 1;
@@ -217,7 +217,7 @@ export class WaitService {
       evidence: [],
     };
     this.append(initial, "pending", timestamp);
-    this.assertRecordSize(initial, id);
+    this.assertRecordSize(initial, id, 1);
     try {
       this.store.writeVersionedJson(this.store.waitStatePath(id), initial, 0);
     } catch (error) {
@@ -240,10 +240,7 @@ export class WaitService {
     const gap = cursor > 0 && cursor < first - 1;
     const events = record.events.filter((event) => event.sequence > cursor).slice(0, limit);
     return {
-      events: events.map((event) => ({
-        ...event,
-        ...(event.evidence ? { evidence: { ...event.evidence } } : {}),
-      })),
+      events: events.map(copyEvent),
       nextCursor: events.at(-1)?.sequence ?? cursor,
       gap,
     };
@@ -256,7 +253,6 @@ export class WaitService {
   /** Reopen validates an existing checkpoint; it has no external side effect. */
   reopen(id: string): WaitRecord {
     const record = this.read(id);
-    this.validateRecord(record);
     return copyRecord(record);
   }
 
@@ -366,9 +362,9 @@ export class WaitService {
   private read(id: string): WaitRecord {
     if (!WAIT_ID.test(id)) throw new WaitServiceError("invalid_request", id);
     try {
-      const record = this.store.readVersionedJson<WaitRecord>(this.store.waitStatePath(id)).value;
-      this.validateRecord(record);
-      return record;
+      const state = this.store.readVersionedJson<WaitRecord>(this.store.waitStatePath(id));
+      this.validateRecord(state.value, this.envelopeVersion(state.version, id));
+      return state.value;
     } catch (error) {
       if (error instanceof ProjectStoreError && error.code === "not_found")
         throw new WaitServiceError("not_found", id);
@@ -383,28 +379,37 @@ export class WaitService {
    */
   private mutate(
     id: string,
-    mutate: (current: { value: WaitRecord } | undefined) => WaitRecord,
+    mutate: (current: VersionedState<WaitRecord> | undefined) => WaitRecord,
   ): WaitRecord {
     return this.store.mutateVersionedJson<WaitRecord>(this.store.waitStatePath(id), (current) => {
       const next = mutate(current);
-      this.assertRecordSize(next, id);
+      this.assertRecordSize(next, id, this.nextEnvelopeVersion(current, id));
       return next;
     }).value;
   }
-  private assertRecordSize(record: WaitRecord, id = record.id): void {
+  private assertRecordSize(record: WaitRecord, id = record.id, envelopeVersion = 1): void {
     // Include ProjectStore's versioned envelope and newline: this is exactly
     // what reaches disk, rather than an optimistic estimate of record fields.
-    const bytes = Buffer.byteLength(JSON.stringify({ version: 1, value: record })) + 1;
+    const bytes =
+      Buffer.byteLength(JSON.stringify({ version: envelopeVersion, value: record })) + 1;
     if (bytes > this.limits.maxPersistedStateBytes)
       throw new WaitServiceError("state_too_large", id);
   }
 
-  private current(current: { value: WaitRecord } | undefined, id: string): WaitRecord {
+  private current(current: VersionedState<WaitRecord> | undefined, id: string): WaitRecord {
     if (current === undefined) throw new WaitServiceError("not_found", id);
-    this.validateRecord(current.value);
+    this.validateRecord(current.value, this.envelopeVersion(current.version, id));
     return current.value;
   }
-  private currentPending(current: { value: WaitRecord } | undefined, id: string): WaitRecord {
+  private envelopeVersion(version: unknown, id: string): number {
+    if (typeof version !== "number" || !Number.isSafeInteger(version) || version <= 0)
+      throw new WaitServiceError("invalid_request", id);
+    return version;
+  }
+  private nextEnvelopeVersion(current: VersionedState<WaitRecord> | undefined, id: string): number {
+    return (current === undefined ? 0 : this.envelopeVersion(current.version, id)) + 1;
+  }
+  private currentPending(current: VersionedState<WaitRecord> | undefined, id: string): WaitRecord {
     const value = this.current(current, id);
     if (value.lifecycle !== "pending") throw new WaitServiceError("not_pending", id);
     return value;
@@ -475,8 +480,28 @@ export class WaitService {
     )
       throw new WaitServiceError("invalid_adapter");
   }
-  private validateRecord(record: WaitRecord): void {
-    if (!record || record.version !== WAIT_RECORD_VERSION || !WAIT_ID.test(record.id))
+  private validateRecord(record: WaitRecord, envelopeVersion = 1): void {
+    if (
+      !plainObject(record, [
+        "version",
+        "id",
+        "lifecycle",
+        "source",
+        "condition",
+        "owner",
+        "policy",
+        "deadlineAt",
+        "recovery",
+        "createdAt",
+        "updatedAt",
+        "nextSequence",
+        "events",
+        "evidence",
+        "reconciliation",
+      ]) ||
+      record.version !== WAIT_RECORD_VERSION ||
+      !WAIT_ID.test(record.id)
+    )
       throw new WaitServiceError("invalid_request");
     this.validateInput(record);
     if (
@@ -523,7 +548,7 @@ export class WaitService {
         !safeTimestamp(record.reconciliation.dispatchedAt))
     )
       throw new WaitServiceError("invalid_request", record.id);
-    this.assertRecordSize(record);
+    this.assertRecordSize(record, record.id, envelopeVersion);
   }
 }
 
@@ -579,18 +604,34 @@ function plainObject(value: unknown, keys: readonly string[]): value is Record<s
     Object.keys(value).every((key) => keys.includes(key))
   );
 }
+function copyEvent(event: WaitEvent): WaitEvent {
+  return {
+    version: event.version,
+    sequence: event.sequence,
+    waitId: event.waitId,
+    lifecycle: event.lifecycle,
+    timestamp: event.timestamp,
+    ...(event.evidence === undefined
+      ? {}
+      : { evidence: { code: event.evidence.code, at: event.evidence.at } }),
+  };
+}
 function copyRecord(record: WaitRecord): WaitRecord {
   return {
-    ...record,
+    version: record.version,
+    id: record.id,
+    lifecycle: record.lifecycle,
     source: copySource(record.source),
     condition: { kind: record.condition.kind },
     owner: { kind: record.owner.kind, id: record.owner.id },
     policy: copyPolicy(record.policy),
-    events: record.events.map((event) => ({
-      ...event,
-      ...(event.evidence === undefined ? {} : { evidence: { ...event.evidence } }),
-    })),
-    evidence: record.evidence.map((item) => ({ ...item })),
+    ...(record.deadlineAt === undefined ? {} : { deadlineAt: record.deadlineAt }),
+    recovery: record.recovery,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+    nextSequence: record.nextSequence,
+    events: record.events.map(copyEvent),
+    evidence: record.evidence.map((item) => ({ code: item.code, at: item.at })),
     ...(record.reconciliation === undefined
       ? {}
       : { reconciliation: { ...record.reconciliation } }),

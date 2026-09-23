@@ -259,6 +259,26 @@ test("persisted wait event data is strictly shaped and bounded before it can be 
   );
 });
 
+test("an unknown top-level persisted wait field is refused before any read surface can expose it", () => {
+  const durable = store();
+  const service = new WaitService(durable, [sourceAdapter(() => ({ lifecycle: "pending" }))]);
+  service.create(input());
+  const statePath = durable.waitStatePath("wait_one");
+  const corrupt = JSON.parse(fs.readFileSync(statePath, "utf8")) as {
+    version: number;
+    value: Record<string, unknown>;
+  };
+  corrupt.value.untypedTransportDetail = "secret-value-must-not-escape";
+  fs.writeFileSync(statePath, `${JSON.stringify(corrupt)}\n`);
+
+  for (const read of [
+    () => service.get("wait_one"),
+    () => service.events("wait_one"),
+    () => service.reopen("wait_one"),
+  ])
+    expect(read).toThrow(new WaitServiceError("invalid_request", "wait_one"));
+});
+
 test("a valid but oversized persisted wait record is refused before every read surface", () => {
   const durable = store();
   const limits = { maxEventsPerWait: 100_000, maxPersistedStateBytes: 64 * 1024 };
@@ -293,4 +313,57 @@ test("a valid but oversized persisted wait record is refused before every read s
   expect(() => service.reopen("wait_one")).toThrow(
     new WaitServiceError("state_too_large", "wait_one"),
   );
+});
+
+test("the wait byte ceiling uses the actual next storage-envelope version", () => {
+  const durable = store();
+  const now = 100;
+  const unbounded = new WaitService(
+    durable,
+    [sourceAdapter(() => ({ lifecycle: "pending" }))],
+    {},
+    () => now,
+  );
+  unbounded.create(input());
+  const statePath = durable.waitStatePath("wait_one");
+  const persisted = JSON.parse(fs.readFileSync(statePath, "utf8")) as {
+    version: number;
+    value: {
+      lifecycle: string;
+      updatedAt: number;
+      nextSequence: number;
+      events: unknown[];
+      evidence: unknown[];
+    };
+  };
+  const projected = structuredClone(persisted.value);
+  projected.lifecycle = "cancelled";
+  projected.updatedAt = now;
+  projected.events.push({
+    version: 1,
+    sequence: projected.nextSequence,
+    waitId: "wait_one",
+    lifecycle: "cancelled",
+    timestamp: now,
+    evidence: { code: "cancelled", at: now },
+  });
+  projected.nextSequence += 1;
+  projected.evidence.push({ code: "cancelled", at: now });
+  // Version 1 is one byte shorter than the actual next envelope, version 10.
+  const versionOneBytes = Buffer.byteLength(JSON.stringify({ version: 1, value: projected })) + 1;
+  fs.writeFileSync(statePath, `${JSON.stringify({ version: 9, value: persisted.value })}\n`);
+
+  const bounded = new WaitService(
+    durable,
+    [sourceAdapter(() => ({ lifecycle: "pending" }))],
+    { maxPersistedStateBytes: versionOneBytes },
+    () => now,
+  );
+  expect(() => bounded.cancel("wait_one")).toThrow(
+    new WaitServiceError("state_too_large", "wait_one"),
+  );
+  expect(JSON.parse(fs.readFileSync(statePath, "utf8"))).toMatchObject({
+    version: 9,
+    value: { lifecycle: "pending" },
+  });
 });

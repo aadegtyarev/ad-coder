@@ -12,6 +12,8 @@ into a timer, a process runner, or a front-only feature.
   lifecycle, event sequence, and bounded event/evidence histories. These are
   identifiers and enums only: URLs, commands, PIDs, headers, provider payloads,
   task text, and credentials are never wait state or evidence.
+- Persisted record, event, and evidence shapes are closed: an unknown field is
+  a typed refusal, never a field copied through `get`, `events`, or `reopen`.
 - Only a registered adapter at the record's exact version validates a source and
   reconciles it. Adapters receive the safe source and condition plus a minted
   operation id; they do not supply arbitrary persisted fields.
