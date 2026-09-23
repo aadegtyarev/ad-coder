@@ -19,6 +19,7 @@ import {
 import { MemoryLedgerSink } from "../src/ledger/ledger";
 import { PLANNER_SUBMISSION_RESTART, plannerRetryTask } from "../src/orchestration/plan";
 import {
+  inspectStandaloneRun,
   type RunProcessIdentity,
   stopRequestPath,
   writeRunStopRequest,
@@ -265,6 +266,94 @@ test("resume reclaims a new-format session lease left by a dead standalone worke
       path.join(store.layout.runs, `standalone-${runId}.json`),
     ).value.status,
   ).toBe("complete");
+});
+
+test("SIGKILLed standalone owner is diagnosed and leaves a recovery witness before resume", async () => {
+  const { faux, models, model, role } = fixture();
+  const runId = `sigkill-owner-${crypto.randomUUID()}`;
+  const task = "resume after a host killed the worker";
+  const aborted = new AbortController();
+  aborted.abort();
+  await expect(
+    runRoleStandalone({ role, model, models, targetDir, task, runId, abortSignal: aborted.signal }),
+  ).rejects.toBeInstanceOf(RunInterruptedError);
+
+  const ready = path.join(targetDir, `${runId}.ready`);
+  const child = Bun.spawn(
+    [
+      process.execPath,
+      "--eval",
+      `import * as fs from "node:fs";
+import { ProjectStore } from ${JSON.stringify(path.join(import.meta.dir, "..", "src", "project-store", "project-store.ts"))};
+import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
+const store = new ProjectStore(process.env.OWNER_LOST_TARGET);
+await store.resumeSession(process.env.OWNER_LOST_RUN, BACKGROUND_CONTEXT);
+fs.writeFileSync(process.env.OWNER_LOST_READY, "ready");
+await Bun.sleep(60_000);`,
+    ],
+    {
+      stdout: "ignore",
+      stderr: "ignore",
+      env: {
+        ...process.env,
+        OWNER_LOST_TARGET: targetDir,
+        OWNER_LOST_RUN: runId,
+        OWNER_LOST_READY: ready,
+      },
+    },
+  );
+  try {
+    const deadline = Date.now() + 10_000;
+    while (!fs.existsSync(ready)) {
+      if (Date.now() > deadline)
+        throw new Error("timed out waiting for child to hold the session lease");
+      await Bun.sleep(25);
+    }
+    const store = new ProjectStore(targetDir);
+    const checkpointPath = path.join(store.layout.runs, `standalone-${runId}.json`);
+    const checkpoint = store.readVersionedJson<Record<string, unknown>>(checkpointPath);
+    const identity = {
+      pid: child.pid,
+      startTime: processStartTime(child.pid),
+      groupId: child.pid,
+    };
+    store.writeVersionedJson(
+      checkpointPath,
+      { ...checkpoint.value, status: "running", process: identity },
+      checkpoint.version,
+    );
+    child.kill("SIGKILL");
+    await child.exited;
+
+    expect(inspectStandaloneRun(targetDir, runId)).toMatchObject({
+      status: "owner_lost",
+      reason: "pid_not_alive",
+      pid: child.pid,
+    });
+    faux.setResponses([fauxAssistantMessage("recovered after SIGKILL")]);
+    await expect(
+      runRoleStandalone({ role, model, models, targetDir, task, runId, resumeExisting: true }),
+    ).resolves.toMatchObject({ text: expect.stringContaining("recovered after SIGKILL") });
+    expect(
+      store.readVersionedJson<{ lastRecovery?: Record<string, unknown> }>(checkpointPath).value,
+    ).toMatchObject({
+      lastRecovery: {
+        code: "owner_lost",
+        reason: "pid_not_alive",
+        previousProcess: identity,
+      },
+    });
+    expect(inspectStandaloneRun(targetDir, runId)).toMatchObject({
+      status: "recorded",
+      lastRecovery: { code: "owner_lost", previousPid: child.pid },
+    });
+  } finally {
+    try {
+      child.kill("SIGKILL");
+    } catch {
+      // The expected path already reaped it.
+    }
+  }
 });
 
 test("a competing resume leaves the paused checkpoint owned by the original run", async () => {

@@ -258,6 +258,8 @@ export {
   parsePlan,
   SUBMIT_PLAN_TOOL_NAME,
 } from "./orchestration/plan";
+export type { StandaloneRunInspection } from "./orchestration/run-stop";
+export { inspectStandaloneRun } from "./orchestration/run-stop";
 export type { PipelineContextDecisionInput, WorkflowSession } from "./orchestration/session";
 export {
   applyTransition,

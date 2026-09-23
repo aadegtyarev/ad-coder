@@ -202,6 +202,144 @@ export interface StoppableRunRecord {
    * is why the pid and start time are recorded by the run itself.
    */
   cmdlineWitness: readonly [string, string] | undefined;
+  /** Last safe owner-loss recovery witness, when a later worker took over. */
+  lastRecovery?: StandaloneOwnerRecovery;
+}
+
+/** The safe, durable part of a former standalone owner's identity. */
+export interface StandaloneOwnerRecovery {
+  code: "owner_lost";
+  reason: "pid_not_alive" | "zombie" | "pid_reused";
+  detectedAt: number;
+  previousPid: number;
+}
+
+/**
+ * A read-only diagnosis of a standalone role's recorded owner.
+ *
+ * A hard process death cannot run the role's closeout handler.  This result
+ * therefore deliberately says only what the next observer can prove from the
+ * record and procfs; it never guesses whether a provider, compactor, terminal,
+ * or host transport caused the death.
+ */
+export type StandaloneRunInspection =
+  | { status: "not_found"; runId: string; nextAction: string }
+  | { status: "not_standalone"; runId: string; nextAction: string }
+  | {
+      status: "recorded";
+      runId: string;
+      recordedStatus: string;
+      nextAction: string;
+      lastRecovery?: StandaloneOwnerRecovery;
+    }
+  | {
+      status: "live";
+      runId: string;
+      pid: number;
+      recordedStatus: "running";
+      nextAction: string;
+    }
+  | {
+      status: "owner_lost";
+      runId: string;
+      pid: number;
+      recordedStatus: "running";
+      reason: "pid_not_alive" | "zombie" | "pid_reused";
+      nextAction: string;
+    }
+  | {
+      status: "owner_unknown";
+      runId: string;
+      recordedStatus: "running";
+      nextAction: string;
+    };
+
+/**
+ * Inspect one standalone role without changing it or signalling anything.
+ *
+ * This is intentionally weaker than `verifyStopTarget`: status must not read
+ * a command line or require the caller to reproduce the exact target spelling.
+ * A complete recorded start time is enough to distinguish a dead owner from a
+ * reused pid.  Missing identity evidence stays `owner_unknown`, never `live`.
+ */
+export function inspectStandaloneRun(targetDir: string, runId: string): StandaloneRunInspection {
+  const record = findStoppableRunRecord(targetDir, runId);
+  if (record === undefined)
+    return {
+      status: "not_found",
+      runId,
+      nextAction: "check the run id and target directory",
+    };
+  if (record.kind !== "standalone")
+    return {
+      status: "not_standalone",
+      runId,
+      nextAction: "inspect this background run through its background-run controls",
+    };
+  const recordedStatus = record.state ?? "unknown";
+  if (recordedStatus !== "running")
+    return {
+      status: "recorded",
+      runId,
+      recordedStatus,
+      nextAction:
+        recordedStatus === "paused"
+          ? "resume the role explicitly when ready"
+          : "inspect the recorded result or start a new role run",
+      ...(record.lastRecovery === undefined ? {} : { lastRecovery: record.lastRecovery }),
+    };
+  const identity = record.identity;
+  if (identity?.startTime === undefined)
+    return {
+      status: "owner_unknown",
+      runId,
+      recordedStatus: "running",
+      nextAction:
+        "the running record has no complete process identity; inspect its durable checkpoint before resuming",
+    };
+  if (!processIsAlive(identity.pid))
+    return {
+      status: "owner_lost",
+      runId,
+      pid: identity.pid,
+      recordedStatus: "running",
+      reason: "pid_not_alive",
+      nextAction: "resume the role from its durable run id; completed work will be reused",
+    };
+  const stat = readProcessStat(identity.pid);
+  if (stat?.state === "Z")
+    return {
+      status: "owner_lost",
+      runId,
+      pid: identity.pid,
+      recordedStatus: "running",
+      reason: "zombie",
+      nextAction: "resume the role from its durable run id; completed work will be reused",
+    };
+  if (stat?.startTime !== undefined && stat.startTime !== identity.startTime)
+    return {
+      status: "owner_lost",
+      runId,
+      pid: identity.pid,
+      recordedStatus: "running",
+      reason: "pid_reused",
+      nextAction: "resume the role from its durable run id; completed work will be reused",
+    };
+  if (stat?.startTime === undefined)
+    return {
+      status: "owner_unknown",
+      runId,
+      recordedStatus: "running",
+      nextAction:
+        "the owner process cannot be identified safely on this host; inspect its durable checkpoint before resuming",
+    };
+  return {
+    status: "live",
+    runId,
+    pid: identity.pid,
+    recordedStatus: "running",
+    nextAction: "the recorded role is still running; wait for it or stop this exact run",
+  };
 }
 
 /**
@@ -240,6 +378,10 @@ export function findStoppableRunRecord(
   const value = store.readVersionedJson<StandaloneRecordShape & BackgroundRecordShape>(
     present.file,
   ).value;
+  const lastRecovery =
+    present.kind === "standalone" && value.lastRecovery !== undefined
+      ? parseStandaloneOwnerRecovery(value.lastRecovery)
+      : undefined;
   return {
     kind: present.kind,
     path: present.file,
@@ -251,6 +393,7 @@ export function findStoppableRunRecord(
           ? undefined
           : (["role", value.role] as const)
         : (["--id", runId] as const),
+    ...(lastRecovery === undefined ? {} : { lastRecovery }),
   };
 }
 
@@ -259,11 +402,38 @@ interface StandaloneRecordShape {
   status?: string;
   role?: string;
   process?: RunProcessIdentity;
+  lastRecovery?: unknown;
 }
 
 interface BackgroundRecordShape {
   lifecycle?: string;
   process?: RunProcessIdentity;
+}
+
+function parseStandaloneOwnerRecovery(value: unknown): StandaloneOwnerRecovery | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const record = value as Record<string, unknown>;
+  const previous = record.previousProcess;
+  const previousPid =
+    typeof previous === "object" && previous !== null
+      ? (previous as { pid?: unknown }).pid
+      : undefined;
+  if (typeof record.detectedAt !== "number" || typeof previousPid !== "number") return undefined;
+  if (
+    record.code !== "owner_lost" ||
+    (record.reason !== "pid_not_alive" &&
+      record.reason !== "zombie" &&
+      record.reason !== "pid_reused") ||
+    !Number.isSafeInteger(record.detectedAt) ||
+    !Number.isSafeInteger(previousPid)
+  )
+    return undefined;
+  return {
+    code: "owner_lost",
+    reason: record.reason,
+    detectedAt: record.detectedAt,
+    previousPid,
+  };
 }
 
 /**
