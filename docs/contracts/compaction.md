@@ -11,10 +11,15 @@ context budget cannot hold the full branch.
   effort, price, context window, prompt, tool grant, budget, and cache policy.
   Its cache retention defaults to disabled. It is internal to compaction, not a
   substitute for the role whose dialogue is being compacted.
-- Automatic compaction begins at 70% of the active role's context window by
-  default. The retained dialogue tail and summary output cap are independently
-  configurable; the default summary cap is one third of that window. A result
-  above its cap fails that attempt rather than entering the next context.
+- Automatic compaction begins when the role budget's dialogue reaches
+  `maxTokens - reserveTokens`. The shipped default role budget is a 160,000
+  max-role-token ceiling with a 20,000-token reply reserve against the default
+  200,000-token role context window, so compaction starts at 140,000 tokens and
+  60,000 tokens remain as the harness reserve the budget never claims. The
+  retained dialogue tail and summary output cap are independently
+  configurable; the default summary cap is one third of the active role's
+  context window. A result above its cap fails that attempt rather than
+  entering the next context.
 - A summary receives only dialogue history, the prior summary, and the evicted
   set. It never receives or replaces a role prompt, tool schema, skills catalogue,
   routing configuration, or another static request-frame datum. Each normal turn

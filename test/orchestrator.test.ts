@@ -89,6 +89,7 @@ import {
   GenerationTruncatedError,
   ProviderLimitError,
   ProviderQuotaError,
+  ProviderUnavailableError,
 } from "../src/runner/errors";
 import type { Tool } from "../src/runner/tool";
 import { SessionLimitController, SessionLimitError } from "../src/session-limits";
@@ -403,6 +404,12 @@ test("run_role projects its thrown errors with reason kept and leak withheld", a
   });
   expect(await callTool(tool, { role: "auditor", task: "x" })).toBe(
     "error: empty_turn (the provider returned a failed empty turn; verify authentication and retry (provider code assistant_error); run run-abc)",
+  );
+  const unavailable = buildRunRoleTool(async () => {
+    throw new ProviderUnavailableError("run-abc");
+  });
+  expect(await callTool(unavailable, { role: "auditor", task: "x" })).toBe(
+    "error: provider_unavailable (the provider operation failed without a usable answer or HTTP status; retry the run, or select another configured model or provider; run run-abc)",
   );
   // Nothing uncontrolled in an unrecognised error -- message, stack -- may
   // reach the projection; the inert constructor name is the diagnosable part.

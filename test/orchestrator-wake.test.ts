@@ -7,6 +7,7 @@ import type { CredentialStore } from "@earendil-works/pi-ai";
 import {
   BackgroundRunError,
   BackgroundRunManager,
+  type PendingWake,
   WAKE_INITIATING_LIFECYCLES,
   type WakeEntry,
 } from "../src/orchestration/background-runs";
@@ -810,6 +811,44 @@ test("buildWakeTurnPrompt names safe fields and never raw prose", () => {
   expect(prompt).toContain("540000");
   expect(prompt).toContain("resume_pipeline");
   expect(prompt).not.toContain("increase or disable the duration stage limit" + "RAW");
+});
+
+test("a blocked startup scan settles without delivering, then drains on the next turn settle", async () => {
+  // Startup must not wait indefinitely for a foreground/recovery lane that it
+  // intentionally cannot enter. The durable wake stays unhandled until that
+  // lane settles and explicitly nudges the pump again.
+  let blocked = true;
+  const pending: PendingWake[] = [
+    {
+      runId: "wake-blocked-startup",
+      kind: "paused",
+      firstAt: 1,
+      lastAt: 1,
+      count: 1,
+      handled: false,
+    },
+  ];
+  let turns = 0;
+  const pump = new WakePump({
+    listPending: () => pending.filter((wake) => !wake.handled),
+    markHandled: () => {
+      pending[0]!.handled = true;
+    },
+    recoveryBlocked: () => blocked,
+    runTurn: async () => {
+      turns += 1;
+    },
+  });
+
+  await pump.startupScan();
+  expect(turns).toBe(0);
+  expect(pending[0]!.handled).toBe(false);
+
+  blocked = false;
+  pump.onTurnSettled();
+  await settle();
+  expect(turns).toBe(1);
+  expect(pending[0]!.handled).toBe(true);
 });
 
 test("(k) a failing listPending is contained by the drain: one bounded line, inFlight resets, idle resolves", async () => {

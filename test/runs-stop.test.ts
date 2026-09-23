@@ -2,7 +2,11 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { processIsAlive, readProcessStat } from "../src/orchestration/run-stop";
+import {
+  inspectStandaloneRun,
+  processIsAlive,
+  readProcessStat,
+} from "../src/orchestration/run-stop";
 import { ProjectStore } from "../src/project-store/project-store";
 
 /**
@@ -146,6 +150,15 @@ function runStop(args: string[]): { exitCode: number | null; stdout: string; std
   };
 }
 
+function runInspect(args: string[]): { exitCode: number | null; stdout: string; stderr: string } {
+  const result = Bun.spawnSync([process.execPath, "run", CLI, "runs", "inspect", ...args]);
+  return {
+    exitCode: result.exitCode,
+    stdout: result.stdout.toString(),
+    stderr: result.stderr.toString(),
+  };
+}
+
 function assertAlive(pid: number): void {
   const stat = readProcessStat(pid);
   // Not a zombie either: a reaped-but-unharvested process is gone as far as
@@ -205,6 +218,39 @@ test("a dead pid is already gone: exit 1, nothing signalled, no crash", async ()
   expect(result.exitCode).toBe(1);
   expect(result.stderr).toContain("already gone");
   expect(result.stderr).toContain("nothing was signalled");
+});
+
+test("runs inspect exposes a SIGKILLed standalone owner without claiming a provider failure", async () => {
+  const target = makeTarget("owner-lost-inspect");
+  const doomed = startDecoy(target);
+  await waitUntilUp(doomed);
+  const identity = identityOf(doomed.process.pid);
+  doomed.process.kill("SIGKILL");
+  await doomed.process.exited;
+  const runId = `owner-lost-${crypto.randomUUID()}`;
+  writeRunRecord(target, runId, {
+    schemaVersion: 2,
+    runId,
+    role: "coder",
+    status: "running",
+    process: identity,
+  });
+
+  expect(inspectStandaloneRun(target, runId)).toMatchObject({
+    status: "owner_lost",
+    pid: identity.pid,
+    reason: "pid_not_alive",
+  });
+  const result = runInspect([runId, "--target-dir", target, "--json"]);
+  expect(result.exitCode).toBe(0);
+  expect(JSON.parse(result.stdout)).toMatchObject({
+    status: "owner_lost",
+    runId,
+    pid: identity.pid,
+    reason: "pid_not_alive",
+  });
+  expect(result.stdout).not.toContain("provider");
+  expect(result.stderr).toBe("");
 });
 
 test("a record with no process identity is refused with exit 3", () => {

@@ -83,6 +83,7 @@ import type {
   SessionLimitSnapshot,
   SessionLimits,
   SpawnOverride,
+  StandaloneRunInspection,
   StepCost,
   StepResult,
   StepView,
@@ -133,6 +134,7 @@ import {
   DEFAULT_CONTEXT_WINDOW,
   DEFAULT_PROJECT_OPERATIONS_CONFIG,
   DEFAULT_REPOSITORY_PUBLISHING_CONFIG,
+  DEFAULT_RUN_STOP_KILL_AFTER_MS,
   DEFAULT_TOOL_ACTIVITY_CONFIG,
   DocumentationRouter,
   DriveError,
@@ -151,6 +153,7 @@ import {
   GitHubBacklogStore,
   importLdoArtifacts,
   inspectImportedLdoWork,
+  inspectStandaloneRun,
   isWorkflowModule,
   Ledger,
   LiveRetryCoordinator,
@@ -167,6 +170,7 @@ import {
   PromptError,
   ProviderAdmissionController,
   ProviderLimitError,
+  ProviderUnavailableError,
   parseProfile,
   parseRegistryConfig,
   preflightRepositoryPublishing,
@@ -200,9 +204,13 @@ import {
   SUBMIT_VERDICT_TOOL_NAME,
   SUMMARIZATION_PROMPT,
   silentNoopWarning,
+  stampBodyCheckErrors,
+  stampCheckErrors,
+  stampDeliveryText,
   startConversation,
   startOrchestrator,
   startRepositoryPublishing,
+  stopRun,
   suggestBacklogMigrationOnce,
   ToolActivityChannel,
   toolCallCounts,
@@ -243,6 +251,7 @@ test("the package is importable by its published name", () => {
   expect(typeof GateRunner).toBe("function");
   expect(typeof runRole).toBe("function");
   expect(typeof ProviderLimitError).toBe("function");
+  expect(typeof ProviderUnavailableError).toBe("function");
   expect(typeof ProviderAdmissionController).toBe("function");
   expect(typeof LiveRetryCoordinator).toBe("function");
   expect(typeof ProjectStore).toBe("function");
@@ -321,12 +330,19 @@ test("the package is importable by its published name", () => {
   expect(typeof CHOOSE_TRANSITION_TOOL_NAME).toBe("string");
   expect(typeof SHOW_COST_TOOL_NAME).toBe("string");
   expect(DEFAULT_CONTEXT_WINDOW).toBe(200_000);
-  expect(DEFAULT_CONTEXT_BUDGET_PERCENTS.maxTokensPercent).toBe(0.9);
+  expect(DEFAULT_CONTEXT_BUDGET_PERCENTS.maxTokensPercent).toBe(0.8);
   expect(typeof deriveContextBudget).toBe("function");
   expect(typeof assertSummarizerWindow).toBe("function");
+  expect(typeof stopRun).toBe("function");
+  expect(typeof inspectStandaloneRun).toBe("function");
+  expect(DEFAULT_RUN_STOP_KILL_AFTER_MS).toBe(2_000);
+  expect(typeof stampDeliveryText).toBe("function");
+  expect(typeof stampCheckErrors).toBe("function");
+  expect(typeof stampBodyCheckErrors).toBe("function");
   const _budgetPercents: BudgetPercents | undefined = undefined;
   const _contextBudgetPercents: ContextBudgetPercents | undefined = undefined;
   const _configurableRole: ConfigurableRole | undefined = undefined;
+  const _standaloneRunInspection: StandaloneRunInspection | undefined = undefined;
   const _resolvableProvider: ResolvableProvider | undefined = undefined;
   const _resolveConfigOpts: ResolvePipelineConfigOptions | undefined = undefined;
   const _storeConfig: ProjectStoreConfig | undefined = undefined;
@@ -515,6 +531,80 @@ test("the package is importable by its published name", () => {
   expect(_pipelineConfig).toBeUndefined();
   expect(_pipelineResult).toBeUndefined();
   expect(_orchCode).toBeUndefined();
+});
+
+test("the package-root exact-run stop is typed and does not invoke a CLI", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-stop-export-"));
+  try {
+    await expect(stopRun({ runId: "missing_run", targetDir: root })).resolves.toMatchObject({
+      status: "not_found",
+      runId: "missing_run",
+    });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a package consumer can stop its own recorded run through typed results", async () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-stop-consumer-")));
+  const runId = "consumer_stop";
+  const ready = path.join(root, "ready");
+  const stopped = path.join(root, "stopped");
+  const script = path.join(root, "run.ts");
+  fs.writeFileSync(
+    script,
+    `import * as fs from "node:fs";
+fs.writeFileSync(process.env.READY!, "ready");
+process.on("SIGTERM", () => { fs.writeFileSync(process.env.STOPPED!, "stopped"); process.exit(0); });
+await Bun.sleep(60_000);`,
+  );
+  const child = Bun.spawn(
+    [process.execPath, "run", script, "role", "coder", "--target-dir", root],
+    {
+      stdout: "ignore",
+      stderr: "ignore",
+      env: { ...process.env, READY: ready, STOPPED: stopped },
+    },
+  );
+  try {
+    const deadline = Date.now() + 5_000;
+    while (!fs.existsSync(ready)) {
+      if (Date.now() > deadline) throw new Error("consumer stop fixture did not become ready");
+      await Bun.sleep(20);
+    }
+    // This is the same durable record a role launcher creates. The consumer
+    // uses only package-root APIs; it neither invokes nor parses the CLI.
+    const store = new ProjectStore(root);
+    store.writeVersionedJson(path.join(store.layout.runs, `standalone-${runId}.json`), {
+      schemaVersion: 2,
+      runId,
+      role: "coder",
+      status: "running",
+      process: { pid: child.pid },
+    });
+
+    const outcome = await stopRun({ runId, targetDir: root });
+    expect(["signalled", "stopped"]).toContain(outcome.status);
+    if (outcome.status === "signalled" || outcome.status === "stopped") {
+      expect(outcome.result).toMatchObject({ runId, kind: "standalone", pid: child.pid });
+      expect(typeof outcome.result.escalated).toBe("boolean");
+    } else {
+      throw new Error(`unexpected typed stop outcome: ${outcome.status}`);
+    }
+    while (!fs.existsSync(stopped)) {
+      if (Date.now() > deadline) throw new Error("typed stop did not reach its recorded process");
+      await Bun.sleep(20);
+    }
+    expect(fs.readFileSync(stopped, "utf8")).toBe("stopped");
+    expect(fs.existsSync(path.join(store.layout.runs, `stop-${runId}.json`))).toBe(true);
+  } finally {
+    try {
+      child.kill("SIGKILL");
+    } catch {
+      // The typed stop already ended the fixture.
+    }
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("the published name resolves the same module as the relative path", async () => {

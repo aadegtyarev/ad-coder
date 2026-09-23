@@ -28,6 +28,10 @@ function processStartTime(pid: number): string {
   return field;
 }
 
+function processProcfsCtimeNs(pid: number): string {
+  return fs.statSync(`/proc/${pid}`, { bigint: true }).ctimeNs.toString();
+}
+
 async function childHoldingLock(): Promise<{
   process: ReturnType<typeof Bun.spawn>;
   startTime: string;
@@ -64,6 +68,7 @@ describe("ProjectStore", () => {
       store.layout.root,
       store.layout.sessions,
       store.layout.runs,
+      store.layout.waits,
       store.layout.scratch,
       store.layout.attachments,
       store.layout.downloads,
@@ -92,6 +97,34 @@ describe("ProjectStore", () => {
     await reopened.close(BACKGROUND_CONTEXT);
     await second.deleteSession("session_one");
     await expect(second.deleteSession("session_one")).rejects.toMatchObject({ code: "not_found" });
+  });
+
+  test("releases session coordination before cleaning up a failed open", async () => {
+    const store = new ProjectStore(target(), { lockRetry: { delaysMs: [1] } });
+    const session = await store.createSession("failed_open");
+    await session.close(BACKGROUND_CONTEXT);
+    const lease = path.join(store.layout.tmp, "session-failed_open.lease");
+    const coordination = path.join(store.layout.tmp, "session-coordination.lock");
+    const storeWithLeaseHook = store as unknown as {
+      acquireSessionLease(id: string): () => void;
+    };
+    const acquireLease = storeWithLeaseHook.acquireSessionLease.bind(store);
+    let cleanupCalled = false;
+    storeWithLeaseHook.acquireSessionLease = (id) => {
+      const release = acquireLease(id);
+      return () => {
+        cleanupCalled = true;
+        expect(fs.existsSync(coordination)).toBe(false);
+        release();
+      };
+    };
+
+    await expect(store.createSession("failed_open")).rejects.toMatchObject({
+      code: "already_exists",
+    });
+    expect(cleanupCalled).toBe(true);
+    expect(fs.existsSync(lease)).toBe(false);
+    expect(fs.existsSync(coordination)).toBe(false);
   });
 
   test("rejects final session symlinks and hard links before listing or resuming", async () => {
@@ -284,6 +317,28 @@ describe("ProjectStore", () => {
     expect(fs.existsSync(lock)).toBe(false);
   });
 
+  test("uses the procfs birth witness when a sandbox reuses a pid in the same tick", () => {
+    const root = target();
+    const store = new ProjectStore(root);
+    const file = path.join(store.layout.runs, "reused_pid_same_tick.json");
+    store.mutateVersionedJson(file, () => ({ ready: true }));
+    const lock = `${file}.lock`;
+    // External Codex execs can restart at PID 2 before the kernel's clock-tick
+    // start-time changes.  The PID and start time below deliberately match
+    // this live process; only the nanosecond procfs birth witness proves that
+    // the lock belongs to its predecessor.
+    fs.writeFileSync(
+      lock,
+      `${JSON.stringify({ pid: process.pid, startTime: processStartTime(process.pid), procfsCtimeNs: "0", token: crypto.randomUUID() })}\n`,
+      { mode: 0o600 },
+    );
+    expect(store.mutateVersionedJson(file, () => ({ recovered: true })).value).toEqual({
+      recovered: true,
+    });
+    expect(fs.existsSync(lock)).toBe(false);
+    expect(processProcfsCtimeNs(process.pid)).not.toBe("0");
+  });
+
   test("accepts an empty lock retry policy as the default policy", () => {
     expect(new ProjectStore(target(), { lockRetry: {} }).lockRetryDelaysMs).toEqual([
       10, 20, 40, 80,
@@ -329,6 +384,25 @@ describe("ProjectStore", () => {
     await reopened.close(BACKGROUND_CONTEXT);
     expect(fs.existsSync(lease)).toBe(false);
     expect(fs.existsSync(coordination)).toBe(false);
+  });
+
+  test("resume reclaims the empty legacy session lease left when its owner was killed", async () => {
+    const root = target();
+    const store = new ProjectStore(root, { lockRetry: { delaysMs: [1] } });
+    const session = await store.createSession("empty_lease_session");
+    await session.close(BACKGROUND_CONTEXT);
+    const lease = path.join(store.layout.tmp, "session-empty_lease_session.lease");
+    // Pre-0.181.16 created this O_EXCL pathname before it wrote the PID and
+    // token.  SIGKILL at that exact point left an empty lease which could not
+    // be recognised as either a live owner or a reclaimable dead owner.
+    fs.writeFileSync(lease, "", { mode: 0o600 });
+
+    const reopened = await new ProjectStore(root, { lockRetry: { delaysMs: [1] } }).resumeSession(
+      "empty_lease_session",
+    );
+    await reopened.close(BACKGROUND_CONTEXT);
+
+    expect(fs.existsSync(lease)).toBe(false);
   });
 
   test("recovers legacy pid-only session locks after a killed standalone role", async () => {

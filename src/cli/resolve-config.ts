@@ -87,7 +87,7 @@ export type ResolvableProvider = "deepseek" | "openrouter" | "openai-codex";
  * `maxTokensPercent` is the whole-turn ceiling; `reserveTokensPercent` is the
  * reply reserve; `keepRecentTokensPercent` is the recent tail the compactor
  * never evicts. `reserve + keepRecent` must stay below `maxTokens` (enforced by
- * `defineRole`), which the defaults satisfy (0.10 + 0.25 < 0.90).
+ * `defineRole`), which the defaults satisfy (0.10 + 0.25 < 0.80).
  */
 export type BudgetPercents = ContextBudgetPercents;
 export type ConfigurableRole =
@@ -176,11 +176,17 @@ export const DEFAULT_ROLE_STAGE_LIMITS: Readonly<Partial<Record<ProfileRole, Sta
     maxCostUsd: 2.4,
   },
   reviewer: {
-    maxDurationMs: 1_350_000,
-    maxModelTurns: 72,
-    maxToolTurns: 180,
-    maxInputTokens: 1_680_000,
-    maxCostUsd: 1.5,
+    // A review normally decides over a bounded diff.  Keep enough reserve to
+    // submit that decision, but do not let broad repository reconnaissance
+    // consume the same budget as an implementation stage.
+    maxDurationMs: 540_000,
+    maxModelTurns: 24,
+    maxToolTurns: 48,
+    maxInputTokens: 600_000,
+    maxCostUsd: 0.3,
+    finalResponseReserveModelTurns: 8,
+    finalResponseReserveToolTurns: 8,
+    finalResponseReserveInputTokens: 100_000,
   },
   auditor: {
     maxDurationMs: 1_350_000,
@@ -319,6 +325,12 @@ export interface ResolvePipelineConfigOptions {
   /** Optional role-specific overlays, resolved over global stageLimits. */
   roleStageLimits?: Partial<Record<ProfileRole, StageLimits>>;
   compactionMode?: CompactionMode;
+  /** Maximum durable summary output tokens; absent derives one third of each active window. */
+  compactionSummaryMaxTokens?: number;
+  /** Attempts on the configured summarizer route before its active-route fallback. */
+  compactionSummarizerRetryLimit?: number;
+  /** Retry exhausted summarization through the active role model. Defaults to true. */
+  compactionFallbackToRoleModel?: boolean;
   pipelineContextMode?: PipelineContextMode;
   /** Zero disables only the material-diff escalation trigger. */
   pipelineContextMaxDiffBytes?: number;
@@ -836,6 +848,14 @@ function resolveConfig(
   }
   if (compactionMode !== "auto" && compactionMode !== "disabled-then-halt") {
     throw new Error(`unknown context compaction mode "${String(compactionMode)}"`);
+  }
+  for (const [name, value] of [
+    ["compactionSummaryMaxTokens", options.compactionSummaryMaxTokens],
+    ["compactionSummarizerRetryLimit", options.compactionSummarizerRetryLimit],
+  ] as const) {
+    if (value !== undefined && (!Number.isSafeInteger(value) || value <= 0)) {
+      throw new Error(`${name} must be a positive safe integer`);
+    }
   }
 
   // PREFLIGHT SCOPE (issue #414). On the models.yaml route the credential
@@ -1423,6 +1443,20 @@ function resolveConfig(
           `contextBudgetMaxTokens.${name}`,
           { value: spec.role.contextBudget.maxTokens, source: "derived" },
         ],
+        [
+          `compactionThresholdTokens.${name}`,
+          {
+            value: spec.role.contextBudget.maxTokens - spec.role.contextBudget.reserveTokens,
+            source: "derived",
+          },
+        ],
+        [
+          `compactionSummaryMaxTokens.${name}`,
+          {
+            value: options.compactionSummaryMaxTokens ?? Math.floor(spec.model.contextWindow / 3),
+            source: options.compactionSummaryMaxTokens !== undefined ? "cli" : "derived-default",
+          },
+        ],
       ];
     }),
   );
@@ -1467,6 +1501,15 @@ function resolveConfig(
         : {
             mode: compactionMode,
             summarizerModel,
+            ...(options.compactionSummaryMaxTokens !== undefined && {
+              summaryMaxTokens: options.compactionSummaryMaxTokens,
+            }),
+            ...(options.compactionSummarizerRetryLimit !== undefined && {
+              summarizerRetryLimit: options.compactionSummarizerRetryLimit,
+            }),
+            ...(options.compactionFallbackToRoleModel !== undefined && {
+              fallbackToRoleModel: options.compactionFallbackToRoleModel,
+            }),
             ...(options.allowCrossProviderSummarization === true && {
               allowCrossProviderSummarization: true,
             }),
@@ -1587,6 +1630,14 @@ function resolveConfig(
       compactionMode: {
         value: compactionMode,
         source: options.compactionMode !== undefined ? "cli" : "built-in-default",
+      },
+      compactionSummarizerRetryLimit: {
+        value: options.compactionSummarizerRetryLimit ?? 3,
+        source: options.compactionSummarizerRetryLimit !== undefined ? "cli" : "built-in-default",
+      },
+      compactionFallbackToRoleModel: {
+        value: options.compactionFallbackToRoleModel ?? true,
+        source: options.compactionFallbackToRoleModel !== undefined ? "cli" : "built-in-default",
       },
       // Compaction rewrites the whole history, so which model does it is a
       // routing decision an operator should be able to check without starting a

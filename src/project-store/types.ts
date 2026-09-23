@@ -3,6 +3,7 @@ import type { JsonlSessionMetadata } from "@earendil-works/pi-agent-core";
 export type ProjectStoreArea =
   | "sessions"
   | "runs"
+  | "waits"
   | "scratch"
   | "attachments"
   | "downloads"

@@ -12,6 +12,9 @@ advice for failed model generation.
 - Invalid credentials, expired login requiring reauthentication, insufficient
   model permission, unavailable model/provider, transport failure, malformed
   provider response, and provider rejection remain distinct typed outcomes.
+  A generation that returns neither answer text nor tool call and no
+  authenticated provider status is its own retryable typed outcome,
+  `provider_unavailable`, not a credential or transport classification.
 - A failure retains bounded HTTP status, provider-code token, retry/reset hint,
   capacity hint, and a bounded sanitized provider message. It never exposes
   credentials, account identity, provider payloads, prompts, tool arguments, or

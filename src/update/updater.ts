@@ -410,7 +410,7 @@ async function updateRegistryInstall(
     return {
       mode: "global-registry",
       checkoutDir: packageDir,
-      branch: "latest",
+      branch: "registry latest",
       upstream: REGISTRY_UPSTREAM,
       previousRevision: previousVersion,
       revision: latest,
@@ -452,7 +452,7 @@ async function updateRegistryInstall(
   return {
     mode: "global-registry",
     checkoutDir: packageDir,
-    branch: "latest",
+    branch: "registry latest",
     upstream: REGISTRY_UPSTREAM,
     previousRevision: previousVersion,
     revision: installedVersion,

@@ -2,6 +2,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import {
   createModels,
@@ -11,6 +12,7 @@ import {
 } from "@earendil-works/pi-ai";
 import {
   formatStageCloseoutNotice,
+  formatStandaloneResumeInstruction,
   runReviewWithSubmissionRetry,
   runRoleStandalone,
   standaloneSystemPrompt,
@@ -18,12 +20,16 @@ import {
 import { MemoryLedgerSink } from "../src/ledger/ledger";
 import { PLANNER_SUBMISSION_RESTART, plannerRetryTask } from "../src/orchestration/plan";
 import {
+  inspectStandaloneRun,
+  processIsAlive,
   type RunProcessIdentity,
   stopRequestPath,
+  verifyStopTarget,
   writeRunStopRequest,
 } from "../src/orchestration/run-stop";
 import { StageLimitError } from "../src/orchestration/stage-limits";
 import {
+  buildSubmitVerdictTool,
   REVIEW_SUBMISSION_RESTART,
   REVIEW_SUBMISSION_RETRY,
   reviewRetryTask,
@@ -32,7 +38,7 @@ import { ProjectStore } from "../src/project-store/project-store";
 import { ProjectStoreError } from "../src/project-store/types";
 import type { Role } from "../src/role";
 import { defineRole } from "../src/role";
-import { EmptyTurnError, RunInterruptedError } from "../src/runner/errors";
+import { ProviderUnavailableError, RunInterruptedError } from "../src/runner/errors";
 
 const CONTEXT_WINDOW = 200_000;
 const BUDGET = { maxTokens: 100_000, reserveTokens: 10_000, keepRecentTokens: 20_000 } as const;
@@ -81,6 +87,10 @@ function processStartTime(pid: number): string {
   return startTime;
 }
 
+function processProcfsCtimeNs(pid: number): string {
+  return fs.statSync(`/proc/${pid}`, { bigint: true }).ctimeNs.toString();
+}
+
 test("runRoleStandalone drives one faux turn and returns the assistant text plus a numeric cost", async () => {
   const { faux, models, model, role } = fixture();
   faux.setResponses([fauxAssistantMessage("looks good to me")]);
@@ -107,6 +117,13 @@ test("runRoleStandalone drives one faux turn and returns the assistant text plus
     status: "complete",
     result: { text: expect.stringContaining("looks good to me"), cost },
   });
+  // The standalone owner supplied the session to `runRole`, so it also must
+  // release that facade before it reopens the session to extract the result.
+  // A retained lease made a completed live role fail its own result-read and
+  // stranded the next `--resume-run` behind "managed state is locked".
+  expect(fs.existsSync(path.join(targetDir, ".ad-coder", "tmp", `session-${runId}.lease`))).toBe(
+    false,
+  );
   // The ledger recorded the turn, and the cost is summed from it.
   expect(ledgerSink.records().length).toBeGreaterThan(0);
 });
@@ -262,6 +279,164 @@ test("a supplied standalone resume task remains an exact digest assertion", asyn
   ).rejects.toMatchObject({ message: "standalone checkpoint task does not match" });
 });
 
+test("a fresh process killed between standalone start intent and session creation resumes once", async () => {
+  const { faux, models, model, role } = fixture();
+  const runId = `start-intent-${crypto.randomUUID()}`;
+  const task = "recover a role stopped before its session exists";
+  const ready = path.join(targetDir, `${runId}.ready`);
+  // The child records the durable start intent, then stops at the exact
+  // checkpoint-to-session boundary. Its argv deliberately carries the same
+  // role/target witnesses the strict #615 owner check requires.
+  const child = Bun.spawn(
+    [
+      process.execPath,
+      "--eval",
+      `import * as fs from "node:fs";
+import { createModels, fauxProvider } from "@earendil-works/pi-ai";
+import { defineRole } from ${JSON.stringify(path.join(import.meta.dir, "..", "src", "role.ts"))};
+import { runRoleStandalone } from ${JSON.stringify(path.join(import.meta.dir, "..", "src", "cli.ts"))};
+const faux = fauxProvider({ provider: "faux", models: [{ id: "faux-1", contextWindow: 200000 }] });
+const models = createModels();
+models.setProvider(faux.provider);
+const model = faux.getModel();
+const role = defineRole({ name: "reviewer", provider: "faux", modelId: model.id, systemPrompt: "You review.", activeToolNames: ["read", "bash"], cacheRetention: "none", contextBudget: { maxTokens: 100000, reserveTokens: 10000, keepRecentTokens: 20000 } }, model);
+await runRoleStandalone({ role, model, models, targetDir: process.env.START_INTENT_TARGET, processTargetDir: process.env.START_INTENT_TARGET, task: process.env.START_INTENT_TASK, runId: process.env.START_INTENT_RUN, beforeSessionCreate: async () => { fs.writeFileSync(process.env.START_INTENT_READY, "ready"); await new Promise(() => {}); } });`,
+      "role",
+      "reviewer",
+      "--target-dir",
+      targetDir,
+    ],
+    {
+      stdout: "ignore",
+      stderr: "ignore",
+      env: {
+        ...process.env,
+        START_INTENT_TARGET: targetDir,
+        START_INTENT_TASK: task,
+        START_INTENT_RUN: runId,
+        START_INTENT_READY: ready,
+      },
+    },
+  );
+  try {
+    const deadline = Date.now() + 10_000;
+    while (!fs.existsSync(ready)) {
+      if (Date.now() > deadline) throw new Error("timed out waiting for durable start intent");
+      await Bun.sleep(25);
+    }
+    const store = new ProjectStore(targetDir);
+    const checkpointPath = path.join(store.layout.runs, `standalone-${runId}.json`);
+    expect(store.readVersionedJson<{ status: string }>(checkpointPath).value.status).toBe(
+      "starting",
+    );
+    expect(inspectStandaloneRun(targetDir, runId)).toMatchObject({
+      status: "recorded",
+      recordedStatus: "starting",
+    });
+    expect((await store.listSessions()).some((session) => session.id === runId)).toBe(false);
+    child.kill("SIGKILL");
+    await child.exited;
+
+    faux.setResponses([fauxAssistantMessage("started exactly once after recovery")]);
+    const recovered = await runRoleStandalone({
+      role,
+      model,
+      models,
+      targetDir,
+      task,
+      runId,
+      resumeExisting: true,
+    });
+    expect(recovered.text).toContain("started exactly once after recovery");
+    expect(store.readVersionedJson<{ status: string }>(checkpointPath).value.status).toBe(
+      "complete",
+    );
+  } finally {
+    try {
+      child.kill("SIGKILL");
+    } catch {
+      // The expected path already reaped it.
+    }
+  }
+});
+
+test("#617: SIGKILL after a settled operation finalizes it without replaying its prompt", async () => {
+  const { models, model, role } = fixture();
+  const runId = `settling-${crypto.randomUUID()}`;
+  const task = "the original task must be dispatched exactly once";
+  const ready = path.join(targetDir, `${runId}.settled`);
+  const child = Bun.spawn(
+    [
+      process.execPath,
+      "--eval",
+      `import * as fs from "node:fs";
+import { createModels, fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
+import { defineRole } from ${JSON.stringify(path.join(import.meta.dir, "..", "src", "role.ts"))};
+import { runRoleStandalone } from ${JSON.stringify(path.join(import.meta.dir, "..", "src", "cli.ts"))};
+const faux = fauxProvider({ provider: "faux", models: [{ id: "faux-1", contextWindow: 200000 }] });
+const models = createModels(); models.setProvider(faux.provider);
+const model = faux.getModel();
+const role = defineRole({ name: "reviewer", provider: "faux", modelId: model.id, systemPrompt: "You review.", activeToolNames: ["read", "bash"], cacheRetention: "none", contextBudget: { maxTokens: 100000, reserveTokens: 10000, keepRecentTokens: 20000 } }, model);
+faux.setResponses([fauxAssistantMessage("the one settled answer")]);
+await runRoleStandalone({ role, model, models, targetDir: process.env.SETTLING_TARGET, task: process.env.SETTLING_TASK, runId: process.env.SETTLING_RUN, afterOperationSettled: async () => { fs.writeFileSync(process.env.SETTLING_READY, "ready"); await new Promise(() => {}); } });`,
+      "role",
+      "reviewer",
+      "--target-dir",
+      targetDir,
+    ],
+    {
+      stdout: "ignore",
+      stderr: "ignore",
+      env: {
+        ...process.env,
+        SETTLING_TARGET: targetDir,
+        SETTLING_TASK: task,
+        SETTLING_RUN: runId,
+        SETTLING_READY: ready,
+      },
+    },
+  );
+  try {
+    const deadline = Date.now() + 10_000;
+    while (!fs.existsSync(ready)) {
+      if (Date.now() > deadline) throw new Error("timed out waiting for settled-operation marker");
+      await Bun.sleep(25);
+    }
+    const store = new ProjectStore(targetDir);
+    const checkpointPath = path.join(store.layout.runs, `standalone-${runId}.json`);
+    expect(
+      store.readVersionedJson<{ status: string; settledOperation?: unknown }>(checkpointPath).value,
+    ).toMatchObject({
+      status: "settling",
+      settledOperation: { cost: expect.any(Number) },
+    });
+    child.kill("SIGKILL");
+    await child.exited;
+
+    // No faux response is queued in this process. If recovery sends `task`
+    // again it fails; a successful result therefore proves zero replayed
+    // provider dispatches across the exact post-settlement crash boundary.
+    await expect(
+      runRoleStandalone({ role, model, models, targetDir, task, runId, resumeExisting: true }),
+    ).resolves.toMatchObject({ text: expect.stringContaining("the one settled answer") });
+    expect(
+      store.readVersionedJson<{ status: string; settledOperation?: unknown }>(checkpointPath).value,
+    ).toMatchObject({
+      status: "complete",
+    });
+    expect(
+      store.readVersionedJson<{ settledOperation?: unknown }>(checkpointPath).value
+        .settledOperation,
+    ).toBeUndefined();
+  } finally {
+    try {
+      child.kill("SIGKILL");
+    } catch {
+      // The expected path already reaped it.
+    }
+  }
+});
+
 test("resume reclaims a new-format session lease left by a dead standalone worker", async () => {
   const { faux, models, model, role } = fixture();
   const runId = `dead-worker-${crypto.randomUUID()}`;
@@ -311,6 +486,163 @@ test("resume reclaims a new-format session lease left by a dead standalone worke
       path.join(store.layout.runs, `standalone-${runId}.json`),
     ).value.status,
   ).toBe("complete");
+});
+
+test("SIGKILLed standalone owner is diagnosed and leaves a recovery witness before resume", async () => {
+  const { faux, models, model, role } = fixture();
+  const runId = `sigkill-owner-${crypto.randomUUID()}`;
+  const task = "resume after a host killed the worker";
+  const aborted = new AbortController();
+  aborted.abort();
+  await expect(
+    runRoleStandalone({ role, model, models, targetDir, task, runId, abortSignal: aborted.signal }),
+  ).rejects.toBeInstanceOf(RunInterruptedError);
+
+  const ready = path.join(targetDir, `${runId}.ready`);
+  // This is deliberately a complete standalone role, not merely a process
+  // that happens to hold its session lease.  The child resumes the durable
+  // checkpoint, records *its own* identity, then blocks in the provider
+  // turn.  Killing it therefore leaves the same running checkpoint and argv
+  // (`role reviewer --target-dir ...`) as the external-CWD self-test that
+  // exposed #615.
+  const child = Bun.spawn(
+    [
+      process.execPath,
+      "--eval",
+      `import * as fs from "node:fs";
+import { createModels, fauxProvider } from "@earendil-works/pi-ai";
+import { defineRole } from ${JSON.stringify(path.join(import.meta.dir, "..", "src", "role.ts"))};
+import { runRoleStandalone } from ${JSON.stringify(path.join(import.meta.dir, "..", "src", "cli.ts"))};
+const faux = fauxProvider({ provider: "faux", models: [{ id: "faux-1", contextWindow: 200000 }] });
+const models = createModels();
+models.setProvider(faux.provider);
+const model = faux.getModel();
+const role = defineRole({ name: "reviewer", provider: "faux", modelId: model.id, systemPrompt: "You review.", activeToolNames: ["read", "bash"], cacheRetention: "none", contextBudget: { maxTokens: 100000, reserveTokens: 10000, keepRecentTokens: 20000 } }, model);
+faux.setResponses([() => new Promise(() => {})]);
+const started = runRoleStandalone({ role, model, models, targetDir: process.env.OWNER_LOST_TARGET, task: process.env.OWNER_LOST_TASK, runId: process.env.OWNER_LOST_RUN, resumeExisting: true });
+fs.writeFileSync(process.env.OWNER_LOST_READY, "ready");
+await started;`,
+      "role",
+      "reviewer",
+      "--target-dir",
+      targetDir,
+    ],
+    {
+      stdout: "ignore",
+      stderr: "ignore",
+      env: {
+        ...process.env,
+        OWNER_LOST_TARGET: targetDir,
+        OWNER_LOST_RUN: runId,
+        OWNER_LOST_TASK: task,
+        OWNER_LOST_READY: ready,
+      },
+    },
+  );
+  try {
+    const deadline = Date.now() + 10_000;
+    while (!fs.existsSync(ready)) {
+      if (Date.now() > deadline)
+        throw new Error("timed out waiting for child to hold the session lease");
+      await Bun.sleep(25);
+    }
+    const store = new ProjectStore(targetDir);
+    const checkpointPath = path.join(store.layout.runs, `standalone-${runId}.json`);
+    const claimDeadline = Date.now() + 10_000;
+    let identity: RunProcessIdentity | undefined;
+    while (identity?.pid !== child.pid) {
+      if (Date.now() > claimDeadline)
+        throw new Error("timed out waiting for child role to claim the checkpoint");
+      const checkpoint = store.readVersionedJson<{ process?: RunProcessIdentity }>(checkpointPath);
+      identity = checkpoint.value.process;
+      await Bun.sleep(25);
+    }
+    expect(identity).toEqual({
+      pid: child.pid,
+      startTime: processStartTime(child.pid),
+      procfsCtimeNs: expect.any(String),
+      groupId: expect.any(Number),
+    });
+    child.kill("SIGKILL");
+    await child.exited;
+
+    expect(inspectStandaloneRun(targetDir, runId)).toMatchObject({
+      status: "owner_lost",
+      reason: "pid_not_alive",
+      pid: child.pid,
+    });
+    faux.setResponses([fauxAssistantMessage("recovered after SIGKILL")]);
+    await expect(
+      runRoleStandalone({ role, model, models, targetDir, task, runId, resumeExisting: true }),
+    ).resolves.toMatchObject({ text: expect.stringContaining("recovered after SIGKILL") });
+    expect(
+      store.readVersionedJson<{ lastRecovery?: Record<string, unknown> }>(checkpointPath).value,
+    ).toMatchObject({
+      lastRecovery: {
+        code: "owner_lost",
+        reason: "pid_not_alive",
+        previousProcess: identity!,
+      },
+    });
+    expect(inspectStandaloneRun(targetDir, runId)).toMatchObject({
+      status: "recorded",
+      lastRecovery: { code: "owner_lost", previousPid: child.pid },
+    });
+  } finally {
+    try {
+      child.kill("SIGKILL");
+    } catch {
+      // The expected path already reaped it.
+    }
+  }
+});
+
+test("a competing resume leaves the paused checkpoint owned by the original run", async () => {
+  const { models, model, role } = fixture();
+  const runId = `live-owner-${crypto.randomUUID()}`;
+  const task = "review after a competing resume";
+  const abortController = new AbortController();
+  abortController.abort();
+
+  await expect(
+    runRoleStandalone({
+      role,
+      model,
+      models,
+      targetDir,
+      task,
+      runId,
+      abortSignal: abortController.signal,
+    }),
+  ).rejects.toBeInstanceOf(RunInterruptedError);
+  const store = new ProjectStore(targetDir);
+  const checkpointPath = path.join(store.layout.runs, `standalone-${runId}.json`);
+  // Model the first launcher still draining after its external stop.  The
+  // second CLI invocation must not claim its checkpoint merely because it was
+  // asked to resume; the managed session lease is the ownership boundary.
+  const original = await store.resumeSession(runId);
+  try {
+    await expect(
+      runRoleStandalone({
+        role,
+        model,
+        models,
+        targetDir,
+        task,
+        runId,
+        resumeExisting: true,
+      }),
+    ).rejects.toMatchObject({ code: "version_conflict" });
+  } finally {
+    await original.close(BACKGROUND_CONTEXT);
+  }
+
+  // The settled-session fix records the refused open on the checkpoint before
+  // rejecting, so the paused checkpoint gains the failure detail and keeps its
+  // pre-conflict pause evidence.
+  expect(
+    store.readVersionedJson<{ status: string; failure: { code: string } }>(checkpointPath).value,
+  ).toMatchObject({ status: "failed", failure: { code: "version_conflict" } });
 });
 
 test("an ambiguous durable session pauses a standalone run for manual recovery", async () => {
@@ -375,13 +707,13 @@ test("an ambiguous durable session pauses a standalone run for manual recovery",
   });
 });
 
-test("a failed empty provider turn settles its standalone run with safe recovery evidence", async () => {
+test("a statusless provider failure settles its standalone run with safe recovery evidence", async () => {
   const { faux, models, model, role } = fixture();
   const runId = `empty-turn-${crypto.randomUUID()}`;
   // This is the real failure shape from a provider adapter: the thrown source
-  // becomes a settled `assistant_error`, which `runRole` types as
-  // EmptyTurnError.  The standalone owner must close its durable record before
-  // it lets that error cross the CLI boundary.
+  // becomes a settled `assistant_error` with no provider status or code. The
+  // standalone owner must close its durable record before it lets that error
+  // cross the CLI boundary.
   faux.setResponses([
     () => {
       throw new Error("provider failed without a response");
@@ -397,7 +729,7 @@ test("a failed empty provider turn settles its standalone run with safe recovery
       task: "review the change",
       runId,
     }),
-  ).rejects.toBeInstanceOf(EmptyTurnError);
+  ).rejects.toBeInstanceOf(ProviderUnavailableError);
 
   const store = new ProjectStore(targetDir);
   const checkpointPath = path.join(store.layout.runs, `standalone-${runId}.json`);
@@ -409,8 +741,8 @@ test("a failed empty provider turn settles its standalone run with safe recovery
   ).toMatchObject({
     status: "failed",
     failure: {
-      code: "empty_turn",
-      message: expect.stringContaining("failed empty turn"),
+      code: "provider_unavailable",
+      message: expect.stringContaining("without a usable answer or HTTP status"),
     },
   });
 });
@@ -483,6 +815,147 @@ test("resuming a standalone run re-records the identity of the process that resu
   expect(
     store.readVersionedJson<{ process?: RunProcessIdentity }>(checkpointPath).value.process?.pid,
   ).toBe(process.pid);
+});
+
+test("resume recovers running standalone checkpoints whose owner is absent, dead, or mismatched", async () => {
+  const cases: Array<[string, RunProcessIdentity | undefined]> = [
+    ["absent", undefined],
+    ["dead", { pid: 999_999_999, startTime: "1", groupId: 999_999_999 }],
+    // A reused pid is not this run. The start-time witness makes that a
+    // positive mismatch rather than a risky guess based on pid alone.
+    ["mismatched", { pid: process.pid, startTime: "0", groupId: process.pid }],
+    // Even an otherwise current process is not this role unless its argv
+    // carries the exact target and `role <name>` witness pair.
+    ["argv", { pid: process.pid, startTime: processStartTime(process.pid), groupId: process.pid }],
+  ];
+  for (const [kind, processIdentity] of cases) {
+    const { faux, models, model, role } = fixture();
+    const runId = `orphaned-running-${kind}-${crypto.randomUUID()}`;
+    const task = "recover the orphaned role";
+    const aborted = new AbortController();
+    aborted.abort();
+    await expect(
+      runRoleStandalone({
+        role,
+        model,
+        models,
+        targetDir,
+        task,
+        runId,
+        abortSignal: aborted.signal,
+      }),
+    ).rejects.toBeInstanceOf(RunInterruptedError);
+
+    const store = new ProjectStore(targetDir);
+    const checkpointPath = path.join(store.layout.runs, `standalone-${runId}.json`);
+    const stale = store.readVersionedJson<Record<string, unknown>>(checkpointPath);
+    const { pause: _pause, process: _process, ...running } = stale.value;
+    store.writeVersionedJson(
+      checkpointPath,
+      {
+        ...running,
+        status: "running",
+        ...(processIdentity === undefined ? {} : { process: processIdentity }),
+      },
+      stale.version,
+    );
+
+    faux.setResponses([fauxAssistantMessage(`recovered ${kind}`)]);
+    await expect(
+      runRoleStandalone({ role, model, models, targetDir, task, runId, resumeExisting: true }),
+    ).resolves.toMatchObject({ text: expect.stringContaining(`recovered ${kind}`) });
+    expect(store.readVersionedJson<{ status: string }>(checkpointPath).value.status).toBe(
+      "complete",
+    );
+  }
+});
+
+test("resume reclaims a same-tick PID reused by an argv-identical external launcher", async () => {
+  const { faux, models, model, role } = fixture();
+  const runId = `same-tick-reuse-${crypto.randomUUID()}`;
+  const task = "recover after external launcher exit";
+  const aborted = new AbortController();
+  aborted.abort();
+  await expect(
+    runRoleStandalone({ role, model, models, targetDir, task, runId, abortSignal: aborted.signal }),
+  ).rejects.toBeInstanceOf(RunInterruptedError);
+
+  // This child has exactly the command-line witnesses the resume verifier
+  // requires.  Its PID and tick-granular start time are deliberately stored
+  // too, so pre-fix code sees a live owner and refuses takeover.  Only the
+  // nanosecond procfs birth witness proves it is a different process; the
+  // child must remain alive throughout the successful recovery.
+  const child = Bun.spawn(
+    [
+      process.execPath,
+      "--eval",
+      "await Bun.sleep(60000)",
+      "role",
+      "reviewer",
+      "--target-dir",
+      targetDir,
+    ],
+    { stdout: "ignore", stderr: "ignore" },
+  );
+  try {
+    const store = new ProjectStore(targetDir);
+    const checkpointPath = path.join(store.layout.runs, `standalone-${runId}.json`);
+    const stale = store.readVersionedJson<Record<string, unknown>>(checkpointPath);
+    const { pause: _pause, process: _process, ...running } = stale.value;
+    const reusedIdentity: RunProcessIdentity = {
+      pid: child.pid,
+      startTime: processStartTime(child.pid),
+      // An old external runner had a different `/proc/<pid>` inode even if
+      // PID 2 and its clock-tick start time were immediately reused.
+      procfsCtimeNs: "0",
+      groupId: child.pid,
+    };
+    expect(processProcfsCtimeNs(child.pid)).not.toBe(reusedIdentity.procfsCtimeNs);
+    // Controlled mutation proof: with the new reader but without the new
+    // comparison witness, every historical ownership check succeeds.  This
+    // pins the regression to the birth witness rather than an accidental argv
+    // mismatch in the test runner.
+    const withoutBirthWitness = { ...reusedIdentity };
+    delete withoutBirthWitness.procfsCtimeNs;
+    const historicalChecks = verifyStopTarget({
+      identity: withoutBirthWitness,
+      stopperTargetDir: targetDir,
+      cmdlineWitness: ["role", "reviewer"],
+    });
+    expect(historicalChecks).toMatchObject({
+      ok: true,
+      live: {
+        pid: child.pid,
+        argv: expect.arrayContaining(["role", "reviewer", "--target-dir", targetDir]),
+      },
+    });
+    const fixedChecks = verifyStopTarget({
+      identity: reusedIdentity,
+      stopperTargetDir: targetDir,
+      cmdlineWitness: ["role", "reviewer"],
+    });
+    expect(fixedChecks).toMatchObject({
+      ok: false,
+      checked: {
+        startTimeMatches: true,
+        procfsCtimeMatches: false,
+      },
+    });
+    store.writeVersionedJson(
+      checkpointPath,
+      { ...running, status: "running", process: reusedIdentity },
+      stale.version,
+    );
+
+    faux.setResponses([fauxAssistantMessage("recovered from same-tick reuse")]);
+    await expect(
+      runRoleStandalone({ role, model, models, targetDir, task, runId, resumeExisting: true }),
+    ).resolves.toMatchObject({ text: expect.stringContaining("recovered from same-tick reuse") });
+    expect(processIsAlive(child.pid)).toBe(true);
+  } finally {
+    child.kill("SIGKILL");
+    await child.exited;
+  }
 });
 
 test("an external stop's pause names the signal and the stop request, and consumes the witness", async () => {
@@ -1109,6 +1582,65 @@ test("a standalone run that settles inside the closeout reserve relays the fact"
   expect(store_read(targetDir, runId).status).toBe("complete");
 });
 
+test("a submitted standalone verdict survives a post-submit limit and a fresh-process resume", async () => {
+  const { faux, models, model, role } = fixture();
+  const reviewerRole = defineRole(
+    { ...role, activeToolNames: [...(role.activeToolNames ?? []), "submit_verdict"] },
+    model,
+  );
+  const runId = `durable-verdict-${crypto.randomUUID()}`;
+  const task = "review the durable verdict";
+  const firstCapture = {};
+  // The first tool accepts the verdict, then the following tool in the same
+  // response reaches the hard stage limit.  This deterministically puts the
+  // submission before a failed closeout without depending on a provider race.
+  faux.setResponses([
+    fauxAssistantMessage([
+      fauxToolCall("submit_verdict", {
+        status: "approved",
+        issues: [],
+        summary: "checked",
+      }),
+      fauxToolCall("read", { path: "not-reached.txt" }),
+    ]),
+  ]);
+  const first = await runRoleStandalone({
+    role: reviewerRole,
+    model,
+    models,
+    targetDir,
+    task,
+    runId,
+    verdictCapture: firstCapture,
+    tools: [buildSubmitVerdictTool(firstCapture, runId)],
+    stageLimits: { maxToolTurns: 1 },
+  });
+  expect(firstCapture).toMatchObject({ verdict: { status: "approved", summary: "checked" } });
+  const checkpointPath = path.join(targetDir, ".ad-coder", "runs", `standalone-${runId}.json`);
+  expect(JSON.parse(fs.readFileSync(checkpointPath, "utf8")).value).toMatchObject({
+    status: "complete",
+    verdict: { status: "approved", summary: "checked" },
+  });
+
+  // A new capture represents a new CLI process.  It has no queued faux
+  // response: resume must hydrate the durable verdict and settle it without a
+  // second provider request or submit_verdict call.
+  const resumedCapture = {};
+  const resumed = await runRoleStandalone({
+    role: reviewerRole,
+    model,
+    models,
+    targetDir,
+    task,
+    runId,
+    resumeExisting: true,
+    verdictCapture: resumedCapture,
+    tools: [buildSubmitVerdictTool(resumedCapture, runId)],
+  });
+  expect(resumedCapture).toMatchObject({ verdict: { status: "approved", summary: "checked" } });
+  expect(resumed.cost).toBe(first.cost);
+});
+
 test("a normal standalone run carries no stageCloseout", async () => {
   const { faux, models, model, role } = fixture();
   faux.setResponses([fauxAssistantMessage("clean pass")]);
@@ -1122,6 +1654,55 @@ test("a normal standalone run carries no stageCloseout", async () => {
     ledgerSink: new MemoryLedgerSink(),
   });
   expect(result.stageCloseout).toBeUndefined();
+});
+
+test("a bounded standalone reviewer pauses for closeout, then resumes without replaying it", async () => {
+  const { faux, models, model, role } = fixture();
+  const runId = `reviewer-closeout-${crypto.randomUUID()}`;
+  const task = "review the bounded diff";
+  // The first turn explores. The second enters the model-turn reserve and
+  // receives a tool-free closeout request rather than another exploration turn.
+  faux.setResponses([
+    fauxAssistantMessage(fauxToolCall("read", { path: "changed.ts" })),
+    fauxAssistantMessage("partial review; closeout requested"),
+  ]);
+  const first = await runRoleStandalone({
+    role,
+    model,
+    models,
+    targetDir,
+    task,
+    runId,
+    stageLimits: { maxModelTurns: 3, finalResponseReserveModelTurns: 2 },
+  });
+  expect(first.stageCloseout).toMatchObject({ code: "stage_closeout", reason: "model_turns" });
+  expect(store_read(targetDir, runId)).toMatchObject({
+    status: "paused",
+    pause: { code: "stage_closeout", reason: "model_turns" },
+  });
+
+  faux.setResponses([fauxAssistantMessage("completed after bounded closeout")]);
+  const resumed = await runRoleStandalone({
+    role,
+    model,
+    models,
+    targetDir,
+    task,
+    runId,
+    resumeExisting: true,
+    stageLimits: { maxModelTurns: 6, finalResponseReserveModelTurns: 2 },
+  });
+  expect(resumed.text).toContain("completed after bounded closeout");
+  expect(store_read(targetDir, runId).status).toBe("complete");
+});
+
+test("interrupted standalone resume advice does not demand adjusted limits", () => {
+  expect(
+    formatStandaloneResumeInstruction({ role: "reviewer", runId: "run-1", adjustLimits: false }),
+  ).toBe("ad-coder: resume with role reviewer --resume-run run-1\n");
+  expect(
+    formatStandaloneResumeInstruction({ role: "reviewer", runId: "run-1", adjustLimits: true }),
+  ).toContain("and adjusted limits");
 });
 
 test("the stderr closeout notice names the reason and the detail (issue #327)", () => {

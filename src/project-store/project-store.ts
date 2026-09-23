@@ -19,9 +19,19 @@ import type {
 } from "./types";
 import { ProjectStoreError } from "./types";
 
+/**
+ * The only recovery that may replace an overlapping journal is a named,
+ * operator-initiated continuation. Keep it at the state boundary so each
+ * front reports the same safe next step instead of suggesting a retry that
+ * cannot resolve an ambiguity.
+ */
+export const AMBIGUOUS_JOURNAL_NEXT_ACTION =
+  "inspect the journal, then explicitly run `ad-coder operations session-clear-ambiguous --id <session-id> --target-dir <project>` to archive it and start a marked continuation";
+
 const AREAS: readonly ProjectStoreArea[] = [
   "sessions",
   "runs",
+  "waits",
   "scratch",
   "attachments",
   "downloads",
@@ -36,15 +46,6 @@ const DEFAULT_RETENTION = Object.fromEntries(
 const DEFAULT_BYTES: ProjectStoreByteLimits = { attachment: 0, state: 0, jsonlRecord: 0 };
 export const DEFAULT_PROJECT_STORE_LOCK_RETRY_DELAYS_MS = [10, 20, 40, 80] as const;
 const STORE_GITIGNORE = "*\n!calibration.json\n";
-
-/**
- * The only recovery that may replace an overlapping journal is a named,
- * operator-initiated continuation. Keep it at the state boundary so each
- * front reports the same safe next step instead of suggesting a retry that
- * cannot resolve an ambiguity.
- */
-export const AMBIGUOUS_JOURNAL_NEXT_ACTION =
-  "inspect the journal, then explicitly run `ad-coder operations session-clear-ambiguous --id <session-id> --target-dir <project>` to archive it and start a marked continuation";
 
 export class ProjectStore {
   readonly layout: ProjectStoreLayout;
@@ -117,6 +118,15 @@ export class ProjectStore {
     if (!ID_PATTERN.test(id))
       throw new ProjectStoreError("invalid_id", id, `id must match ${String(ID_PATTERN)}`);
     return id;
+  }
+
+  /**
+   * The sole durable location for a WaitService record.  Keeping this path in
+   * ProjectStore means wait state gets the same private-directory, no-link and
+   * versioned-write protections as every other durable control-plane record.
+   */
+  waitStatePath(id: string): string {
+    return path.join(this.managedPath("waits", id), "state.json");
   }
 
   async createSession(
@@ -651,6 +661,14 @@ export class ProjectStore {
           if (this.reclaimLegacyLock(lockPath, legacyHolder)) continue;
         }
         const delay = this.lockRetryDelaysMs[attempt];
+        // Releases before 0.181.16 created the pathname first and wrote its
+        // identity second.  A killed owner in that tiny interval leaves an
+        // empty regular file: it carries neither a PID nor a token, so it
+        // cannot enter either stale-owner recovery branch above.  Only after
+        // the normal bounded contention schedule has elapsed may we reclaim
+        // that exact inert legacy shape.  New writers publish a populated
+        // inode atomically in `createLock`, so they never create this shape.
+        if (delay === undefined && this.reclaimEmptyLegacyLock(lockPath)) continue;
         if (delay === undefined)
           throw new ProjectStoreError("version_conflict", lockPath, "managed state is locked");
         Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay);
@@ -725,38 +743,91 @@ export class ProjectStore {
 
   private createLock(
     lockPath: string,
-    identity: { pid: number; startTime?: string; token?: string },
+    identity: { pid: number; startTime?: string; procfsCtimeNs?: string; token?: string },
   ): () => void {
     this.assertDestination(lockPath);
     const ownedIdentity = { ...identity, token: identity.token ?? crypto.randomUUID() };
+    const temporary = path.join(
+      path.dirname(lockPath),
+      `.${path.basename(lockPath)}.${crypto.randomUUID()}.lock`,
+    );
     const fd = fs.openSync(
-      lockPath,
+      temporary,
       fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW,
       0o600,
     );
-    fs.writeFileSync(fd, `${JSON.stringify(ownedIdentity)}\n`);
-    fs.fsyncSync(fd);
-    return () => {
+    try {
+      fs.writeFileSync(fd, `${JSON.stringify(ownedIdentity)}\n`);
+      fs.fsyncSync(fd);
+      fs.linkSync(temporary, lockPath);
+    } finally {
+      fs.closeSync(fd);
       try {
-        this.withVersionedLockCoordination(lockPath, () => {
-          if (this.readLockToken(lockPath) !== ownedIdentity.token) return;
-          const released = `${lockPath}.release-${ownedIdentity.token}`;
-          try {
-            fs.renameSync(lockPath, released);
-          } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-            return;
-          }
-          fs.unlinkSync(released);
-        });
-      } finally {
-        fs.closeSync(fd);
+        fs.unlinkSync(temporary);
+      } catch {
+        // A failed cleanup leaves only an inert, random private temporary.
+        // Never let that hide the acquisition result or its typed conflict.
       }
+    }
+    return () => {
+      this.withVersionedLockCoordination(lockPath, () => {
+        if (this.readLockToken(lockPath) !== ownedIdentity.token) return;
+        const released = `${lockPath}.release-${ownedIdentity.token}`;
+        try {
+          fs.renameSync(lockPath, released);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+          return;
+        }
+        fs.unlinkSync(released);
+      });
     };
   }
 
-  private processIdentity(): { pid: number; startTime: string } {
-    return { pid: process.pid, startTime: this.readProcessStartTime(process.pid) ?? "unavailable" };
+  /**
+   * Recover the only ownerless legacy lock shape the old O_EXCL-then-write
+   * publisher could leave.  A non-empty or non-regular object is deliberately
+   * not guessed at: that remains a typed contention/refusal.
+   */
+  private reclaimEmptyLegacyLock(lockPath: string): boolean {
+    let stat: fs.Stats;
+    try {
+      stat = fs.lstatSync(lockPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw error;
+    }
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size !== 0)
+      return false;
+    const quarantine = `${lockPath}.reclaim-empty-${crypto.randomUUID()}`;
+    try {
+      fs.renameSync(lockPath, quarantine);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw error;
+    }
+    try {
+      const moved = fs.lstatSync(quarantine);
+      // A writer that had the old inode open can still finish after rename.
+      // Preserve that non-empty inode rather than deleting live ownership.
+      if (!moved.isFile() || moved.isSymbolicLink() || moved.nlink !== 1 || moved.size !== 0)
+        return false;
+      fs.unlinkSync(quarantine);
+      return true;
+    } finally {
+      // `quarantine` is intentionally retained if a raced old writer filled
+      // it.  It is evidence of an unsafe concurrent legacy protocol, never a
+      // substitute for a fresh lock at `lockPath`.
+    }
+  }
+
+  private processIdentity(): { pid: number; startTime: string; procfsCtimeNs?: string } {
+    const procfsCtimeNs = this.readProcessProcfsCtimeNs(process.pid);
+    return {
+      pid: process.pid,
+      startTime: this.readProcessStartTime(process.pid) ?? "unavailable",
+      ...(procfsCtimeNs === undefined ? {} : { procfsCtimeNs }),
+    };
   }
 
   private reclaimStaleLock(
@@ -817,7 +888,7 @@ export class ProjectStore {
 
   private readVersionedLock(
     lockPath: string,
-  ): { pid: number; startTime: string; token: string } | undefined {
+  ): { pid: number; startTime: string; procfsCtimeNs?: string; token: string } | undefined {
     try {
       const value = JSON.parse(fs.readFileSync(lockPath, "utf8")) as Record<string, unknown>;
       if (
@@ -825,11 +896,18 @@ export class ProjectStore {
         (value.pid as number) <= 0 ||
         typeof value.startTime !== "string" ||
         (value.startTime !== "unavailable" && !/^\d{1,32}$/.test(value.startTime)) ||
+        (value.procfsCtimeNs !== undefined &&
+          (typeof value.procfsCtimeNs !== "string" || !/^\d{1,32}$/.test(value.procfsCtimeNs))) ||
         typeof value.token !== "string" ||
         !/^[0-9a-f-]{36}$/.test(value.token)
       )
         return undefined;
-      return { pid: value.pid as number, startTime: value.startTime, token: value.token };
+      return {
+        pid: value.pid as number,
+        startTime: value.startTime,
+        ...(value.procfsCtimeNs === undefined ? {} : { procfsCtimeNs: value.procfsCtimeNs }),
+        token: value.token,
+      };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT" || error instanceof SyntaxError)
         return undefined;
@@ -861,7 +939,11 @@ export class ProjectStore {
     }
   }
 
-  private isVersionedLockHolderAlive(holder: { pid: number; startTime: string }): boolean {
+  private isVersionedLockHolderAlive(holder: {
+    pid: number;
+    startTime: string;
+    procfsCtimeNs?: string;
+  }): boolean {
     try {
       process.kill(holder.pid, 0);
     } catch (error) {
@@ -871,7 +953,12 @@ export class ProjectStore {
     const current = this.readProcessIdentity(holder.pid);
     if (current === undefined || holder.startTime === "unavailable") return true;
     if (current.state === "Z") return false;
-    return current.startTime === holder.startTime;
+    if (current.startTime !== holder.startTime) return false;
+    if (holder.procfsCtimeNs === undefined) return true;
+    const currentProcfsCtimeNs = this.readProcessProcfsCtimeNs(holder.pid);
+    // An unreadable witness remains a held lock; it is never permission to
+    // reclaim a potentially live process.
+    return currentProcfsCtimeNs === undefined || currentProcfsCtimeNs === holder.procfsCtimeNs;
   }
 
   /**
@@ -890,6 +977,16 @@ export class ProjectStore {
 
   private readProcessStartTime(pid: number): string | undefined {
     return this.readProcessIdentity(pid)?.startTime;
+  }
+
+  /** Nanosecond birth witness for the procfs pid directory, when available. */
+  private readProcessProcfsCtimeNs(pid: number): string | undefined {
+    try {
+      const stat = fs.statSync(`/proc/${pid}`, { bigint: true }) as { ctimeNs?: bigint };
+      return stat.ctimeNs?.toString();
+    } catch {
+      return undefined;
+    }
   }
 
   private readProcessIdentity(pid: number): { state: string; startTime: string } | undefined {
@@ -934,14 +1031,20 @@ export class ProjectStore {
     const releaseCoordination = this.acquireVersionedLock(this.sessionCoordinationPath());
     let release: (() => void) | undefined;
     let session: Session<T> | undefined;
+    let openingFailed = false;
+    let openingError: unknown;
     try {
       release = this.acquireSessionLease(id);
       session = await open();
     } catch (error) {
-      release?.();
-      throw error;
+      openingFailed = true;
+      openingError = error;
     } finally {
       releaseCoordination();
+    }
+    if (openingFailed) {
+      release?.();
+      throw openingError;
     }
     if (release === undefined || session === undefined) {
       release?.();

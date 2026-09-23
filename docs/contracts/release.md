@@ -24,6 +24,11 @@ or published as an ad-coder release.
 - Before publication, inspect the tracked and packed file sets for credentials,
   private keys, local runtime state, unexpected generated data, and licensing
   mistakes. Uncertainty blocks publication.
+- Publication readiness is proven before a release is claimed available: the
+  workflow publishes each channel exactly once, then a bounded read loop must
+  confirm the registry serves that exact version and its dist-tag before the
+  release reports success. Registry acknowledgement alone is not success, and
+  readiness never retries publishing.
 
 ## Verification
 

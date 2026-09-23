@@ -18,7 +18,10 @@ export interface ContextBudgetPercents {
 }
 
 export const DEFAULT_CONTEXT_BUDGET_PERCENTS = {
-  maxTokensPercent: 0.9,
+  // Keep a 10% reply reserve and begin durable compaction once the dialogue
+  // reaches 70% of the active role window. `maxTokens - reserveTokens` is the
+  // compaction threshold, so an 80% turn ceiling implements that default.
+  maxTokensPercent: 0.8,
   reserveTokensPercent: 0.1,
   keepRecentTokensPercent: 0.25,
 } as const;

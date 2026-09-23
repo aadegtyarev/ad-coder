@@ -1550,15 +1550,20 @@ function parsePersistedEntry(value: unknown): PersistedEntry {
   };
 }
 function parseProcessIdentity(value: unknown): RunProcessIdentity {
-  const object = strictObject(value, ["pid", "startTime", "groupId"]);
+  const object = strictObject(value, ["pid", "startTime", "procfsCtimeNs", "groupId"]);
   const pid = safeInteger(object.pid, 1);
   if (object.startTime !== undefined) {
     if (typeof object.startTime !== "string" || !/^\d{1,32}$/.test(object.startTime))
       throw new TypeError("record process start time is invalid");
   }
+  if (object.procfsCtimeNs !== undefined) {
+    if (typeof object.procfsCtimeNs !== "string" || !/^\d{1,32}$/.test(object.procfsCtimeNs))
+      throw new TypeError("record process procfs birth witness is invalid");
+  }
   return {
     pid,
     ...(object.startTime === undefined ? {} : { startTime: object.startTime }),
+    ...(object.procfsCtimeNs === undefined ? {} : { procfsCtimeNs: object.procfsCtimeNs }),
     ...(object.groupId === undefined ? {} : { groupId: safeInteger(object.groupId, 1) }),
   };
 }

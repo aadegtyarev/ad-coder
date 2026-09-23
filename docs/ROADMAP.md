@@ -37,6 +37,14 @@ module-locality from the touched-file set to decide what can parallelize.
 
 ## Status
 
+### Bounded standalone review closeout (implemented 2026-09-23)
+
+Standalone reviewers use tighter, configurable role-stage limits than coding
+roles. A known diff is the review surface; the reviewer establishes it before
+repository-wide discovery. When the budget reserve is reached, the submission
+tool remains available and the run records a resumable `stage_closeout` rather
+than silently spending an implementation-sized budget without a verdict.
+
 ### Detached background pipelines (implemented 2026-09-13)
 
 The seven pipeline tools and JSON `background` CLI support detached execution,

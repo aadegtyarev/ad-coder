@@ -51,6 +51,7 @@ import {
   GenerationTruncatedError,
   ProviderQuotaError,
   ProviderRejectionError,
+  ProviderUnavailableError,
 } from "../src/runner/errors";
 import { SessionLimitError } from "../src/session-limits";
 import {
@@ -678,6 +679,20 @@ test("empty provider turns show an actionable authentication command", async () 
   expect(error.text()).toContain(
     "run: ad-coder auth login --provider openrouter --target-dir '/tmp/project'",
   );
+});
+
+test("a statusless provider failure asks for retry or rerouting, never authentication", async () => {
+  const error = new Capture();
+  await runConsole({
+    session: fakeSession({ stepError: new ProviderUnavailableError("run") }),
+    input: ttyFrom("hello\n"),
+    output: new Capture(),
+    error,
+    authenticationCommand: "ad-coder auth login --provider openrouter --target-dir '/tmp/project'",
+  });
+  expect(error.text()).toContain("without a usable answer or HTTP status");
+  expect(error.text()).toContain("select another configured model or provider");
+  expect(error.text()).not.toContain("auth login");
 });
 
 test("a quota refusal advises waiting on the reset window, never authentication", async () => {

@@ -621,6 +621,13 @@ test("the settle hook stamps an approved run and refuses to certify a review-les
   expect(parsed.verdict).toBe("approved");
   expect(parsed.treeDigest).toBe(computeTreeDigest(withMarker));
   expect(parsed.reviewer).toMatch(/faux\/model/);
+  // A CLI process can die after append succeeds and before it records its own
+  // closeout. Replaying the same durable reviewer run must reuse this stamp,
+  // not append a second indistinguishable verdict.
+  expect(recordReviewStampFromResult(withMarker, settledResult()).recorded).toBe(true);
+  expect(
+    fs.readFileSync(path.join(withMarker, "docs/reviews/stamps.log"), "utf8").trim().split("\n"),
+  ).toHaveLength(1);
 
   const reviewless = gitRepo();
   fs.writeFileSync(path.join(reviewless, STAMPS_MARKER_FILE), JSON.stringify({}));

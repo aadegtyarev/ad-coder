@@ -30,6 +30,7 @@ import {
   resolveProviderAdmissionController,
 } from "./cli/resolve-config";
 import { resolveResumeRun, resumeOrchestratorConfig, resumeSeedNote } from "./cli/resume";
+import { runsInspectCommand } from "./cli/runs-inspect";
 import { DEFAULT_KILL_AFTER_MS, runsStopCommand } from "./cli/runs-stop";
 import { ToolActivityRenderer } from "./cli/tool-activity";
 import { loadModelsConfigSeam, loadSettingsConfigSeam } from "./config/seam";
@@ -76,9 +77,11 @@ import { startOrchestrator } from "./orchestration/orchestrator";
 import { runPipeline } from "./orchestration/pipeline";
 import {
   consumeRunStopRequest,
+  inspectStandaloneRun,
   type RunProcessIdentity,
   readRunStopRequest,
   selfProcessIdentity,
+  verifyStopTarget,
 } from "./orchestration/run-stop";
 import { createWorkflowSession } from "./orchestration/session";
 import {
@@ -90,7 +93,13 @@ import {
   type StageLimits,
 } from "./orchestration/stage-limits";
 import { isSubmissionToolName } from "./orchestration/submission-tools";
-import type { Complexity, PipelineConfig, RoleSpec, WorkflowPhase } from "./orchestration/types";
+import type {
+  Complexity,
+  PipelineConfig,
+  RoleSpec,
+  Verdict,
+  WorkflowPhase,
+} from "./orchestration/types";
 import { PipelinePauseError } from "./orchestration/types";
 import {
   buildSubmitVerdictTool,
@@ -148,6 +157,7 @@ import { defineRole } from "./role";
 import {
   assertRunId,
   EmptyTurnError,
+  ProviderUnavailableError,
   RunInterruptedError,
   resolveTargetDir,
 } from "./runner/errors";
@@ -165,7 +175,12 @@ import {
   SkillResolutionError,
   skillInventory,
 } from "./skills/resolver";
-import { stampBodyCheckErrors, stampCheckErrors, stampDeliveryText } from "./stamp/cli";
+import {
+  StampLedgerSourceError,
+  stampBodyCheckErrors,
+  stampCheckErrors,
+  stampDeliveryText,
+} from "./stamp/cli";
 import { recordReviewStampFromResult, resolveStampRequirement } from "./stamp/record-review-stamp";
 import { findingsReportLines } from "./stamp/verdict-findings";
 import { formatUpdateResult, UpdateError, updateAdCoder } from "./update/updater";
@@ -578,6 +593,12 @@ export async function runRoleStandalone(params: {
   models: Models;
   targetDir: string;
   /**
+   * The exact `--target-dir` token the role process carries in argv. The
+   * resolved target may differ (for example, a relative path or symlink),
+   * while process ownership requires the literal witness, never a guess.
+   */
+  processTargetDir?: string;
+  /**
    * The task for a new role run, or an optional identity assertion on resume.
    * Omit it only with `resumeExisting`: the durable conversation already holds
    * the original task, while the checkpoint deliberately retains only its digest.
@@ -616,6 +637,12 @@ export async function runRoleStandalone(params: {
    * can be long after this call started.
    */
   interruptSignal?: () => "SIGINT" | "SIGTERM" | undefined;
+  /** A reviewer handoff persisted before submit_verdict acknowledges success. */
+  verdictCapture?: VerdictCapture;
+  /** Test-only synchronization seam for the durable start boundary. */
+  beforeSessionCreate?: () => void | Promise<void>;
+  /** Test-only synchronization seam for the post-operation closeout boundary. */
+  afterOperationSettled?: () => void | Promise<void>;
 }): Promise<{
   text: string;
   cost: number;
@@ -650,7 +677,12 @@ export async function runRoleStandalone(params: {
      * advertised as a live `running` role: the record is what `runs status`,
      * resume, and recovery read after the launcher has exited.
      */
-    status: "running" | "paused" | "complete" | "failed";
+    /**
+     * `starting` is the durable intent to create the session. It is written
+     * before the session exists, so a hard death in that interval is safe to
+     * resume and cannot be mistaken for a provider turn.
+     */
+    status: "starting" | "running" | "settling" | "paused" | "complete" | "failed";
     /**
      * The process that owns (last owned) this run, recorded by the run's own
      * process at start and re-recorded by the process that resumes (issue
@@ -658,8 +690,21 @@ export async function runRoleStandalone(params: {
      * those -- without a pid there is nothing addressable to signal.
      */
     process?: RunProcessIdentity;
+    /** A validated reviewer submission, acknowledged durably before tool success. */
+    verdict?: Verdict;
     result?: {
       text: string;
+      cost: number;
+      ledgerPath?: string;
+      observations: import("./runner/runner").RoleObservations;
+      stageCloseout?: StageCloseoutFact;
+    };
+    /**
+     * The provider operation settled, but standalone closeout has not yet
+     * projected its durable transcript into `result`. Recovery must finalize
+     * this operation rather than replaying its original provider prompt.
+     */
+    settledOperation?: {
       cost: number;
       ledgerPath?: string;
       observations: import("./runner/runner").RoleObservations;
@@ -699,6 +744,11 @@ export async function runRoleStandalone(params: {
           stopRequest?: { requestedAt: number; requesterPid: number };
         }
       | {
+          /** A later observer proved the prior process is gone, not why. */
+          code: "owner_lost";
+          reason: "pid_not_alive" | "zombie" | "pid_reused";
+        }
+      | {
           /**
            * The session cannot be opened without an explicit operator choice.
            * This is distinct from a failed provider attempt: the durable
@@ -716,6 +766,17 @@ export async function runRoleStandalone(params: {
      * other errors keep only their stable `internal_error` classification.
      */
     failure?: { code: string; message: string };
+    /**
+     * Safe evidence that this process recovered work after the previous owner
+     * disappeared before its closeout. It survives the new `running` owner so
+     * the event cannot be rewritten as a provider or compaction failure.
+     */
+    lastRecovery?: {
+      code: "owner_lost";
+      reason: "pid_not_alive" | "zombie" | "pid_reused";
+      detectedAt: number;
+      previousProcess: RunProcessIdentity;
+    };
   };
   // Do not copy task text into the checkpoint just to make a resume convenient:
   // it would turn a bounded identity record into a second private transcript.
@@ -725,6 +786,34 @@ export async function runRoleStandalone(params: {
     params.task === undefined
       ? undefined
       : new Bun.CryptoHasher("sha256").update(params.task).digest("hex");
+  /**
+   * A `running` checkpoint is only live when its self-recorded process still
+   * proves it is THIS role invocation. A dead pid, reused pid, or command
+   * line for another target or role is positive evidence that this record is
+   * orphaned; an unreadable process remains held rather than guessed at.
+   */
+  const inspectOwnedCheckpoint = (candidate: Checkpoint): "live" | "orphaned" | "unknown" => {
+    if (candidate.process === undefined) return "orphaned";
+    const inspected = verifyStopTarget({
+      identity: candidate.process,
+      stopperTargetDir: params.processTargetDir ?? params.targetDir,
+      cmdlineWitness: ["role", candidate.role],
+    });
+    if (inspected.ok) return "live";
+    const { checked } = inspected;
+    return checked.pidAlive === false ||
+      checked.state === "Z" ||
+      checked.startTimeMatches === false ||
+      checked.procfsCtimeMatches === false ||
+      checked.targetDirInArgv === false ||
+      checked.witnessInArgv === false
+      ? "orphaned"
+      : "unknown";
+  };
+  const orphanedFailure = {
+    code: "orphaned_process",
+    message: "role process is no longer verifiably live; resume the durable checkpoint",
+  };
   let checkpoint: import("./project-store/types").VersionedState<Checkpoint>;
   let stageLimitInitial: Checkpoint["pause"] extends infer _
     ?
@@ -735,9 +824,155 @@ export async function runRoleStandalone(params: {
         | undefined
     : never;
   let session: Session;
+  const updateCheckpoint = (update: (current: Checkpoint) => Checkpoint): void => {
+    checkpoint = store.mutateVersionedJson<Checkpoint>(checkpointPath, (current) => {
+      if (current === undefined)
+        throw new ProjectStoreError("not_found", checkpointPath, "standalone checkpoint was lost");
+      return update(current.value);
+    });
+  };
+  let latestStageLimitSnapshot: Readonly<StageLimitSnapshot> | undefined;
+  // A session-open failure used to escape before the checkpoint recorded its
+  // terminal outcome, leaving a dead process advertised as `running` forever.
+  // This closeout settles the attempt before rethrowing: an ambiguous journal
+  // pauses for an explicit operator decision instead of a guessed ordering
+  // (issue #596). Other session-store failures record only their stable
+  // classification; a lower layer's message can name host paths or untrusted
+  // data.
+  const reopenOrRecover = async (open: () => Promise<Session>): Promise<Session> => {
+    try {
+      return await open();
+    } catch (error) {
+      if (error instanceof ProjectStoreError && error.code === "ambiguous_journal") {
+        updateCheckpoint((current) => ({
+          ...current,
+          status: "paused",
+          pause: {
+            code: "manual_recovery" as const,
+            reason: "ambiguous_journal" as const,
+            detail: "session journal requires explicit recovery before this role can resume",
+          },
+        }));
+      } else {
+        updateCheckpoint((current) => ({
+          ...current,
+          status: "failed",
+          failure: {
+            code: error instanceof ProjectStoreError ? error.code : "internal_error",
+            message: "role session could not be opened; inspect harness diagnostics and retry",
+          },
+        }));
+      }
+      throw error;
+    }
+  };
+  const finalizeSettledOperation = async (
+    operation: NonNullable<Checkpoint["settledOperation"]>,
+  ): Promise<{
+    text: string;
+    cost: number;
+    ledgerPath: string | undefined;
+    observations: import("./runner/runner").RoleObservations;
+    stageCloseout?: StageCloseoutFact;
+  }> => {
+    // Release the owner facade before reopening a read facade, including on a
+    // recovery that never enters runRole.
+    await session.close(BACKGROUND_CONTEXT);
+    const readable = await store.resumeSession(runId, BACKGROUND_CONTEXT);
+    let text: string;
+    try {
+      text = await extractFinalText(readable, BACKGROUND_CONTEXT);
+    } finally {
+      await readable.close(BACKGROUND_CONTEXT);
+    }
+    const durableResult = {
+      text,
+      cost: operation.cost,
+      ...(operation.ledgerPath !== undefined && { ledgerPath: operation.ledgerPath }),
+      ...(operation.stageCloseout !== undefined && { stageCloseout: operation.stageCloseout }),
+      observations: operation.observations,
+    };
+    const closeout = operation.stageCloseout;
+    updateCheckpoint((current) => {
+      const {
+        pause: _pause,
+        failure: _failure,
+        settledOperation: _operation,
+        ...settled
+      } = current;
+      if (closeout === undefined) return { ...settled, status: "complete", result: durableResult };
+      const key = STAGE_LIMIT_KEY[closeout.reason];
+      const snapshot = latestStageLimitSnapshot;
+      const limit = snapshot?.[key] ?? params.stageLimits?.[key] ?? 0;
+      const observed =
+        closeout.reason === "duration"
+          ? (snapshot?.elapsedMs ?? current.cumulativeUsage.elapsedMs)
+          : closeout.reason === "model_turns"
+            ? (snapshot?.modelTurns ?? current.cumulativeUsage.modelTurns)
+            : closeout.reason === "tool_turns"
+              ? (snapshot?.toolTurns ?? current.cumulativeUsage.toolTurns)
+              : (snapshot?.inputTokens ?? current.cumulativeUsage.inputTokens);
+      return {
+        ...settled,
+        status: "paused",
+        result: durableResult,
+        pause: {
+          code: "stage_closeout",
+          reason: closeout.reason,
+          detail: closeout.detail,
+          limit,
+          observed,
+        },
+      };
+    });
+    return {
+      text,
+      cost: operation.cost,
+      ledgerPath: operation.ledgerPath,
+      observations: operation.observations,
+      ...(operation.stageCloseout !== undefined && { stageCloseout: operation.stageCloseout }),
+    };
+  };
+  const finishPersistedVerdict = async (): Promise<{
+    text: string;
+    cost: number;
+    ledgerPath: string | undefined;
+    observations: import("./runner/runner").RoleObservations;
+  }> => {
+    const readable = await store.resumeSession(runId, BACKGROUND_CONTEXT);
+    let text: string;
+    try {
+      text = await extractFinalText(readable, BACKGROUND_CONTEXT);
+    } finally {
+      await readable.close(BACKGROUND_CONTEXT);
+    }
+    const usage = checkpoint.value.cumulativeUsage;
+    const observations: import("./runner/runner").RoleObservations = {
+      provider: params.model.provider,
+      model: params.model.id,
+      durationMs: usage.elapsedMs,
+      input: usage.inputTokens,
+      cachedInput: 0,
+      freshInput: usage.inputTokens,
+      output: 0,
+      costUsd: usage.costUsd,
+      requestBytes: { systemPrompt: 0, prompt: 0, toolDefinitions: 0, total: 0 },
+      readFiles: [],
+      readFilesTotal: 0,
+      readFilesTruncated: 0,
+      diffBytes: 0,
+      contextStrategy: "auto",
+    };
+    const durableResult = { text, cost: usage.costUsd, observations };
+    updateCheckpoint((current) => {
+      const { pause: _pause, failure: _failure, ...completed } = current;
+      return { ...completed, status: "complete", result: durableResult };
+    });
+    return { text, cost: durableResult.cost, ledgerPath: undefined, observations };
+  };
   if (params.resumeExisting === true) {
     checkpoint = store.readVersionedJson<Checkpoint>(checkpointPath);
-    const prior = checkpoint.value;
+    let prior = checkpoint.value;
     if (prior.schemaVersion !== 2 || prior.runId !== runId || prior.role !== params.role.name)
       throw new ProjectStoreError(
         "invalid_config",
@@ -756,12 +991,77 @@ export async function runRoleStandalone(params: {
         checkpointPath,
         "standalone checkpoint task does not match",
       );
-    if (prior.status === "complete")
+    if (prior.status === "complete" && prior.verdict === undefined)
       throw new ProjectStoreError(
         "invalid_config",
         checkpointPath,
         "standalone role is already complete",
       );
+    if (prior.status === "running") {
+      // This mutation is deliberately under the checkpoint's versioned lock.
+      // Later ownership still depends on the session lease below; a contender
+      // that loses that lease never publishes a replacement process identity.
+      checkpoint = store.mutateVersionedJson<Checkpoint>(checkpointPath, (current) => {
+        if (current === undefined)
+          throw new ProjectStoreError(
+            "not_found",
+            checkpointPath,
+            "standalone checkpoint was lost",
+          );
+        const state = inspectOwnedCheckpoint(current.value);
+        if (state === "live")
+          throw new ProjectStoreError(
+            "version_conflict",
+            checkpointPath,
+            "standalone role is already running in its recorded process",
+          );
+        if (state === "unknown")
+          throw new ProjectStoreError(
+            "version_conflict",
+            checkpointPath,
+            "standalone role process cannot be identified safely",
+          );
+        // Preserve the existing public recovery witness where procfs can name
+        // the loss precisely. The stricter argv mismatch path is still an
+        // orphan, but does not invent a pid-loss reason for it.
+        const inspection = inspectStandaloneRun(params.targetDir, runId);
+        return {
+          ...current.value,
+          status: "failed",
+          failure: orphanedFailure,
+          ...(inspection.status === "owner_lost" && current.value.process !== undefined
+            ? {
+                lastRecovery: {
+                  code: "owner_lost" as const,
+                  reason: inspection.reason,
+                  detectedAt: Date.now(),
+                  previousProcess: current.value.process,
+                },
+              }
+            : {}),
+        };
+      });
+      prior = checkpoint.value;
+    }
+    // A validated reviewer verdict is terminal. Never spend another provider
+    // turn merely because a limit or host interruption followed its tool ack.
+    if (prior.verdict !== undefined && params.verdictCapture !== undefined) {
+      params.verdictCapture.verdict = prior.verdict;
+      delete params.verdictCapture.error;
+      if (prior.status === "complete" && prior.result !== undefined)
+        return {
+          text: prior.result.text,
+          cost: prior.result.cost,
+          ledgerPath: prior.result.ledgerPath,
+          observations: prior.result.observations,
+          ...(prior.result.stageCloseout !== undefined && {
+            stageCloseout: prior.result.stageCloseout,
+          }),
+        };
+      session = await store.resumeSession(runId, BACKGROUND_CONTEXT);
+      await session.close(BACKGROUND_CONTEXT);
+      return await finishPersistedVerdict();
+    }
     const cumulativeUsage = {
       ...prior.cumulativeUsage,
       lastInputTokens:
@@ -779,22 +1079,85 @@ export async function runRoleStandalone(params: {
           `resume requires a larger ${key} or 0`,
         );
     }
-    const { pause: _pause, failure: _failure, result: _result, ...resumed } = prior;
-    checkpoint = store.writeVersionedJson(
-      checkpointPath,
-      {
-        ...resumed,
-        cumulativeUsage,
-        status: "running",
-        // The resuming process takes over the run: the recorded pid must be
-        // its own, or `runs stop` would aim at the dead predecessor's pid
-        // (issue #479). Resuming past a stop request answers it; the witness
-        // is consumed so it cannot brand a later unrelated interruption.
-        process: selfProcessIdentity(),
-      },
-      checkpoint.version,
-    );
-    consumeRunStopRequest(store, runId);
+    // Claim the durable session *before* publishing that this process owns the
+    // run.  An operator can issue `--resume-run` while the original process is
+    // still draining after an external stop.  In that case the live lease must
+    // refuse the second launcher without letting it overwrite the checkpoint's
+    // process identity with a process that never ran.  Once the predecessor is
+    // actually dead, `resumeSession` reclaims its versioned lease safely.
+    if (prior.status === "starting" || prior.status === "settling") {
+      // A start intent is durable before `createSession`. Recovery therefore
+      // opens-or-creates under the normal session lease: either side of a
+      // crash at that boundary has one session and no provider prompt yet.
+      const state = inspectOwnedCheckpoint(prior);
+      if (state === "live")
+        throw new ProjectStoreError(
+          "version_conflict",
+          checkpointPath,
+          `standalone role is still ${prior.status} in its recorded process`,
+        );
+      if (state === "unknown")
+        throw new ProjectStoreError(
+          "version_conflict",
+          checkpointPath,
+          `standalone role ${prior.status} cannot be identified safely`,
+        );
+      session =
+        prior.status === "starting"
+          ? await reopenOrRecover(() => store.openOrCreateSession(runId, BACKGROUND_CONTEXT))
+          : await reopenOrRecover(() => store.resumeSession(runId, BACKGROUND_CONTEXT));
+    } else {
+      session = await reopenOrRecover(() => store.resumeSession(runId, BACKGROUND_CONTEXT));
+    }
+    try {
+      let recoveredPrior = prior;
+      if (prior.status === "running") {
+        const inspection = inspectStandaloneRun(params.targetDir, runId);
+        if (inspection.status === "owner_lost" && prior.process !== undefined) {
+          // This separate atomic write is intentional. If this process dies
+          // before it can publish its own identity, the next observer still
+          // sees why the old owner was replaced rather than a second opaque
+          // `running` record.
+          checkpoint = store.writeVersionedJson(
+            checkpointPath,
+            {
+              ...prior,
+              status: "paused",
+              pause: { code: "owner_lost", reason: inspection.reason },
+              lastRecovery: {
+                code: "owner_lost",
+                reason: inspection.reason,
+                detectedAt: Date.now(),
+                previousProcess: prior.process,
+              },
+            },
+            checkpoint.version,
+          );
+          recoveredPrior = checkpoint.value;
+        }
+      }
+      const { pause: _pause, failure: _failure, result: _result, ...resumed } = recoveredPrior;
+      checkpoint = store.writeVersionedJson(
+        checkpointPath,
+        {
+          ...resumed,
+          cumulativeUsage,
+          status: recoveredPrior.settledOperation === undefined ? "running" : "settling",
+          // The resuming process takes over the run: the recorded pid must be
+          // its own, or `runs stop` would aim at the dead predecessor's pid
+          // (issue #479). Resuming past a stop request answers it; the witness
+          // is consumed so it cannot brand a later unrelated interruption.
+          process: selfProcessIdentity(),
+        },
+        checkpoint.version,
+      );
+      consumeRunStopRequest(store, runId);
+    } catch (error) {
+      await session.close(BACKGROUND_CONTEXT);
+      throw error;
+    }
+    if (checkpoint.value.settledOperation !== undefined)
+      return await finalizeSettledOperation(checkpoint.value.settledOperation);
   } else {
     if (taskDigest === undefined)
       throw new ProjectStoreError(
@@ -819,63 +1182,26 @@ export async function runRoleStandalone(params: {
           lastInputTokens: 0,
           costUsd: 0,
         },
-        status: "running",
+        // Do not advertise a provider operation before a session can record
+        // it. This start intent is the recovery point for a hard process exit.
+        status: "starting",
         process: selfProcessIdentity(),
       },
       0,
     );
+    await params.beforeSessionCreate?.();
+    session = await reopenOrRecover(() => store.createSession(runId, BACKGROUND_CONTEXT));
+    checkpoint = store.writeVersionedJson(
+      checkpointPath,
+      { ...checkpoint.value, status: "running" },
+      checkpoint.version,
+    );
   }
-  /**
-   * Runtime progress has more than one durable observer (turn admission,
-   * closeout, and recovery).  A later observer is allowed to have advanced
-   * the record by the time this caller settles, so merge under the store lock
-   * instead of turning an otherwise recoverable role into a stale-version
-   * failure.  Session ownership still makes the role a single writer in the
-   * semantic sense; this only serializes its independent durability paths.
-   */
-  const updateCheckpoint = (update: (current: Checkpoint) => Checkpoint): void => {
-    checkpoint = store.mutateVersionedJson<Checkpoint>(checkpointPath, (current) => {
-      if (current === undefined)
-        throw new ProjectStoreError("not_found", checkpointPath, "standalone checkpoint was lost");
-      return update(current.value);
-    });
-  };
-  try {
-    session =
-      params.resumeExisting === true
-        ? await store.resumeSession(runId, BACKGROUND_CONTEXT)
-        : await store.createSession(runId, BACKGROUND_CONTEXT);
-  } catch (error) {
-    // Session opening happens after the checkpoint deliberately claims this
-    // process owns the attempt.  It therefore needs its own closeout: a
-    // journal that requires explicit recovery used to escape here and leave a
-    // dead process advertised as `running` forever.
-    if (error instanceof ProjectStoreError && error.code === "ambiguous_journal") {
-      updateCheckpoint((current) => ({
-        ...current,
-        status: "paused",
-        pause: {
-          code: "manual_recovery",
-          reason: "ambiguous_journal",
-          detail: "session journal requires explicit recovery before this role can resume",
-        },
-      }));
-    } else {
-      // A session-store error before the runner has begun is a terminal result
-      // of this attempt.  Preserve only its stable classification: a lower
-      // layer's message can name host paths or untrusted data.
-      updateCheckpoint((current) => ({
-        ...current,
-        status: "failed",
-        failure: {
-          code: error instanceof ProjectStoreError ? error.code : "internal_error",
-          message: "role session could not be opened; inspect harness diagnostics and retry",
-        },
-      }));
-    }
-    throw error;
+  if (params.verdictCapture !== undefined) {
+    params.verdictCapture.persistVerdict = async (verdict) => {
+      updateCheckpoint((current) => ({ ...current, verdict }));
+    };
   }
-  let latestStageLimitSnapshot: Readonly<StageLimitSnapshot> | undefined;
   let result: Awaited<ReturnType<ReturnType<typeof createRoleRunner>["runRole"]>>;
   try {
     result = await createRoleRunner({
@@ -928,12 +1254,26 @@ export async function runRoleStandalone(params: {
         ...(params.abortSignal !== undefined && { abortSignal: params.abortSignal }),
       },
     );
+    const settledOperation = {
+      cost: result.observations.costUsd ?? 0,
+      ...(result.ledgerPath !== undefined && { ledgerPath: result.ledgerPath }),
+      ...(result.stageCloseout !== undefined && { stageCloseout: result.stageCloseout }),
+      observations: result.observations,
+    };
+    // Persist this before releasing the session or extracting its transcript.
+    // A hard exit in either closeout step must not replay the original task.
+    updateCheckpoint((current) => ({ ...current, status: "settling", settledOperation }));
+    await params.afterOperationSettled?.();
+    return await finalizeSettledOperation(settledOperation);
   } catch (error) {
     try {
       await session.close(BACKGROUND_CONTEXT);
     } catch {
       // The runner normally owns closeout; this covers failures before harness creation.
     }
+    // A limit/host failure after a durably accepted verdict cannot turn the
+    // completed review into a missing verdict or cause a second provider run.
+    if (params.verdictCapture?.verdict !== undefined) return await finishPersistedVerdict();
     if (error instanceof StageLimitError) {
       if (error.snapshot === undefined)
         throw new ProjectStoreError(
@@ -998,7 +1338,7 @@ export async function runRoleStandalone(params: {
       // empty-turn class.  Unknown Error.message values may carry a provider
       // body, prompt, or credentials, so their durable projection is fixed.
       const failure =
-        error instanceof EmptyTurnError
+        error instanceof EmptyTurnError || error instanceof ProviderUnavailableError
           ? { code: error.code, message: error.message }
           : {
               code: "internal_error",
@@ -1008,62 +1348,6 @@ export async function runRoleStandalone(params: {
     }
     throw error;
   }
-  // runRole closes the session facade it was handed; reopen a fresh readable
-  // facade from the durable store to scan the settled transcript.
-  const readable = await store.resumeSession(runId, BACKGROUND_CONTEXT);
-  let text: string;
-  try {
-    text = await extractFinalText(readable, BACKGROUND_CONTEXT);
-  } finally {
-    await readable.close(BACKGROUND_CONTEXT);
-  }
-  const durableResult = {
-    text,
-    cost: result.observations.costUsd ?? 0,
-    ...(result.ledgerPath !== undefined && { ledgerPath: result.ledgerPath }),
-    ...(result.stageCloseout !== undefined && { stageCloseout: result.stageCloseout }),
-    observations: result.observations,
-  };
-  const closeout = result.stageCloseout;
-  updateCheckpoint((current) => {
-    const { pause: _pause, failure: _failure, ...settled } = current;
-    if (closeout === undefined) return { ...settled, status: "complete", result: durableResult };
-
-    // A closeout controller has observed a snapshot before it can emit this
-    // fact (model/tool admission publishes one). Keep the defensive fallback
-    // so an adapter regression still leaves the run resumable rather than
-    // replacing a partial result with a dead `running` record.
-    const key = STAGE_LIMIT_KEY[closeout.reason];
-    const snapshot = latestStageLimitSnapshot;
-    const limit = snapshot?.[key] ?? params.stageLimits?.[key] ?? 0;
-    const observed =
-      closeout.reason === "duration"
-        ? (snapshot?.elapsedMs ?? current.cumulativeUsage.elapsedMs)
-        : closeout.reason === "model_turns"
-          ? (snapshot?.modelTurns ?? current.cumulativeUsage.modelTurns)
-          : closeout.reason === "tool_turns"
-            ? (snapshot?.toolTurns ?? current.cumulativeUsage.toolTurns)
-            : (snapshot?.inputTokens ?? current.cumulativeUsage.inputTokens);
-    return {
-      ...settled,
-      status: "paused",
-      result: durableResult,
-      pause: {
-        code: "stage_closeout",
-        reason: closeout.reason,
-        detail: closeout.detail,
-        limit,
-        observed,
-      },
-    };
-  });
-  return {
-    text,
-    cost: durableResult.cost,
-    ledgerPath: result.ledgerPath,
-    observations: result.observations,
-    ...(result.stageCloseout !== undefined && { stageCloseout: result.stageCloseout }),
-  };
 }
 
 /** The resolved RoleSpec for a validated shipped role name. */
@@ -1667,7 +1951,12 @@ function stampCommand(positionals: string[], flags: Record<string, string | unde
   const targetDir = resolveTargetDir(flags["--target-dir"] ?? process.cwd());
   if (action === "delivery") {
     const fileArgs = positionals.slice(2);
-    process.stdout.write(`${stampDeliveryText(targetDir, fileArgs)}\n`);
+    try {
+      process.stdout.write(`${stampDeliveryText(targetDir, fileArgs)}\n`);
+    } catch (error) {
+      if (error instanceof StampLedgerSourceError) fail(error.message);
+      throw error;
+    }
     return;
   }
   if (action === "body-check") {
@@ -1675,7 +1964,13 @@ function stampCommand(positionals: string[], flags: Record<string, string | unde
     if (bodyPath === undefined)
       fail("stamp body-check requires a pull-request body file path as the first argument");
     const fileArgs = positionals.slice(3);
-    const failures = stampBodyCheckErrors(bodyPath, targetDir, fileArgs);
+    let failures: ReturnType<typeof stampBodyCheckErrors>;
+    try {
+      failures = stampBodyCheckErrors(bodyPath, targetDir, fileArgs);
+    } catch (error) {
+      if (error instanceof StampLedgerSourceError) fail(error.message);
+      throw error;
+    }
     if (failures.length > 0)
       failGate(
         failures.map(({ reason }) => reason).join("\n"),
@@ -2689,6 +2984,22 @@ function buildConfigOptions(
   ) {
     fail(`invalid --compaction-mode: ${compactionMode}`);
   }
+  const compactionSummaryMaxTokens = parsePositiveIntegerFlag(
+    "--compaction-summary-max-tokens",
+    flags["--compaction-summary-max-tokens"],
+  );
+  const compactionSummarizerRetryLimit = parsePositiveIntegerFlag(
+    "--compaction-summarizer-retry-limit",
+    flags["--compaction-summarizer-retry-limit"],
+  );
+  const compactionFallback = flags["--compaction-fallback-to-role-model"];
+  if (
+    compactionFallback !== undefined &&
+    compactionFallback !== "true" &&
+    compactionFallback !== "false"
+  ) {
+    fail(`invalid --compaction-fallback-to-role-model: ${compactionFallback}`);
+  }
   const researchPurpose = flags["--research-purpose"];
   if (
     researchPurpose !== undefined &&
@@ -2884,6 +3195,11 @@ function buildConfigOptions(
       summarizerModel: flags["--summarizer-model"],
     }),
     ...(compactionMode !== undefined && { compactionMode }),
+    ...(compactionSummaryMaxTokens !== undefined && { compactionSummaryMaxTokens }),
+    ...(compactionSummarizerRetryLimit !== undefined && { compactionSummarizerRetryLimit }),
+    ...(compactionFallback !== undefined && {
+      compactionFallbackToRoleModel: compactionFallback === "true",
+    }),
     ...(researchPurpose !== undefined && { researchPurpose }),
     ...(researchBriefValues[0] !== undefined && {
       researchBrief: {
@@ -2920,6 +3236,18 @@ function buildConfigOptions(
 /** Full stderr notice line naming the closeout reason (issue #327, pure for tests). */
 export function formatStageCloseoutNotice(closeout: StageCloseoutFact): string {
   return `ad-coder: stage closeout (${closeout.reason}): ${closeout.detail}\n`;
+}
+
+/** Resume advice must not claim a budget change after an ordinary interruption. */
+export function formatStandaloneResumeInstruction(params: {
+  role: string;
+  runId: string;
+  adjustLimits: boolean;
+}): string {
+  return (
+    `ad-coder: resume with role ${params.role} --resume-run ${params.runId}` +
+    `${params.adjustLimits ? " and adjusted limits" : ""}\n`
+  );
 }
 
 /** Run a single role standalone against a target directory, resolved from the environment. */
@@ -3030,6 +3358,7 @@ async function roleCommand(
       model: spec.model,
       models: config.models,
       targetDir: configOptions.targetDir,
+      processTargetDir: targetDirArg,
       // The first id-only resume intentionally has no task assertion. Any
       // later reviewer retry is a new run and receives its generated task.
       ...(resumeRunId !== undefined && attemptRunId === standaloneRunId && task === undefined
@@ -3053,6 +3382,7 @@ async function roleCommand(
       ...(config.providerAdmissionController !== undefined && {
         providerAdmissionController: config.providerAdmissionController,
       }),
+      ...(keepsVerdictTool && { verdictCapture }),
       abortSignal: abortController.signal,
       // The pause names the signal that ended the run (issue #479); only the
       // handlers above know which one fired.
@@ -3073,7 +3403,11 @@ async function roleCommand(
         `ad-coder: standalone checkpoint=${expectedCheckpointPath} runId=${standaloneRunId}\n`,
       );
       process.stderr.write(
-        `ad-coder: resume with role ${name} --resume-run ${standaloneRunId} and adjusted limits\n`,
+        formatStandaloneResumeInstruction({
+          role: name,
+          runId: standaloneRunId,
+          adjustLimits: error instanceof StageLimitError,
+        }),
       );
       if (error instanceof RunInterruptedError && receivedSignal !== undefined) {
         process.exitCode = receivedSignal === "SIGINT" ? 130 : 143;
@@ -3670,6 +4004,21 @@ const PIPELINE_OPTIONS: CommandDefinition["options"] = [
     name: "--compaction-mode",
     value: "<mode>",
     description: "Set auto or disabled-then-halt context handling.",
+  },
+  {
+    name: "--compaction-summary-max-tokens",
+    value: "<n>",
+    description: "Cap one durable summary; defaults to one third of the active context window.",
+  },
+  {
+    name: "--compaction-summarizer-retry-limit",
+    value: "<n>",
+    description: "Attempts on the selected summarizer before active-model fallback; defaults to 3.",
+  },
+  {
+    name: "--compaction-fallback-to-role-model",
+    value: "<boolean>",
+    description: "Retry an exhausted summarizer with the active role model; defaults to true.",
   },
   {
     name: "--pipeline-context",
@@ -4295,9 +4644,9 @@ const COMMANDS: readonly CommandDefinition[] = [
   },
   {
     name: "runs",
-    description: "Stop one run by the process identity its own record carries.",
+    description: "Inspect or stop one run by the process identity its own record carries.",
     positionals: [
-      { name: "<stop>", description: "Action: stop." },
+      { name: "<inspect|stop>", description: "Action: inspect or stop." },
       {
         name: "<run-id>",
         description: "Run identifier; its record lives under <target>/.ad-coder/runs/.",
@@ -4342,18 +4691,25 @@ const COMMANDS: readonly CommandDefinition[] = [
     ],
     run: ({ positionals, flags, booleans }) => {
       const action = positionals[1];
-      if (action === undefined) fail("runs requires an action: stop");
-      if (action !== "stop") fail(`unknown runs action: ${action} (only stop exists)`);
+      if (action === undefined) fail("runs requires an action: inspect or stop");
+      if (action !== "inspect" && action !== "stop")
+        fail(`unknown runs action: ${action} (expected inspect or stop)`);
       const runId = positionals[2];
-      if (runId === undefined) fail("runs stop requires a run id");
-      if (positionals[3] !== undefined) fail("runs stop accepts exactly one run id");
+      if (runId === undefined) fail(`runs ${action} requires a run id`);
+      if (positionals[3] !== undefined) fail(`runs ${action} accepts exactly one run id`);
       try {
         assertRunId(runId);
       } catch (error) {
         fail(errorMessage(error));
       }
       const targetArg = flags["--target-dir"];
-      if (targetArg === undefined) fail("--target-dir is required for runs stop");
+      if (targetArg === undefined) fail(`--target-dir is required for runs ${action}`);
+      if (action === "inspect")
+        return runsInspectCommand({
+          runId,
+          targetDir: targetArg,
+          json: booleans["--json"] === true,
+        });
       const kill = booleans["--kill"] === true;
       const killAfterMs =
         parseNonNegativeIntegerFlag("--kill-after-ms", flags["--kill-after-ms"]) ??
@@ -4587,6 +4943,15 @@ function errorMessage(error: unknown): string {
  * a process spawn (`docs/contracts/errors.md`, `docs/contracts/architecture.md`).
  */
 export function projectCliError(error: unknown): Record<string, unknown> {
+  if (error instanceof ProviderUnavailableError)
+    return {
+      code: error.code,
+      detail: error.runId,
+      text: error.message,
+      retryable: error.retryable,
+      ...(error.diagnosticCode === undefined ? {} : { diagnosticCode: error.diagnosticCode }),
+      nextAction: "retry the run, or select another configured model or provider",
+    };
   if (error instanceof UpdateError)
     return {
       code: error.code,
@@ -4631,6 +4996,8 @@ export function projectCliError(error: unknown): Record<string, unknown> {
       nextAction: SessionNotAcquiredError.NEXT_ACTION,
     };
   if (error instanceof ProjectOperationsError) return { code: error.code, detail: error.detail };
+  // Issue #596: a store rejection is typed public behavior, not a host-path
+  // leak. All of these fields are authored constants plus the validated path.
   if (error instanceof ProjectStoreError)
     return {
       code: error.code,

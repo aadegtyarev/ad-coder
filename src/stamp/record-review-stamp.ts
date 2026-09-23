@@ -201,6 +201,24 @@ export function recordReviewStampFromResult(
     // #466 fixes.
     findingsRef: findingsRef,
   };
+  // A front can die after appendReviewStamp succeeds but before it has printed
+  // its result or advanced its own checkpoint.  Replaying the same settled
+  // reviewer outcome must not manufacture another stamp line.  Run ids are
+  // generated per reviewer attempt and are the durable idempotency key; reject
+  // a contradictory reuse rather than silently certifying a different review.
+  const existing = readReviewStamps(repoRoot, filePath)
+    .map((entry) => entry.parsed)
+    .find(
+      (entry): entry is ReviewStamp =>
+        typeof entry !== "string" &&
+        entry.runIds.length === stamp.runIds.length &&
+        entry.runIds.every((runId, index) => runId === stamp.runIds[index]),
+    );
+  if (existing !== undefined) {
+    if (existing.treeDigest !== stamp.treeDigest || existing.verdict !== stamp.verdict)
+      throw new Error("review run id already has a contradictory recorded stamp");
+    return { recorded: true, filePath, findingsRef: existing.findingsRef };
+  }
   try {
     appendReviewStamp(repoRoot, filePath, stamp);
   } catch (error) {

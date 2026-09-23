@@ -8,7 +8,10 @@ workflow, tool, or subprocess without stopping its session or unrelated work.
 - TUI, machine API, and orchestrator use one headless run-control operation. It
   lists a run's state and offers graceful cancel; an explicit force action appears
   only when its configured authority and safety checks permit it. The former
-  standalone `runs stop` CLI mode is not a public interface.
+  standalone `runs stop` CLI mode is not a public interface. The standalone-run
+  inspect projection reports the recorded state, distinguishing `starting` and
+  `settling` runs, and when the recorded owner is gone reports `owner_lost` with
+  the recorded identity and a recovery action instead of offering a signal.
 - A cancellation intent records initiator, reason, run identity, state revision,
   and requested strength durably before any cancellation signal or provider/tool
   request. Repeated cancel is idempotent and reports the already-settled outcome.
@@ -36,7 +39,8 @@ off by default.
 
 ## Verification
 
-Test TUI/API/orchestrator parity, running and settled records, graceful and forced
+Test TUI/API/orchestrator parity, running and settled records, standalone inspect
+projection for starting/settling/owner_lost, graceful and forced
 cancellation, durable intent ordering, dead/reused PID, path/process-group refusal,
 repeated cancel, preserved WIP and input queue, wake delivery, resume/retry, and
 unrelated-session isolation.

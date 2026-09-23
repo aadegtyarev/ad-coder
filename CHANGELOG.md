@@ -11,6 +11,300 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.50] - 2026-09-24
+
+### Added
+
+- **Integrated branch audit one-tree release.** This merge lands the contract
+  audit wave, the durable `WaitService` and its headless wait state machine
+  (#626), exact-identity standalone resume with durable `starting`, `settling`,
+  and owner-loss recovery (issue #619 and its related #617/#618/#620-#622
+  fixes), and the npm registry readiness/publication corrections
+  (#603-#610, #623-#629) as one integrated tree.
+
+### Fixed
+
+- **The compaction contract's thresholds now match the shipped runtime.** The
+  contract example named percentages of the whole context window; the runtime
+  owns a per-role budget: a 160,000-token max role budget, a 20,000-token reply
+  reserve, compaction beginning at 140,000 tokens, and a 60,000-token harness
+  reserve on the 200,000-token default role window. Runtime behaviour is
+  unchanged.
+
+
+## [0.181.49] - 2026-09-24
+
+### Fixed
+
+- Accept npm 12's exact singleton-object wrapper for `dist --json` readiness
+  metadata while still rejecting empty, multiple, nested, partial, or otherwise
+  ambiguous registry payloads.
+
+## [0.181.48] - 2026-09-24
+
+### Fixed
+
+- Accept npm's pretty multiline `dist --json` object in release readiness while
+  still rejecting partial, multiple, or otherwise ambiguous registry payloads.
+
+## [0.181.47] - 2026-09-24
+
+### Fixed
+
+- Make npm readiness verify the exact package name and version captured from
+  the publish manifest, so a dev release cannot wait on the restored stable
+  manifest after successfully publishing `ad-coder-dev`.
+
+## [0.181.46] - 2026-09-23
+
+### Fixed
+
+- **Durable wait reads now reject untyped record fields.** Every exposed copy
+  is explicitly whitelisted, and the state-size guard measures the actual
+  versioned storage envelope on every mutation.
+
+## [0.181.45] - 2026-09-23
+
+### Fixed
+
+- Keep npm tarball-fetch exceptions out of release terminal and CI logs while
+  retaining a safe, actionable readiness failure class.
+
+## [0.181.44] - 2026-09-23
+
+### Fixed
+
+- **Durable wait records have a mandatory byte ceiling.** Valid-shaped but
+  oversized persisted state now fails a typed, content-free refusal before any
+  wait read surface exposes it; new and mutated records are bounded too.
+
+## [0.181.43] - 2026-09-23
+
+### Fixed
+
+- **Wait recovery retains an in-flight reconciliation witness after a
+  cancellation or deadline.** A late adapter response now remains explicitly
+  uncertain instead of losing the durable evidence or being reported as a
+  generic non-pending wait. Persisted wait events and evidence are also
+  shape-checked and bounded before reopening or exposing them.
+
+## [0.181.42] - 2026-09-23
+
+### Fixed
+
+- Hold a release until npm serves the exact tarball and its bytes match the registry integrity, not merely until version metadata and `latest` are visible.
+
+All notable changes to ad-coder are recorded here. The format follows
+[Keep a Changelog](https://keepachangelog.com/), and the project aims at
+[Semantic Versioning](https://semver.org/).
+
+Release and contract dates are the operator's LOCAL calendar day -- the day the
+release shipped, in the operator's own timezone. Never date an entry by
+`date -u`; on an evening after 20:00 local (UTC+04) that is one day behind and
+makes "which rule is newer" unanswerable by reading. `bun run check:release`
+enforces that dated release headings go in non-increasing date order
+(docs/contracts/documentation.md, 2026-09-17).
+
+## [0.181.42] - 2026-09-23
+
+### Added
+
+- **Durable core wait state machine.** `WaitService` persists typed,
+  secret-safe wait identities and bounded versioned lifecycle events through
+  `ProjectStore`. Its adapter reconciliation seam checkpoints dispatch before
+  any external effect and refuses replay after an uncertain crash boundary;
+  timer, process, CLI, and create-front concerns remain outside this core.
+
+- **Durable wait contracts.** Waiting, recovery, cursor reconciliation, and
+  wake-delivery boundaries define the headless service's typed, secret-safe
+  records and checkpoint-before-report semantics.
+
+## [0.181.41] - 2026-09-23
+
+### Fixed
+
+- **External-CWD standalone resumes no longer mistake a reused sandbox PID
+  for their former owner.** Role checkpoints and durable state locks add the
+  nanosecond `/proc/<pid>` birth witness to the existing PID/start-time check;
+  a live shell reusing PID 2 in the same kernel tick is refused as a different
+  process, while legacy records retain the conservative compatibility path.
+
+## [0.181.40] - 2026-09-23
+
+### Fixed
+
+- **The version ladder no longer treats symbolic `origin/HEAD` as a second
+  foreign branch claim.** The gate resolves that alias and evaluates its
+  already-listed remote-tracking target once; a direct or unresolved ref stays
+  conservative and is still evaluated as a claim.
+
+## [0.181.33] - 2026-09-23
+
+### Fixed
+
+- **Standalone resume never replays an operation that already settled (issue
+  #617).** The role checkpoints a bounded `settling` handoff before closeout;
+  recovery reclaims its owner and finalizes that durable result without another
+  provider dispatch.
+
+## [0.181.32] - 2026-09-23
+
+### Fixed
+
+- **Standalone role starts now recover atomically.** A durable `starting`
+  intent exists before session creation; after a hard stop, explicit resume
+  verifies the former owner and safely creates or reopens the one session
+  before making a provider request.
+
+## [0.181.31] - 2026-09-23
+
+### Fixed
+
+- **Orphaned standalone role checkpoints recover only with strict owner
+  evidence.** Resume rejects a still-live or unidentifiable owner, while a
+  missing, dead, reused, or argv-mismatched process can safely yield its
+  durable session to one recovering role.
+
+## [0.181.30] - 2026-09-23
+
+### Fixed
+
+- **A blocked wake startup no longer hangs.** Startup now settles after it
+  observes an active or recovery-blocked lane, leaving the durable wake
+  unhandled for delivery when that lane next settles.
+
+## [0.181.29] - 2026-09-23
+
+### Fixed
+
+- **Disabling the compaction fallback now prevents an unconfigured role-model
+  summary.** A failed configured summarizer declines the hook when fallback is
+  off; each failed attempt reports only its route, error class and numeric
+  context, without provider prose or conversation content.
+
+## [0.181.28] - 2026-09-23
+
+### Fixed
+
+- **Release packaging accepts npm pack runs without JSON output.** It checks
+  the sole archive's own package manifest for the expected name and version,
+  hashes its bytes, and publishes that exact archive. Empty or misleading npm
+  output cannot prevent a valid release or authorize a different package.
+
+## [0.181.27] - 2026-09-23
+
+### Fixed
+
+- **Release packaging accepts npm pack metadata without a filename.** The
+  publisher selects the sole regular `.tgz` in its fresh pack directory, checks
+  its bytes against any existing registry version, and publishes those bytes.
+  Misleading filename metadata cannot redirect or block the release.
+
+## [0.181.26] - 2026-09-23
+
+### Fixed
+
+- **Release recovery now compares the tarball it actually publishes.** It packs
+  once, hashes the archive bytes, and publishes that same archive. npm versions
+  that omit `integrity` from pack JSON no longer prevent a release; an existing
+  version is still reused only when its registry integrity matches those bytes.
+
+## [0.181.25] - 2026-09-23
+
+### Fixed
+
+- **Slow npm registry propagation can recover on a release rerun.** The release
+  waits up to about thirty minutes and reports exact-version and `latest`
+  observations as it waits. A rerun reuses an already published version only
+  when its tarball integrity matches the package built from this checkout;
+  mismatches and unreadable registry responses fail.
+
+## [0.181.24] - 2026-09-23
+
+### Fixed
+
+- **A provider that returns no response after its own retries no longer looks
+  like an authentication failure.** The safe `provider_unavailable` outcome
+  tells the operator to retry or select another configured route, includes a
+  fixed diagnostic code for recognised SDK transport and finish-reason errors,
+  and keeps raw provider text out of public state. Real credential-bearing
+  empty turns remain unchanged.
+
+## [0.181.23] - 2026-09-23
+
+### Fixed
+
+- **Standalone reviews now close out before broad reconnaissance consumes an
+  implementation-sized budget.** The configurable reviewer defaults preserve
+  structured submission capacity, and interrupted runs no longer claim that a
+  budget increase is required to resume.
+
+## [0.181.22] - 2026-09-23
+
+### Fixed
+
+- **Registry readiness now tolerates npm warning lines without accepting
+  damaged output.** It extracts one complete JSON string from command output;
+  malformed, ambiguous, and non-string values still leave publication pending.
+
+## [0.181.21] - 2026-09-23
+
+### Fixed
+
+- **A successful npm publish now waits for the registry before calling the
+  release usable.** The release job publishes exactly once, then makes bounded
+  read-only checks that the exact package version resolves and `latest` names
+  it. A slow registry reports an explicit propagation-pending failure rather
+  than trying an impossible duplicate publish. `ad-coder update` calls the
+  channel target “registry latest” so that wording does not imply a local fact.
+
+## [0.181.20] - 2026-09-23
+
+### Fixed
+
+- **A standalone reviewer no longer loses an accepted structured verdict when
+  a later tool reaches a stage limit or the host stops.** `submit_verdict`
+  saves the validated object before reporting tool success. Resume reuses that
+  terminal review outcome without another provider call, and duplicate replay
+  cannot append a second stamp for the same reviewer run id.
+
+- **A hard-killed standalone role is visible and recoverable.** Run inspection
+  now distinguishes a proven lost worker from provider or compaction failures.
+  Resume preserves that durable owner-loss witness before taking over the
+  session and reconciling its saved lane.
+
+## [0.181.18] - 2026-09-23
+
+### Fixed
+
+- **A failed session open releases coordination before its lease.** Cleanup
+  follows a stable lock order while preserving the original typed open error
+  and releasing the failed session's lease.
+
+## [0.181.17] - 2026-09-23
+
+### Fixed
+
+- **A killed standalone role no longer leaves an ownerless lease forever.**
+  Lock publication now exposes a complete PID/token identity atomically, and
+  resume recovers the empty legacy lease shape after bounded contention.
+
+## [0.181.16] - 2026-09-23
+
+### Added
+
+- **Machine-facing stop and stamp APIs are public.** Embedders can now request
+  a verified single-run stop and render delivery or review-stamp gates through
+  the package root, without invoking CLI parsing or output handling.
+
+## [0.181.15] - 2026-09-23
+
+### Fixed
+
+- **Missing stamp ledgers are command errors, not internal failures.** `stamp
+  delivery` and `stamp body-check` now name the absent target ledger and use
+  the normal human and machine usage-error projections.
+
 ## [0.181.14] - 2026-09-23
 
 ### Fixed
@@ -21,6 +315,15 @@ enforces that dated release headings go in non-increasing date order
   digest. Supplying a task remains an exact digest assertion, so mismatched
   resumes are still refused.
 
+## [0.181.14] - 2026-09-23
+
+### Fixed
+
+- **A competing standalone resume no longer steals the checkpoint.** The CLI
+  now acquires the durable session lease before marking a resumed run as
+  running, so a still-draining predecessor leaves its paused checkpoint and
+  process identity intact; a genuinely dead owner remains reclaimable.
+
 ## [0.181.13] - 2026-09-23
 
 ### Fixed
@@ -30,6 +333,14 @@ enforces that dated release headings go in non-increasing date order
   journal, and reports the marked continuation instead of retrying or choosing
   a transaction order.
 
+## [0.181.13] - 2026-09-23
+
+### Fixed
+
+- **Active-model compaction fallback is regression-tested as an ad-coder
+  compaction.** The test now asserts the durable fallback marker and the
+  hook-owned entry actually produced by the bounded route.
+
 ## [0.181.12] - 2026-09-23
 
 ### Fixed
@@ -38,6 +349,15 @@ enforces that dated release headings go in non-increasing date order
   that needs explicit recovery records a durable `manual_recovery` pause;
   other pre-run session-store failures settle the attempt safely instead of
   leaving a dead process advertised as `running`.
+
+## [0.181.12] - 2026-09-23
+
+### Fixed
+
+- **Standalone roles release their own durable lease before result recovery.**
+  A completed role can no longer contend with itself while reopening its saved
+  session to extract the result; fallback compaction also never commits an
+  absent summary.
 
 ## [0.181.11] - 2026-09-23
 
@@ -55,6 +375,18 @@ enforces that dated release headings go in non-increasing date order
   preserves overlapping committed transactions and reports a typed recovery;
   an explicit clear archives the exact journal and records its location on a
   fresh same-id continuation rather than silently choosing or deleting data.
+
+## [0.181.7] - 2026-09-23
+
+### Fixed
+
+- **Automatic compaction now starts at the configured default.** The shipped
+  context budget begins durable compaction at 70% of a role's active context
+  window, rather than the previous 80%.
+- **Compaction summaries are now bounded and recoverable.** Summary output is
+  capped at one third of the active context window by default; the cap, three
+  summarizer attempts, and active-model fallback are configurable and visible
+  in effective configuration.
 
 ## [0.181.9] - 2026-09-22
 
@@ -317,6 +649,7 @@ enforces that dated release headings go in non-increasing date order
   `docs/contracts/session-manager.md`. A thin `ad-coder session-manager
   serve|list` front renders it in the single command registry; the capability
   is exported from the library API (`src/index.ts`).
+
 ## [0.148.0] - 2026-09-20
 
 ### Removed
@@ -354,6 +687,7 @@ enforces that dated release headings go in non-increasing date order
   `subscriptionCapacityRanges` at run time (the only reader is `resolveConfig`,
   which takes the `routing` field and the source name), so no project that
   carries none loses anything else.
+
 ## [0.147.0] - 2026-09-20
 
 ### Fixed
@@ -564,6 +898,43 @@ enforces that dated release headings go in non-increasing date order
   response content), and the retry instruction fits this refusal. The accepted
   plan form is unchanged: prose is refused, not parsed.
 
+## [0.139.0] - 2026-09-20
+
+### Fixed
+- **The console stopped printing the same decision three times (issue #501).**
+  One console session measured twenty startup banners, one per role delegation
+  behind the session, each carrying the same selection and ladder: repeated
+  identical output read as milestones instead of noise, and the banner itself
+  named the plumbing instead of the decision -- a `provider destination` line
+  printed the host and the credential variable name per provider, and the main
+  banner pinned a `complexity` number the orchestrator reclassifies per brief.
+  The banner is now one line printed once per process, keyed on its content:
+  the selection, the provider(s) the routed models actually resolve to (distinct
+  provider names -- never hosts, never credential variables -- and only where
+  the selection does not already name them), and the role->model ladder the run
+  takes, with no default `complexity` at all; a genuinely different routing
+  prints once more, and the resolution data itself is untouched. The busy
+  console heartbeat drew a fresh bare `still running` line per interval, a line
+  storm that pushed real activity off screen; it now draws through the activity
+  renderer's single in-place slot and names what the turn is doing -- the
+  activity subject, the worker once a second role has worked, and the spend so
+  far -- while identical progress is never rewritten and JSON mode keeps its
+  complete event lines. A pipeline pause reached the terminal through two paths
+  (the pushed background notice and the result path that drove the run) and
+  printed twice, reading as a new decision where the operator already made one;
+  every renderer of a pause now asks one keyed memo before it writes, so the
+  first renderer of an occurrence wins and a new occurrence -- a different run,
+  phase, or code -- still prints. The pause line carries the recovery action in
+  words, says the phase even when the event carries no stage, and keeps "the run
+  is resumable, not failed"; the drive result path keeps the checkpoint path and
+  the actionable resume command on its one line. A payload that fails
+  validation degrades to `unknown` and invents no limit, while the lifecycle
+  stays fully visible. Tests pin the seams (each test resets the process-level
+  memos, so no test depends on run order) and the contract: one banner per
+  identical routing and one more per different routing, no plumbing in the
+  banner text, a busy line that names its subject instead of stacking, and a
+  pause that prints once per occurrence and never on re-delivery.
+
 ## [0.138.0] - 2026-09-20
 
 ### Fixed
@@ -574,7 +945,6 @@ enforces that dated release headings go in non-increasing date order
 
 ### Fixed
 - **A paused stage whose recorded ceiling happens to equal the session default is resumable again (issue #511).** `resume_pipeline` refused every raise with `invalid_config (unchanged input stage limit)` -- observed live on run 67b85284, whose review stage paused at the 2400000 default and rejected raises to 2500000 and 2600000 alike. The durable resume guard reads the ceiling for the role whose stage paused, but `createWorkflowSession` never put `roleStageLimits` on the object it returns, so the guard always fell through to the session-wide ceiling, where a pause recorded at that same default compares equal to every raise and refuses it however large. The raise itself did reach execution, so only the check was blind. The factory now returns the per-role ceilings beside the session-wide ones, copied so the session does not share the config's object.
-
 
 ## [0.134.0] - 2026-09-20
 
@@ -663,43 +1033,6 @@ enforces that dated release headings go in non-increasing date order
   `input` on the delegated catalog model (`src/registry/resolve.ts:145-152`), so
   the catalog's price -- tiers included -- is what prices the run. Declare the
   catalog's own numbers so the file agrees with the bill.
-
-## [0.139.0] - 2026-09-20
-
-### Fixed
-- **The console stopped printing the same decision three times (issue #501).**
-  One console session measured twenty startup banners, one per role delegation
-  behind the session, each carrying the same selection and ladder: repeated
-  identical output read as milestones instead of noise, and the banner itself
-  named the plumbing instead of the decision -- a `provider destination` line
-  printed the host and the credential variable name per provider, and the main
-  banner pinned a `complexity` number the orchestrator reclassifies per brief.
-  The banner is now one line printed once per process, keyed on its content:
-  the selection, the provider(s) the routed models actually resolve to (distinct
-  provider names -- never hosts, never credential variables -- and only where
-  the selection does not already name them), and the role->model ladder the run
-  takes, with no default `complexity` at all; a genuinely different routing
-  prints once more, and the resolution data itself is untouched. The busy
-  console heartbeat drew a fresh bare `still running` line per interval, a line
-  storm that pushed real activity off screen; it now draws through the activity
-  renderer's single in-place slot and names what the turn is doing -- the
-  activity subject, the worker once a second role has worked, and the spend so
-  far -- while identical progress is never rewritten and JSON mode keeps its
-  complete event lines. A pipeline pause reached the terminal through two paths
-  (the pushed background notice and the result path that drove the run) and
-  printed twice, reading as a new decision where the operator already made one;
-  every renderer of a pause now asks one keyed memo before it writes, so the
-  first renderer of an occurrence wins and a new occurrence -- a different run,
-  phase, or code -- still prints. The pause line carries the recovery action in
-  words, says the phase even when the event carries no stage, and keeps "the run
-  is resumable, not failed"; the drive result path keeps the checkpoint path and
-  the actionable resume command on its one line. A payload that fails
-  validation degrades to `unknown` and invents no limit, while the lifecycle
-  stays fully visible. Tests pin the seams (each test resets the process-level
-  memos, so no test depends on run order) and the contract: one banner per
-  identical routing and one more per different routing, no plumbing in the
-  banner text, a busy line that names its subject instead of stacking, and a
-  pause that prints once per occurrence and never on re-delivery.
 
 ## [0.131.0] - 2026-09-20
 
@@ -1311,6 +1644,7 @@ enforces that dated release headings go in non-increasing date order
   `docs/contracts/errors.md` gained a dated 2026-09-19 entry, and
   `docs/contracts/ledger-report.md` documents the new field. No new error class and no new
   hierarchy.
+
 ## [0.100.0] - 2026-09-19
 
 ### Changed
@@ -1335,6 +1669,7 @@ enforces that dated release headings go in non-increasing date order
   `stampCheckErrors` and `stampBodyCheckErrors`; verdict and digest logic
   is untouched. \#425 additionally accepts `stamp --json` as an alias for
   the machine front.
+
 ## [0.99.0] - 2026-09-19
 
 ### Added
@@ -1348,8 +1683,6 @@ enforces that dated release headings go in non-increasing date order
   and chore PRs raise the version too. It skips on main (push event or local
   branch), where the base check is meaningless, and passes when no title is
   available (typical local run).
-
-## [0.96.0] - 2026-09-19
 
 ## [0.96.1] - 2026-09-19
 
@@ -1369,6 +1702,8 @@ enforces that dated release headings go in non-increasing date order
   and an additive `refusal` field carrying code, discriminator, and the authored
   sentence only -- so it stays distinguishable from a provider-failure row,
   which always carries provider-reported usage and no refusal field.
+
+## [0.96.0] - 2026-09-19
 
 ## [0.95.1] - 2026-09-19
 
@@ -2695,7 +3030,6 @@ enforces that dated release headings go in non-increasing date order
   first gate with `ENOENT: could not open the "node_modules" directory` -- green
   locally, where the link resolves, and nowhere else.
 
-
 ## [0.47.0] - 2026-09-17
 
 ### Added
@@ -2717,6 +3051,57 @@ enforces that dated release headings go in non-increasing date order
   nor the paste, nor `config show`'s skill row, and an `always` skill is never
   a catalogue row -- its text is already in the prompt, so `load_skill` for it
   answers `skill_not_available`.
+
+## [0.46.0] - 2026-09-17
+
+### Added
+- A `documentation-writing` skill, offered to every role. It carries what this
+  project keeps rediscovering: compactness is not word count (a ceiling is a
+  prompt to re-read the document, not a tax on the sentence being added);
+  verify each claim against the code rather than copying it from an issue;
+  a stale sentence is worse than a missing one; and a decision is recorded with
+  its date rather than by quietly rewriting the old one. Written after a README
+  rewrite compressed "read navigable pages" to "read pages" to fit a word
+  budget, losing the distinction the adjective carried. (#229)
+- `architecture-recon` gains two reconnaissance habits, as advice rather than
+  rule: print what actually arrives where you would add a mechanism, and treat a
+  green test as proof your code works, not that it was needed. Both come from a
+  session that set out to pass read paths between pipeline stages, printed the
+  prompt the second coder round really received, and found the handoff already
+  there -- the change it was about to write would have been a second path beside
+  a working one. (#274)
+
+## [0.45.0] - 2026-09-17
+
+### Fixed
+- The orchestrator can now raise a stage ceiling and resume, which is what
+  `docs/contracts/operator-flow.md` has required since 2026-09-16 and what no
+  code could do. The coordinator already refused to resume a stage-limit pause
+  at an unchanged ceiling (`unchanged <reason> stage limit`) -- a correct guard
+  that, with no way to carry a larger number back in, blocked the very
+  correction it was written to enforce. `resume_pipeline` now takes
+  `raiseRole`, `raiseReason` and `raiseLimit`; the raise lands as a role
+  overlay through the same path the classified tier already travels, and each
+  field is validated against the shipped unions with a refusal that names what
+  was wrong. Measured cause: a coder stage exhausted 400k input tokens on
+  reconnaissance and reported "I ran out of budget during reconnaissance and
+  made zero edits" -- honest, caught by review, and unrecoverable until now.
+  (#208)
+- Review of the first version of this fix (`changes_requested`) caught two
+  blockers, both now closed and pinned by tests. A `raiseLimit` of `0` passed a
+  `>= 0` check while `0` DISABLES a limit, and the coordinator's guard
+  short-circuits on a resolved zero -- so a zero raise would have slipped past
+  the protection it exists to satisfy and removed the ceiling. And validation
+  sat only inside the tool, so a library caller of the exported
+  `resumePipeline` got a silently unmatched overlay and then failed on the
+  "unchanged ceiling" guard, reporting the wrong cause; `assertRaisedLimits` now
+  guards the core boundary every entry point crosses. A malformed raise also
+  gets its own `invalid_raise` code rather than reusing `invalid_role`.
+- `STAGE_LIMIT_KEY` maps each exhaustion reason to the `StageLimits` field it
+  is measured against, shared by the coordinator's guard and the raise path.
+  Two copies of that mapping would drift the moment a reason is added, and a
+  raise that wrote a different field than the guard checks would satisfy the
+  guard while changing nothing.
 
 ## [0.44.1] - 2026-09-17
 
@@ -3077,59 +3462,6 @@ enforces that dated release headings go in non-increasing date order
   truncated, or blank line is a skipped line counted in per-file stats, never a
   crash; a file that cannot be opened fails with its path named.
 
-## [0.46.0] - 2026-09-17
-
-### Added
-- A `documentation-writing` skill, offered to every role. It carries what this
-  project keeps rediscovering: compactness is not word count (a ceiling is a
-  prompt to re-read the document, not a tax on the sentence being added);
-  verify each claim against the code rather than copying it from an issue;
-  a stale sentence is worse than a missing one; and a decision is recorded with
-  its date rather than by quietly rewriting the old one. Written after a README
-  rewrite compressed "read navigable pages" to "read pages" to fit a word
-  budget, losing the distinction the adjective carried. (#229)
-- `architecture-recon` gains two reconnaissance habits, as advice rather than
-  rule: print what actually arrives where you would add a mechanism, and treat a
-  green test as proof your code works, not that it was needed. Both come from a
-  session that set out to pass read paths between pipeline stages, printed the
-  prompt the second coder round really received, and found the handoff already
-  there -- the change it was about to write would have been a second path beside
-  a working one. (#274)
-
-
-## [0.45.0] - 2026-09-17
-
-### Fixed
-- The orchestrator can now raise a stage ceiling and resume, which is what
-  `docs/contracts/operator-flow.md` has required since 2026-09-16 and what no
-  code could do. The coordinator already refused to resume a stage-limit pause
-  at an unchanged ceiling (`unchanged <reason> stage limit`) -- a correct guard
-  that, with no way to carry a larger number back in, blocked the very
-  correction it was written to enforce. `resume_pipeline` now takes
-  `raiseRole`, `raiseReason` and `raiseLimit`; the raise lands as a role
-  overlay through the same path the classified tier already travels, and each
-  field is validated against the shipped unions with a refusal that names what
-  was wrong. Measured cause: a coder stage exhausted 400k input tokens on
-  reconnaissance and reported "I ran out of budget during reconnaissance and
-  made zero edits" -- honest, caught by review, and unrecoverable until now.
-  (#208)
-- Review of the first version of this fix (`changes_requested`) caught two
-  blockers, both now closed and pinned by tests. A `raiseLimit` of `0` passed a
-  `>= 0` check while `0` DISABLES a limit, and the coordinator's guard
-  short-circuits on a resolved zero -- so a zero raise would have slipped past
-  the protection it exists to satisfy and removed the ceiling. And validation
-  sat only inside the tool, so a library caller of the exported
-  `resumePipeline` got a silently unmatched overlay and then failed on the
-  "unchanged ceiling" guard, reporting the wrong cause; `assertRaisedLimits` now
-  guards the core boundary every entry point crosses. A malformed raise also
-  gets its own `invalid_raise` code rather than reusing `invalid_role`.
-- `STAGE_LIMIT_KEY` maps each exhaustion reason to the `StageLimits` field it
-  is measured against, shared by the coordinator's guard and the raise path.
-  Two copies of that mapping would drift the moment a reason is added, and a
-  raise that wrote a different field than the guard checks would satisfy the
-  guard while changing nothing.
-
-
 ## [0.35.2] - 2026-09-17
 
 ### Fixed
@@ -3157,6 +3489,7 @@ enforces that dated release headings go in non-increasing date order
   pin and an inherited off stay mutually exclusive. It fails without a
   launch parameter arriving at the boundary (the #245 shape), which a defaulted
   parameter and all seven gates passed silently.
+
 ## [0.35.1] - 2026-09-17
 
 ### Fixed
@@ -4325,7 +4658,6 @@ enforces that dated release headings go in non-increasing date order
   confirming responses, rather than two per-token rates, so the operator can
   check them against a provider invoice directly.
 
-
 ## [0.9.0] - 2026-09-15
 
 ### Added
@@ -4371,6 +4703,7 @@ enforces that dated release headings go in non-increasing date order
   reported its block for the next run on a DIFFERENT model, and kept reporting
   it after the operator released it -- wedging every model in the session shut.
   It is now cleared on entry to every admission and consumed when replayed.
+
 ## [0.8.4] - 2026-09-15
 
 ### Fixed
@@ -4456,6 +4789,7 @@ enforces that dated release headings go in non-increasing date order
   without a catalog number -- were judged identical and whichever was
   registered first answered for the other: a confident, specific, arbitrary
   attribution. The resolved window is now part of the comparison.
+
 ## [0.8.1] - 2026-09-15
 
 ### Changed
@@ -4473,6 +4807,7 @@ enforces that dated release headings go in non-increasing date order
   durable evidence record in `docs/calibration-evidence.jsonl` rather than
   figures that lived only in a scratch ledger. Documentation only; no
   behavior change.
+
 ## [0.7.0] - 2026-09-15
 
 ### Fixed
@@ -4509,6 +4844,7 @@ enforces that dated release headings go in non-increasing date order
   The error carries the run id and the numeric status ONLY: the response body
   that produced the status is read for the number and dropped, because an
   uncontrolled provider body must never cross an error boundary.
+
 ## [0.6.4] - 2026-09-15
 
 ### Added
@@ -4536,6 +4872,7 @@ enforces that dated release headings go in non-increasing date order
   permanent reprice is accepted once rather than re-alarming forever. Enabled by
   default and configurable throughout. Implementation is tracked in
   `docs/BACKLOG.md`; no behavior ships in this release.
+
 ## [0.6.3] - 2026-09-15
 
 ### Fixed

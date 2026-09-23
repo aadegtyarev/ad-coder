@@ -131,7 +131,11 @@ const HEAD_SHA = "0f9d1e2a4b5c";
 const ATTACHED: FakeHead = { commit: HEAD_SHA, branch: THIS_BRANCH };
 const DETACHED: FakeHead = { commit: HEAD_SHA, branch: null };
 
-function fakeGit(refs: readonly FakeRef[], head: FakeHead = ATTACHED): GitRun {
+function fakeGit(
+  refs: readonly FakeRef[],
+  head: FakeHead = ATTACHED,
+  remoteHeadTarget: string | null = null,
+): GitRun {
   return (args: string[]) => {
     const [cmd] = args;
     if (cmd === "for-each-ref")
@@ -147,6 +151,10 @@ function fakeGit(refs: readonly FakeRef[], head: FakeHead = ATTACHED): GitRun {
           : { exitCode: 0, stdout: `${head.commit}\n`, stderr: "" };
       return { exitCode: 0, stdout: "b32584dbdc26\n", stderr: "" };
     }
+    if (cmd === "symbolic-ref" && args[2] === "refs/remotes/origin/HEAD")
+      return remoteHeadTarget === null
+        ? { exitCode: 1, stdout: "", stderr: "" }
+        : { exitCode: 0, stdout: `${remoteHeadTarget}\n`, stderr: "" };
     if (cmd === "symbolic-ref")
       return head.branch === null
         ? { exitCode: 1, stdout: "", stderr: "" }
@@ -213,6 +221,47 @@ describe("readOpenClaims (issue #383, git via injected seam)", () => {
     const result = readOpenClaims(fakeGit([remote, SELF]));
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.claims.map((claim) => claim.version)).toEqual(["0.135.0"]);
+  });
+  test("a symbolic origin/HEAD alias is not a second foreign claim", () => {
+    const target = "refs/remotes/origin/fix/501-console-output";
+    const remote: FakeRef = { ref: target, version: "0.135.0", merged: false };
+    const alias: FakeRef = { ref: "refs/remotes/origin/HEAD", version: "0.135.0", merged: false };
+    const result = readOpenClaims(fakeGit([alias, remote, SELF], ATTACHED, target));
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.claims).toEqual([{ ref: target, version: "0.135.0" }]);
+  });
+  test("a direct origin/HEAD ref stays a foreign claim", () => {
+    const direct: FakeRef = {
+      ref: "refs/remotes/origin/HEAD",
+      version: "0.135.0",
+      merged: false,
+    };
+    const result = readOpenClaims(fakeGit([direct, SELF]));
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.claims).toEqual([{ ref: direct.ref, version: "0.135.0" }]);
+  });
+  test("an origin/HEAD alias to a non-origin ref remains a claim", () => {
+    const localTarget: FakeRef = {
+      ref: "refs/heads/local-default",
+      version: "0.136.0",
+      merged: false,
+    };
+    const alias: FakeRef = { ref: "refs/remotes/origin/HEAD", version: "0.135.0", merged: false };
+    const result = readOpenClaims(fakeGit([alias, localTarget, SELF], ATTACHED, localTarget.ref));
+    expect(result.ok).toBe(true);
+    if (result.ok)
+      expect(result.claims).toEqual([
+        { ref: alias.ref, version: "0.135.0" },
+        { ref: localTarget.ref, version: "0.136.0" },
+      ]);
+  });
+  test("an origin/HEAD alias whose target is not enumerated remains a claim", () => {
+    const alias: FakeRef = { ref: "refs/remotes/origin/HEAD", version: "0.135.0", merged: false };
+    const result = readOpenClaims(
+      fakeGit([alias, SELF], ATTACHED, "refs/remotes/origin/missing-default"),
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.claims).toEqual([{ ref: alias.ref, version: "0.135.0" }]);
   });
   test("red: git unavailable is a named failure, not a silent pass", () => {
     const result = readOpenClaims(() => null);

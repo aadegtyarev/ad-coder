@@ -258,6 +258,8 @@ export {
   parsePlan,
   SUBMIT_PLAN_TOOL_NAME,
 } from "./orchestration/plan";
+export type { StandaloneRunInspection } from "./orchestration/run-stop";
+export { inspectStandaloneRun } from "./orchestration/run-stop";
 export type { PipelineContextDecisionInput, WorkflowSession } from "./orchestration/session";
 export {
   applyTransition,
@@ -281,6 +283,8 @@ export {
   StageLimitController,
   StageLimitError,
 } from "./orchestration/stage-limits";
+export type { StopRunInput, StopRunOutcome, StopRunSuccess } from "./orchestration/stop-run";
+export { DEFAULT_RUN_STOP_KILL_AFTER_MS, stopRun } from "./orchestration/stop-run";
 export type {
   AvailableTransition,
   Complexity,
@@ -322,6 +326,33 @@ export type {
 export { OrchestrationError } from "./orchestration/types";
 export type { VerdictCapture } from "./orchestration/verdict";
 export { buildSubmitVerdictTool, SUBMIT_VERDICT_TOOL_NAME } from "./orchestration/verdict";
+export type {
+  CreateWaitInput,
+  WaitCondition,
+  WaitDelivery,
+  WaitEvent,
+  WaitEventPage,
+  WaitEvidence,
+  WaitEvidenceCode,
+  WaitLifecycle,
+  WaitObservation,
+  WaitOwner,
+  WaitPolicy,
+  WaitRecord,
+  WaitRecoveryAction,
+  WaitServiceLimits,
+  WaitSource,
+  WaitSourceAdapter,
+  WaitTarget,
+  WaitTerminalLifecycle,
+} from "./orchestration/wait-service";
+export {
+  DEFAULT_WAIT_SERVICE_LIMITS,
+  WAIT_EVENT_VERSION,
+  WAIT_RECORD_VERSION,
+  WaitService,
+  WaitServiceError,
+} from "./orchestration/wait-service";
 export type { DefaultProfileModels } from "./profiles/default-profile";
 export { buildDefaultProfile } from "./profiles/default-profile";
 export type { ProfileErrorCode } from "./profiles/errors";
@@ -574,6 +605,7 @@ export {
   ProviderLimitError,
   ProviderQuotaError,
   ProviderRejectionError,
+  ProviderUnavailableError,
   providerLimitFrom,
   providerQuotaFrom,
   providerRejectionStatusFrom,
@@ -653,6 +685,12 @@ export {
 } from "./skills/resolver";
 export type { RoleSkillKit, RoleSkillKitOptions } from "./skills/role-kit";
 export { roleSkillKit } from "./skills/role-kit";
+export {
+  stampBodyCheckErrors,
+  stampCheckErrors,
+  stampDeliveryText,
+} from "./stamp/cli";
+export type { ReviewStampFailure } from "./stamp/record-review-stamp";
 export type {
   TelegramRoomBinding,
   TelegramRoomBindingErrorCode,

@@ -1,3 +1,5 @@
+import type { ProviderFailureDiagnostic } from "../runner/errors";
+
 /**
  * The numeric shape of one provider usage reading: tokens and money, no
  * identifiers and no diff-only bookkeeping.
@@ -113,4 +115,6 @@ export interface LedgerRecord {
     status?: number;
     code?: string;
   };
+  /** Fixed diagnostic from a recognised statusless SDK failure, never source text. */
+  providerDiagnostic?: ProviderFailureDiagnostic;
 }

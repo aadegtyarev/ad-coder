@@ -132,8 +132,8 @@ test("a resolved pipeline carries a live cost-anomaly detector, so default-on is
 });
 
 for (const [modelName, window, expectedBudget] of [
-  ["small", 32_000, 28_800],
-  ["large", 200_000, 180_000],
+  ["small", 32_000, 25_600],
+  ["large", 200_000, 160_000],
 ] as const) {
   test(`homogeneous ${window}-token configuration derives role-local budgets`, () => {
     const config = resolvePipelineConfig({
@@ -171,9 +171,9 @@ test("mixed-window roles select independently and derive independent budgets", (
   expect(config.roles.planner?.model.contextWindow).toBe(32000);
   expect(config.roles.security?.model.contextWindow).toBe(200000);
   expect(config.roles.researcher?.model.contextWindow).toBe(200000);
-  expect(config.roles.coder.role.contextBudget.maxTokens).toBe(28800);
-  expect(config.roles.reviewer.role.contextBudget.maxTokens).toBe(180000);
-  expect(config.roles.auditor?.role.contextBudget.maxTokens).toBe(28800);
+  expect(config.roles.coder.role.contextBudget.maxTokens).toBe(25600);
+  expect(config.roles.reviewer.role.contextBudget.maxTokens).toBe(160000);
+  expect(config.roles.auditor?.role.contextBudget.maxTokens).toBe(25600);
   expect(config.roles.orchestrator?.model.contextWindow).toBe(32000);
 });
 
@@ -202,10 +202,51 @@ test("config show reports the context window each role will actually use", () =>
   // The window is not the ceiling a turn gets; the derived budget is, so both
   // are projected and the operator can see the relationship.
   expect(config.effectiveConfig?.["contextBudgetMaxTokens.planner"]).toEqual({
-    value: 28_800,
+    value: 25_600,
     source: "derived",
   });
+  expect(config.effectiveConfig?.["compactionThresholdTokens.reviewer"]).toEqual({
+    value: 140_000,
+    source: "derived",
+  });
+  expect(config.effectiveConfig?.["compactionSummaryMaxTokens.reviewer"]).toEqual({
+    value: 66_666,
+    source: "derived-default",
+  });
   expect(config.effectiveConfig?.["contextWindow.orchestrator"]).toBeDefined();
+});
+
+test("compaction cap, retries, and fallback are configurable and visible", () => {
+  const config = resolvePipelineConfig({
+    task: "x",
+    targetDir: "/tmp/target",
+    registryConfig: mixedRegistry(),
+    profile: buildDefaultProfile({ strong: "large", mid: "small", cheap: "small" }),
+    summarizerModel: "large",
+    compactionSummaryMaxTokens: 12_345,
+    compactionSummarizerRetryLimit: 2,
+    compactionFallbackToRoleModel: false,
+    env: fakeEnv({ LOCAL_KEY: "k" }),
+    warn: silent,
+  });
+
+  expect(config.compaction).toMatchObject({
+    summaryMaxTokens: 12_345,
+    summarizerRetryLimit: 2,
+    fallbackToRoleModel: false,
+  });
+  expect(config.effectiveConfig?.["compactionSummaryMaxTokens.reviewer"]).toEqual({
+    value: 12_345,
+    source: "cli",
+  });
+  expect(config.effectiveConfig?.compactionSummarizerRetryLimit).toEqual({
+    value: 2,
+    source: "cli",
+  });
+  expect(config.effectiveConfig?.compactionFallbackToRoleModel).toEqual({
+    value: false,
+    source: "cli",
+  });
 });
 
 test("a clamped context window names the window it was clamped from", () => {
@@ -362,7 +403,7 @@ test("every complexity route and override derives from its dispatched model wind
         routing.overrides?.[role],
       ).model;
       const budget = deriveContextBudget(model.contextWindow, routing.budgetPercents?.[role]);
-      expect(budget.maxTokens).toBe(model.contextWindow === 200000 ? 180000 : 28800);
+      expect(budget.maxTokens).toBe(model.contextWindow === 200000 ? 160000 : 25600);
     }
   }
 });
@@ -1077,8 +1118,11 @@ test("role stage-budget overlays inherit global limits and preserve explicit zer
     maxToolTurns: 0,
     // A role's own shipped ceiling, untouched by the two global values passed
     // above -- the overlay only replaces the dimensions a caller names.
-    maxDurationMs: 1_350_000,
-    maxInputTokens: 1_680_000,
+    maxDurationMs: 540_000,
+    maxInputTokens: 600_000,
+    finalResponseReserveModelTurns: 8,
+    finalResponseReserveToolTurns: 8,
+    finalResponseReserveInputTokens: 100_000,
   });
   // The other half of that rule, and the one `--help` used to hide: a global
   // flag DOES replace the role's own ceiling for that dimension, so passing

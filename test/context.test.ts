@@ -6,6 +6,7 @@ import type {
 } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { createModels, fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
+import { deriveContextBudget } from "../src/context/budget";
 import type { CompactionHookResult } from "../src/context/compactor";
 import { produceSummary, selectRecentTail } from "../src/context/compactor";
 import type { CompactionFailure, ContextBudget, Summarizer } from "../src/index";
@@ -162,6 +163,19 @@ test("durableCompactionSettings maps the budget onto the harness threshold", () 
   expect(200_000 - shipped.reserveTokens).toBe(180_000 - 20_000);
 });
 
+test("the shipped budget begins automatic compaction at 70 percent of the role window", () => {
+  const contextWindow = 200_000;
+  const resolved = deriveContextBudget(contextWindow);
+  const settings = durableCompactionSettings(resolved, contextWindow);
+
+  expect(resolved).toEqual({
+    maxTokens: 160_000,
+    reserveTokens: 20_000,
+    keepRecentTokens: 50_000,
+  });
+  expect(contextWindow - settings.reserveTokens).toBe(140_000);
+});
+
 test("durableCompactionSettings keeps a negative reserve impossible", () => {
   // A role paired at call time with a model smaller than the one it was defined
   // against: maxTokens - reserve exceeds the runtime window, and a negative
@@ -261,7 +275,7 @@ test("nothing to summarize is not a summarizer call, and declines on a threshold
   expect(calls).toBe(0);
 });
 
-test("a summarizer failure declines once, with one attributed line, and no content", async () => {
+test("a summarizer failure declines after three attributed attempts without leaking content", async () => {
   const secret = "z".repeat(4000);
   class ProviderBoom extends Error {
     override readonly name = "ProviderBoom";
@@ -281,21 +295,19 @@ test("a summarizer failure declines once, with one attributed line, and no conte
     }),
   );
 
-  // Declining is how the hook hands the decision back: the harness then
-  // summarizes with the ROLE's model, so a dead cheap summarizer does not end
-  // the run. A throw here would have been swallowed by the hook registry and
-  // produced exactly the same fallback -- silently.
-  expect(result).toBeUndefined();
+  // An explicitly disabled fallback must remain disabled: undefined would ask
+  // the harness to summarize with the role model outside our retry policy.
+  expect(result).toEqual({ decline: true });
   expect(writes).toContain("ad-coder: compaction summarizer failed");
   expect(writes).toContain("ProviderBoom");
   expect(writes).toContain("HTTP 529");
   expect(writes).toContain("code overloaded");
   expect(writes).toContain("summary-provider/cheap");
   expect(writes).toContain("measured 5000 tokens, threshold 1800");
-  // The failure is announced on every attempt, not only under an attempt bound:
-  // the pre-#444 handler gated its warning on `failures.length <= 2`, so 63
-  // failures in one turn left two lines behind.
-  expect(writes.match(/compaction summarizer failed/g)).toHaveLength(1);
+  for (const attempt of [1, 2, 3]) {
+    expect(writes).toContain(`compaction summarizer attempt ${attempt}/3 failed`);
+  }
+  expect(writes.match(/compaction summarizer attempt/g)).toHaveLength(3);
   // Leak invariant: names and numbers only. The thrown text can carry the
   // request it rejected, and the evicted head IS conversation.
   expect(writes).not.toContain(secret);
@@ -313,7 +325,7 @@ test("a summarizer that recovers summarizes the next preparation", async () => {
   const prep = preparation({ messagesToSummarize: evicted, retainedTail: [small("t1")] });
 
   const { result } = await captureStderr(async () => {
-    expect(await driveHook(prep, deps)).toBeUndefined();
+    expect(await driveHook(prep, deps)).toEqual({ decline: true });
     failing = false;
     return driveHook(prep, deps);
   });
@@ -322,6 +334,44 @@ test("a summarizer that recovers summarizes the next preparation", async () => {
   // next preparation simply gets a summary. A one-off refusal costs one
   // fallback, not the session (issue #391).
   expect(committed(result).summary).toContain("SUMMARY");
+});
+
+test("compaction caps oversized summaries, retries three times, then uses the active-model fallback", async () => {
+  let primaryCalls = 0;
+  let fallbackCalls = 0;
+  const primary: Summarizer = async () => {
+    primaryCalls += 1;
+    return Array.from({ length: 4_000 }, (_, index) => `fact-${index}`).join(" ");
+  };
+  const fallback: Summarizer = async () => {
+    fallbackCalls += 1;
+    return "brief retained state";
+  };
+  const { result, writes } = await captureStderr(() =>
+    driveHook(preparation({ messagesToSummarize: [big()], retainedTail: [small("tail")] }), {
+      budget: budget(),
+      summarizer: primary,
+      fallbackSummarizer: fallback,
+      summarizerScope: { provider: "cheap", model: "summary" },
+      fallbackScope: { provider: "active", model: "reviewer" },
+      summaryMaxTokens: 10,
+      summarizerRetryLimit: 3,
+    }),
+  );
+
+  expect(primaryCalls).toBe(3);
+  expect(fallbackCalls).toBe(1);
+  expect(committed(result).summary).toContain("brief retained state");
+  expect(committed(result).details).toMatchObject({
+    compactionFallbackUsed: true,
+    compactionFallbackSource: "cheap/summary",
+    compactionFallbackRoute: "active/reviewer",
+    compactionFallbackAttempts: 3,
+  });
+  expect(writes).toContain(
+    "compaction fallback used (cheap/summary -> active/reviewer, attempts 3)",
+  );
+  expect(writes.match(/compaction summarizer attempt/g)).toHaveLength(3);
 });
 
 test("describeCompactionFailure renders names and numbers only", () => {
@@ -567,6 +617,20 @@ test("createSummarizer asks for no prompt cache on its one-shot request", async 
   const summarizer = createSummarizer(models, faux.getModel() as Model<Api>);
   expect(await summarizer([small("source")])).toBe("brief");
   expect(faux.state.callCount).toBe(1);
+});
+
+test("createSummarizer passes its configured output cap to the provider", async () => {
+  const faux = fauxProvider({ provider: "summary", models: [{ id: "cheap" }] });
+  const models = createModels();
+  models.setProvider(faux.provider);
+  faux.setResponses([
+    (_context, options) => {
+      expect(options?.maxTokens).toBe(123);
+      return fauxAssistantMessage([{ type: "text", text: "brief" }]);
+    },
+  ]);
+  const summarizer = createSummarizer(models, faux.getModel() as Model<Api>, 123);
+  expect(await summarizer([small("source")])).toBe("brief");
 });
 
 test("createSummarizer rejects custom messages and empty provider output", async () => {

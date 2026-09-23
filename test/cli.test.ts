@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
 import type { AuthInteraction, Models } from "@earendil-works/pi-ai";
 import { FileCredentialStore } from "../src/auth/credential-store";
 import { projectCliError, renderCliError, renderConfigShowRow } from "../src/cli";
@@ -10,6 +11,7 @@ import { SessionNotAcquiredError } from "../src/conversation/conversation";
 import type { DurableRunRecord } from "../src/orchestration/control-plane";
 import { ProjectStore } from "../src/project-store/project-store";
 import { ProjectStoreError } from "../src/project-store/types";
+import { ProviderUnavailableError } from "../src/runner/errors";
 import { UpdateError } from "../src/update/updater";
 
 const REPO_ROOT = path.resolve(import.meta.dir, "..");
@@ -2018,6 +2020,23 @@ test("a machine front projects an update failure with its code, retryability, an
 
   // An unrecognized failure never leaks its text into the machine record.
   expect(projectCliError(new Error("secret internals"))).toEqual({ code: "internal_error" });
+  const unavailable = new ProviderUnavailableError("run-9f2a");
+  expect(projectCliError(unavailable)).toEqual({
+    code: "provider_unavailable",
+    detail: "run-9f2a",
+    text: unavailable.message,
+    retryable: true,
+    nextAction: "retry the run, or select another configured model or provider",
+  });
+  expect(projectCliError(new ProviderUnavailableError("run-9f2a", "fetch_failed"))).toMatchObject({
+    code: "provider_unavailable",
+    diagnosticCode: "fetch_failed",
+  });
+  expect(
+    renderCliError(new ProviderUnavailableError("run-9f2a", "fetch_failed")).match(
+      /retry the run/g,
+    ),
+  ).toHaveLength(1);
 });
 
 test("a human front states the update failure and its recovery action on one line", () => {
@@ -2434,9 +2453,9 @@ test("machine recovery explicitly archives an ambiguous journal before continuin
   try {
     const store = new ProjectStore(target);
     const session = await store.createSession("ambiguous_session");
-    const branch = await session.createBranch("main", null);
-    await branch.appendCustomEntry("test", { ready: true });
-    await session.close();
+    const branch = await session.createBranch("main", null, BACKGROUND_CONTEXT);
+    await branch.appendCustomEntry("test", { ready: true }, BACKGROUND_CONTEXT);
+    await session.close(BACKGROUND_CONTEXT);
     const [metadata] = await store.listSessions();
     if (metadata === undefined) throw new Error("missing durable session metadata");
     const before = fs.readFileSync(metadata.path, "utf8");

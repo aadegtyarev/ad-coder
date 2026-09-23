@@ -150,7 +150,13 @@ export class WakePump {
       // Durable interrupted/blocked recovery also owns the lane until the next
       // operator input. The wake stays durably unhandled and drains on that
       // input's settle -- never lost, never hot-looped.
-      if (this.deps.turnActive?.() || this.deps.recoveryBlocked?.()) return;
+      if (this.deps.turnActive?.() || this.deps.recoveryBlocked?.()) {
+        // `startupScan()` promises only that its initial scan attempt has
+        // settled. A busy lane deliberately defers delivery until the next
+        // settle/notice, but must not strand that startup waiter forever.
+        this.resolveIdle();
+        return;
+      }
       void this.drain();
     });
   }
@@ -247,12 +253,14 @@ export class WakePump {
       }
       if (remaining) {
         this.schedule();
-      } else if (this.idleResolver !== undefined) {
-        const resolve = this.idleResolver;
-        this.idleResolver = undefined;
-        resolve();
-      }
+      } else this.resolveIdle();
     }
+  }
+
+  private resolveIdle(): void {
+    const resolve = this.idleResolver;
+    this.idleResolver = undefined;
+    resolve?.();
   }
 
   private awaitIdle(): Promise<void> {

@@ -31,9 +31,12 @@ import {
   ConfiguredToolsUnavailableError,
   extractProviderCodeToken,
   GenerationTruncatedError,
+  hasZeroAssistantUsage,
   ProviderLimitError,
   ProviderQuotaError,
   ProviderRejectionError,
+  ProviderUnavailableError,
+  providerFailureDiagnosticFrom,
   providerLimitFrom,
   providerQuotaFrom,
   providerRejectionStatusFrom,
@@ -614,6 +617,88 @@ test("#356: a message-embedded 429 quota refusal surfaces as a typed quota outco
     status: 429,
     providerCode: "insufficient_quota",
   });
+});
+
+test("a statusless generic assistant error is provider-unavailable, not an authentication failure", async () => {
+  const { faux, models, model, role } = harnessFixture();
+  // pi-agent-core has already exhausted its own retry policy when this settles
+  // as assistant_error. There is no provider response from which auth or quota
+  // can be inferred.
+  faux.setResponses([
+    () => {
+      throw new Error("provider failed without a response");
+    },
+  ]);
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-provider-unavailable-"));
+  const thrown = await runRole({ role, targetDir: tmp, models, model, prompt: "do it" }).catch(
+    (error: unknown) => error,
+  );
+  expect(thrown).toBeInstanceOf(ProviderUnavailableError);
+  expect(thrown).toMatchObject({ code: "provider_unavailable", retryable: true });
+  expect((thrown as Error).message).not.toContain("authentication");
+});
+
+test("a statusless SDK failure exposes only an authored diagnostic", async () => {
+  const { faux, models, model, role } = harnessFixture();
+  faux.setResponses([
+    () => {
+      throw new Error("connect ETIMEDOUT private.example:443 token=never-publish-me");
+    },
+  ]);
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-provider-diagnostic-"));
+  const thrown = await runRole({ role, targetDir: tmp, models, model, prompt: "do it" }).catch(
+    (error: unknown) => error,
+  );
+  expect(thrown).toMatchObject({
+    code: "provider_unavailable",
+    diagnosticCode: "connection_timeout",
+  });
+  expect(JSON.stringify(thrown)).not.toContain("never-publish-me");
+  expect((thrown as Error).message).not.toContain("private.example");
+});
+
+test("a statusless failed answer with billed input is not provider-unavailable through runRole", async () => {
+  const message = fauxAssistantMessage("", {
+    stopReason: "error",
+    errorMessage: "No response body",
+  });
+  message.usage = {
+    input: 11,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 11,
+    cost: { input: 0.001, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.001 },
+  };
+  const { models, model, role } = usageFixture([message]);
+  const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-billed-failure-"));
+  const outcome = await runRole({ role, targetDir, models, model, prompt: "do it" }).catch(
+    (error: unknown) => error,
+  );
+  expect(outcome).not.toBeInstanceOf(ProviderUnavailableError);
+  expect(outcome).toMatchObject({ result: { status: "failed" } });
+});
+
+test("zero usage requires every reported token and cost field to be zero", () => {
+  expect(hasZeroAssistantUsage(undefined)).toBe(true);
+  expect(hasZeroAssistantUsage({ input: 11, output: 0 })).toBe(false);
+  expect(hasZeroAssistantUsage({ totalTokens: 11 })).toBe(false);
+  expect(hasZeroAssistantUsage({ cost: { input: 0.001, total: 0 } })).toBe(false);
+});
+
+test("statusless diagnostic extraction rejects uncontrolled provider prose", () => {
+  expect(providerFailureDiagnosticFrom({ message: "No response body" })).toBe(
+    "response_body_missing",
+  );
+  expect(providerFailureDiagnosticFrom({ message: "Provider finish_reason: content_filter" })).toBe(
+    "provider_content_filter",
+  );
+  expect(
+    providerFailureDiagnosticFrom({ message: "body says fetch failed; password=hunter2" }),
+  ).toBeUndefined();
+  const error = new ProviderUnavailableError("run-1", "secret prose" as never);
+  expect(error.diagnosticCode).toBeUndefined();
+  expect(JSON.stringify(error)).not.toContain("secret prose");
 });
 
 test("#418: a non-allow-list provider status still names its cause in the empty-turn fallback", async () => {
