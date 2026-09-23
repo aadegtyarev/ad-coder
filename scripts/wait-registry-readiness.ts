@@ -25,6 +25,7 @@ export interface RegistryReadinessOptions {
   delayMs: number;
   run: RegistryCommandRunner;
   sleep?: (delayMs: number) => Promise<void>;
+  onPending?: (attempt: number, observation: string) => void;
 }
 
 export interface RegistryReadiness {
@@ -49,7 +50,7 @@ export class RegistryPropagationPendingError extends Error {
   }
 }
 
-function readJsonString(result: RegistryCommandResult): string | null {
+export function readJsonString(result: RegistryCommandResult): string | null {
   if (result.exitCode !== 0) return null;
   // npm normally prints one JSON value, but a runner can prepend or append its
   // own npm warnings to stdout. Treat whole non-empty lines as candidates: a
@@ -73,10 +74,10 @@ function readJsonString(result: RegistryCommandResult): string | null {
 function observation(result: RegistryCommandResult, expected: string): string {
   const found = readJsonString(result);
   if (found !== null) return found === expected ? "matched" : `returned ${JSON.stringify(found)}`;
-  const detail = result.stderr.trim() || result.stdout.trim();
+  const npmCode = /(?:^|\n)npm (?:error|ERR!) code ([A-Z][A-Z0-9]+)/u.exec(result.stderr)?.[1];
   return result.exitCode === 0
     ? "returned invalid JSON"
-    : `lookup failed (${detail || `exit ${result.exitCode}`})`;
+    : `lookup failed (${npmCode ?? `exit ${result.exitCode}`})`;
 }
 
 /**
@@ -101,6 +102,7 @@ export async function waitForRegistryReadiness(
       `${options.packageName}@${options.version}`,
       "version",
       "--json",
+      "--prefer-online",
     ]);
     const latest = await options.run([
       "npm",
@@ -108,12 +110,14 @@ export async function waitForRegistryReadiness(
       options.packageName,
       "dist-tags.latest",
       "--json",
+      "--prefer-online",
     ]);
     const exactValue = readJsonString(exact);
     const latestValue = readJsonString(latest);
     if (exactValue === options.version && latestValue === options.version)
       return { attempts: attempt };
     lastObservation = `exact ${observation(exact, options.version)}; latest ${observation(latest, options.version)}`;
+    options.onPending?.(attempt, lastObservation);
     if (attempt < options.maxAttempts) await sleep(options.delayMs);
   }
   throw new RegistryPropagationPendingError(
@@ -165,7 +169,7 @@ async function main(): Promise<void> {
     maxAttempts: positiveInteger(
       "REGISTRY_READY_ATTEMPTS",
       process.env.REGISTRY_READY_ATTEMPTS,
-      30,
+      180,
     ),
     delayMs: nonNegativeInteger(
       "REGISTRY_READY_DELAY_MS",
@@ -173,6 +177,13 @@ async function main(): Promise<void> {
       10_000,
     ),
     run: npmRunner,
+    onPending: (attempt, status) => {
+      // A delayed publish can take many minutes. Keep its two independent
+      // registry observations visible while the job is running, without
+      // flooding Actions logs on every ten-second poll.
+      if (attempt === 1 || attempt % 6 === 0)
+        process.stdout.write(`npm registry pending (attempt ${attempt}): ${status}\n`);
+    },
   });
   process.stdout.write(
     `npm registry ready: ${manifest.name}@${manifest.version} resolves exactly and is latest (${result.attempts} attempt${result.attempts === 1 ? "" : "s"})\n`,
