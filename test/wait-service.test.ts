@@ -153,3 +153,108 @@ test("a crash after adapter dispatch never replays an uncertain external effect"
   );
   expect(calls).toBe(1);
 });
+
+test("cancellation keeps an in-flight dispatch witness when a late adapter result arrives", async () => {
+  const durable = store();
+  let resolve!: (observation: { lifecycle: "satisfied"; evidence: "condition_met" }) => void;
+  const service = new WaitService(durable, [
+    sourceAdapter(
+      () =>
+        new Promise((done) => {
+          resolve = done;
+        }),
+    ),
+  ]);
+  service.create(input());
+  const reconciling = service.reconcile("wait_one");
+  await Bun.sleep(1);
+
+  expect(service.cancel("wait_one").reconciliation).toBeDefined();
+  resolve({ lifecycle: "satisfied", evidence: "condition_met" });
+  await expect(reconciling).rejects.toEqual(
+    new WaitServiceError("reconcile_uncertain", "wait_one"),
+  );
+
+  const reopened = new WaitService(durable, [sourceAdapter(() => ({ lifecycle: "pending" }))]);
+  const record = reopened.reopen("wait_one");
+  expect(record.lifecycle).toBe("cancelled");
+  expect(record.reconciliation).toBeDefined();
+  expect(record.evidence.at(-1)?.code).toBe("cancelled");
+});
+
+test("a deadline also retains an in-flight dispatch witness for a late adapter result", async () => {
+  const durable = store();
+  let now = 100;
+  let resolve!: (observation: { lifecycle: "satisfied"; evidence: "condition_met" }) => void;
+  const service = new WaitService(
+    durable,
+    [
+      sourceAdapter(
+        () =>
+          new Promise((done) => {
+            resolve = done;
+          }),
+      ),
+    ],
+    {},
+    () => now,
+  );
+  service.create({ ...input(), deadlineAt: 101 });
+  const reconciling = service.reconcile("wait_one");
+  now = 101;
+  expect((await service.reconcile("wait_one")).lifecycle).toBe("timed_out");
+  resolve({ lifecycle: "satisfied", evidence: "condition_met" });
+  await expect(reconciling).rejects.toEqual(
+    new WaitServiceError("reconcile_uncertain", "wait_one"),
+  );
+  expect(service.reopen("wait_one").reconciliation).toBeDefined();
+});
+
+test("persisted wait event data is strictly shaped and bounded before it can be exposed", () => {
+  const durable = store();
+  const service = new WaitService(durable, [sourceAdapter(() => ({ lifecycle: "pending" }))], {
+    maxEventsPerWait: 1,
+    maxEvidenceEntries: 1,
+  });
+  service.create(input());
+  const statePath = durable.waitStatePath("wait_one");
+  const corrupt = JSON.parse(fs.readFileSync(statePath, "utf8")) as {
+    version: number;
+    value: { events: unknown[]; evidence: unknown[] };
+  };
+  corrupt.value.events = [
+    { version: 1, sequence: 1, waitId: "wait_one", lifecycle: "pending", timestamp: 1 },
+    { version: 1, sequence: 2, waitId: "wait_one", lifecycle: "pending", timestamp: 2 },
+  ];
+  fs.writeFileSync(statePath, `${JSON.stringify(corrupt)}\n`);
+  expect(() => service.events("wait_one")).toThrow(
+    new WaitServiceError("invalid_request", "wait_one"),
+  );
+
+  corrupt.value.events = [
+    {
+      version: 1,
+      sequence: 1,
+      waitId: "wait_one",
+      lifecycle: "pending",
+      timestamp: 1,
+      evidence: { code: "condition_met", at: 1, raw: "must-not-escape" },
+    },
+  ];
+  fs.writeFileSync(statePath, `${JSON.stringify(corrupt)}\n`);
+  expect(() => service.reopen("wait_one")).toThrow(
+    new WaitServiceError("invalid_request", "wait_one"),
+  );
+
+  corrupt.value.events = [
+    { version: 1, sequence: 1, waitId: "wait_one", lifecycle: "pending", timestamp: 1 },
+  ];
+  corrupt.value.evidence = [
+    { code: "condition_met", at: 1 },
+    { code: "condition_met", at: 2 },
+  ];
+  fs.writeFileSync(statePath, `${JSON.stringify(corrupt)}\n`);
+  expect(() => service.get("wait_one")).toThrow(
+    new WaitServiceError("invalid_request", "wait_one"),
+  );
+});

@@ -24,6 +24,16 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.43] - 2026-09-23
+
+### Fixed
+
+- **Wait recovery retains an in-flight reconciliation witness after a
+  cancellation or deadline.** A late adapter response now remains explicitly
+  uncertain instead of losing the durable evidence or being reported as a
+  generic non-pending wait. Persisted wait events and evidence are also
+  shape-checked and bounded before reopening or exposing them.
+
 ## [0.181.42] - 2026-09-23
 
 ### Added

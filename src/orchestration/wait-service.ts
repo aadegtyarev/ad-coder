@@ -302,9 +302,14 @@ export class WaitService {
       throw new WaitServiceError("reconcile_uncertain", id);
     }
     return this.store.mutateVersionedJson<WaitRecord>(this.store.waitStatePath(id), (current) => {
-      const value = this.currentPending(current, id);
+      const value = this.current(current, id);
       if (value.reconciliation?.operationId !== operationId)
         throw new WaitServiceError("reconcile_uncertain", id);
+      // A concurrent cancellation or deadline transition wins the lifecycle,
+      // but must retain the dispatch witness.  The late adapter result cannot
+      // establish whether its effect happened before that transition, so never
+      // collapse it into the generic not_pending result.
+      if (value.lifecycle !== "pending") throw new WaitServiceError("reconcile_uncertain", id);
       const { reconciliation: _reconciliation, ...withoutReconciliation } = value;
       const next = { ...withoutReconciliation, updatedAt: this.now() };
       if (observation.lifecycle === "pending") return next;
@@ -325,8 +330,10 @@ export class WaitService {
         if (value.lifecycle === lifecycle) return value;
         throw new WaitServiceError("not_pending", id);
       }
-      const { reconciliation: _reconciliation, ...withoutReconciliation } = value;
-      const next = { ...withoutReconciliation, lifecycle, updatedAt: timestamp };
+      // Keep an in-flight dispatch witness after a user cancellation or an
+      // elapsed deadline.  A late adapter return must remain explicitly
+      // ambiguous rather than making recovery evidence disappear.
+      const next = { ...value, lifecycle, updatedAt: timestamp };
       this.append(next, lifecycle, timestamp, evidence);
       return next;
     }).value;
@@ -448,12 +455,81 @@ export class WaitService {
       throw new WaitServiceError("invalid_request");
     this.validateInput(record);
     if (
+      !WAIT_LIFECYCLE.has(record.lifecycle) ||
+      !safeTimestamp(record.createdAt) ||
+      !safeTimestamp(record.updatedAt) ||
       !Number.isSafeInteger(record.nextSequence) ||
       record.nextSequence <= 0 ||
-      !Array.isArray(record.events)
+      !Array.isArray(record.events) ||
+      record.events.length > this.limits.maxEventsPerWait ||
+      !Array.isArray(record.evidence) ||
+      record.evidence.length > this.limits.maxEvidenceEntries
+    )
+      throw new WaitServiceError("invalid_request", record.id);
+    let previousSequence = 0;
+    for (const event of record.events) {
+      if (
+        !plainObject(event, [
+          "version",
+          "sequence",
+          "waitId",
+          "lifecycle",
+          "timestamp",
+          "evidence",
+        ]) ||
+        event.version !== WAIT_EVENT_VERSION ||
+        !Number.isSafeInteger(event.sequence) ||
+        event.sequence <= previousSequence ||
+        event.sequence >= record.nextSequence ||
+        event.waitId !== record.id ||
+        !WAIT_LIFECYCLE.has(event.lifecycle as WaitLifecycle) ||
+        !safeTimestamp(event.timestamp) ||
+        (event.evidence !== undefined && !validEvidence(event.evidence))
+      )
+        throw new WaitServiceError("invalid_request", record.id);
+      previousSequence = event.sequence;
+    }
+    for (const evidence of record.evidence)
+      if (!validEvidence(evidence)) throw new WaitServiceError("invalid_request", record.id);
+    if (
+      record.reconciliation !== undefined &&
+      (!plainObject(record.reconciliation, ["operationId", "dispatchedAt"]) ||
+        !SAFE_ID.test(record.reconciliation.operationId) ||
+        !safeTimestamp(record.reconciliation.dispatchedAt))
     )
       throw new WaitServiceError("invalid_request", record.id);
   }
+}
+
+const WAIT_LIFECYCLE = new Set<WaitLifecycle>([
+  "pending",
+  "satisfied",
+  "failed",
+  "unavailable",
+  "timed_out",
+  "stalled",
+  "cancelled",
+]);
+const WAIT_EVIDENCE = new Set<WaitEvidenceCode>([
+  "condition_met",
+  "condition_failed",
+  "source_unavailable",
+  "deadline_exceeded",
+  "source_stalled",
+  "cancelled",
+  "reconcile_uncertain",
+]);
+
+function safeTimestamp(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+function validEvidence(value: unknown): value is WaitEvidence {
+  return (
+    plainObject(value, ["code", "at"]) &&
+    typeof value.code === "string" &&
+    WAIT_EVIDENCE.has(value.code as WaitEvidenceCode) &&
+    safeTimestamp(value.at)
+  );
 }
 
 function copySource(source: WaitSource): WaitSource {
