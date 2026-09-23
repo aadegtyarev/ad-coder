@@ -1,5 +1,7 @@
 /** Publish once, or resume a release whose identical package is already on npm. */
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import {
   type RegistryCommandResult,
@@ -23,7 +25,11 @@ function npmErrorCode(result: RegistryCommandResult): string {
   );
 }
 
-function expectedIntegrity(result: RegistryCommandResult): string {
+function packedTarball(
+  result: RegistryCommandResult,
+  destination: string,
+  options: PublishOptions,
+): string {
   if (result.exitCode !== 0) throw new Error(`npm pack failed (${npmErrorCode(result)})`);
   let value: unknown;
   try {
@@ -31,9 +37,17 @@ function expectedIntegrity(result: RegistryCommandResult): string {
   } catch {
     throw new Error("npm pack returned invalid JSON");
   }
-  if (!Array.isArray(value) || value.length !== 1 || typeof value[0]?.integrity !== "string")
-    throw new Error("npm pack did not return one package integrity");
-  return value[0].integrity;
+  if (!Array.isArray(value) || value.length !== 1 || typeof value[0]?.filename !== "string")
+    throw new Error("npm pack did not return one package filename");
+  if (value[0].name !== options.packageName || value[0].version !== options.version)
+    throw new Error("npm pack returned a different package name or version");
+  const filename = value[0].filename;
+  if (filename !== path.basename(filename) || !filename.endsWith(".tgz"))
+    throw new Error("npm pack returned an invalid package filename");
+  const tarball = path.join(destination, filename);
+  if (!fs.statSync(tarball, { throwIfNoEntry: false })?.isFile())
+    throw new Error("npm pack did not create the reported tarball");
+  return tarball;
 }
 
 type Lookup = { kind: "missing" } | { kind: "present"; integrity: string };
@@ -66,31 +80,47 @@ function requireMatch(actual: string, expected: string, options: PublishOptions)
 
 /** Never mark another tarball of the same immutable version as this release. */
 export async function publishOrReuse(options: PublishOptions): Promise<PublishOutcome> {
-  const packed = await options.run(["npm", "pack", "--dry-run", "--json", "--silent"]);
-  const expected = expectedIntegrity(packed);
-  const before = await lookupIntegrity(options);
-  if (before.kind === "present") {
-    requireMatch(before.integrity, expected, options);
-    return "reused";
-  }
+  const destination = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-release-pack-"));
+  try {
+    const packed = await options.run([
+      "npm",
+      "pack",
+      "--json",
+      "--silent",
+      "--pack-destination",
+      destination,
+    ]);
+    const tarball = packedTarball(packed, destination, options);
+    // Compute SRI from the actual bytes. npm's pack JSON may omit `integrity`,
+    // and a later directory publish could repack to a different tarball.
+    const expected = `sha512-${createHash("sha512").update(fs.readFileSync(tarball)).digest("base64")}`;
+    const before = await lookupIntegrity(options);
+    if (before.kind === "present") {
+      requireMatch(before.integrity, expected, options);
+      return "reused";
+    }
 
-  const publish = await options.run([
-    "npm",
-    "publish",
-    ...(options.tag ? ["--tag", options.tag] : []),
-  ]);
-  if (publish.exitCode === 0) return "published";
+    const publish = await options.run([
+      "npm",
+      "publish",
+      tarball,
+      ...(options.tag ? ["--tag", options.tag] : []),
+    ]);
+    if (publish.exitCode === 0) return "published";
 
-  // Another attempt may have published this exact tarball while its metadata
-  // was still returning 404. Recover only after a positive integrity match.
-  const after = await lookupIntegrity(options);
-  if (after.kind === "present") {
-    requireMatch(after.integrity, expected, options);
-    return "reused";
+    // Another attempt may have published this exact tarball while its metadata
+    // was still returning 404. Recover only after a positive integrity match.
+    const after = await lookupIntegrity(options);
+    if (after.kind === "present") {
+      requireMatch(after.integrity, expected, options);
+      return "reused";
+    }
+    throw new Error(
+      `npm publish failed (${npmErrorCode(publish)}); exact version remains unavailable`,
+    );
+  } finally {
+    fs.rmSync(destination, { recursive: true, force: true });
   }
-  throw new Error(
-    `npm publish failed (${npmErrorCode(publish)}); exact version remains unavailable`,
-  );
 }
 
 async function npmRunner(argv: string[]): Promise<RegistryCommandResult> {
