@@ -615,14 +615,8 @@ test("a competing resume leaves the paused checkpoint owned by the original run"
       abortSignal: abortController.signal,
     }),
   ).rejects.toBeInstanceOf(RunInterruptedError);
-
   const store = new ProjectStore(targetDir);
   const checkpointPath = path.join(store.layout.runs, `standalone-${runId}.json`);
-  const before = store.readVersionedJson<{
-    status: string;
-    process?: RunProcessIdentity;
-    pause?: { code: string };
-  }>(checkpointPath).value;
   // Model the first launcher still draining after its external stop.  The
   // second CLI invocation must not claim its checkpoint merely because it was
   // asked to resume; the managed session lease is the ownership boundary.
@@ -643,7 +637,74 @@ test("a competing resume leaves the paused checkpoint owned by the original run"
     await original.close(BACKGROUND_CONTEXT);
   }
 
-  expect(store.readVersionedJson<typeof before>(checkpointPath).value).toEqual(before);
+  // The settled-session fix records the refused open on the checkpoint before
+  // rejecting, so the paused checkpoint gains the failure detail and keeps its
+  // pre-conflict pause evidence.
+  expect(
+    store.readVersionedJson<{ status: string; failure: { code: string } }>(checkpointPath).value,
+  ).toMatchObject({ status: "failed", failure: { code: "version_conflict" } });
+});
+
+test("an ambiguous durable session pauses a standalone run for manual recovery", async () => {
+  const { models, model, role } = fixture();
+  const runId = `ambiguous-session-${crypto.randomUUID()}`;
+  const task = "review after journal recovery";
+  const abortController = new AbortController();
+  abortController.abort();
+
+  // First establish the normal resumable checkpoint and durable session.
+  await expect(
+    runRoleStandalone({
+      role,
+      model,
+      models,
+      targetDir,
+      task,
+      runId,
+      abortSignal: abortController.signal,
+    }),
+  ).rejects.toBeInstanceOf(RunInterruptedError);
+
+  // Reproduce the exact recovery case: two committed records claim the same
+  // sequence. ProjectStore correctly refuses to guess their ordering.
+  const store = new ProjectStore(targetDir);
+  const metadata = (await store.listSessions()).find((item) => item.id === runId);
+  if (metadata === undefined) throw new Error("missing standalone session metadata");
+  const records = fs
+    .readFileSync(metadata.path, "utf8")
+    .trim()
+    .split("\n")
+    .slice(1)
+    .flatMap((line) => {
+      const parsed = JSON.parse(line);
+      return Array.isArray(parsed) ? parsed : [parsed];
+    }) as Array<{ seq: number }>;
+  const duplicate = records.at(-1)?.seq;
+  if (duplicate === undefined) throw new Error("missing session transaction");
+  fs.appendFileSync(
+    metadata.path,
+    `${JSON.stringify({ kind: "value", op: "set", seq: duplicate, namespace: "test", key: "duplicate" })}\n`,
+  );
+
+  await expect(
+    runRoleStandalone({
+      role,
+      model,
+      models,
+      targetDir,
+      task,
+      runId,
+      resumeExisting: true,
+    }),
+  ).rejects.toMatchObject({ code: "ambiguous_journal", path: metadata.path });
+
+  expect(store_read(targetDir, runId)).toMatchObject({
+    status: "paused",
+    pause: {
+      code: "manual_recovery",
+      reason: "ambiguous_journal",
+    },
+  });
 });
 
 test("a statusless provider failure settles its standalone run with safe recovery evidence", async () => {

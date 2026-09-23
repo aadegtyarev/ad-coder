@@ -1,0 +1,60 @@
+# Contract index
+
+- `architecture.md` — product structure; read when adding or moving a capability.
+- `agent-dispatch.md` — named and ad-hoc agent runs; read when launching background work.
+- `autonomy.md` — authority and budget control; read when changing autonomous actions.
+- `cli.md` — command-line front; read when changing commands, flags, or output.
+- `compaction.md` — context compaction; read when changing context retention or summarizer routing.
+- `compatibility.md` — public compatibility and releases; read before a public change.
+- `config.md` — settings and defaults; read when behaviour is configurable.
+- `cost-anomaly.md` — unexpected provider prices; read when changing cost controls.
+- `decomposition.md` — code decomposition; read before splitting implementation.
+- `delegation.md` — execution-path selection; read when dispatching work or lanes.
+- `documentation.md` — project documentation; read when changing project prose.
+- `errors.md` — error behaviour; read when adding a boundary failure.
+- `execution-boundary.md` — tool authority and sandbox seam; read when adding execution or guard policy.
+- `extension-modules.md` — optional integrations; read when adding a front, VCS, forge, or transport.
+- `hooks.md` — lifecycle extension points; read when adding SDK or harness hooks.
+- `ledger-report.md` — ledger reports; read when changing their API or output.
+- `machine-api.md` — JSON machine interface; read when changing non-interactive controls.
+- `meta-contract.md` — contract form; read when writing or editing a contract.
+- `operation-modes.md` — manual and automatic authority; read when changing modes.
+- `pause-causes.md` — durable failure evidence; read when changing paused workflow state.
+- `parallel-lanes.md` — isolated concurrent work; read when launching mutable work in parallel.
+- `builtin-pipeline-context.md` — bundled pipeline context; read when changing diff handoff or its economy policy.
+- `operator-flow.md` — operator experience; read when changing task interaction.
+- `orchestrator-run-observation.md` — orchestrator visibility of run outcomes; read when changing manual-run delivery.
+- `orchestrator.md` — task orchestration; read when changing orchestration behaviour.
+- `product-change.md` — delivery of product changes; read before planning or reviewing one.
+- `project-practices.md` — portable practice bundles; read when adopting or removing project guidance.
+- `provider-admission.md` — provider capacity admission; read when changing model dispatch.
+- `provider-failures.md` — model generation failures; read when classifying provider errors.
+- `quality.md` — project quality gates; read when changing checks or review evidence.
+- `quality-bootstrap.md` — project gate setup; read before first code mutation in a new stack.
+- `release.md` — release evidence and metadata; read before merging or publishing a release.
+- `review-evidence.md` — independent review proof; read when changing verdicts or merge stamps.
+- `runtime-inspection.md` — session/ledger diagnostics; read when changing status, usage, or about.
+- `resumability.md` — checkpoint and recovery; read when persisting or resuming work.
+- `role-tools.md` — role and tool wiring; read when changing a role's tool access.
+- `role-catalog.md` — built-in and prompt-defined roles; read when adding or removing a role.
+- `run-control.md` — targeted run stopping; read when changing process termination.
+- `routing-calibration.md` — portable route evidence; read when changing profiles or snapshots.
+- `routing-config.md` — model routes and credentials; read when changing `models.yaml`.
+- `security.md` — security boundaries; read when changing trust or external effects.
+- `session-manager.md` — managed sessions; read when changing SessionManager behaviour.
+- `session-titles.md` — managed session names; read when changing title generation.
+- `session-transport.md` — local session socket boundary; read when changing transport.
+- `settings-interface.md` — grouped settings controls; read when adding a behaviour setting.
+- `skill-authoring.md` — individual skills; read when authoring a skill.
+- `skills.md` — skill resolution and loading; read when changing skill behaviour.
+- `stage-limit-calibration.md` — learned stage ceilings; read when changing their policy.
+- `telegram.md` — Telegram front; read when changing Telegram behaviour.
+- `terminal-ui.md` — interactive terminal front; read when changing TUI rendering or themes.
+- `task-estimation.md` — whole-cycle forecast and feedback; read when budgeting a dispatch.
+- `tool-observability.md` — tool activity; read when changing progress events or rendering.
+- `tui-commands.md` — TUI operator controls; read when changing interactive commands.
+- `ui-responsiveness.md` — interactive fronts; read when changing controls or waiting.
+- `wake-delivery.md` — background wake turns; read when changing durable notifications.
+- `waiting.md` — durable condition waits; read when waiting for runs, processes, CI, or external status.
+- `work-decomposition.md` — workflow follow-up splitting; read when changing automatic slices.
+- `worktree-lifecycle.md` — managed worktree creation and cleanup; read when isolating work.

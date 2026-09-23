@@ -747,6 +747,17 @@ export async function runRoleStandalone(params: {
           /** A later observer proved the prior process is gone, not why. */
           code: "owner_lost";
           reason: "pid_not_alive" | "zombie" | "pid_reused";
+        }
+      | {
+          /**
+           * The session cannot be opened without an explicit operator choice.
+           * This is distinct from a failed provider attempt: the durable
+           * transcript still exists, but recovery must not invent an ordering
+           * for it (issue #596).
+           */
+          code: "manual_recovery";
+          reason: "ambiguous_journal";
+          detail: string;
         };
     /**
      * Safe terminal diagnosis for a failed attempt.  Do not persist a raw
@@ -821,6 +832,40 @@ export async function runRoleStandalone(params: {
     });
   };
   let latestStageLimitSnapshot: Readonly<StageLimitSnapshot> | undefined;
+  // A session-open failure used to escape before the checkpoint recorded its
+  // terminal outcome, leaving a dead process advertised as `running` forever.
+  // This closeout settles the attempt before rethrowing: an ambiguous journal
+  // pauses for an explicit operator decision instead of a guessed ordering
+  // (issue #596). Other session-store failures record only their stable
+  // classification; a lower layer's message can name host paths or untrusted
+  // data.
+  const reopenOrRecover = async (open: () => Promise<Session>): Promise<Session> => {
+    try {
+      return await open();
+    } catch (error) {
+      if (error instanceof ProjectStoreError && error.code === "ambiguous_journal") {
+        updateCheckpoint((current) => ({
+          ...current,
+          status: "paused",
+          pause: {
+            code: "manual_recovery" as const,
+            reason: "ambiguous_journal" as const,
+            detail: "session journal requires explicit recovery before this role can resume",
+          },
+        }));
+      } else {
+        updateCheckpoint((current) => ({
+          ...current,
+          status: "failed",
+          failure: {
+            code: error instanceof ProjectStoreError ? error.code : "internal_error",
+            message: "role session could not be opened; inspect harness diagnostics and retry",
+          },
+        }));
+      }
+      throw error;
+    }
+  };
   const finalizeSettledOperation = async (
     operation: NonNullable<Checkpoint["settledOperation"]>,
   ): Promise<{
@@ -1059,10 +1104,10 @@ export async function runRoleStandalone(params: {
         );
       session =
         prior.status === "starting"
-          ? await store.openOrCreateSession(runId, BACKGROUND_CONTEXT)
-          : await store.resumeSession(runId, BACKGROUND_CONTEXT);
+          ? await reopenOrRecover(() => store.openOrCreateSession(runId, BACKGROUND_CONTEXT))
+          : await reopenOrRecover(() => store.resumeSession(runId, BACKGROUND_CONTEXT));
     } else {
-      session = await store.resumeSession(runId, BACKGROUND_CONTEXT);
+      session = await reopenOrRecover(() => store.resumeSession(runId, BACKGROUND_CONTEXT));
     }
     try {
       let recoveredPrior = prior;
@@ -1145,7 +1190,7 @@ export async function runRoleStandalone(params: {
       0,
     );
     await params.beforeSessionCreate?.();
-    session = await store.createSession(runId, BACKGROUND_CONTEXT);
+    session = await reopenOrRecover(() => store.createSession(runId, BACKGROUND_CONTEXT));
     checkpoint = store.writeVersionedJson(
       checkpointPath,
       { ...checkpoint.value, status: "running" },
@@ -2283,7 +2328,39 @@ async function operationsCommand(
     });
   };
   let result: unknown;
-  if (action === "control-triage") {
+  if (action === "session-clear-ambiguous") {
+    const id = flags["--id"];
+    if (id === undefined) fail("--id is required for this operations action");
+    const recovered = await store.clearAmbiguousSession(id, BACKGROUND_CONTEXT);
+    try {
+      const entry = (await recovered.findEntries({ type: "custom" }, BACKGROUND_CONTEXT)).find(
+        (candidate) =>
+          candidate.type === "custom" && candidate.customType === "ad-coder.session_recovery",
+      );
+      if (entry?.type !== "custom")
+        throw new Error("ambiguous session recovery did not write its durable receipt");
+      const data = entry.data as {
+        state?: unknown;
+        recovery?: unknown;
+        artifact?: { type?: unknown; path?: unknown };
+      };
+      if (
+        data.state !== "cleared_ambiguous_journal" ||
+        data.recovery !== "new_continuation" ||
+        data.artifact?.type !== "ambiguous_journal" ||
+        typeof data.artifact.path !== "string"
+      )
+        throw new Error("ambiguous session recovery receipt is invalid");
+      result = {
+        id,
+        state: data.state,
+        recovery: data.recovery,
+        artifact: { type: data.artifact.type, path: data.artifact.path },
+      };
+    } finally {
+      await recovered.close(BACKGROUND_CONTEXT);
+    }
+  } else if (action === "control-triage") {
     result = { route: triageControlPlaneTask(input() as never) };
   } else if (action === "control-start") {
     const supplied = strictOperationInput(input(), ["requestKey", "task", "mode", "scope"], action);
@@ -4495,7 +4572,7 @@ const COMMANDS: readonly CommandDefinition[] = [
       {
         name: "<action>",
         description:
-          "Action including control start/status/list/resume/cancel/decisions/run-until/report/publish, publish-preflight, ldo-resume, and backlog operations.",
+          "Action including session-clear-ambiguous, control start/status/list/resume/cancel/decisions/run-until/report/publish, publish-preflight, ldo-resume, and backlog operations.",
       },
     ],
     options: [
@@ -4919,7 +4996,16 @@ export function projectCliError(error: unknown): Record<string, unknown> {
       nextAction: SessionNotAcquiredError.NEXT_ACTION,
     };
   if (error instanceof ProjectOperationsError) return { code: error.code, detail: error.detail };
-  if (error instanceof ProjectStoreError) return { code: error.code, detail: error.path };
+  // Issue #596: a store rejection is typed public behavior, not a host-path
+  // leak. All of these fields are authored constants plus the validated path.
+  if (error instanceof ProjectStoreError)
+    return {
+      code: error.code,
+      detail: error.path,
+      text: error.message,
+      retryable: false,
+      ...(error.nextAction === undefined ? {} : { nextAction: error.nextAction }),
+    };
   if (error instanceof BackgroundRunError) return { code: error.code, detail: error.detail };
   return { code: "internal_error" };
 }
@@ -4933,7 +5019,9 @@ export function renderCliError(error: unknown): string {
         ? error.nextAction
         : error instanceof SessionNotAcquiredError
           ? SessionNotAcquiredError.NEXT_ACTION
-          : undefined;
+          : error instanceof ProjectStoreError
+            ? error.nextAction
+            : undefined;
   return `ad-coder: ${errorMessage(error)}${action === undefined ? "" : `; ${action}`}\n`;
 }
 

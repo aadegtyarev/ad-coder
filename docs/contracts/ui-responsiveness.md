@@ -1,25 +1,36 @@
 # UI responsiveness contract
 
-- 2026-09-21 (issue #547): background wake turns are serialized with foreground
-  console output. The owning formatted console shows their start and settled
-  result, then restores its prompt without allowing a busy line or notice to
-  corrupt the interactive output.
+This contract governs responsiveness and interrupt isolation for every
+interactive ad-coder front.
 
-Rules for every interactive ad-coder front. A violation is always blocking.
+## Guarantees
 
-- `ui-responsiveness:input-control` — Model calls, tools, subprocesses, workflow
-  steps, watches, and retries must never prevent the front from accepting its
-  documented interrupt, cancel, status, and exit controls. Long work exposes a
-  cancellable handle and bounded progress or stall signals.
-- `ui-responsiveness:isolated-interrupt` — Interrupting the active foreground
-  turn promptly returns control and preserves the conversation and unrelated
-  detached work. Cancelling detached work requires an explicit run-scoped
-  action. Terminal modes and signal handlers are restored on every exit path.
-- `ui-responsiveness:bounded-watch` — A requested synchronous watch uses a
-  configured polling interval, total timeout, and stall timeout. It returns on
-  state change, completion, stall, cancellation, or timeout. Waiting may occupy
-  the requesting model turn, but the interactive front remains controllable.
-  Hand-written sleep/poll loops are not an acceptable UI implementation.
+- Model calls, tools, subprocesses, workflow steps, watches, and retries never
+  prevent input, documented interrupt, cancel, status, or exit controls. Long
+  work exposes a cancellable handle and bounded progress or stall signals.
+- The input editor is continuously available. A submitted message enters the
+  durable FIFO session queue; if no orchestrator turn is active it starts the
+  next turn immediately, otherwise it is delivered to the next turn after the
+  active one settles. No front drops, overwrites, or requires the operator to
+  retype a queued message.
+- Interrupting an active foreground turn promptly returns control and preserves
+  its conversation and unrelated detached work. Cancelling detached work uses
+  an explicit run-scoped action. Terminal modes and signal handlers are restored.
+- A wait/watch has configured polling, total-timeout, and stall-timeout bounds.
+  It returns control immediately and later settles as state change, completion,
+  stall, cancellation, or timeout through the shared wait service.
+- An interactive front serializes background output with foreground output,
+  renders each wake's concise orchestrator summary and next action, then restores
+  its editor without corruption or loss of typed input.
 
-Tests use slow and never-completing dependencies and prove that controls remain
-available, shutdown is finite, and one operation cannot cancel another.
+## Verification
+
+- Tests use slow and never-completing dependencies to prove continuously
+  available input and controls, FIFO next-turn delivery, finite shutdown, and
+  isolation between operations.
+
+## Related surfaces
+
+- [Wake delivery](wake-delivery.md).
+- [Terminal UI](terminal-ui.md).
+- [Waiting](waiting.md).

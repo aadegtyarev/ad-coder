@@ -7,29 +7,29 @@ import { resolveSkills } from "ad-coder";
  * The surfaces a model reads as instructions, and the surfaces that only
  * describe them -- pinned to each other.
  *
- * The role-selection rule (#527) lives in three places that no compiler reads:
- * the shipped skill (its description, which is what makes a model load it, and
- * its instructions), and two dated contract entries that state the same order
- * for a human. The eval probe that measures the trigger is a fourth: it replays
- * a prompt and scores the run's recorded tool activity. Measured in review
+ * The role-selection rule (#527) lives in the shipped skill: its description,
+ * which is what makes a model load it, and its instructions. The operation-mode
+ * contract owns that boundary and directs static path-choice guidance to the
+ * skill rather than duplicating its rungs. The eval probe that measures the
+ * trigger is a separate surface: it replays a prompt and scores the run's
+ * recorded tool activity. Measured in review
  * round 5 (#527): replacing the probe's target prompt with "What is the
  * weather?" left every test green, and inverting either contract entry did the
  * same -- the rule was pinned on the skill's own text and nowhere else, so the
  * probe could stop probing and the contracts could start contradicting the
  * skill in silence.
  *
- * So these tests read the probe and the contracts and compare them to the
- * shipped surface they describe. The order is pinned as an ORDER (positions),
- * not as the presence of three phrases: a rewritten sentence that keeps the
- * words but reverses the rungs is exactly the drift this is for.
+ * So these tests read the probe, the ownership boundary, and the shipped skill.
+ * The order is pinned as an ORDER (positions), not as the presence of three
+ * phrases: a rewritten sentence that keeps the words but reverses the rungs is
+ * exactly the drift this is for.
  *
  * Each half was measured against its own removal before it was claimed: the
  * probe's target prompt replaced by "What is the weather?" in both of its
  * copies, and in the top-level copy alone; a non-target prompt given the
  * target's own trigger; the `Phrases:` clause dropped from the description
- * while the manifest still resolves; the order inverted on the skill, in
- * docs/contracts/operation-modes.md and in docs/contracts/skills.md -- seven
- * edits, seven red runs, each turning red the one test named below for that
+ * while the manifest still resolves; and the order inverted on the skill --
+ * five edits, five red runs, each turning red the one test named below for that
  * surface. The description control is the one that can take both tests down
  * instead of one: a manifest that no longer resolves the skill at all -- its
  * `description` key gone rather than its phrase list -- fails at
@@ -132,7 +132,7 @@ test("the eval probe's target prompt is the trigger its description declares (#5
 
 const RUNGS = [
   { rung: "own hands", pattern: /own hands/i },
-  { rung: "one role", pattern: /one (?:role|`run_role`)/i },
+  { rung: "one role", pattern: /one role/i },
   { rung: "the pipeline", pattern: /the pipeline/i },
 ] as const;
 
@@ -147,12 +147,9 @@ function rungOrder(statement: string): string[] {
 }
 
 /**
- * The preference statement on a surface: from the anchor that introduces it to
- * the first mention of its last rung. Bounding it is what makes the pin about
- * the ORDER: both contract entries name "the pipeline" earlier, for other
- * reasons, and an unbounded read would sort those mentions instead of the
- * claim -- and the entry is prose, so the surrounding sentences are free to
- * move.
+ * The preference statement in the owning skill: from the anchor that introduces
+ * it to the first mention of its last rung. Bounding it is what makes the pin
+ * about the ORDER rather than a later, unrelated pipeline mention.
  */
 function preferenceStatement(file: string, text: string, anchor: string): string {
   const at = text.indexOf(anchor);
@@ -164,29 +161,22 @@ function preferenceStatement(file: string, text: string, anchor: string): string
   return tail.slice(0, end + "the pipeline".length);
 }
 
-test("the order of preference reads the same in the skill and in both dated entries (#527)", () => {
-  const surfaces = [
-    {
-      file: "the shipped role-selection skill",
-      text: flat(skill("role-selection").instructions),
-      anchor: "The order of preference is",
-    },
-    {
-      file: "docs/contracts/operation-modes.md",
-      text: flat(read("docs/contracts/operation-modes.md")),
-      anchor: "Preference runs the orchestrator's own hands",
-    },
-    {
-      file: "docs/contracts/skills.md",
-      text: flat(read("docs/contracts/skills.md")),
-      anchor: "The skill now holds the order of preference",
-    },
-  ];
+test("the role-selection skill owns the preferred execution-path order (#527)", () => {
+  const modes = flat(read("docs/contracts/operation-modes.md"));
+  expect(modes).toContain(
+    "Static guidance on choosing a path belongs in the role-selection skill.",
+  );
+  const surface = {
+    file: "the shipped role-selection skill",
+    text: flat(skill("role-selection").instructions),
+    anchor: "The order of preference is",
+  };
   const expected = ["own hands", "one role", "the pipeline"];
-  for (const { file, text, anchor } of surfaces) {
-    const statement = preferenceStatement(file, text, anchor);
-    // The file name rides in the compared object, so a failure says which
-    // surface drifted instead of printing three bare arrays.
-    expect({ file, order: rungOrder(statement) }).toEqual({ file, order: expected });
-  }
+  const statement = preferenceStatement(surface.file, surface.text, surface.anchor);
+  // The file name rides in the compared object, so a failure identifies the
+  // owner instead of printing a bare array.
+  expect({ file: surface.file, order: rungOrder(statement) }).toEqual({
+    file: surface.file,
+    order: expected,
+  });
 });

@@ -240,6 +240,150 @@ workflows — one substrate, swappable drivers.
   stepped engine (which threads an explicit `WorkflowState`) is the substrate that
   makes this natural — a plan produced by one driver/target is a value another can
   resume against a different target.
+
+- **REQUIREMENT — managed worktree lifecycle.** Worktrees created by ad-coder
+  live under the project-local ignored `.worktrees/` root, not beside the
+  repository or in `.ad-coder/` runtime state. After a verified merge, the
+  publisher safely removes only its own clean, inactive worktree from a parent
+  context; it retains and reports anything it cannot prove safe to remove.
+
+- **DECISION — terminal front.** Replace the line-oriented `console` front with
+  `tui`, implemented directly on `@earendil-works/pi-tui` alongside the existing
+  `@earendil-works/pi-ai` stack. Keep machine commands and JSON as a separate
+  headless surface. Start with a sparse main-screen `plain` presentation; themes
+  are visual-only, while a future Claude-like layout is an independently selected
+  presentation profile.
+
+- **DECISION — one machine API.** Replace public `drive`, `run_role`, and related
+  operation-mode commands with `ad-coder api`; remove `--json` rather than carry
+  two JSON conventions. `api` mirrors TUI controls exactly, including shared
+  orchestrator conversation, role/agent/workflow dispatch, skills, ceilings, run
+  control, and profile list/show/select. Profile selection changes the
+  orchestrator route as part of the visible profile map; a session-level `/model`
+  control can select another profile-reachable model for the orchestrator alone.
+  The headless workflow primitives remain the implementation substrate behind
+  both fronts.
+
+- **REQUIREMENT — modular core and shared session choice.** TUI, API, Telegram,
+  future web and Matrix fronts, VCS/workspace adapters, forge adapters such as
+  GitHub or GitLab, workflows, tools, and event transports are optional modules
+  around one headless core. They share durable session/run identities and cannot
+  own private lifecycles. The SessionManager lists and switches accessible project
+  sessions for TUI, API, and Telegram; switching waits for an active turn rather
+  than cancelling it, and subsequent input uses the selected session.
+
+- **REQUIREMENT — isolated parallel lanes.** With the Git workspace adapter,
+  the operator or orchestrator can launch independent role or workflow lanes in
+  separate managed worktrees and branches. Admission proves disjoint mutable
+  scope or requires an explicit bounded merge plan and integration lane; all
+  lanes retain independent budgets, review, resume, and outcome. A non-Git
+  workspace permits parallel research but one mutable lane only.
+
+- **REQUIREMENT — runtime inspection.** Operator and orchestrator share a
+  read-only, redacted session inspector: session/run/lane state, role/model
+  tokens and provider-reported costs, totals, effective ceilings/profile, and
+  bounded diagnostics. TUI/API also expose harness name, SemVer version, enabled
+  module capabilities, and concise help through the same core projection.
+
+- **REQUIREMENT — quality bootstrap.** Quality setup defaults on. Once a stack
+  is detected and before initial code mutation, the researcher proposes a
+  language-appropriate tests/format/lint/static-analysis/build/security profile
+  and asks the operator. An approved specialised bootstrapper configures and
+  validates it; installation remains explicit authority. Offline research reports
+  the limitation and offers installed-tool inventory or operator-provided gates.
+  Changes to stack, framework, component, dependency class, or test surface mark
+  the profile stale and require the same strategy review before related code work.
+
+- **REQUIREMENT — complete, navigable settings.** Every behaviour-changing flag
+  or parameter is a declared short setting with validation, default, group, and
+  visible effective source. Profile and project files configure the same registry
+  with project precedence. TUI/API list groups first, then a requested group's
+  settings, so discovery and editing stay navigable rather than rendering a
+  single unbounded configuration page.
+
+- **REQUIREMENT — SDK-first lifecycle hooks.** Standard harness lifecycle events
+  are exposed as versioned extension hooks. A selected SDK's native hooks are
+  adapted where present; ad-coder supplies only the missing event points, with
+  exact-once delivery. Trusted hook modules can observe, guard, or own a bounded
+  transformation; ordering, enablement, failures, and resume are deterministic.
+
+- **REQUIREMENT — pluggable compaction strategies.** The current summary strategy
+  compacts dialogue only through the independently routed summarizer role at 70%
+  of the active role's window, with a one-third-window summary cap and bounded
+  retry. After exhausted summary retries it defaults to the active role's model,
+  retaining the summarizer request boundary and emitting visible durable fallback
+  evidence. Refactor selection behind `CompactionStrategy` before adding
+  alternatives such as sliding-window retention or future algorithms; static role
+  frame and durable lifecycle remain outside every strategy.
+
+- **DECISION — release policy is pluggable, ad-coder uses strict SemVer.** The
+  core lets a project declare its own compatibility/version policy. ad-coder has
+  release and `dev` branches: release versions are final SemVer, while dev uses
+  the corresponding next-version SemVer prerelease channel. Neither GitHub nor a
+  particular branching model is a core requirement for another project.
+  Until the project supports external users, deliberate API and behaviour breaks
+  need no migration layer; they remain versioned and explicitly recorded.
+
+- **REQUIREMENT — price reconciliation preserves availability.** Provider/model
+  catalogue prices and explicit configured prices are references. Provider-billed
+  observations create a separately inspectable calculation overlay, without
+  rewriting either source. A configurable provider/model variance band produces
+  prominent notices and session-end reporting, never a price-driven dispatch
+  block or hidden reroute. Catalogue-refresh failure is visible and falls back to
+  valid cache, configured, or observed data; otherwise accounting is unpriced.
+
+- **REQUIREMENT — layered execution boundary.** Default execution remains open
+  host authority, with only a best-effort guard against unmistakably broad
+  destructive commands; it is not isolation. Replace direct construction of
+  `NodeExecutionEnv` in standalone and conversation paths with one
+  `ExecutionBoundary` factory for built-in and module tools. Then add a real
+  sandbox provider that fails closed if unavailable; an optional LLM guard may
+  follow it as policy assistance, never as the security boundary.
+
+- **REQUIREMENT — background agent dispatch.** A TUI operator and the
+  orchestrator can launch built-in, prompt-defined custom, or ad-hoc agents
+  without blocking interactive input. Project prompt files create and remove
+  custom role identities; grants remain policy, not prompt side effects. A profile
+  supplies `agents.defaultModel` for custom/ad-hoc work, while the orchestrator
+  may choose any reachable profile model and the operator may require one.
+
+- **REQUIREMENT — operator command parity and run observation.** The TUI exposes
+  every orchestrator execution action, plus local help, profile, ceiling, and
+  skill-selection controls. The machine JSON API exposes the same capabilities
+  and semantics. Argument-less controls are local help rather than model work.
+  Every role, ad-hoc agent, pipeline, and workflow outcome wakes the orchestrator
+  by default, including manually started work; the operator can disable only that
+  observation, not durable run evidence or their own status.
+
+- **REQUIREMENT — continuously available conversation.** The TUI editor never
+  blocks: submitted messages enter durable FIFO state, start a turn immediately
+  when idle, and otherwise reach the next turn. Run and timer wakes make the
+  orchestrator print a short event/data-or-error/next-action summary. Material
+  decisions are visible throughout WIP; a task is not reported complete before
+  its durable closeout.
+
+- **REQUIREMENT — universal resume.** Every orchestrator, role, agent, workflow,
+  queue, timer, and wake state survives orderly exit and process interruption.
+  Resume restores context and continuation state rather than making the operator
+  reconstruct it. An in-flight action is reconciled from durable evidence; an
+  ambiguous external effect pauses visibly instead of being duplicated or lost.
+
+- **REQUIREMENT — estimate, probe, then decompose.** Before work, the
+  orchestrator forecasts the entire selected development cycle, including its
+  roles, workflow, review/rework rounds, routes, and budget reserve. A capacity
+  or complexity signal permits one measured ceiling probe only when later roles
+  remain funded; otherwise it causes decomposition. Planner/coder/reviewer
+  complexity signals and review loops become durable, non-punitive feedback that
+  the orchestrator can query before later estimates.
+
+- **REQUIREMENT — policy-bounded execution choice.** Project settings override
+  profile defaults for direct edits, required roles, required review, and the
+  large-output delegation threshold. Direct edits are `off` or `reviewed`; the
+  latter requires independent review and records the orchestrator's judgement
+  rather than treating diff size as a safety proof. It may select only useful
+  roles (for example, direct researcher or conflict-resolution coder) but cannot
+  omit required review. It delegates high-output work to a specialist or `generic`
+  agent to retain a compact orchestration context.
 - **REQUIREMENT — breakpoint control (implemented).** Drivers can auto-advance
   through phases and pause before a chosen phase, then resume from durable state.
   The trusted `control run-until` action exposes this without requiring a caller
@@ -364,6 +508,81 @@ workflows — one substrate, swappable drivers.
   contract-with-a-trigger, an immutable decision, or — if enforceable — a gate,
   not freeform prose. Trust perimeters are contracts. ad-coder ships this as an
   opinionated default so users don't reinvent docs/ chaos.
+- **REQUIREMENT — portable project practices.** Documentation, contract writing,
+  decomposition, quality setup, and actionable error handling ship as named
+  versioned practice bundles.
+  `bootstrap` and `init` propose a preview from project evidence; the operator
+  selects individual practices. A bundle is removable or replaceable without
+  overwriting edited project assets, and its guidance follows the project's
+  configured documentation language. See [project practices](contracts/project-practices.md).
+- **REQUIREMENT — core-owned resumable state.** A versioned `DurableStateStore`
+  is core infrastructure shared by sessions, roles, agents, ledgers, timers, and
+  built-in or custom workflows. Workflow modules declare their own serializable
+  state and restoration entrypoint but never own the store. Checkpointed
+  cross-entity transitions survive orderly exit, power loss, and harness failure;
+  an unrecoverable operation pauses with evidence while the session remains usable.
+- **REQUIREMENT — adaptive pipeline change context.** The built-in pipeline starts
+  with the smallest safe context of workspace changes, then widens it when a role
+  asks, measurement/truncation requires it, or durable full-cycle evidence shows
+  that compact context costs more in retries or rework. Optimize accepted-result
+  cost rather than input tokens; full context is a visible normal fallback. The
+  pipeline itself is an optional bundled workflow module.
+- **REQUIREMENT — adaptive route capacity and fallback.** Admission scopes capacity
+  by secret-free provider account and model route, learns conservative effective
+  concurrency from limit evidence, and visibly reports adjustments. A role's
+  ordered `provider:model` ladder may cross providers; routing selects the first
+  usable permitted rung and records any fallback. Capacity evidence and fallback
+  never make a session unusable.
+- **REQUIREMENT — actionable provider status.** Capacity, rate, credit, subscription
+  allowance and reset period, reauthentication, permission, availability, and
+  malformed-response failures are separate durable events. The operator and
+  orchestrator receive the same safe provider diagnostic and recovery action, and
+  route fallback policy selects which classes may move to another ladder rung.
+- **REQUIREMENT — accepted-result routing calibration.** Learn from comparable
+  role/complexity outcomes including review, retries, time, billing, allowance,
+  capacity, and failures. With sufficient bounded evidence, reorder only already
+  authorized `provider:model` ladder rungs to optimize the actual scarce resource;
+  make each change visible, reversible, and independent of explicit pins.
+- **REQUIREMENT — seamless model handoff.** All route changes retain the durable
+  provider-neutral pi-ai context, role frame, tool/skill grants, workflow state,
+  queue, budget, and ledger identity. Delegate target-format conversion to pi-ai;
+  ad-coder owns atomic handoff lifecycle, target-window compaction, visibility,
+  and rollback. A switch never recreates a session or discards work.
+- **REQUIREMENT — run-scoped cancellation.** TUI, API, and orchestrator can
+  gracefully cancel one durable run without blocking input or ending its session.
+  Force cancellation is an explicit configured escalation over a proven owned
+  process, with checkpointed WIP retained for recovery.
+- **REQUIREMENT — portable adaptive skills.** Adopt standard `SKILL.md` bundles
+  and progressive disclosure. A configurable manual/catalog/ranked/adaptive
+  selector serves constrained and large context windows; roles and dispatches
+  compose explicit allowed/required/inherited skill sets without granting tools.
+  Selection is durable and inspectable. Research is in [skill-practices.md](skill-practices.md).
+- **REQUIREMENT — meaningful tool activity.** A tool registers a semantic activity
+  descriptor and renderer or cannot run; generic `Tool …` placeholders are never
+  shown. Human path output shortens from the left while preserving filename and
+  useful trailing directories; structured events retain complete safe identity.
+- **REQUIREMENT — durable non-blocking waiting.** A core `WaitService` waits for
+  runs, owned processes, timers, or enabled module-provided sources such as CI/PR
+  status without holding input or an orchestrator turn. Event delivery is preferred
+  to bounded polling; all outcomes resume through durable wakes and are controllable
+  identically by TUI, API, and orchestrator.
+- **REQUIREMENT — economical session titles.** Extract titles locally from the
+  first user message by default. Optional semantic generation uses the resolved
+  Summarizer role with its default cache-off policy, low admission priority, and
+  no ability to block session input or work.
+- **REQUIREMENT — complete session summaries.** A ledger-derived session summary
+  includes all role/model tokens and cost totals plus every durable abnormal or
+  degraded event. It is available locally and, only when an associated PR and an
+  enabled forge delivery-summary capability exist, published to that PR. GitHub,
+  PR creation, issue tracking, CI, and publication remain separable forge-module
+  capabilities.
+- **REQUIREMENT — scoped review stamps.** The bundled pipeline requires a review
+  stamp by default, with an explicit opt-out. A stamp covers implementation,
+  tests, executable checks, and contracts by default and stores a covered-path
+  manifest; projects may configure additional globs. A direct version-only
+  successor may reuse its parent's stamp
+  only under a narrow configured metadata policy; ad-coder permits `CHANGELOG.md`
+  and `package.json` for that resolution step.
 - **Auditor role + refactor executor** — recognizing decomposition needs vs doing
   them safely, two tools. Auditor: a cold-read role triggered by a drift signal
   (size band, churn, drift-log-reaches-8) that surfaces decomposition candidates
@@ -374,6 +593,8 @@ workflows — one substrate, swappable drivers.
   revert-and-restore proof), and LSP/AST moves (rename/extract, safe by
   construction) preferred over LLM regeneration. Large decompositions reshape the
   shared barrel/multiple modules, so they are NOT parallel-safe.
+  The practice basis is recorded in
+  [refactoring-practices.md](refactoring-practices.md).
 
 - **Profiles + complexity-aware model routing** — DONE (src/profiles/ + runPipeline routing).
   These are two independent axes. A **profile** is a named replaceable execution

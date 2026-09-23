@@ -19,6 +19,15 @@ import type {
 } from "./types";
 import { ProjectStoreError } from "./types";
 
+/**
+ * The only recovery that may replace an overlapping journal is a named,
+ * operator-initiated continuation. Keep it at the state boundary so each
+ * front reports the same safe next step instead of suggesting a retry that
+ * cannot resolve an ambiguity.
+ */
+export const AMBIGUOUS_JOURNAL_NEXT_ACTION =
+  "inspect the journal, then explicitly run `ad-coder operations session-clear-ambiguous --id <session-id> --target-dir <project>` to archive it and start a marked continuation";
+
 const AREAS: readonly ProjectStoreArea[] = [
   "sessions",
   "runs",
@@ -165,6 +174,7 @@ export class ProjectStore {
           "ambiguous_journal",
           metadata.path,
           "session journal is not a complete overlapping transaction set",
+          AMBIGUOUS_JOURNAL_NEXT_ACTION,
         );
       const replacement = await this.sessions.create({ id, cwd: this.layout.targetDir }, context);
       const branch = await replacement.createBranch("main", null, context);
@@ -239,6 +249,7 @@ export class ProjectStore {
             "ambiguous_journal",
             metadata.path,
             "session journal has overlapping committed transactions; inspect it or clear it for a new continuation",
+            AMBIGUOUS_JOURNAL_NEXT_ACTION,
           );
         throw new ProjectStoreError(
           "corrupt_state",

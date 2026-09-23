@@ -1,241 +1,70 @@
 # Skills contract
 
-Skills are trusted, versioned instruction bundles loaded only when selected for
-a role/task. They reduce permanent role-prompt size; they are not a second
-unbounded prompt directory.
+This contract owns discovery, selection, loading, and role/subagent composition
+of portable skill bundles.
 
-- A skill has a safe `id`, `version`, concise manifest description, role scope,
-  and `instructions.md`. Its selected content and source have a SHA-256 digest.
-- Built-in skills ship with ad-coder. A project may add or override a skill at
-  `.ad-coder/skills/<id>/`; project skills are trusted operator configuration,
-  like project prompt overrides. Package/remote skills require an explicit later
-  plugin installation path.
-- V1 resolves a default set (the catalogue a role loads from with `load_skill`),
-  explicit pinned IDs, and the explicit off (`--no-skills`, or the profile
-  setting). Selected manifests and instructions load under separate finite
-  count/byte limits, identical for every layer. Pinned or loaded, unknown,
-  malformed, duplicate, escaping, or oversized skills fail loudly before
-  provider dispatch. Bounded manifest discovery is a separately tracked v2
-  capability; the per-role catalogue's bounded discovery is not a scan claim --
-  it enumerates trusted directories that operator configuration owns.
-- Selection is programmatic and visible: the default set is the catalog a role
-  loads from, a `--skills` value pins exactly those ids pasted into the prompt,
-  and the resolved set -- ids, versions, source tiers, digests -- is reported by
-  the resolver and visible in `config show`. Version, source tier and digest
-  are always exposed. Durable pipeline snapshots are a separately tracked v2
-  boundary; v1 never claims resume-stable skill selection. Future discovery may
-  let the orchestrator recommend skills from manifest descriptions, and the
-  2026-09-16 catalogue rule below is that recommendation -- but full
-  instructions still reach a prompt only through an explicit load or a pin,
-  never silently.
-- Built-in `architecture-recon`, `task-slicing`, `acceptance-review`,
-  `delivery-calibration`, `delivery-discipline`, `repository-navigation`,
-  `role-selection`, `documentation-writing`, `change-implementation`,
-  `change-verification`, `threat-modelling`, `external-research`,
-  `tracker-work` and `overload-response` are the shipped skills.
-- 2026-09-16: A skill carries what a role prompt has no room for: the specific
-  technique, the failure it prevents, and the rule for stopping. A skill that
-  restates its role prompt in one sentence costs a load and teaches nothing --
-  the first four shipped at 19-26 words each against a 16 KiB ceiling, which is
-  why a reviewer holding `acceptance-review` behaved exactly as one without it.
-- 2026-09-16: A role prompt carries the CATALOGUE -- each available skill's id,
-  version and one-line description -- and a role loads a skill's instructions
-  with `load_skill` once it has read the task. Which methodology a task needs is
-  knowledge the model has and the operator does not, but only after reading the
-  task, which is when a tool call can still happen and a prompt can no longer
-  change. Selecting every skill and pasting it was tried for one afternoon and
-  reached 2106 words of appendix for the orchestrator regardless of the task.
-  `--skills` remains a pin -- "use exactly these", pasted as before -- for when
-  the operator does know better.
-- 2026-09-17: `--no-skills` is the explicit off for the skill capability,
-  declared once in the shared pipeline options for every command that runs a
-  role: no catalogue in any prompt, no loader tool registered, no appended
-  instructions. It cannot be combined with `--skills` -- exactly one of pin,
-  off, or default resolves. Background workers inherit the off like they
-  inherit a pin.
-- 2026-09-17: A persistent setting lives in the user profile at
-  `~/.config/ad-coder/profile.json`: `"capabilities": {"skills": false}` turns
-  the skill capability off for every run; the field absent or `true` is the
-  built-in enabled default. This is an optional field accepted by the v1
-  profile parser -- not a v2 bump -- so existing exports and stored profiles
-  stay valid; the field is carried through export/import verbatim and omitted
-  when unset. Layer order: explicit launch parameter beats the setting beats
-  the default. `--no-skills` and `--skills` are both explicit, so a `--skills`
-  pin disables the setting in its own direction too.
-- 2026-09-17: `role-selection` is a shipped skill, scoped to the orchestrator: the
-  three execution paths (direct editing, roles only, roles plus pipeline) with
-  their tool markers, what each delegable worker role does and returns, and the
-  conditions under which delegation is the wrong call. The orchestrator prompt
-  keeps only one line per delegation surface and points at this skill and at the
-  `run_role` tool description for the live half; duplicating either in the
-  unconditional prompt is the defect issue #232 diagnosed, and a role
-  description that restates the role's own prompt teaches nothing by the
-  2026-09-16 rule.
-- 2026-09-17: The resolved skill set is visible in `config show`: a `skills`
-  row carries every skill a run can reach as id, version, source tier
-  (`builtin`/`project`), and the SHA-256 digest of the loaded content, plus the
-  winning layer (`cli`, `profile`, or `built-in-default`). A pin reports
-  exactly the pinned ids; the default enumerates the catalogue across all
-  roles and, like a per-role catalogue, skips an entry that fails to resolve
-  rather than failing the default path -- the count an operator sees is the
-  count a role can load.
-- 2026-09-17: A manifest may declare two optional fields beyond the catalogue.
-  `always` is a boolean, default false, and `requires` is
-  `{workflows: [names]}` and/or `{plugins: [names]}`. `always: true` pastes the
-  skill's instructions into the prompt of every role in its `roles` list, in
-  catalogue AND pin mode, without the role asking -- so it is justified only
-  where a role cannot understand its own situation without the text, never
-  where the text is merely useful. The cost rule is beside it: pasting what is
-  merely useful is how the orchestrator reached 2106 words of appendix
-  regardless of task, and the session measurements behind the catalogue found
-  93% of input tokens served from cache precisely because a prompt is re-read
-  every turn. `--no-skills` -- and a profile with `capabilities.skills: false`
-  -- still suppresses an always skill entirely: off is off. `requires` names
-  what the session must actually have for the skill to exist at all: plugins
-  are matched against really registered tool names (`explore_project`,
-  `search_project`, `read_project`; `web_search`, `web_read`; `inspect_image`),
-  workflows against the workflow modules the run resolved. A skill whose
-  dependency the session does not satisfy appears in neither the catalogue, nor
-  the paste, nor `config show`'s skill row; an undefined composition is treated
-  as having nothing and fails closed. Because an always skill's text is already
-  in the prompt, it is never listed in the catalogue -- `load_skill` for it
-  answers `skill_not_available`.
-- 2026-09-16: Loading obeys every constraint selection obeyed: the id pattern,
-  the manifest's role scope, per-turn count and byte ceilings, and a typed
-  content-free error carrying its reason. A refusal for a skill outside the
-  role's scope says what the catalogue said, so it cannot be used to enumerate
-  skills written for other roles.
-- 2026-09-17: A skill is written for a TASK, and its `roles` list names every
-  role that can perform that task -- not the one role whose title matches it.
-  Any role can be switched off, and so can the pipeline, so knowledge that lives
-  only in one role's prompt leaves the harness when that role does. The
-  technique for editing code, verifying a change, modelling threats, researching
-  outside the repository, mapping a surface and responding to overload are
-  therefore skills, and a role prompt states what the role owns and points at
-  them.
-  The rule this replaces produced its own contradictions: `architecture-recon`
-  was granted to the researcher, whose prompt said "Do not survey the
-  repository", and withheld from the reviewer and auditor, whose prompts order
-  exactly that work.
-- 2026-09-17: A role prompt must not name a tool the role was not granted.
-  Teaching the planner to batch `rg` and `git` reads when it has no `bash`, or
-  the coder to call `explore_project` when that tool is filtered out of its
-  grant, spends a turn on a call that cannot succeed and reads as a defect in
-  the role. A skill shared across roles states which tool answers which question
-  without assuming any particular grant. Enforced by a test over every built-in
-  plugin combination.
-- 2026-09-17: The summarizer's system prompt is `prompts/summarizer.md`,
-  resolved through the same loader as every other role prompt and overridable at
-  `.ad-coder/prompts/summarizer.md`. It was a string constant in
-  `src/context/compactor.ts` -- the one role contract an operator could not
-  change without rebuilding the package, governing what every later turn still
-  knows.
-- 2026-09-18: **The prompt carries the obligation; the skill carries the
-  technique.** A rule that lives only in a skill a model may skip is advice, not
-  a rule: the orchestrator had `delivery-calibration` granted and never loaded
-  it, and dispatched a decomposed ticket ten seconds after reading it. So an
-  obligation the role must produce -- size the work before dispatching it,
-  delegate unfamiliar ground instead of reading it into the context that still
-  has a run to carry, claim the issue, name the files before a coder sees the
-  task -- is stated in that role's own prompt, while the skill keeps how to do
-  it (issues #307, #330, #316, #293). This is the boundary against the
-  2026-09-17 duplicate-the-prompt defect: restating the prompt is duplication,
-  and an obligation the prompt never stated is not. Where the obligation is bound
-  to a lifecycle event, docs/contracts/skill-authoring.md (2026-09-18) places it:
-  hook-carried by the harness at the event, never always-on, never a catalogue
-  guess.
-- 2026-09-18: **A skill's description says when the skill applies, not only what
-  it contains.** The catalogue is everything a model sees before deciding to
-  load a file, so "Estimate accepted-result cost" does not fire before a
-  dispatch while "Size a ticket before dispatching it" does. Descriptions are
-  the only always-read surface a skill has, which is why they are contract text
-  and why a version bump is warranted when the wording changes. The shape, the
-  1,536-character budget, and the transition rule for shipped descriptions are
-  pinned in docs/contracts/skill-authoring.md (2026-09-18).
-- 2026-09-18: **A rule conditioned on something the dispatcher often does not do
-  licenses the common case.** `coder.md` said "when the plan names affected
-  files, do not run broad exploration", and the coder explored: with no file
-  list the condition was simply false, so exploration was permitted and the
-  budget went there instead of into code. A condition that is meant to gate the
-  exception must be written from the rule's side -- the obligation stands, and
-  a dispatcher who cannot name the files owes a planner or researcher pass
-  first (issue #316).
-- 2026-09-18: **A skill that applies is binding, and the rule that says so names
-  no skill.** The obligation is stated in general words on the two surfaces
-  every role reads: the catalogue header `formatSkillCatalogue` emits, and the
-  role's own prompt ("Your skills catalogue lists the methods for this work:
-  where one of them describes what you are doing, loading it and following it is
-  mandatory rather than optional, and the technique in it governs over your own
-  habit"). Naming a skill in a prompt is wrong twice over: the enumeration
-  ("Load `x` when y") is advice a model skims past -- the orchestrator held
-  `delivery-calibration`, never loaded it, and dispatched the decomposed ticket
-  seconds later -- and with `--no-skills`, a pin, or an unmet `requires` it names
-  a capability that session does not have, which the 2026-09-17 tool-grant rule
-  already forbade for tools. The seven role prompts' tails were deleted; the
-  conditions they carried ("when the surface is elevated and no security stage
-  will run") moved into the descriptions, which is where a model reads them
-  before deciding. Enforced by a test that no shipped prompt contains a
-  backticked skill id, and one that the catalogue header carries the rule.
-- 2026-09-18: **Every shipped skill opens by stating that its instruction is
-  mandatory.** The first line of every `instructions.md` is the same sentence --
-  "**This instruction is mandatory.** Where this skill's description matches the
-  work in front of you, the method below is required: an approach that
-  contradicts it is a defect to fix, not a preference to keep." -- followed by a
-  blank line so it reads as a statement about the skill rather than as the
-  technique's opening sentence. The catalogue header binds the set; this binds
-  the one skill a role has already loaded, been handed by a pin, or received as
-  an `always` paste, which no header reaches. The wording is identical in all
-  thirteen because it is a rule about skills, not a habit of each author; a test
-  reads the shipped directory and fails on the first skill whose opening line
-  differs.
-- 2026-09-20: **A catalogue row is an address, not a label.** The catalogue
-  renders each entry as `- <id>@<version> — <description>` and the loader's
-  parameter says to name the id "exactly as listed", so the loader accepts the
-  advertised string: `<id>@<version>` names the same skill as the bare `<id>`,
-  both spellings share the once-per-turn answer, and a version the session does
-  not list is refused in its own right (`skill_version_mismatch`, naming the
-  version that exists) rather than answered with a different revision or
-  reported as a skill the caller's role cannot reach. Measured 2026-09-20
-  (issue #524): the executor compared the request against the bare id alone, so
-  every copied row was refused as `skill_not_available` -- a false statement
-  about the caller's scope that reads as "this skill does not exist here", and
-  the reason no role in any console followed a skill. The row is compared WHOLE:
-  a version is any non-empty string, so `@` inside one is legal and re-splitting
-  the rendered row would refuse a row this catalogue prints (review of #524,
-  version `v@2`). Splitting remains only how an unlisted version is attributed
-  to the version the session does have.
-- 2026-09-20: **A skill names the situation the OPERATOR creates, not only the
-  ones the work creates.** `role-selection` (now version 5) gains the case the
-  2026-09-17 entry above -- three execution paths, what each worker role does,
-  when delegation is wrong -- did not cover: which path an operator's OWN ask
-  takes. A direct request ("fix this small bug") was absent from the route table,
-  which named the pipeline for a feature, a refactor or a multi-file fix and said
-  nothing about an ask the operator had already bounded himself, so the heaviest
-  path matched first and a five-line change came back as a pipeline run
-  (docs/contracts/operation-modes.md, 2026-09-20). The skill now holds the order
-  of preference -- own hands, then one `run_role`, then the pipeline -- the
-  machine bound that makes the first rung honest (one file, five changed lines,
-  #388: past it the write is REFUSED), what the roles-only rung is for (a single
-  bounded job, at the orchestrator's own discretion, no stages and no plan
-  document), what the pipeline is bought for (the SEQUENCE, not size and not
-  realness), and the sentence the operator is owed when the ask does not fit. A
-  rule that cannot say "I cannot do this by hand" escalates in silence, which is
-  the defect this entry closes. The DESCRIPTION carries the trigger ("including
-  an operator ask"), because the description
-  is the only always-read surface a skill has (2026-09-18) and a situation absent
-  from it is a skill a model never loads. The ROUTE TABLE stays here and is not
-  restated in the role prompt: the prompt carries the obligation (take the
-  cheapest path that can carry what the change owes, and say it out loud), the
-  skill carries which path is which and what it costs (review of #527, against
-  the 2026-09-17 operation-modes rule and the 2026-09-18 prompt/skill split). The
-  prompt's own per-type routing bullet -- "a feature, refactor, multi-file fix
-  ... goes through the pipeline" -- was removed with it: it named the pipeline
-  for work by its size, which is the one thing this skill's decision rule says
-  cannot decide. And the middle rung is priced honestly: a delegation carries no
-  review, because a review run as a bare `run_role` is advisory and writes no
-  stamp (docs/contracts/quality.md, 2026-09-19), so a MUTATING one-role change
-  still owes its gates and a standalone `ad-coder role reviewer` round -- which
-  is what the pipeline's review stage sells, and the reason the skill says to
-  offer the pipeline when a stamp is owed rather than after the code is written.
-  A "cheaper" rung that silently drops the review is not cheaper; it is a
-  change nobody reviewed, reported as done.
+## Guarantees
+
+- The core resolves bundled, profile, project, and enabled external skill sources
+  through one bounded registry. Each entry exposes source identity, address,
+  digest, standard name/description, trust state, and availability; duplicate
+  names remain distinguishable by address rather than silently overriding.
+- A session chooses one discovery mode: `manual`, `catalog`, `ranked`, or
+  `adaptive`. `manual` exposes no optional skill until explicitly selected;
+  `catalog` presents all reachable metadata and lets the model load any entry;
+  `ranked` presents a bounded declared-scoring shortlist while retaining a tool to
+  list and load the full reachable registry; `adaptive` selects catalog or ranked
+  from configured context budget and registry size. An operator may override the
+  effective mode for a session.
+- Metadata is the only always-present skill context. Full `SKILL.md` instructions
+  load only through explicit operator/orchestrator selection, role-required policy,
+  or model/tool activation. Resources load on demand. The core never eagerly pastes
+  every instruction bundle merely because a model has a large context window.
+- A role policy independently declares reachable, default-selected, required, and
+  denied skills. Required skills load before the turn; default-selected skills are
+  offered by the selected discovery mode. A fixed role cannot bypass its deny list;
+  an ad-hoc agent may receive an explicit allowed subset but never gains tool
+  authority from a skill.
+- Operator and orchestrator may select skills for a session, one dispatch, an
+  ad-hoc subagent, or all eligible child dispatches. Explicit dispatch selection
+  records source and inheritance scope, composes with fixed-role policy, and is
+  visible before launch. A child receives only its resolved selection, not an
+  implicit copy of every parent instruction.
+- Every resolved selection is durable across resume: addresses, digests, mode,
+  policy source, loaded instructions, and inheritance provenance restore before
+  the next turn. A changed or missing source pauses only its affected operation
+  with recovery choices; it never substitutes a same-named skill silently.
+- Unknown, malformed, escaping, untrusted, unavailable, or over-budget skill
+  selection refuses before provider dispatch. Limits apply to metadata catalogue,
+  per-turn instructions, resources, and list output independently; an omitted
+  entry states the applicable limit rather than looking absent.
+- Skill loading and use are ledgered with safe address/digest and token attribution.
+  The selector's shortlist, scoring source, and final model/operator choice are
+  inspectable; vector or embedding retrieval is an optional selector module, not a
+  hidden provider call or a prerequisite for catalog/manual use.
+
+## Configuration
+
+Skill source enablement and precedence, trust, discovery mode, metadata/context
+budgets, ranking selector, role allow/default/required/deny policy, subagent
+inheritance, and load/resource limits follow standard settings precedence.
+`adaptive` is the default: it favours a complete catalogue when its metadata fits
+the role's budget and a ranked shortlist otherwise. Manual selection remains
+available for constrained local routes.
+
+## Verification
+
+Test standard-source discovery and duplicate addresses, all discovery modes and
+budget transitions, full-registry escape from a shortlist, explicit/manual load,
+role policy, subagent inheritance, no implicit tool grant, durable resume/digest
+mismatch, selector observability, resource containment, and TUI/API/orchestrator
+parity.
+
+## Related surfaces
+
+- [Skill authoring](skill-authoring.md) owns one skill's format and content.
+- [Role catalog](role-catalog.md) owns fixed role identity.
+- [Agent dispatch](agent-dispatch.md) owns child launches.
+- [Role tools](role-tools.md) owns tool grants.
+- [Resumability](resumability.md) owns durable recovery.
+- [Settings interface](settings-interface.md) owns operator controls.
