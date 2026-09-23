@@ -299,6 +299,83 @@ await runRoleStandalone({ role, model, models, targetDir: process.env.START_INTE
   }
 });
 
+test("#617: SIGKILL after a settled operation finalizes it without replaying its prompt", async () => {
+  const { models, model, role } = fixture();
+  const runId = `settling-${crypto.randomUUID()}`;
+  const task = "the original task must be dispatched exactly once";
+  const ready = path.join(targetDir, `${runId}.settled`);
+  const child = Bun.spawn(
+    [
+      process.execPath,
+      "--eval",
+      `import * as fs from "node:fs";
+import { createModels, fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
+import { defineRole } from ${JSON.stringify(path.join(import.meta.dir, "..", "src", "role.ts"))};
+import { runRoleStandalone } from ${JSON.stringify(path.join(import.meta.dir, "..", "src", "cli.ts"))};
+const faux = fauxProvider({ provider: "faux", models: [{ id: "faux-1", contextWindow: 200000 }] });
+const models = createModels(); models.setProvider(faux.provider);
+const model = faux.getModel();
+const role = defineRole({ name: "reviewer", provider: "faux", modelId: model.id, systemPrompt: "You review.", activeToolNames: ["read", "bash"], cacheRetention: "none", contextBudget: { maxTokens: 100000, reserveTokens: 10000, keepRecentTokens: 20000 } }, model);
+faux.setResponses([fauxAssistantMessage("the one settled answer")]);
+await runRoleStandalone({ role, model, models, targetDir: process.env.SETTLING_TARGET, task: process.env.SETTLING_TASK, runId: process.env.SETTLING_RUN, afterOperationSettled: async () => { fs.writeFileSync(process.env.SETTLING_READY, "ready"); await new Promise(() => {}); } });`,
+      "role",
+      "reviewer",
+      "--target-dir",
+      targetDir,
+    ],
+    {
+      stdout: "ignore",
+      stderr: "ignore",
+      env: {
+        ...process.env,
+        SETTLING_TARGET: targetDir,
+        SETTLING_TASK: task,
+        SETTLING_RUN: runId,
+        SETTLING_READY: ready,
+      },
+    },
+  );
+  try {
+    const deadline = Date.now() + 10_000;
+    while (!fs.existsSync(ready)) {
+      if (Date.now() > deadline) throw new Error("timed out waiting for settled-operation marker");
+      await Bun.sleep(25);
+    }
+    const store = new ProjectStore(targetDir);
+    const checkpointPath = path.join(store.layout.runs, `standalone-${runId}.json`);
+    expect(
+      store.readVersionedJson<{ status: string; settledOperation?: unknown }>(checkpointPath).value,
+    ).toMatchObject({
+      status: "settling",
+      settledOperation: { cost: expect.any(Number) },
+    });
+    child.kill("SIGKILL");
+    await child.exited;
+
+    // No faux response is queued in this process. If recovery sends `task`
+    // again it fails; a successful result therefore proves zero replayed
+    // provider dispatches across the exact post-settlement crash boundary.
+    await expect(
+      runRoleStandalone({ role, model, models, targetDir, task, runId, resumeExisting: true }),
+    ).resolves.toMatchObject({ text: expect.stringContaining("the one settled answer") });
+    expect(
+      store.readVersionedJson<{ status: string; settledOperation?: unknown }>(checkpointPath).value,
+    ).toMatchObject({
+      status: "complete",
+    });
+    expect(
+      store.readVersionedJson<{ settledOperation?: unknown }>(checkpointPath).value
+        .settledOperation,
+    ).toBeUndefined();
+  } finally {
+    try {
+      child.kill("SIGKILL");
+    } catch {
+      // The expected path already reaped it.
+    }
+  }
+});
+
 test("resume reclaims a new-format session lease left by a dead standalone worker", async () => {
   const { faux, models, model, role } = fixture();
   const runId = `dead-worker-${crypto.randomUUID()}`;

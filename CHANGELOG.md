@@ -11,6 +11,15 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.33] - 2026-09-23
+
+### Fixed
+
+- **Standalone resume never replays an operation that already settled (issue
+  #617).** The role checkpoints a bounded `settling` handoff before closeout;
+  recovery reclaims its owner and finalizes that durable result without another
+  provider dispatch.
+
 ## [0.181.32] - 2026-09-23
 
 ### Fixed

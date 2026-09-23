@@ -636,6 +636,8 @@ export async function runRoleStandalone(params: {
   verdictCapture?: VerdictCapture;
   /** Test-only synchronization seam for the durable start boundary. */
   beforeSessionCreate?: () => void | Promise<void>;
+  /** Test-only synchronization seam for the post-operation closeout boundary. */
+  afterOperationSettled?: () => void | Promise<void>;
 }): Promise<{
   text: string;
   cost: number;
@@ -669,7 +671,7 @@ export async function runRoleStandalone(params: {
      * before the session exists, so a hard death in that interval is safe to
      * resume and cannot be mistaken for a provider turn.
      */
-    status: "starting" | "running" | "paused" | "complete" | "failed";
+    status: "starting" | "running" | "settling" | "paused" | "complete" | "failed";
     /**
      * The process that owns (last owned) this run, recorded by the run's own
      * process at start and re-recorded by the process that resumes (issue
@@ -681,6 +683,17 @@ export async function runRoleStandalone(params: {
     verdict?: Verdict;
     result?: {
       text: string;
+      cost: number;
+      ledgerPath?: string;
+      observations: import("./runner/runner").RoleObservations;
+      stageCloseout?: StageCloseoutFact;
+    };
+    /**
+     * The provider operation settled, but standalone closeout has not yet
+     * projected its durable transcript into `result`. Recovery must finalize
+     * this operation rather than replaying its original provider prompt.
+     */
+    settledOperation?: {
       cost: number;
       ledgerPath?: string;
       observations: import("./runner/runner").RoleObservations;
@@ -789,6 +802,73 @@ export async function runRoleStandalone(params: {
     });
   };
   let latestStageLimitSnapshot: Readonly<StageLimitSnapshot> | undefined;
+  const finalizeSettledOperation = async (
+    operation: NonNullable<Checkpoint["settledOperation"]>,
+  ): Promise<{
+    text: string;
+    cost: number;
+    ledgerPath: string | undefined;
+    observations: import("./runner/runner").RoleObservations;
+    stageCloseout?: StageCloseoutFact;
+  }> => {
+    // Release the owner facade before reopening a read facade, including on a
+    // recovery that never enters runRole.
+    await session.close(BACKGROUND_CONTEXT);
+    const readable = await store.resumeSession(runId, BACKGROUND_CONTEXT);
+    let text: string;
+    try {
+      text = await extractFinalText(readable, BACKGROUND_CONTEXT);
+    } finally {
+      await readable.close(BACKGROUND_CONTEXT);
+    }
+    const durableResult = {
+      text,
+      cost: operation.cost,
+      ...(operation.ledgerPath !== undefined && { ledgerPath: operation.ledgerPath }),
+      ...(operation.stageCloseout !== undefined && { stageCloseout: operation.stageCloseout }),
+      observations: operation.observations,
+    };
+    const closeout = operation.stageCloseout;
+    updateCheckpoint((current) => {
+      const {
+        pause: _pause,
+        failure: _failure,
+        settledOperation: _operation,
+        ...settled
+      } = current;
+      if (closeout === undefined) return { ...settled, status: "complete", result: durableResult };
+      const key = STAGE_LIMIT_KEY[closeout.reason];
+      const snapshot = latestStageLimitSnapshot;
+      const limit = snapshot?.[key] ?? params.stageLimits?.[key] ?? 0;
+      const observed =
+        closeout.reason === "duration"
+          ? (snapshot?.elapsedMs ?? current.cumulativeUsage.elapsedMs)
+          : closeout.reason === "model_turns"
+            ? (snapshot?.modelTurns ?? current.cumulativeUsage.modelTurns)
+            : closeout.reason === "tool_turns"
+              ? (snapshot?.toolTurns ?? current.cumulativeUsage.toolTurns)
+              : (snapshot?.inputTokens ?? current.cumulativeUsage.inputTokens);
+      return {
+        ...settled,
+        status: "paused",
+        result: durableResult,
+        pause: {
+          code: "stage_closeout",
+          reason: closeout.reason,
+          detail: closeout.detail,
+          limit,
+          observed,
+        },
+      };
+    });
+    return {
+      text,
+      cost: operation.cost,
+      ledgerPath: operation.ledgerPath,
+      observations: operation.observations,
+      ...(operation.stageCloseout !== undefined && { stageCloseout: operation.stageCloseout }),
+    };
+  };
   const finishPersistedVerdict = async (): Promise<{
     text: string;
     cost: number;
@@ -941,7 +1021,7 @@ export async function runRoleStandalone(params: {
     // refuse the second launcher without letting it overwrite the checkpoint's
     // process identity with a process that never ran.  Once the predecessor is
     // actually dead, `resumeSession` reclaims its versioned lease safely.
-    if (prior.status === "starting") {
+    if (prior.status === "starting" || prior.status === "settling") {
       // A start intent is durable before `createSession`. Recovery therefore
       // opens-or-creates under the normal session lease: either side of a
       // crash at that boundary has one session and no provider prompt yet.
@@ -950,15 +1030,18 @@ export async function runRoleStandalone(params: {
         throw new ProjectStoreError(
           "version_conflict",
           checkpointPath,
-          "standalone role is still starting in its recorded process",
+          `standalone role is still ${prior.status} in its recorded process`,
         );
       if (state === "unknown")
         throw new ProjectStoreError(
           "version_conflict",
           checkpointPath,
-          "standalone role start cannot be identified safely",
+          `standalone role ${prior.status} cannot be identified safely`,
         );
-      session = await store.openOrCreateSession(runId, BACKGROUND_CONTEXT);
+      session =
+        prior.status === "starting"
+          ? await store.openOrCreateSession(runId, BACKGROUND_CONTEXT)
+          : await store.resumeSession(runId, BACKGROUND_CONTEXT);
     } else {
       session = await store.resumeSession(runId, BACKGROUND_CONTEXT);
     }
@@ -995,7 +1078,7 @@ export async function runRoleStandalone(params: {
         {
           ...resumed,
           cumulativeUsage,
-          status: "running",
+          status: recoveredPrior.settledOperation === undefined ? "running" : "settling",
           // The resuming process takes over the run: the recorded pid must be
           // its own, or `runs stop` would aim at the dead predecessor's pid
           // (issue #479). Resuming past a stop request answers it; the witness
@@ -1009,6 +1092,8 @@ export async function runRoleStandalone(params: {
       await session.close(BACKGROUND_CONTEXT);
       throw error;
     }
+    if (checkpoint.value.settledOperation !== undefined)
+      return await finalizeSettledOperation(checkpoint.value.settledOperation);
   } else {
     checkpoint = store.writeVersionedJson(
       checkpointPath,
@@ -1094,12 +1179,17 @@ export async function runRoleStandalone(params: {
       ...(params.tools !== undefined && { tools: params.tools }),
       ...(params.abortSignal !== undefined && { abortSignal: params.abortSignal }),
     });
-    // `runRole` owns and closes only a session it opened itself.  Standalone
-    // already opened this facade so it could claim the durable lease before a
-    // runner exists; release that lease before reopening a readable facade
-    // below.  Otherwise a successful live role can contend with *itself* and
-    // report "managed state is locked" after it has done all of its work.
-    await session.close(BACKGROUND_CONTEXT);
+    const settledOperation = {
+      cost: result.observations.costUsd ?? 0,
+      ...(result.ledgerPath !== undefined && { ledgerPath: result.ledgerPath }),
+      ...(result.stageCloseout !== undefined && { stageCloseout: result.stageCloseout }),
+      observations: result.observations,
+    };
+    // Persist this before releasing the session or extracting its transcript.
+    // A hard exit in either closeout step must not replay the original task.
+    updateCheckpoint((current) => ({ ...current, status: "settling", settledOperation }));
+    await params.afterOperationSettled?.();
+    return await finalizeSettledOperation(settledOperation);
   } catch (error) {
     try {
       await session.close(BACKGROUND_CONTEXT);
@@ -1183,62 +1273,6 @@ export async function runRoleStandalone(params: {
     }
     throw error;
   }
-  // runRole closes the session facade it was handed; reopen a fresh readable
-  // facade from the durable store to scan the settled transcript.
-  const readable = await store.resumeSession(runId, BACKGROUND_CONTEXT);
-  let text: string;
-  try {
-    text = await extractFinalText(readable, BACKGROUND_CONTEXT);
-  } finally {
-    await readable.close(BACKGROUND_CONTEXT);
-  }
-  const durableResult = {
-    text,
-    cost: result.observations.costUsd ?? 0,
-    ...(result.ledgerPath !== undefined && { ledgerPath: result.ledgerPath }),
-    ...(result.stageCloseout !== undefined && { stageCloseout: result.stageCloseout }),
-    observations: result.observations,
-  };
-  const closeout = result.stageCloseout;
-  updateCheckpoint((current) => {
-    const { pause: _pause, failure: _failure, ...settled } = current;
-    if (closeout === undefined) return { ...settled, status: "complete", result: durableResult };
-
-    // A closeout controller has observed a snapshot before it can emit this
-    // fact (model/tool admission publishes one). Keep the defensive fallback
-    // so an adapter regression still leaves the run resumable rather than
-    // replacing a partial result with a dead `running` record.
-    const key = STAGE_LIMIT_KEY[closeout.reason];
-    const snapshot = latestStageLimitSnapshot;
-    const limit = snapshot?.[key] ?? params.stageLimits?.[key] ?? 0;
-    const observed =
-      closeout.reason === "duration"
-        ? (snapshot?.elapsedMs ?? current.cumulativeUsage.elapsedMs)
-        : closeout.reason === "model_turns"
-          ? (snapshot?.modelTurns ?? current.cumulativeUsage.modelTurns)
-          : closeout.reason === "tool_turns"
-            ? (snapshot?.toolTurns ?? current.cumulativeUsage.toolTurns)
-            : (snapshot?.inputTokens ?? current.cumulativeUsage.inputTokens);
-    return {
-      ...settled,
-      status: "paused",
-      result: durableResult,
-      pause: {
-        code: "stage_closeout",
-        reason: closeout.reason,
-        detail: closeout.detail,
-        limit,
-        observed,
-      },
-    };
-  });
-  return {
-    text,
-    cost: durableResult.cost,
-    ledgerPath: result.ledgerPath,
-    observations: result.observations,
-    ...(result.stageCloseout !== undefined && { stageCloseout: result.stageCloseout }),
-  };
 }
 
 /** The resolved RoleSpec for a validated shipped role name. */

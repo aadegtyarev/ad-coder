@@ -22,6 +22,12 @@ Rules for ad-coder's command-line front. A violation is always blocking.
   `runs inspect` exposes `starting` as recorded state with that recovery action;
   it is not a running provider turn.
 
+- 2026-09-23 (issue #617): after a standalone provider operation settles, its
+  owner persists a bounded `settling` handoff before it releases the session or
+  extracts the final transcript. A resumed `settling` record uses the same
+  owner-loss proof as a running role, then finalizes that settled operation;
+  it never sends the original prompt to the provider again.
+
 - 2026-09-11: The CLI is a THIN front over the programmatic core (see
   `architecture.md`). Its whole command surface — every command, every option,
   every positional argument, each with a one-line description — is declared in
