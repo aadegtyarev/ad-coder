@@ -94,6 +94,21 @@ jobs:
         if: steps.channel.outputs.dev == 'true'
         run: bun run scripts/dev-package.ts "${{ steps.channel.outputs.tag }}"
 
+      # Capture the exact manifest that the publish step will pack. The dev
+      # manifest is temporary, so downstream readiness must not rediscover the
+      # target from a checkout manifest that another npm step may restore.
+      - name: Capture published package coordinates
+        id: package
+        run: |
+          node <<'NODE' >> "$GITHUB_OUTPUT"
+          const { name, version } = require("./package.json");
+          if (
+            typeof name !== "string" || name.length === 0 || name.length > 214 || /[\r\n]/u.test(name) ||
+            typeof version !== "string" || version.length === 0 || version.length > 256 || /[\r\n]/u.test(version)
+          ) throw new Error("publish manifest must contain bounded single-line name and version");
+          process.stdout.write(`name=${name}\nversion=${version}\n`);
+          NODE
+
       # `npm publish` with no NODE_AUTH_TOKEN: the OIDC credential minted from
       # `id-token: write` is what npm verifies. npm 11.5.1+ is required for
       # Trusted Publishing.
@@ -115,7 +130,10 @@ jobs:
       # moves `latest`. Give propagation a bounded 30-minute window while
       # logging the exact-version and dist-tag observations about once a minute.
       - name: Wait for npm registry propagation
-        run: bun run scripts/wait-registry-readiness.ts
+        run: >-
+          bun run scripts/wait-registry-readiness.ts
+          --package-name "${{ steps.package.outputs.name }}"
+          --version "${{ steps.package.outputs.version }}"
 
       # The release notes are the CHANGELOG section for this version, so the
       # published notes and the committed history cannot drift apart. A dev

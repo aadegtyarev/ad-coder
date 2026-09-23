@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.181.47] - 2026-09-24
+
+### Fixed
+
+- Make npm readiness verify the exact package name and version captured from
+  the publish manifest, so a dev release cannot wait on the restored stable
+  manifest after successfully publishing `ad-coder-dev`.
+
 ## [0.181.45] - 2026-09-23
 
 ### Fixed
