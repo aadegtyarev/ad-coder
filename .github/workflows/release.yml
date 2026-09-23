@@ -109,6 +109,13 @@ jobs:
       - run: npm publish
         if: steps.channel.outputs.dev == 'false'
 
+      # npm can acknowledge a publish before its CDN serves the exact version or
+      # moves `latest`. Poll those read-only facts rather than retrying publish:
+      # a second publish can only fail (versions are immutable) and obscures the
+      # real, recoverable propagation delay from downstream installers.
+      - name: Wait for npm registry propagation
+        run: bun run scripts/wait-registry-readiness.ts
+
       # The release notes are the CHANGELOG section for this version, so the
       # published notes and the committed history cannot drift apart. A dev
       # release has no CHANGELOG section of its own -- it is a preview of work in
