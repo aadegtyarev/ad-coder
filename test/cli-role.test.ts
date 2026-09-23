@@ -516,6 +516,59 @@ test("resuming a standalone run re-records the identity of the process that resu
   ).toBe(process.pid);
 });
 
+test("resume recovers running standalone checkpoints whose owner is absent, dead, or mismatched", async () => {
+  const cases: Array<[string, RunProcessIdentity | undefined]> = [
+    ["absent", undefined],
+    ["dead", { pid: 999_999_999, startTime: "1", groupId: 999_999_999 }],
+    // A reused pid is not this run. The start-time witness makes that a
+    // positive mismatch rather than a risky guess based on pid alone.
+    ["mismatched", { pid: process.pid, startTime: "0", groupId: process.pid }],
+    // Even an otherwise current process is not this role unless its argv
+    // carries the exact target and `role <name>` witness pair.
+    ["argv", { pid: process.pid, startTime: processStartTime(process.pid), groupId: process.pid }],
+  ];
+  for (const [kind, processIdentity] of cases) {
+    const { faux, models, model, role } = fixture();
+    const runId = `orphaned-running-${kind}-${crypto.randomUUID()}`;
+    const task = "recover the orphaned role";
+    const aborted = new AbortController();
+    aborted.abort();
+    await expect(
+      runRoleStandalone({
+        role,
+        model,
+        models,
+        targetDir,
+        task,
+        runId,
+        abortSignal: aborted.signal,
+      }),
+    ).rejects.toBeInstanceOf(RunInterruptedError);
+
+    const store = new ProjectStore(targetDir);
+    const checkpointPath = path.join(store.layout.runs, `standalone-${runId}.json`);
+    const stale = store.readVersionedJson<Record<string, unknown>>(checkpointPath);
+    const { pause: _pause, process: _process, ...running } = stale.value;
+    store.writeVersionedJson(
+      checkpointPath,
+      {
+        ...running,
+        status: "running",
+        ...(processIdentity === undefined ? {} : { process: processIdentity }),
+      },
+      stale.version,
+    );
+
+    faux.setResponses([fauxAssistantMessage(`recovered ${kind}`)]);
+    await expect(
+      runRoleStandalone({ role, model, models, targetDir, task, runId, resumeExisting: true }),
+    ).resolves.toMatchObject({ text: expect.stringContaining(`recovered ${kind}`) });
+    expect(store.readVersionedJson<{ status: string }>(checkpointPath).value.status).toBe(
+      "complete",
+    );
+  }
+});
+
 test("an external stop's pause names the signal and the stop request, and consumes the witness", async () => {
   const { models, model, role } = fixture();
   const runId = `stop-requested-${crypto.randomUUID()}`;

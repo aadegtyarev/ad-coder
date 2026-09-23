@@ -81,6 +81,7 @@ import {
   type RunProcessIdentity,
   readRunStopRequest,
   selfProcessIdentity,
+  verifyStopTarget,
 } from "./orchestration/run-stop";
 import { createWorkflowSession } from "./orchestration/session";
 import {
@@ -591,6 +592,12 @@ export async function runRoleStandalone(params: {
   model: Model<Api>;
   models: Models;
   targetDir: string;
+  /**
+   * The exact `--target-dir` token the role process carries in argv. The
+   * resolved target may differ (for example, a relative path or symlink),
+   * while process ownership requires the literal witness, never a guess.
+   */
+  processTargetDir?: string;
   task: string;
   runId?: string;
   resumeExisting?: boolean;
@@ -730,6 +737,33 @@ export async function runRoleStandalone(params: {
     };
   };
   const taskDigest = new Bun.CryptoHasher("sha256").update(params.task).digest("hex");
+  /**
+   * A `running` checkpoint is only live when its self-recorded process still
+   * proves it is THIS role invocation. A dead pid, reused pid, or command
+   * line for another target or role is positive evidence that this record is
+   * orphaned; an unreadable process remains held rather than guessed at.
+   */
+  const inspectRunningCheckpoint = (candidate: Checkpoint): "live" | "orphaned" | "unknown" => {
+    if (candidate.process === undefined) return "orphaned";
+    const inspected = verifyStopTarget({
+      identity: candidate.process,
+      stopperTargetDir: params.processTargetDir ?? params.targetDir,
+      cmdlineWitness: ["role", candidate.role],
+    });
+    if (inspected.ok) return "live";
+    const { checked } = inspected;
+    return checked.pidAlive === false ||
+      checked.state === "Z" ||
+      checked.startTimeMatches === false ||
+      checked.targetDirInArgv === false ||
+      checked.witnessInArgv === false
+      ? "orphaned"
+      : "unknown";
+  };
+  const orphanedFailure = {
+    code: "orphaned_process",
+    message: "role process is no longer verifiably live; resume the durable checkpoint",
+  };
   let checkpoint: import("./project-store/types").VersionedState<Checkpoint>;
   let stageLimitInitial: Checkpoint["pause"] extends infer _
     ?
@@ -787,7 +821,7 @@ export async function runRoleStandalone(params: {
   };
   if (params.resumeExisting === true) {
     checkpoint = store.readVersionedJson<Checkpoint>(checkpointPath);
-    const prior = checkpoint.value;
+    let prior = checkpoint.value;
     if (prior.schemaVersion !== 2 || prior.runId !== runId || prior.role !== params.role.name)
       throw new ProjectStoreError(
         "invalid_config",
@@ -812,6 +846,52 @@ export async function runRoleStandalone(params: {
         checkpointPath,
         "standalone role is already complete",
       );
+    if (prior.status === "running") {
+      // This mutation is deliberately under the checkpoint's versioned lock.
+      // Later ownership still depends on the session lease below; a contender
+      // that loses that lease never publishes a replacement process identity.
+      checkpoint = store.mutateVersionedJson<Checkpoint>(checkpointPath, (current) => {
+        if (current === undefined)
+          throw new ProjectStoreError(
+            "not_found",
+            checkpointPath,
+            "standalone checkpoint was lost",
+          );
+        const state = inspectRunningCheckpoint(current.value);
+        if (state === "live")
+          throw new ProjectStoreError(
+            "version_conflict",
+            checkpointPath,
+            "standalone role is already running in its recorded process",
+          );
+        if (state === "unknown")
+          throw new ProjectStoreError(
+            "version_conflict",
+            checkpointPath,
+            "standalone role process cannot be identified safely",
+          );
+        // Preserve the existing public recovery witness where procfs can name
+        // the loss precisely. The stricter argv mismatch path is still an
+        // orphan, but does not invent a pid-loss reason for it.
+        const inspection = inspectStandaloneRun(params.targetDir, runId);
+        return {
+          ...current.value,
+          status: "failed",
+          failure: orphanedFailure,
+          ...(inspection.status === "owner_lost" && current.value.process !== undefined
+            ? {
+                lastRecovery: {
+                  code: "owner_lost" as const,
+                  reason: inspection.reason,
+                  detectedAt: Date.now(),
+                  previousProcess: current.value.process,
+                },
+              }
+            : {}),
+        };
+      });
+      prior = checkpoint.value;
+    }
     // A validated reviewer verdict is terminal. Never spend another provider
     // turn merely because a limit or host interruption followed its tool ack.
     if (prior.verdict !== undefined && params.verdictCapture !== undefined) {
@@ -3099,6 +3179,7 @@ async function roleCommand(
       model: spec.model,
       models: config.models,
       targetDir: configOptions.targetDir,
+      processTargetDir: targetDirArg,
       task: attemptTask,
       runId: attemptRunId,
       ...(resumeRunId !== undefined && attemptRunId === standaloneRunId
