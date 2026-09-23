@@ -236,21 +236,21 @@ export type StandaloneRunInspection =
       status: "live";
       runId: string;
       pid: number;
-      recordedStatus: "running";
+      recordedStatus: "running" | "settling";
       nextAction: string;
     }
   | {
       status: "owner_lost";
       runId: string;
       pid: number;
-      recordedStatus: "running";
+      recordedStatus: "running" | "settling";
       reason: "pid_not_alive" | "zombie" | "pid_reused";
       nextAction: string;
     }
   | {
       status: "owner_unknown";
       runId: string;
-      recordedStatus: "running";
+      recordedStatus: "running" | "settling";
       nextAction: string;
     };
 
@@ -277,7 +277,7 @@ export function inspectStandaloneRun(targetDir: string, runId: string): Standalo
       nextAction: "inspect this background run through its background-run controls",
     };
   const recordedStatus = record.state ?? "unknown";
-  if (recordedStatus !== "running")
+  if (recordedStatus !== "running" && recordedStatus !== "settling")
     return {
       status: "recorded",
       runId,
@@ -295,7 +295,7 @@ export function inspectStandaloneRun(targetDir: string, runId: string): Standalo
     return {
       status: "owner_unknown",
       runId,
-      recordedStatus: "running",
+      recordedStatus,
       nextAction:
         "the running record has no complete process identity; inspect its durable checkpoint before resuming",
     };
@@ -304,7 +304,7 @@ export function inspectStandaloneRun(targetDir: string, runId: string): Standalo
       status: "owner_lost",
       runId,
       pid: identity.pid,
-      recordedStatus: "running",
+      recordedStatus,
       reason: "pid_not_alive",
       nextAction: "resume the role from its durable run id; completed work will be reused",
     };
@@ -314,7 +314,7 @@ export function inspectStandaloneRun(targetDir: string, runId: string): Standalo
       status: "owner_lost",
       runId,
       pid: identity.pid,
-      recordedStatus: "running",
+      recordedStatus,
       reason: "zombie",
       nextAction: "resume the role from its durable run id; completed work will be reused",
     };
@@ -323,7 +323,7 @@ export function inspectStandaloneRun(targetDir: string, runId: string): Standalo
       status: "owner_lost",
       runId,
       pid: identity.pid,
-      recordedStatus: "running",
+      recordedStatus,
       reason: "pid_reused",
       nextAction: "resume the role from its durable run id; completed work will be reused",
     };
@@ -331,7 +331,7 @@ export function inspectStandaloneRun(targetDir: string, runId: string): Standalo
     return {
       status: "owner_unknown",
       runId,
-      recordedStatus: "running",
+      recordedStatus,
       nextAction:
         "the owner process cannot be identified safely on this host; inspect its durable checkpoint before resuming",
     };
@@ -339,7 +339,7 @@ export function inspectStandaloneRun(targetDir: string, runId: string): Standalo
     status: "live",
     runId,
     pid: identity.pid,
-    recordedStatus: "running",
+    recordedStatus,
     nextAction: "the recorded role is still running; wait for it or stop this exact run",
   };
 }
