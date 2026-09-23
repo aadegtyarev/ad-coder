@@ -11,6 +11,15 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.26] - 2026-09-23
+
+### Fixed
+
+- **Release recovery now compares the tarball it actually publishes.** It packs
+  once, hashes the archive bytes, and publishes that same archive. npm versions
+  that omit `integrity` from pack JSON no longer prevent a release; an existing
+  version is still reused only when its registry integrity matches those bytes.
+
 ## [0.181.25] - 2026-09-23
 
 ### Fixed

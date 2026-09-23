@@ -33,7 +33,9 @@ surprising existing users, and what evidence makes an installable release valid?
   published exact version only after its registry tarball integrity matches the
   package packed from the same checkout; a mismatch or unreadable registry
   response blocks publication. A missing exact version may be published once
-  by that run. The timeout and polling interval remain bounded and configurable,
+  by that run. The release computes integrity from one locally packed tarball
+  and publishes those same bytes; pack JSON metadata is not the integrity
+  authority. The timeout and polling interval remain bounded and configurable,
   and the job reports both registry observations while waiting.
 - Before publication, inspect the exact tracked and packed file sets for credentials,
   private keys, local runtime state, unexpected generated data, and licensing
