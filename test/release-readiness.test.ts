@@ -126,12 +126,32 @@ test("registry readiness accepts npm's pretty multiline dist object amid warning
   ).resolves.toEqual({ attempts: 1 });
 });
 
-test("registry readiness rejects partial, multiple, array-wrapped, and secret-bearing dist JSON", async () => {
+test("registry readiness accepts npm 12's singleton dist object array amid warning lines", async () => {
+  const run: RegistryCommandRunner = async (argv) =>
+    argv[3] === "dist"
+      ? reply(`npm warn cli old runtime\n[${matchingDistPretty}]\nnpm warn config ignored\n`)
+      : reply('"0.181.22"');
+  await expect(
+    waitForRegistryReadiness({
+      packageName: "ad-coder-dev",
+      version: "0.181.22",
+      maxAttempts: 1,
+      delayMs: 0,
+      run,
+      fetchTarball: async () => ({ ok: true, status: 200, bytes: tarballBytes }),
+    }),
+  ).resolves.toEqual({ attempts: 1 });
+});
+
+test("registry readiness rejects partial, ambiguous arrays, nested values, and secrets", async () => {
   const secret = "registry-token-must-not-appear";
   for (const stdout of [
     matchingDistPretty.slice(0, -1),
     `${matchingDistPretty}\n${matchingDistPretty}`,
-    `[${matchingDistPretty}]`,
+    "[]",
+    `[${matchingDistPretty},${matchingDistPretty}]`,
+    `[[${matchingDistPretty}]]`,
+    `[{"tarball":"${secret}"}]`,
     `${matchingDistPretty}\n"second-value"`,
     `{"tarball":"${secret}"`,
   ]) {
