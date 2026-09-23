@@ -2981,6 +2981,18 @@ export function formatStageCloseoutNotice(closeout: StageCloseoutFact): string {
   return `ad-coder: stage closeout (${closeout.reason}): ${closeout.detail}\n`;
 }
 
+/** Resume advice must not claim a budget change after an ordinary interruption. */
+export function formatStandaloneResumeInstruction(params: {
+  role: string;
+  runId: string;
+  adjustLimits: boolean;
+}): string {
+  return (
+    `ad-coder: resume with role ${params.role} <same-task> --resume-run ${params.runId}` +
+    `${params.adjustLimits ? " and adjusted limits" : ""}\n`
+  );
+}
+
 /** Run a single role standalone against a target directory, resolved from the environment. */
 async function roleCommand(
   positionals: string[],
@@ -3126,7 +3138,11 @@ async function roleCommand(
         `ad-coder: standalone checkpoint=${expectedCheckpointPath} runId=${standaloneRunId}\n`,
       );
       process.stderr.write(
-        `ad-coder: resume with role ${name} <same-task> --resume-run ${standaloneRunId} and adjusted limits\n`,
+        formatStandaloneResumeInstruction({
+          role: name,
+          runId: standaloneRunId,
+          adjustLimits: error instanceof StageLimitError,
+        }),
       );
       if (error instanceof RunInterruptedError && receivedSignal !== undefined) {
         process.exitCode = receivedSignal === "SIGINT" ? 130 : 143;

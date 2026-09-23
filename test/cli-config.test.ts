@@ -1118,8 +1118,11 @@ test("role stage-budget overlays inherit global limits and preserve explicit zer
     maxToolTurns: 0,
     // A role's own shipped ceiling, untouched by the two global values passed
     // above -- the overlay only replaces the dimensions a caller names.
-    maxDurationMs: 1_350_000,
-    maxInputTokens: 1_680_000,
+    maxDurationMs: 540_000,
+    maxInputTokens: 600_000,
+    finalResponseReserveModelTurns: 8,
+    finalResponseReserveToolTurns: 8,
+    finalResponseReserveInputTokens: 100_000,
   });
   // The other half of that rule, and the one `--help` used to hide: a global
   // flag DOES replace the role's own ceiling for that dimension, so passing

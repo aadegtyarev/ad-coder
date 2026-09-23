@@ -12,6 +12,7 @@ import {
 } from "@earendil-works/pi-ai";
 import {
   formatStageCloseoutNotice,
+  formatStandaloneResumeInstruction,
   runReviewWithSubmissionRetry,
   runRoleStandalone,
   standaloneSystemPrompt,
@@ -1211,6 +1212,55 @@ test("a normal standalone run carries no stageCloseout", async () => {
     ledgerSink: new MemoryLedgerSink(),
   });
   expect(result.stageCloseout).toBeUndefined();
+});
+
+test("a bounded standalone reviewer pauses for closeout, then resumes without replaying it", async () => {
+  const { faux, models, model, role } = fixture();
+  const runId = `reviewer-closeout-${crypto.randomUUID()}`;
+  const task = "review the bounded diff";
+  // The first turn explores. The second enters the model-turn reserve and
+  // receives a tool-free closeout request rather than another exploration turn.
+  faux.setResponses([
+    fauxAssistantMessage(fauxToolCall("read", { path: "changed.ts" })),
+    fauxAssistantMessage("partial review; closeout requested"),
+  ]);
+  const first = await runRoleStandalone({
+    role,
+    model,
+    models,
+    targetDir,
+    task,
+    runId,
+    stageLimits: { maxModelTurns: 3, finalResponseReserveModelTurns: 2 },
+  });
+  expect(first.stageCloseout).toMatchObject({ code: "stage_closeout", reason: "model_turns" });
+  expect(store_read(targetDir, runId)).toMatchObject({
+    status: "paused",
+    pause: { code: "stage_closeout", reason: "model_turns" },
+  });
+
+  faux.setResponses([fauxAssistantMessage("completed after bounded closeout")]);
+  const resumed = await runRoleStandalone({
+    role,
+    model,
+    models,
+    targetDir,
+    task,
+    runId,
+    resumeExisting: true,
+    stageLimits: { maxModelTurns: 6, finalResponseReserveModelTurns: 2 },
+  });
+  expect(resumed.text).toContain("completed after bounded closeout");
+  expect(store_read(targetDir, runId).status).toBe("complete");
+});
+
+test("interrupted standalone resume advice does not demand adjusted limits", () => {
+  expect(
+    formatStandaloneResumeInstruction({ role: "reviewer", runId: "run-1", adjustLimits: false }),
+  ).toBe("ad-coder: resume with role reviewer <same-task> --resume-run run-1\n");
+  expect(
+    formatStandaloneResumeInstruction({ role: "reviewer", runId: "run-1", adjustLimits: true }),
+  ).toContain("and adjusted limits");
 });
 
 test("the stderr closeout notice names the reason and the detail (issue #327)", () => {
