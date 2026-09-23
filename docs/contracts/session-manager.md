@@ -24,6 +24,17 @@ This contract owns the headless `SessionManager` API for shared durable sessions
   acquire immediately, then retry once after each delay. A supplied schedule is
   a non-empty array of positive safe integer milliseconds; invalid keys or values
   fail before acquisition. A proven dead holder is reclaimed without waiting.
+- A coordination directory whose owner identity was never published is inert and
+  is reclaimed conservatively: only an absent or zero-byte, singly linked
+  regular owner with no other entries qualifies. Any other shape is a refusal,
+  never a guess.
+- Coordination cleanup is bound to the acquiring frame's identity, never to the
+  fixed path. Owner publication failure quarantines the directory under the
+  frame's token and removes it only when it still provably created it,
+  preserving the original write error; release cleanup removes the directory
+  only when the published owner exactly matches the frame identity, refusing
+  absent, malformed, symlinked, hard-linked and foreign owners instead of
+  deleting a contender's freshly re-created directory.
 - Standalone lease detection is read-only. The manager never steals a live
   standalone session; a completed handoff requires both durable handoff events
   and the standalone owner's release before adoption of its session id.

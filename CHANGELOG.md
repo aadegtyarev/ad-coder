@@ -11,6 +11,23 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.51] - 2026-09-24
+
+### Fixed
+
+- Reclaim an inert versioned-lock coordination directory whose owner identity
+  was never published (absent or zero-byte owner, no other entries), so a
+  poisoned coordination directory no longer strands checkpoint and session-lease
+  acquisition forever, and ambiguous shapes still refuse. Coordination cleanup
+  is bound to the acquiring frame's identity, not the fixed path: owner
+  publication failure quarantines under the frame's own token, removes only a
+  directory it still provably created, restores anything ambiguous on that
+  same fixed path, and preserves the original write error; release cleanup
+  removes the directory only when the published owner is this frame's exact
+  identity, conservatively refusing absent, malformed, symlinked, hard-linked
+  and foreign owners so a contender's freshly re-created directory is never
+  deleted out from under it.
+
 ## [0.181.50] - 2026-09-24
 
 ### Added
