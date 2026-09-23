@@ -488,6 +488,52 @@ test("resume reclaims a new-format session lease left by a dead standalone worke
   ).toBe("complete");
 });
 
+test("standalone resume recovers a poisoned inert coordination directory left by a dead role", async () => {
+  const { faux, models, model, role } = fixture();
+  const runId = `poisoned-coordination-${crypto.randomUUID()}`;
+  const task = "resume over a poisoned coordination directory";
+  const abortController = new AbortController();
+  abortController.abort();
+
+  await expect(
+    runRoleStandalone({
+      role,
+      model,
+      models,
+      targetDir,
+      task,
+      runId,
+      abortSignal: abortController.signal,
+    }),
+  ).rejects.toBeInstanceOf(RunInterruptedError);
+
+  // The inert coordination shape issue #631 left behind: a coordination
+  // directory whose owner file was never published (zero-byte).
+  const store = new ProjectStore(targetDir);
+  const coordination = `${path.join(store.layout.tmp, "session-coordination.lock")}.coordination`;
+  fs.mkdirSync(coordination, 0o700);
+  fs.writeFileSync(path.join(coordination, "owner"), "", { mode: 0o600 });
+
+  faux.setResponses([fauxAssistantMessage("recovered from poisoned coordination")]);
+  const resumed = await runRoleStandalone({
+    role,
+    model,
+    models,
+    targetDir,
+    task,
+    runId,
+    resumeExisting: true,
+  });
+
+  expect(resumed.text).toContain("recovered from poisoned coordination");
+  expect(fs.existsSync(coordination)).toBe(false);
+  expect(
+    store.readVersionedJson<{ status: string }>(
+      path.join(store.layout.runs, `standalone-${runId}.json`),
+    ).value.status,
+  ).toBe("complete");
+});
+
 test("SIGKILLed standalone owner is diagnosed and leaves a recovery witness before resume", async () => {
   const { faux, models, model, role } = fixture();
   const runId = `sigkill-owner-${crypto.randomUUID()}`;

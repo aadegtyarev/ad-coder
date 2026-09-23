@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, mock, test } from "bun:test";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -427,6 +427,123 @@ describe("ProjectStore", () => {
 
     expect(fs.existsSync(lease)).toBe(false);
     expect(fs.existsSync(coordination)).toBe(false);
+  });
+
+  test("self-heals an inert coordination directory before a checkpoint write", () => {
+    const store = new ProjectStore(target(), { lockRetry: { delaysMs: [1] } });
+    const checkpoint = path.join(store.layout.runs, "standalone-poisoned-run.json");
+    store.writeVersionedJson(checkpoint, { runs: 0 });
+    // The inert shapes issue #631 left stranded forever: the coordination
+    // directory exists but its owner identity never published, so neither
+    // dead-holder branch could recognise it.
+    const versions: number[] = [];
+    for (const shape of ["ownerless", "zero-byte-owner"] as const) {
+      const coordination = `${checkpoint}.lock.coordination`;
+      fs.mkdirSync(coordination, 0o700);
+      if (shape === "zero-byte-owner")
+        fs.writeFileSync(path.join(coordination, "owner"), "", { mode: 0o600 });
+      const result = store.mutateVersionedJson(checkpoint, (current) => ({
+        runs: (current?.value as { runs: number } | undefined)?.runs ?? 0,
+      }));
+      versions.push(result.version);
+      expect(fs.existsSync(coordination)).toBe(false);
+    }
+    // Deterministic: each shape is reclaimed on the first retry without
+    // exhausting the bounded contention schedule.
+    expect(versions).toEqual([2, 3]);
+    expect(fs.readdirSync(store.layout.runs).some((entry) => entry.includes("reclaim"))).toBe(
+      false,
+    );
+  });
+
+  test("resume self-heals an inert coordination directory before re-leasing a saved session", async () => {
+    const root = target();
+    const store = new ProjectStore(root, { lockRetry: { delaysMs: [1] } });
+    const session = await store.createSession("inert_coordination_session");
+    await session.close(BACKGROUND_CONTEXT);
+    const coordination = `${path.join(store.layout.tmp, "session-coordination.lock")}.coordination`;
+    fs.mkdirSync(coordination, 0o700);
+    fs.writeFileSync(path.join(coordination, "owner"), "", { mode: 0o600 });
+
+    const reopened = await new ProjectStore(root, { lockRetry: { delaysMs: [1] } }).resumeSession(
+      "inert_coordination_session",
+    );
+    await reopened.close(BACKGROUND_CONTEXT);
+
+    expect(fs.existsSync(coordination)).toBe(false);
+    expect(fs.readdirSync(store.layout.tmp).some((entry) => entry.includes("reclaim"))).toBe(false);
+  });
+
+  test("refuses ambiguous poisoned coordination shapes instead of guessing at them", async () => {
+    for (const shape of ["extra-entry", "owner-directory", "coordination-as-file"] as const) {
+      const root = target();
+      const store = new ProjectStore(root, { lockRetry: { delaysMs: [1] } });
+      const session = await store.createSession(`ambiguous_${shape}`);
+      await session.close(BACKGROUND_CONTEXT);
+      const coordination = `${path.join(store.layout.tmp, "session-coordination.lock")}.coordination`;
+      if (shape === "coordination-as-file") {
+        fs.writeFileSync(coordination, "", { mode: 0o600 });
+      } else {
+        fs.mkdirSync(coordination, 0o700);
+        if (shape === "extra-entry") {
+          fs.writeFileSync(path.join(coordination, "owner"), "", { mode: 0o600 });
+          fs.writeFileSync(path.join(coordination, "stray"), "", { mode: 0o600 });
+        } else {
+          fs.mkdirSync(path.join(coordination, "owner"), 0o600);
+        }
+      }
+      const acquisition = new ProjectStore(root, {
+        lockRetry: { delaysMs: [1] },
+      }).resumeSession(`ambiguous_${shape}`);
+      // Ambiguous shapes are refused, never guessed at.  `version_conflict`
+      // is the typed refusal for a well-formed but unrecognisable directory;
+      // a non-directory object on the coordination path fails with the same
+      // raw errno it always has.  Either way the poison stays in place.
+      const code = await acquisition.then(
+        () => null,
+        (error) => (error as NodeJS.ErrnoException).code,
+      );
+      expect(code).toBe(
+        shape === "extra-entry"
+          ? "version_conflict"
+          : shape === "owner-directory"
+            ? "EISDIR"
+            : "ENOTDIR",
+      );
+      expect(fs.existsSync(coordination)).toBe(true);
+    }
+  });
+
+  test("removes a half-created coordination directory when owner publication throws and preserves the error", () => {
+    const store = new ProjectStore(target(), { lockRetry: { delaysMs: [1] } });
+    const coordinationPath = `${path.join(store.layout.tmp, "session-coordination.lock")}.coordination`;
+    const implementation = store as unknown as {
+      withVersionedLockCoordination(lockPath: string, operation: () => number): number;
+    };
+    const publicationFailure = new Error("publication failed explicitly");
+    let handlerRan = false;
+    const originalWriteFileSync = fs.writeFileSync;
+    mock.module("node:fs", () => ({
+      ...fs,
+      writeFileSync: () => {
+        throw publicationFailure;
+      },
+    }));
+    try {
+      expect(() =>
+        implementation.withVersionedLockCoordination(
+          path.join(store.layout.tmp, "session-coordination.lock"),
+          () => {
+            handlerRan = true;
+            return 1;
+          },
+        ),
+      ).toThrow(publicationFailure);
+    } finally {
+      mock.module("node:fs", () => ({ ...fs, writeFileSync: originalWriteFileSync }));
+    }
+    expect(handlerRan).toBe(false);
+    expect(fs.existsSync(coordinationPath)).toBe(false);
   });
 
   test("cleanup skips a session leased by another store", async () => {

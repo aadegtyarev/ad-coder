@@ -11,6 +11,17 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.51] - 2026-09-24
+
+### Fixed
+
+- Reclaim an inert versioned-lock coordination directory whose owner identity
+  was never published (absent or zero-byte owner, no other entries), so a
+  poisoned coordination directory no longer strands checkpoint and session-lease
+  acquisition forever. Ambiguous shapes still refuse, an owner publication
+  failure cleans up its half-created directory best-effort, and the original
+  error is preserved.
+
 ## [0.181.50] - 2026-09-24
 
 ### Added

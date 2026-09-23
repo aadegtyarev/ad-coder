@@ -693,9 +693,22 @@ export class ProjectStore {
     for (let attempt = 0; ; attempt += 1) {
       try {
         fs.mkdirSync(coordinationPath, 0o700);
-        fs.writeFileSync(path.join(coordinationPath, "owner"), `${JSON.stringify(identity)}\n`, {
-          mode: 0o600,
-        });
+        try {
+          fs.writeFileSync(path.join(coordinationPath, "owner"), `${JSON.stringify(identity)}\n`, {
+            mode: 0o600,
+          });
+        } catch (writeError) {
+          // A half-created coordination directory is inert by construction:
+          // the owner identity never published.  Remove it best-effort so the
+          // next attempt starts clean, but never let that cleanup hide the
+          // publication error itself.
+          try {
+            fs.rmSync(coordinationPath, { recursive: true, force: true });
+          } catch {
+            // Left in place, it is reclaimable by the inert-owner branch below.
+          }
+          throw writeError;
+        }
         break;
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
@@ -728,6 +741,7 @@ export class ProjectStore {
           fs.rmSync(quarantine, { recursive: true, force: true });
           continue;
         }
+        if (this.reclaimInertCoordination(coordinationPath)) continue;
         const delay = this.lockRetryDelaysMs[attempt];
         if (delay === undefined)
           throw new ProjectStoreError("version_conflict", lockPath, "managed state is locked");
@@ -739,6 +753,69 @@ export class ProjectStore {
     } finally {
       fs.rmSync(coordinationPath, { recursive: true, force: true });
     }
+  }
+
+  /**
+   * Reclaim an ownerless coordination directory.  A directory whose owner was
+   * never published leaves no PID and no token, so neither dead-owner branch
+   * above can recognise it and it would otherwise refuse every contender
+   * forever.  Only the unambiguously inert shape qualifies: no entries at all,
+   * or a single `owner` entry that is a zero-byte, singly linked regular file.
+   * An owner with content, any second entry, or any non-directory object is
+   * deliberately not guessed at: that remains the typed contention refusal.
+   */
+  private reclaimInertCoordination(coordinationPath: string): boolean {
+    if (this.coordinationShape(coordinationPath) !== "inert") return false;
+    const quarantine = `${coordinationPath}.reclaim-${crypto.randomUUID()}`;
+    try {
+      fs.renameSync(coordinationPath, quarantine);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw error;
+    }
+    if (this.coordinationShape(quarantine) !== "inert") {
+      // A contender published an owner between inspection and rename.  The
+      // quarantined directory is evidence of that race, not ours to delete:
+      // it is retained as an ambiguous shape and never a substitute for the
+      // coordination directory a fresh caller creates itself.
+      return false;
+    }
+    fs.rmSync(quarantine, { recursive: true, force: true });
+    return true;
+  }
+
+  /**
+   * Classify a coordination directory conservatively.  `"inert"` is the only
+   * shape reclamation may delete; everything ambiguous stays refused.
+   */
+  private coordinationShape(directory: string): "inert" | "empty" | "ambiguous" {
+    let stat: fs.Stats;
+    try {
+      stat = fs.lstatSync(directory);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return "empty";
+      throw error;
+    }
+    if (!stat.isDirectory() || stat.isSymbolicLink()) return "ambiguous";
+    let entries: string[];
+    try {
+      entries = fs.readdirSync(directory);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return "empty";
+      throw error;
+    }
+    if (entries.length === 0) return "inert";
+    if (entries.length !== 1 || entries[0] !== "owner") return "ambiguous";
+    let owner: fs.Stats;
+    try {
+      owner = fs.lstatSync(path.join(directory, "owner"));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return "inert";
+      throw error;
+    }
+    if (!owner.isFile() || owner.isSymbolicLink() || owner.nlink !== 1 || owner.size !== 0)
+      return "ambiguous";
+    return "inert";
   }
 
   private createLock(
