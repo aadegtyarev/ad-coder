@@ -25,6 +25,13 @@ export interface RunProcessIdentity {
    */
   startTime?: string;
   /**
+   * The nanosecond ctime of `/proc/<pid>`.  Linux's stat start time is in
+   * clock ticks, so an ephemeral PID namespace can reuse PID 2 for a new
+   * launcher within the same tick.  This procfs inode witness distinguishes
+   * those processes without weakening the legacy fallback on other hosts.
+   */
+  procfsCtimeNs?: string;
+  /**
    * `/proc/<pid>/stat` field 5 (pgrp). A detached background worker is its
    * own group leader: the launcher's `detached` spawn puts the child in its
    * own process group (measured 2026-09-20 under both `bun run` and `bun
@@ -102,6 +109,16 @@ export function readProcessStat(
   }
 }
 
+/** A higher-resolution Linux process-birth witness; absent off procfs. */
+export function readProcessProcfsCtimeNs(pid: number): string | undefined {
+  try {
+    const stat = fs.statSync(`/proc/${pid}`, { bigint: true }) as { ctimeNs?: bigint };
+    return stat.ctimeNs?.toString();
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Read the command line of ONE pid via `ps -o args= -p <pid>` -- never a
  * table scan. Undefined when ps reports nothing (dead pid, unreapable
@@ -121,9 +138,11 @@ export function readProcessArgv(pid: number): string[] | undefined {
 /** The identity the CURRENT process records about itself at a run's start. */
 export function selfProcessIdentity(): RunProcessIdentity {
   const stat = readProcessStat(process.pid);
+  const procfsCtimeNs = readProcessProcfsCtimeNs(process.pid);
   return {
     pid: process.pid,
     ...(stat?.startTime !== undefined && { startTime: stat.startTime }),
+    ...(procfsCtimeNs !== undefined && { procfsCtimeNs }),
     ...(stat?.groupId !== undefined && { groupId: Number(stat.groupId) }),
   };
 }
@@ -479,6 +498,23 @@ export function verifyStopTarget(params: {
       return {
         ok: false,
         reason: `pid ${identity.pid} start time ${stat.startTime} does not match the recorded ${identity.startTime}; the pid was reused`,
+        checked,
+      };
+  }
+  checked.procfsCtimeMatches = null;
+  if (identity.procfsCtimeNs !== undefined) {
+    const currentProcfsCtimeNs = readProcessProcfsCtimeNs(identity.pid);
+    if (currentProcfsCtimeNs === undefined)
+      return {
+        ok: false,
+        reason: `procfs birth witness of pid ${identity.pid} could not be read for identification`,
+        checked,
+      };
+    checked.procfsCtimeMatches = currentProcfsCtimeNs === identity.procfsCtimeNs;
+    if (checked.procfsCtimeMatches === false)
+      return {
+        ok: false,
+        reason: `pid ${identity.pid} procfs birth witness does not match the recorded process; the pid was reused`,
         checked,
       };
   }

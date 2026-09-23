@@ -21,8 +21,10 @@ import { MemoryLedgerSink } from "../src/ledger/ledger";
 import { PLANNER_SUBMISSION_RESTART, plannerRetryTask } from "../src/orchestration/plan";
 import {
   inspectStandaloneRun,
+  processIsAlive,
   type RunProcessIdentity,
   stopRequestPath,
+  verifyStopTarget,
   writeRunStopRequest,
 } from "../src/orchestration/run-stop";
 import { StageLimitError } from "../src/orchestration/stage-limits";
@@ -83,6 +85,10 @@ function processStartTime(pid: number): string {
     .split(" ")[19];
   if (startTime === undefined) throw new Error("missing process start time");
   return startTime;
+}
+
+function processProcfsCtimeNs(pid: number): string {
+  return fs.statSync(`/proc/${pid}`, { bigint: true }).ctimeNs.toString();
 }
 
 test("runRoleStandalone drives one faux turn and returns the assistant text plus a numeric cost", async () => {
@@ -554,6 +560,7 @@ await started;`,
     expect(identity).toEqual({
       pid: child.pid,
       startTime: processStartTime(child.pid),
+      procfsCtimeNs: expect.any(String),
       groupId: expect.any(Number),
     });
     child.kill("SIGKILL");
@@ -799,6 +806,94 @@ test("resume recovers running standalone checkpoints whose owner is absent, dead
     expect(store.readVersionedJson<{ status: string }>(checkpointPath).value.status).toBe(
       "complete",
     );
+  }
+});
+
+test("resume reclaims a same-tick PID reused by an argv-identical external launcher", async () => {
+  const { faux, models, model, role } = fixture();
+  const runId = `same-tick-reuse-${crypto.randomUUID()}`;
+  const task = "recover after external launcher exit";
+  const aborted = new AbortController();
+  aborted.abort();
+  await expect(
+    runRoleStandalone({ role, model, models, targetDir, task, runId, abortSignal: aborted.signal }),
+  ).rejects.toBeInstanceOf(RunInterruptedError);
+
+  // This child has exactly the command-line witnesses the resume verifier
+  // requires.  Its PID and tick-granular start time are deliberately stored
+  // too, so pre-fix code sees a live owner and refuses takeover.  Only the
+  // nanosecond procfs birth witness proves it is a different process; the
+  // child must remain alive throughout the successful recovery.
+  const child = Bun.spawn(
+    [
+      process.execPath,
+      "--eval",
+      "await Bun.sleep(60000)",
+      "role",
+      "reviewer",
+      "--target-dir",
+      targetDir,
+    ],
+    { stdout: "ignore", stderr: "ignore" },
+  );
+  try {
+    const store = new ProjectStore(targetDir);
+    const checkpointPath = path.join(store.layout.runs, `standalone-${runId}.json`);
+    const stale = store.readVersionedJson<Record<string, unknown>>(checkpointPath);
+    const { pause: _pause, process: _process, ...running } = stale.value;
+    const reusedIdentity: RunProcessIdentity = {
+      pid: child.pid,
+      startTime: processStartTime(child.pid),
+      // An old external runner had a different `/proc/<pid>` inode even if
+      // PID 2 and its clock-tick start time were immediately reused.
+      procfsCtimeNs: "0",
+      groupId: child.pid,
+    };
+    expect(processProcfsCtimeNs(child.pid)).not.toBe(reusedIdentity.procfsCtimeNs);
+    // Controlled mutation proof: with the new reader but without the new
+    // comparison witness, every historical ownership check succeeds.  This
+    // pins the regression to the birth witness rather than an accidental argv
+    // mismatch in the test runner.
+    const withoutBirthWitness = { ...reusedIdentity };
+    delete withoutBirthWitness.procfsCtimeNs;
+    const historicalChecks = verifyStopTarget({
+      identity: withoutBirthWitness,
+      stopperTargetDir: targetDir,
+      cmdlineWitness: ["role", "reviewer"],
+    });
+    expect(historicalChecks).toMatchObject({
+      ok: true,
+      live: {
+        pid: child.pid,
+        argv: expect.arrayContaining(["role", "reviewer", "--target-dir", targetDir]),
+      },
+    });
+    const fixedChecks = verifyStopTarget({
+      identity: reusedIdentity,
+      stopperTargetDir: targetDir,
+      cmdlineWitness: ["role", "reviewer"],
+    });
+    expect(fixedChecks).toMatchObject({
+      ok: false,
+      checked: {
+        startTimeMatches: true,
+        procfsCtimeMatches: false,
+      },
+    });
+    store.writeVersionedJson(
+      checkpointPath,
+      { ...running, status: "running", process: reusedIdentity },
+      stale.version,
+    );
+
+    faux.setResponses([fauxAssistantMessage("recovered from same-tick reuse")]);
+    await expect(
+      runRoleStandalone({ role, model, models, targetDir, task, runId, resumeExisting: true }),
+    ).resolves.toMatchObject({ text: expect.stringContaining("recovered from same-tick reuse") });
+    expect(processIsAlive(child.pid)).toBe(true);
+  } finally {
+    child.kill("SIGKILL");
+    await child.exited;
   }
 });
 
