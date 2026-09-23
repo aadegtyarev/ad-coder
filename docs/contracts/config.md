@@ -244,11 +244,12 @@ Rules the operator declared for ad-coder. A violation is always blocking.
   `maxWakesPerTurn` (default 8) caps how many unhandled windows one orchestrator
   turn drains. CLI overrides are `--background-max-wake-entries` and
   `--background-max-wakes-per-turn`.
-- 2026-09-23: Wait-service retention and polling eligibility are independently
-  configurable positive safety limits. `maxEventsPerWait`,
-  `maxEvidenceEntries`, and `minPollIntervalMs` have efficient defaults in
-  `DEFAULT_WAIT_SERVICE_LIMITS`; zero and negative values are refused rather
-  than disabling durable history or permitting busy waiting. See
+- 2026-09-23: Wait-service retention, persisted-state size, and polling
+  eligibility are independently configurable positive safety limits.
+  `maxEventsPerWait`, `maxEvidenceEntries`, `maxPersistedStateBytes`, and
+  `minPollIntervalMs` have efficient defaults in `DEFAULT_WAIT_SERVICE_LIMITS`;
+  zero and negative values are refused rather than disabling durable history,
+  the record-size ceiling, or busy-wait protection. See
   [waiting](waiting.md) and [wake delivery](wake-delivery.md).
 - 2026-09-15: The context window each role will actually use is visible in the
   effective configuration, per role, together with where that number came from

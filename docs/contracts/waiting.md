@@ -33,7 +33,12 @@ into a timer, a process runner, or a front-only feature.
 
 - Each lifecycle event has `WAIT_EVENT_VERSION`, a strictly increasing,
   per-wait sequence and the wait id. Event and evidence retention are bounded
-  by positive `maxEventsPerWait` and `maxEvidenceEntries` limits.
+  by positive `maxEventsPerWait` and `maxEvidenceEntries` limits. A separate,
+  mandatory positive `maxPersistedStateBytes` ceiling includes the versioned
+  storage envelope: it applies before a record is created or mutated and before
+  `get`, `events`, or `reopen` expose a persisted record. An oversized record
+  fails the typed, content-free `state_too_large` refusal; it is not truncated,
+  silently accepted, or used as an event page.
 - `events(waitId, cursor, limit)` returns events strictly after the cursor and
   the last returned sequence as `nextCursor`. A cursor behind retained history
   sets `gap`; consumers reconcile from `get`/`reopen` rather than treating a
@@ -65,8 +70,9 @@ into a timer, a process runner, or a front-only feature.
 ## Configuration and related surfaces
 
 All retention and cadence limits above are constructor configuration with
-positive defaults in `DEFAULT_WAIT_SERVICE_LIMITS`; hosts expose any user-facing
-choice under [configuration](config.md). The implementation is
+positive defaults in `DEFAULT_WAIT_SERVICE_LIMITS`; zero and negative values
+are refused. Hosts expose any user-facing choice under
+[configuration](config.md). The implementation is
 `src/orchestration/wait-service.ts`; private atomic storage is
 `src/project-store/project-store.ts`. The system map is
 [architecture](../ARCHITECTURE.md), recovery is [resumability](resumability.md),

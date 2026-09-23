@@ -24,6 +24,14 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.44] - 2026-09-23
+
+### Fixed
+
+- **Durable wait records have a mandatory byte ceiling.** Valid-shaped but
+  oversized persisted state now fails a typed, content-free refusal before any
+  wait read surface exposes it; new and mutated records are bounded too.
+
 ## [0.181.43] - 2026-09-23
 
 ### Fixed

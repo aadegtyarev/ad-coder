@@ -258,3 +258,39 @@ test("persisted wait event data is strictly shaped and bounded before it can be 
     new WaitServiceError("invalid_request", "wait_one"),
   );
 });
+
+test("a valid but oversized persisted wait record is refused before every read surface", () => {
+  const durable = store();
+  const limits = { maxEventsPerWait: 100_000, maxPersistedStateBytes: 64 * 1024 };
+  const service = new WaitService(
+    durable,
+    [sourceAdapter(() => ({ lifecycle: "pending" }))],
+    limits,
+  );
+  service.create(input());
+  const statePath = durable.waitStatePath("wait_one");
+  const oversized = JSON.parse(fs.readFileSync(statePath, "utf8")) as {
+    version: number;
+    value: { events: unknown[]; nextSequence: number };
+  };
+  oversized.value.events = Array.from({ length: 100_000 }, (_, index) => ({
+    version: 1,
+    sequence: index + 1,
+    waitId: "wait_one",
+    lifecycle: "pending",
+    timestamp: index + 1,
+  }));
+  oversized.value.nextSequence = 100_001;
+  fs.writeFileSync(statePath, `${JSON.stringify(oversized)}\n`);
+
+  expect(fs.statSync(statePath).size).toBeGreaterThan(limits.maxPersistedStateBytes);
+  expect(() => service.get("wait_one")).toThrow(
+    new WaitServiceError("state_too_large", "wait_one"),
+  );
+  expect(() => service.events("wait_one")).toThrow(
+    new WaitServiceError("state_too_large", "wait_one"),
+  );
+  expect(() => service.reopen("wait_one")).toThrow(
+    new WaitServiceError("state_too_large", "wait_one"),
+  );
+});

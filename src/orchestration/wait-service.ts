@@ -8,6 +8,8 @@ export const WAIT_EVENT_VERSION = 1;
 export const DEFAULT_WAIT_SERVICE_LIMITS = Object.freeze({
   maxEventsPerWait: 32,
   maxEvidenceEntries: 8,
+  /** A wait record is durable control-plane state, never an unbounded log. */
+  maxPersistedStateBytes: 64 * 1024,
   minPollIntervalMs: 100,
 });
 
@@ -122,6 +124,8 @@ export interface WaitRecord {
 export interface WaitServiceLimits {
   maxEventsPerWait: number;
   maxEvidenceEntries: number;
+  /** Positive UTF-8 ceiling for one persisted wait record, including its envelope. */
+  maxPersistedStateBytes: number;
   minPollIntervalMs: number;
 }
 export type WaitServiceErrorCode =
@@ -130,6 +134,7 @@ export type WaitServiceErrorCode =
   | "not_found"
   | "already_exists"
   | "not_pending"
+  | "state_too_large"
   | "reconcile_uncertain";
 export class WaitServiceError extends Error {
   override readonly name = "WaitServiceError";
@@ -212,6 +217,7 @@ export class WaitService {
       evidence: [],
     };
     this.append(initial, "pending", timestamp);
+    this.assertRecordSize(initial, id);
     try {
       this.store.writeVersionedJson(this.store.waitStatePath(id), initial, 0);
     } catch (error) {
@@ -272,19 +278,15 @@ export class WaitService {
     )
       return copyRecord(record);
     const operationId = crypto.randomUUID();
-    const dispatched = this.store.mutateVersionedJson<WaitRecord>(
-      this.store.waitStatePath(id),
-      (current) => {
-        const value = this.currentPending(current, id);
-        if (value.reconciliation !== undefined)
-          throw new WaitServiceError("reconcile_uncertain", id);
-        return {
-          ...value,
-          updatedAt: timestamp,
-          reconciliation: { operationId, dispatchedAt: timestamp },
-        };
-      },
-    ).value;
+    const dispatched = this.mutate(id, (current) => {
+      const value = this.currentPending(current, id);
+      if (value.reconciliation !== undefined) throw new WaitServiceError("reconcile_uncertain", id);
+      return {
+        ...value,
+        updatedAt: timestamp,
+        reconciliation: { operationId, dispatchedAt: timestamp },
+      };
+    });
     const adapter = this.adapterFor(dispatched.source);
     let observation: WaitObservation;
     try {
@@ -301,7 +303,7 @@ export class WaitService {
       // the adapter performed its external effect.
       throw new WaitServiceError("reconcile_uncertain", id);
     }
-    return this.store.mutateVersionedJson<WaitRecord>(this.store.waitStatePath(id), (current) => {
+    return this.mutate(id, (current) => {
       const value = this.current(current, id);
       if (value.reconciliation?.operationId !== operationId)
         throw new WaitServiceError("reconcile_uncertain", id);
@@ -315,7 +317,7 @@ export class WaitService {
       if (observation.lifecycle === "pending") return next;
       this.append(next, observation.lifecycle, next.updatedAt, observation.evidence);
       return next;
-    }).value;
+    });
   }
 
   private transition(
@@ -324,7 +326,7 @@ export class WaitService {
     evidence: WaitEvidenceCode,
     timestamp = this.now(),
   ): WaitRecord {
-    return this.store.mutateVersionedJson<WaitRecord>(this.store.waitStatePath(id), (current) => {
+    return this.mutate(id, (current) => {
       const value = this.current(current, id);
       if (TERMINAL.has(value.lifecycle)) {
         if (value.lifecycle === lifecycle) return value;
@@ -336,7 +338,7 @@ export class WaitService {
       const next = { ...value, lifecycle, updatedAt: timestamp };
       this.append(next, lifecycle, timestamp, evidence);
       return next;
-    }).value;
+    });
   }
 
   private append(
@@ -372,6 +374,29 @@ export class WaitService {
         throw new WaitServiceError("not_found", id);
       throw error;
     }
+  }
+  /**
+   * Enforce the wait-specific ceiling on every mutation, even when the shared
+   * ProjectStore has its generic state limit disabled.  The check sits before
+   * ProjectStore serializes/writes, so an overgrown next record is never made
+   * durable by this service.
+   */
+  private mutate(
+    id: string,
+    mutate: (current: { value: WaitRecord } | undefined) => WaitRecord,
+  ): WaitRecord {
+    return this.store.mutateVersionedJson<WaitRecord>(this.store.waitStatePath(id), (current) => {
+      const next = mutate(current);
+      this.assertRecordSize(next, id);
+      return next;
+    }).value;
+  }
+  private assertRecordSize(record: WaitRecord, id = record.id): void {
+    // Include ProjectStore's versioned envelope and newline: this is exactly
+    // what reaches disk, rather than an optimistic estimate of record fields.
+    const bytes = Buffer.byteLength(JSON.stringify({ version: 1, value: record })) + 1;
+    if (bytes > this.limits.maxPersistedStateBytes)
+      throw new WaitServiceError("state_too_large", id);
   }
 
   private current(current: { value: WaitRecord } | undefined, id: string): WaitRecord {
@@ -498,6 +523,7 @@ export class WaitService {
         !safeTimestamp(record.reconciliation.dispatchedAt))
     )
       throw new WaitServiceError("invalid_request", record.id);
+    this.assertRecordSize(record);
   }
 }
 
