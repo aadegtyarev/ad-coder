@@ -7,8 +7,8 @@ reviewed pipeline. It supports a human CLI, programmatic API, persistent
 conversations, and a daemon-free control plane. The headless core owns behavior;
 the CLI is only an adapter.
 
-This map points contributors to invariants in `docs/contracts/`, design in
-`docs/ROADMAP.md`, and open GitHub work indexed by `docs/BACKLOG.md`.
+Read invariants in `docs/contracts/`, design in `docs/ROADMAP.md`, and open work
+through `docs/BACKLOG.md`.
 
 ## Runtime and dependencies
 
@@ -33,7 +33,7 @@ This map points contributors to invariants in `docs/contracts/`, design in
 | Ledger | `src/ledger/` | Records and reports usage, cost, role, and tool counts. |
 | Activity observability | `src/observability/tool-activity.ts`, `src/cli/tool-activity.ts` | Project harness lifecycle into a bounded headless stream; group or transport it at the CLI boundary. |
 | Workflow core | `src/orchestration/` | Run the plan, research, security, code, and review graph. |
-| Durable waits | `src/orchestration/wait-service.ts`, `src/project-store/` | Persist typed, bounded waits; hosts own delivery. |
+| Durable waits | `src/orchestration/wait-service.ts`, `src/project-store/` | Persist typed bounded waits; hosts own delivery ([waiting contract](contracts/waiting.md)). |
 | Durable coordination | `src/project-operations/`, `src/project-store/` | Checkpoint runs, coordinate resume, and manage follow-ups and publication. |
 | Quality and exploration | `src/gates/`, `src/project-tools/` | Run bounded checks and Git-ignore-aware structural reconnaissance. |
 | Web and media plugins | `src/web/` | Search, read pages, and inspect images with capability routing. |

@@ -34,6 +34,10 @@ enforces that dated release headings go in non-increasing date order
   any external effect and refuses replay after an uncertain crash boundary;
   timer, process, CLI, and create-front concerns remain outside this core.
 
+- **Durable wait contracts.** Waiting, recovery, cursor reconciliation, and
+  wake-delivery boundaries define the headless service's typed, secret-safe
+  records and checkpoint-before-report semantics.
+
 ## [0.181.41] - 2026-09-23
 
 ### Fixed
