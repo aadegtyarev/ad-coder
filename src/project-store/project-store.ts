@@ -22,6 +22,7 @@ import { ProjectStoreError } from "./types";
 const AREAS: readonly ProjectStoreArea[] = [
   "sessions",
   "runs",
+  "waits",
   "scratch",
   "attachments",
   "downloads",
@@ -108,6 +109,15 @@ export class ProjectStore {
     if (!ID_PATTERN.test(id))
       throw new ProjectStoreError("invalid_id", id, `id must match ${String(ID_PATTERN)}`);
     return id;
+  }
+
+  /**
+   * The sole durable location for a WaitService record.  Keeping this path in
+   * ProjectStore means wait state gets the same private-directory, no-link and
+   * versioned-write protections as every other durable control-plane record.
+   */
+  waitStatePath(id: string): string {
+    return path.join(this.managedPath("waits", id), "state.json");
   }
 
   async createSession(

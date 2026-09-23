@@ -326,6 +326,33 @@ export type {
 export { OrchestrationError } from "./orchestration/types";
 export type { VerdictCapture } from "./orchestration/verdict";
 export { buildSubmitVerdictTool, SUBMIT_VERDICT_TOOL_NAME } from "./orchestration/verdict";
+export type {
+  CreateWaitInput,
+  WaitCondition,
+  WaitDelivery,
+  WaitEvent,
+  WaitEventPage,
+  WaitEvidence,
+  WaitEvidenceCode,
+  WaitLifecycle,
+  WaitObservation,
+  WaitOwner,
+  WaitPolicy,
+  WaitRecord,
+  WaitRecoveryAction,
+  WaitServiceLimits,
+  WaitSource,
+  WaitSourceAdapter,
+  WaitTarget,
+  WaitTerminalLifecycle,
+} from "./orchestration/wait-service";
+export {
+  DEFAULT_WAIT_SERVICE_LIMITS,
+  WAIT_EVENT_VERSION,
+  WAIT_RECORD_VERSION,
+  WaitService,
+  WaitServiceError,
+} from "./orchestration/wait-service";
 export type { DefaultProfileModels } from "./profiles/default-profile";
 export { buildDefaultProfile } from "./profiles/default-profile";
 export type { ProfileErrorCode } from "./profiles/errors";

@@ -24,6 +24,16 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.42] - 2026-09-23
+
+### Added
+
+- **Durable core wait state machine.** `WaitService` persists typed,
+  secret-safe wait identities and bounded versioned lifecycle events through
+  `ProjectStore`. Its adapter reconciliation seam checkpoints dispatch before
+  any external effect and refuses replay after an uncertain crash boundary;
+  timer, process, CLI, and create-front concerns remain outside this core.
+
 ## [0.181.41] - 2026-09-23
 
 ### Fixed
@@ -79,7 +89,6 @@ enforces that dated release headings go in non-increasing date order
   evidence.** Resume rejects a still-live or unidentifiable owner, while a
   missing, dead, reused, or argv-mismatched process can safely yield its
   durable session to one recovering role.
-
 ## [0.181.30] - 2026-09-23
 
 ### Fixed

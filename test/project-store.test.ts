@@ -68,6 +68,7 @@ describe("ProjectStore", () => {
       store.layout.root,
       store.layout.sessions,
       store.layout.runs,
+      store.layout.waits,
       store.layout.scratch,
       store.layout.attachments,
       store.layout.downloads,
