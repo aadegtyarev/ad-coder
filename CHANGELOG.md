@@ -11,6 +11,16 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.25] - 2026-09-23
+
+### Fixed
+
+- **Slow npm registry propagation can recover on a release rerun.** The release
+  waits up to about thirty minutes and reports exact-version and `latest`
+  observations as it waits. A rerun reuses an already published version only
+  when its tarball integrity matches the package built from this checkout;
+  mismatches and unreadable registry responses fail.
+
 ## [0.181.24] - 2026-09-23
 
 ### Fixed

@@ -104,15 +104,16 @@ jobs:
       # development channel, so its newest build is its `latest`. Anyone wanting
       # stability installs `ad-coder` instead; a second gradation inside the dev
       # package would be a distinction nobody asked for.
-      - run: npm publish --tag latest
+      # A failed readiness check may be rerun after npm has propagated the
+      # publish. Reuse only an identical tarball at the exact immutable version.
+      - run: bun run scripts/publish-registry-package.ts --tag latest
         if: steps.channel.outputs.dev == 'true'
-      - run: npm publish
+      - run: bun run scripts/publish-registry-package.ts
         if: steps.channel.outputs.dev == 'false'
 
       # npm can acknowledge a publish before its CDN serves the exact version or
-      # moves `latest`. Poll those read-only facts rather than retrying publish:
-      # a second publish can only fail (versions are immutable) and obscures the
-      # real, recoverable propagation delay from downstream installers.
+      # moves `latest`. Give propagation a bounded 30-minute window while
+      # logging the exact-version and dist-tag observations about once a minute.
       - name: Wait for npm registry propagation
         run: bun run scripts/wait-registry-readiness.ts
 

@@ -32,10 +32,10 @@ test("registry readiness waits for both the exact version and latest dist-tag", 
     }),
   ).resolves.toEqual({ attempts: 2 });
   expect(calls).toEqual([
-    ["npm", "view", "ad-coder-dev@0.181.21", "version", "--json"],
-    ["npm", "view", "ad-coder-dev", "dist-tags.latest", "--json"],
-    ["npm", "view", "ad-coder-dev@0.181.21", "version", "--json"],
-    ["npm", "view", "ad-coder-dev", "dist-tags.latest", "--json"],
+    ["npm", "view", "ad-coder-dev@0.181.21", "version", "--json", "--prefer-online"],
+    ["npm", "view", "ad-coder-dev", "dist-tags.latest", "--json", "--prefer-online"],
+    ["npm", "view", "ad-coder-dev@0.181.21", "version", "--json", "--prefer-online"],
+    ["npm", "view", "ad-coder-dev", "dist-tags.latest", "--json", "--prefer-online"],
   ]);
   expect(sleeps).toEqual([7]);
 });
@@ -92,6 +92,34 @@ test("registry readiness times out without attempting another publish", async ()
   expect((failure as RegistryPropagationPendingError).message).toContain("will not be republished");
   expect(calls).toHaveLength(4);
   expect(calls.flat()).not.toContain("publish");
+});
+
+test("slow propagation reports each exact-version and latest observation", async () => {
+  const pending: Array<{ attempt: number; status: string }> = [];
+  let lookups = 0;
+  const run: RegistryCommandRunner = async () => {
+    lookups += 1;
+    if (lookups <= 4)
+      return lookups % 2 === 1
+        ? { exitCode: 1, stdout: "", stderr: "npm error code E404\n" }
+        : reply('"0.181.23-dev.122"');
+    return reply('"0.181.24-dev.123"');
+  };
+  await expect(
+    waitForRegistryReadiness({
+      packageName: "ad-coder-dev",
+      version: "0.181.24-dev.123",
+      maxAttempts: 3,
+      delayMs: 0,
+      run,
+      sleep: async () => undefined,
+      onPending: (attempt, status) => pending.push({ attempt, status }),
+    }),
+  ).resolves.toEqual({ attempts: 3 });
+  expect(pending).toEqual([
+    { attempt: 1, status: 'exact lookup failed (E404); latest returned "0.181.23-dev.122"' },
+    { attempt: 2, status: 'exact lookup failed (E404); latest returned "0.181.23-dev.122"' },
+  ]);
 });
 
 test("registry readiness rejects an unbounded or invalid retry configuration", async () => {

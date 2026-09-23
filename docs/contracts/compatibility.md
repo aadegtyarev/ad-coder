@@ -29,8 +29,12 @@ surprising existing users, and what evidence makes an installable release valid?
   resolve to the expected version.** The check accepts exactly one complete JSON
   string per successful lookup, allowing surrounding npm warning lines but never
   a partial, ambiguous, or non-string JSON value. A propagation timeout names that
-  state and performs no second publish; immutable package versions make
-  republishing an error, not a recovery.
+  state and performs no second publish. A release rerun may reuse an already
+  published exact version only after its registry tarball integrity matches the
+  package packed from the same checkout; a mismatch or unreadable registry
+  response blocks publication. A missing exact version may be published once
+  by that run. The timeout and polling interval remain bounded and configurable,
+  and the job reports both registry observations while waiting.
 - Before publication, inspect the exact tracked and packed file sets for credentials,
   private keys, local runtime state, unexpected generated data, and licensing
   mistakes. Publication stops on uncertainty; absence of an optional external
