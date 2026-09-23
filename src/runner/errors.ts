@@ -191,9 +191,17 @@ export function hasZeroAssistantUsage(
         input?: number;
         cacheRead?: number;
         cacheWrite?: number;
+        cacheWrite1h?: number;
         output?: number;
         reasoning?: number;
-        cost?: { total?: number };
+        totalTokens?: number;
+        cost?: {
+          input?: number;
+          output?: number;
+          cacheRead?: number;
+          cacheWrite?: number;
+          total?: number;
+        };
       }
     | undefined,
 ): boolean {
@@ -201,8 +209,14 @@ export function hasZeroAssistantUsage(
     (usage?.input ?? 0) === 0 &&
     (usage?.cacheRead ?? 0) === 0 &&
     (usage?.cacheWrite ?? 0) === 0 &&
+    (usage?.cacheWrite1h ?? 0) === 0 &&
     (usage?.output ?? 0) === 0 &&
     (usage?.reasoning ?? 0) === 0 &&
+    (usage?.totalTokens ?? 0) === 0 &&
+    (usage?.cost?.input ?? 0) === 0 &&
+    (usage?.cost?.output ?? 0) === 0 &&
+    (usage?.cost?.cacheRead ?? 0) === 0 &&
+    (usage?.cost?.cacheWrite ?? 0) === 0 &&
     (usage?.cost?.total ?? 0) === 0
   );
 }

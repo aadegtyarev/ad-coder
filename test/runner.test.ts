@@ -31,6 +31,7 @@ import {
   ConfiguredToolsUnavailableError,
   extractProviderCodeToken,
   GenerationTruncatedError,
+  hasZeroAssistantUsage,
   ProviderLimitError,
   ProviderQuotaError,
   ProviderRejectionError,
@@ -676,6 +677,13 @@ test("a statusless failed answer with billed input is not provider-unavailable t
   );
   expect(outcome).not.toBeInstanceOf(ProviderUnavailableError);
   expect(outcome).toMatchObject({ result: { status: "failed" } });
+});
+
+test("zero usage requires every reported token and cost field to be zero", () => {
+  expect(hasZeroAssistantUsage(undefined)).toBe(true);
+  expect(hasZeroAssistantUsage({ input: 11, output: 0 })).toBe(false);
+  expect(hasZeroAssistantUsage({ totalTokens: 11 })).toBe(false);
+  expect(hasZeroAssistantUsage({ cost: { input: 0.001, total: 0 } })).toBe(false);
 });
 
 test("statusless diagnostic extraction rejects uncontrolled provider prose", () => {
