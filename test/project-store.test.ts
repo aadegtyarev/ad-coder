@@ -546,6 +546,145 @@ describe("ProjectStore", () => {
     expect(fs.existsSync(coordinationPath)).toBe(false);
   });
 
+  test("publication failure cleans only a directory this frame created", () => {
+    const store = new ProjectStore(target(), { lockRetry: { delaysMs: [1] } });
+    const coordinationPath = `${path.join(store.layout.tmp, "session-coordination.lock")}.coordination`;
+    const implementation = store as unknown as {
+      withVersionedLockCoordination(lockPath: string, operation: () => number): number;
+    };
+    const publicationFailure = new Error("publication failed explicitly");
+    const contender = {
+      pid: process.pid + 100000,
+      startTime: "1",
+      token: crypto.randomUUID(),
+    };
+    let writeCalls = 0;
+    const originalWriteFileSync = fs.writeFileSync;
+    mock.module("node:fs", () => ({
+      ...fs,
+      writeFileSync: (target: string, data: string, options?: object) => {
+        writeCalls += 1;
+        // Deterministic F1 replay: the first write is this frame's real
+        // attempt and fails; the injected second call stands in for the
+        // contender that re-created a fully published directory on the fixed
+        // path during the pause between this frame's mkdir and its write.
+        if (writeCalls > 1) throw new Error("test injected a contender-owned publication failure");
+        originalWriteFileSync(target, data, options);
+        fs.rmSync(coordinationPath, { recursive: true, force: true });
+        fs.mkdirSync(coordinationPath, 0o700);
+        originalWriteFileSync(
+          path.join(coordinationPath, "owner"),
+          `${JSON.stringify(contender)}\n`,
+          { mode: 0o600 },
+        );
+        throw publicationFailure;
+      },
+    }));
+    try {
+      expect(() =>
+        implementation.withVersionedLockCoordination(
+          path.join(store.layout.tmp, "session-coordination.lock"),
+          () => 1,
+        ),
+      ).toThrow(publicationFailure);
+    } finally {
+      mock.module("node:fs", () => ({ ...fs, writeFileSync: originalWriteFileSync }));
+    }
+    // The contender's directory and its published owner are untouched: no
+    // quarantine rename, no removal, and the original error identity held.
+    expect(writeCalls).toBe(1);
+    expect(fs.readdirSync(store.layout.tmp).some((entry) => entry.includes("reclaim"))).toBe(false);
+    expect(fs.readFileSync(path.join(coordinationPath, "owner"), "utf8")).toBe(
+      `${JSON.stringify(contender)}\n`,
+    );
+  });
+
+  test("release cleanup never removes a directory published by another frame", () => {
+    const store = new ProjectStore(target(), { lockRetry: { delaysMs: [1] } });
+    const coordinationPath = `${path.join(store.layout.tmp, "session-coordination.lock")}.coordination`;
+    const implementation = store as unknown as {
+      withVersionedLockCoordination(lockPath: string, operation: () => number): number;
+    };
+    const contender = {
+      pid: process.pid + 100000,
+      startTime: "1",
+      token: crypto.randomUUID(),
+    };
+    // In the F1 race a contender reclaims this frame's directory between the
+    // mkdir and the owner write and re-creates the fixed path for itself.  The
+    // operation body deterministically installs that contender directory so
+    // release cleanup runs against a foreign owner.
+    implementation.withVersionedLockCoordination(
+      path.join(store.layout.tmp, "session-coordination.lock"),
+      () => {
+        fs.rmSync(coordinationPath, { recursive: true, force: true });
+        fs.mkdirSync(coordinationPath, 0o700);
+        fs.writeFileSync(path.join(coordinationPath, "owner"), `${JSON.stringify(contender)}\n`, {
+          mode: 0o600,
+        });
+        return 1;
+      },
+    );
+    expect(fs.existsSync(coordinationPath)).toBe(true);
+    expect(fs.readFileSync(path.join(coordinationPath, "owner"), "utf8")).toBe(
+      `${JSON.stringify(contender)}\n`,
+    );
+  });
+
+  test("release cleanup conservatively refuses symlink, hard link, malformed and absent owners", () => {
+    const root = target();
+    const store = new ProjectStore(root, { lockRetry: { delaysMs: [1] } });
+    const coordinationPath = `${path.join(store.layout.tmp, "session-coordination.lock")}.coordination`;
+    const implementation = store as unknown as {
+      withVersionedLockCoordination(lockPath: string, operation: () => number): number;
+    };
+    for (const shape of ["symlink", "hardlink", "malformed", "absent"] as const) {
+      const outside = path.join(root, `owner-outside-${shape}`);
+      fs.writeFileSync(outside, "outside-bytes", { mode: 0o600 });
+      fs.rmSync(coordinationPath, { recursive: true, force: true });
+      fs.rmSync(path.join(store.layout.tmp, "session-coordination.lock"), { force: true });
+      fs.mkdirSync(coordinationPath, 0o700);
+      const ownerPath = path.join(coordinationPath, "owner");
+      // Deterministic F1 replay without sleeps: the frame legitimately
+      // publishes a real owner inside the operation, and then a contender or
+      // an attacker replaces or removes it before release cleanup runs.  Every
+      // replacement -- symlink, hard link, garbage bytes, removal -- leaves an
+      // owner whose identity cannot be verified as this frame's.
+      implementation.withVersionedLockCoordination(
+        path.join(store.layout.tmp, "session-coordination.lock"),
+        () => {
+          fs.rmSync(ownerPath, { force: true });
+          if (shape === "symlink") fs.symlinkSync(outside, ownerPath);
+          if (shape === "hardlink") fs.linkSync(outside, ownerPath);
+          if (shape === "malformed") fs.writeFileSync(ownerPath, "not json {}", { mode: 0o600 });
+          if (shape === "absent") fs.writeFileSync(ownerPath, "", { mode: 0o600 });
+          if (shape === "absent") {
+            // A directory whose owner exists but not as published identity:
+            // an empty owner must be refused, never rm'd on the fixed path.
+            fs.rmSync(ownerPath, { force: true });
+          }
+          return 7;
+        },
+      );
+      // None of these owners is verifiably this frame's, so the directory and
+      // its owner survive the release untouched.
+      expect(fs.existsSync(coordinationPath)).toBe(true);
+      if (shape === "symlink") {
+        expect(fs.lstatSync(ownerPath).isSymbolicLink()).toBe(true);
+        expect(fs.readFileSync(ownerPath, "utf8")).toBe("outside-bytes");
+      } else if (shape === "hardlink") {
+        expect(fs.statSync(ownerPath).nlink).toBe(2);
+        expect(fs.readFileSync(ownerPath, "utf8")).toBe("outside-bytes");
+      } else if (shape === "malformed") {
+        expect(fs.readFileSync(ownerPath, "utf8")).toBe("not json {}");
+      } else {
+        expect(fs.existsSync(ownerPath)).toBe(false);
+      }
+      fs.rmSync(coordinationPath, { recursive: true, force: true });
+      fs.rmSync(outside, { force: true });
+    }
+  });
+
   test("cleanup skips a session leased by another store", async () => {
     const root = target();
     const first = new ProjectStore(root, { retention: { sessions: 1 } });

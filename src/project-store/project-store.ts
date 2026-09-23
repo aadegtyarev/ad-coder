@@ -57,6 +57,10 @@ export class ProjectStore {
   private readonly sessions: JsonlSessionRepo;
   /** Test-only synchronization seam for deterministic stale-lock races. */
   private versionedLockHook?: (phase: "stale-inspected") => void;
+  private versionedLockCleanupHook?: (
+    phase: "release-refused" | "publication-cleanup-refused" | "quarantine-retained",
+    error?: unknown,
+  ) => void;
 
   constructor(targetDir: string, config: ProjectStoreConfig = {}) {
     const resolvedTarget = resolveTargetDir(targetDir);
@@ -698,14 +702,21 @@ export class ProjectStore {
             mode: 0o600,
           });
         } catch (writeError) {
-          // A half-created coordination directory is inert by construction:
-          // the owner identity never published.  Remove it best-effort so the
-          // next attempt starts clean, but never let that cleanup hide the
-          // publication error itself.
+          // A directory this frame created but whose owner never published is
+          // inert by construction and safe to remove so the next attempt
+          // starts clean -- but only when it is still provably this frame's.
+          // A contender may have renamed it away and re-created the fixed path
+          // for itself in the pause between `mkdirSync` and the write, so the
+          // cleanup verifies ownership against the frame identity and, on any
+          // ambiguity, restores the quarantined directory untouched.  The
+          // original publication error always wins over cleanup problems.
           try {
-            fs.rmSync(coordinationPath, { recursive: true, force: true });
-          } catch {
-            // Left in place, it is reclaimable by the inert-owner branch below.
+            this.reclaimOwnCoordinationOnly(coordinationPath, identity);
+          } catch (cleanupError) {
+            // Cleanup itself failed: the directory, if any, stays in place or
+            // stays quarantined as evidence, both recoverable later; the
+            // caller must still see the write failure it actually had.
+            this.versionedLockCleanupHook?.("publication-cleanup-refused", cleanupError);
           }
           throw writeError;
         }
@@ -751,13 +762,24 @@ export class ProjectStore {
     try {
       return operation();
     } finally {
-      fs.rmSync(coordinationPath, { recursive: true, force: true });
+      // Cleanup is bound to the frame identity, never to the fixed path.  In
+      // the F1 race the fixed path may already hold a contender's freshly
+      // re-created coordination directory; removing it from here would delete
+      // a live owner out from under that contender.  A malformed or absent
+      // owner is refused for the same reason: absence is exactly the inert
+      // shape the inert-leftover recovery branch below the acquisition loop
+      // is designed to reclaim, and unreadable or ambiguous shapes are never
+      // guessed at.
+      if (this.ownsPublishedCoordination(coordinationPath, identity)) {
+        fs.rmSync(coordinationPath, { recursive: true, force: true });
+      } else {
+        this.versionedLockCleanupHook?.("release-refused");
+      }
     }
   }
 
   /**
-   * Reclaim an ownerless coordination directory.  A directory whose owner was
-   * never published leaves no PID and no token, so neither dead-owner branch
+   * Reclaim an ownerless coordination directory.  A directory whose owner was, so neither dead-owner branch
    * above can recognise it and it would otherwise refuse every contender
    * forever.  Only the unambiguously inert shape qualifies: no entries at all,
    * or a single `owner` entry that is a zero-byte, singly linked regular file.
@@ -782,6 +804,136 @@ export class ProjectStore {
     }
     fs.rmSync(quarantine, { recursive: true, force: true });
     return true;
+  }
+
+  /**
+   * Remove a coordination directory created by this frame only when it still
+   * provably belongs to this frame.  The fixed path is quarantined under this
+   * frame's token first, so a contender racing behind can never install a
+   * fresh directory into the path under inspection, and the quarantined
+   * snapshot is then verified against the frame identity before removal.  On
+   * any ambiguity the snapshot is renamed back: it is either another frame's
+   * published owner or evidence of a mixed-protocol race, and neither is
+   * ever deleted on someone else's behalf.
+   */
+  private reclaimOwnCoordinationOnly(
+    coordinationPath: string,
+    identity: { pid: number; startTime: string; procfsCtimeNs?: string; token: string },
+  ): void {
+    const quarantine = `${coordinationPath}.reclaim-${identity.token}`;
+    try {
+      fs.renameSync(coordinationPath, quarantine);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw error;
+    }
+    if (this.ownsQuarantinedCoordination(quarantine, identity)) {
+      fs.rmSync(quarantine, { recursive: true, force: true });
+      return;
+    }
+    try {
+      fs.renameSync(quarantine, coordinationPath);
+    } catch {
+      // The fixed path was re-created in the pause between quarantine and
+      // restore, so this frame's inert directory stays quarantined under its
+      // own token rather than being deleted while contested.
+      this.versionedLockCleanupHook?.("quarantine-retained");
+    }
+  }
+
+  /**
+   * Decide whether a named coordination directory is unambiguously owned by
+   * this frame's unpublished attempt: no entries at all, or a plain singly
+   * linked `owner` file that is empty (half-created) or carries exactly this
+   * frame's identity (a write the kernel reported failed after it landed).
+   * Symlinks, hard links, foreign identities, extra entries and unreadable
+   * state are all ambiguous and therefore refused, never removed.
+   */
+  private ownsQuarantinedCoordination(
+    directory: string,
+    identity: { pid: number; startTime: string; procfsCtimeNs?: string; token: string },
+  ): boolean {
+    if (!this.ordinaryDirectory(directory)) return false;
+    let entries: string[];
+    try {
+      entries = fs.readdirSync(directory);
+    } catch {
+      return false;
+    }
+    if (entries.length === 0) return true;
+    if (entries.length !== 1 || entries[0] !== "owner") return false;
+    return this.plainOwnerEntryMatches(directory, identity, true);
+  }
+
+  /**
+   * Decide whether a directory still published on the fixed coordination path
+   * is owner-verified as this frame's.  Every unreadable, malformed, absent,
+   * symlinked or multiply linked owner is a conservative refusal to remove:
+   * refusing only ever leaves a recoverable leftover in place, whereas removal
+   * based on the fixed path alone can delete a contender's live directory.
+   */
+  private ownsPublishedCoordination(
+    coordinationPath: string,
+    identity: { pid: number; startTime: string; procfsCtimeNs?: string; token: string },
+  ): boolean {
+    if (!this.ordinaryDirectory(coordinationPath)) return false;
+    return this.plainOwnerEntryMatches(coordinationPath, identity, false);
+  }
+
+  /** The directory must currently be a real directory, never a symlink. */
+  private ordinaryDirectory(directory: string): boolean {
+    try {
+      const stat = fs.lstatSync(directory);
+      return stat.isDirectory() && !stat.isSymbolicLink();
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Compare a published owner entry against this frame's identity.  The owner
+   * must be a plain, singly linked regular file carrying exactly this frame's
+   * identity; when `allowUnpublished` is true an empty owner file also
+   * matches (the owner write is still in flight for this same frame).
+   * Otherwise every shape -- absent, malformed, foreign or shared -- refuses.
+   */
+  private plainOwnerEntryMatches(
+    directory: string,
+    identity: { pid: number; startTime: string; procfsCtimeNs?: string; token: string },
+    allowUnpublished: boolean,
+  ): boolean {
+    const ownerPath = path.join(directory, "owner");
+    let stat: fs.Stats;
+    try {
+      stat = fs.lstatSync(ownerPath);
+    } catch {
+      return false;
+    }
+    if (stat.isSymbolicLink() || !stat.isFile() || stat.nlink !== 1) return false;
+    if (stat.size === 0) return allowUnpublished;
+    const owner = this.readVersionedLockQuietly(ownerPath);
+    if (owner === undefined) return false;
+    return (
+      owner.pid === identity.pid &&
+      owner.startTime === identity.startTime &&
+      (owner.procfsCtimeNs ?? undefined) === (identity.procfsCtimeNs ?? undefined) &&
+      owner.token === identity.token
+    );
+  }
+
+  /**
+   * Read a strict versioned owner identity, refusing (not throwing) on any
+   * unreadable or non-strictly-shaped content so cleanup never speculates
+   * about an owner it cannot fully verify.
+   */
+  private readVersionedLockQuietly(
+    lockPath: string,
+  ): { pid: number; startTime: string; procfsCtimeNs?: string; token: string } | undefined {
+    try {
+      return this.readVersionedLock(lockPath);
+    } catch {
+      return undefined;
+    }
   }
 
   /**
