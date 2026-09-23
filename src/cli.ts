@@ -793,6 +793,7 @@ export async function runRoleStandalone(params: {
     return checked.pidAlive === false ||
       checked.state === "Z" ||
       checked.startTimeMatches === false ||
+      checked.procfsCtimeMatches === false ||
       checked.targetDirInArgv === false ||
       checked.witnessInArgv === false
       ? "orphaned"

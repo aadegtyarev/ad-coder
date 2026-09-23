@@ -11,6 +11,16 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.41] - 2026-09-23
+
+### Fixed
+
+- **External-CWD standalone resumes no longer mistake a reused sandbox PID
+  for their former owner.** Role checkpoints and durable state locks add the
+  nanosecond `/proc/<pid>` birth witness to the existing PID/start-time check;
+  a live shell reusing PID 2 in the same kernel tick is refused as a different
+  process, while legacy records retain the conservative compatibility path.
+
 ## [0.181.40] - 2026-09-23
 
 ### Fixed

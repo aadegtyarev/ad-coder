@@ -28,6 +28,10 @@ function processStartTime(pid: number): string {
   return field;
 }
 
+function processProcfsCtimeNs(pid: number): string {
+  return fs.statSync(`/proc/${pid}`, { bigint: true }).ctimeNs.toString();
+}
+
 async function childHoldingLock(): Promise<{
   process: ReturnType<typeof Bun.spawn>;
   startTime: string;
@@ -310,6 +314,28 @@ describe("ProjectStore", () => {
       recovered: true,
     });
     expect(fs.existsSync(lock)).toBe(false);
+  });
+
+  test("uses the procfs birth witness when a sandbox reuses a pid in the same tick", () => {
+    const root = target();
+    const store = new ProjectStore(root);
+    const file = path.join(store.layout.runs, "reused_pid_same_tick.json");
+    store.mutateVersionedJson(file, () => ({ ready: true }));
+    const lock = `${file}.lock`;
+    // External Codex execs can restart at PID 2 before the kernel's clock-tick
+    // start-time changes.  The PID and start time below deliberately match
+    // this live process; only the nanosecond procfs birth witness proves that
+    // the lock belongs to its predecessor.
+    fs.writeFileSync(
+      lock,
+      `${JSON.stringify({ pid: process.pid, startTime: processStartTime(process.pid), procfsCtimeNs: "0", token: crypto.randomUUID() })}\n`,
+      { mode: 0o600 },
+    );
+    expect(store.mutateVersionedJson(file, () => ({ recovered: true })).value).toEqual({
+      recovered: true,
+    });
+    expect(fs.existsSync(lock)).toBe(false);
+    expect(processProcfsCtimeNs(process.pid)).not.toBe("0");
   });
 
   test("accepts an empty lock retry policy as the default policy", () => {
