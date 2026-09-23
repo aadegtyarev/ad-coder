@@ -11,6 +11,15 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.27] - 2026-09-23
+
+### Fixed
+
+- **Release packaging accepts npm pack metadata without a filename.** The
+  publisher selects the sole regular `.tgz` in its fresh pack directory, checks
+  its bytes against any existing registry version, and publishes those bytes.
+  Misleading filename metadata cannot redirect or block the release.
+
 ## [0.181.26] - 2026-09-23
 
 ### Fixed

@@ -37,16 +37,20 @@ function packedTarball(
   } catch {
     throw new Error("npm pack returned invalid JSON");
   }
-  if (!Array.isArray(value) || value.length !== 1 || typeof value[0]?.filename !== "string")
-    throw new Error("npm pack did not return one package filename");
+  if (!Array.isArray(value) || value.length !== 1 || !value[0] || typeof value[0] !== "object")
+    throw new Error("npm pack did not return one package record");
   if (value[0].name !== options.packageName || value[0].version !== options.version)
     throw new Error("npm pack returned a different package name or version");
-  const filename = value[0].filename;
-  if (filename !== path.basename(filename) || !filename.endsWith(".tgz"))
-    throw new Error("npm pack returned an invalid package filename");
-  const tarball = path.join(destination, filename);
-  if (!fs.statSync(tarball, { throwIfNoEntry: false })?.isFile())
-    throw new Error("npm pack did not create the reported tarball");
+  // The fresh directory is ours. npm pack metadata may omit or misreport its
+  // filename, so discover the sole archive from the directory we gave npm.
+  const entries = fs.readdirSync(destination, { withFileTypes: true });
+  if (
+    entries.length !== 1 ||
+    !entries[0]?.isFile() ||
+    !/^[A-Za-z0-9][A-Za-z0-9._-]*\.tgz$/u.test(entries[0].name)
+  )
+    throw new Error("npm pack did not create exactly one safe tarball");
+  const tarball = path.join(destination, entries[0].name);
   return tarball;
 }
 
@@ -91,8 +95,8 @@ export async function publishOrReuse(options: PublishOptions): Promise<PublishOu
       destination,
     ]);
     const tarball = packedTarball(packed, destination, options);
-    // Compute SRI from the actual bytes. npm's pack JSON may omit `integrity`,
-    // and a later directory publish could repack to a different tarball.
+    // Compute SRI from the actual bytes. npm's pack JSON may omit or misreport
+    // metadata, and a later directory publish could repack a different tarball.
     const expected = `sha512-${createHash("sha512").update(fs.readFileSync(tarball)).digest("base64")}`;
     const before = await lookupIntegrity(options);
     if (before.kind === "present") {

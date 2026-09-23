@@ -14,14 +14,15 @@ const absent = (): RegistryCommandResult => ({
   stdout: "",
   stderr: "npm error code E404\n",
 });
-// Regression for npm versions that return pack metadata without `integrity`.
-const metadata = { name: "ad-coder-dev", version: "0.181.24-dev.123", filename };
+// npm pack metadata can omit both `filename` and `integrity`.
+const metadata = { name: "ad-coder-dev", version: "0.181.24-dev.123" };
 const packed = ok(JSON.stringify([metadata]));
 
 function options(
   replies: RegistryCommandResult[],
   calls: string[][],
   contents: Buffer = packageBytes,
+  artifacts: string[] = [filename],
 ): PublishOptions {
   return {
     packageName: "ad-coder-dev",
@@ -32,7 +33,8 @@ function options(
       if (argv[1] === "pack" && replies[0]?.exitCode === 0) {
         const destination = argv[5];
         if (!destination) throw new Error("pack destination missing");
-        fs.writeFileSync(path.join(destination, filename), contents);
+        for (const artifact of artifacts)
+          fs.writeFileSync(path.join(destination, artifact), contents);
       }
       if (argv[1] === "publish") {
         const tarball = argv[2];
@@ -59,6 +61,17 @@ test("an unpublished version is published once with its configured dist-tag", as
     ["npm", "publish", path.join(destination, filename), "--tag", "latest"],
   ]);
   expect(fs.existsSync(destination)).toBe(false);
+});
+
+test("a misleading pack filename cannot redirect or block publication", async () => {
+  for (const reported of ["missing.tgz", "../escape.tgz", "/tmp/other.tgz"]) {
+    const calls: string[][] = [];
+    const reply = ok(JSON.stringify([{ ...metadata, filename: reported }]));
+    expect(await publishOrReuse(options([reply, absent(), ok("published")], calls))).toBe(
+      "published",
+    );
+    expect(calls[2]?.[2]).toBe(path.join(calls[0]?.[5] ?? "", filename));
+  }
 });
 
 test("a rerun reuses only the identical published tarball", async () => {
@@ -95,17 +108,50 @@ test("registry integrity is checked against tarball bytes, not optional pack met
   expect(changedCalls).toHaveLength(2);
 });
 
-test("missing or malformed packed tarballs cannot trigger publication", async () => {
+test("invalid pack metadata cannot trigger publication", async () => {
   for (const packReply of [
-    ok(JSON.stringify([{ ...metadata, filename: "../escape.tgz" }])),
-    ok(JSON.stringify([{ ...metadata, filename: "missing.tgz" }])),
     ok(JSON.stringify([{ ...metadata, version: "other-version" }])),
     ok(JSON.stringify([])),
+    ok(JSON.stringify([null])),
   ]) {
     const calls: string[][] = [];
     await expect(publishOrReuse(options([packReply], calls))).rejects.toThrow();
     expect(calls).toHaveLength(1);
   }
+});
+
+test("a missing, ambiguous, or unsafe packed archive cannot trigger publication", async () => {
+  for (const artifacts of [
+    [],
+    [filename, "second.tgz"],
+    [filename, "unexpected.txt"],
+    [".hidden.tgz"],
+  ]) {
+    const calls: string[][] = [];
+    await expect(publishOrReuse(options([packed], calls, packageBytes, artifacts))).rejects.toThrow(
+      "exactly one safe tarball",
+    );
+    expect(calls).toHaveLength(1);
+  }
+});
+
+test("a symlinked tarball cannot trigger publication", async () => {
+  const calls: string[][] = [];
+  const testOptions = options([packed], calls);
+  const originalRun = testOptions.run;
+  testOptions.run = async (argv) => {
+    const result = await originalRun(argv);
+    if (argv[1] === "pack") {
+      const destination = argv[5];
+      if (!destination) throw new Error("pack destination missing");
+      const tarball = path.join(destination, filename);
+      fs.unlinkSync(tarball);
+      fs.symlinkSync("outside.tgz", tarball);
+    }
+    return result;
+  };
+  await expect(publishOrReuse(testOptions)).rejects.toThrow("exactly one safe tarball");
+  expect(calls).toHaveLength(1);
 });
 
 test("an unavailable registry or malformed response cannot trigger publish", async () => {
