@@ -36,7 +36,10 @@ surprising existing users, and what evidence makes an installable release valid?
   by that run. The release computes integrity from one locally packed tarball
   and publishes those same bytes. The fresh pack destination must contain
   exactly one regular, safely named tarball; pack JSON filename and integrity
-  are not authorities for locating or validating it. The timeout and polling
+  are not authorities for locating or validating it. Publication must not
+  depend on pack JSON existing at all: inspect the archive's own package
+  manifest and require the expected name and version before registry lookup.
+  The timeout and polling
   interval remain bounded and configurable, and the job reports both registry
   observations while waiting.
 - Before publication, inspect the exact tracked and packed file sets for credentials,

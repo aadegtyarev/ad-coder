@@ -1,4 +1,6 @@
 /** Publish once, or resume a release whose identical package is already on npm. */
+
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -31,18 +33,8 @@ function packedTarball(
   options: PublishOptions,
 ): string {
   if (result.exitCode !== 0) throw new Error(`npm pack failed (${npmErrorCode(result)})`);
-  let value: unknown;
-  try {
-    value = JSON.parse(result.stdout);
-  } catch {
-    throw new Error("npm pack returned invalid JSON");
-  }
-  if (!Array.isArray(value) || value.length !== 1 || !value[0] || typeof value[0] !== "object")
-    throw new Error("npm pack did not return one package record");
-  if (value[0].name !== options.packageName || value[0].version !== options.version)
-    throw new Error("npm pack returned a different package name or version");
-  // The fresh directory is ours. npm pack metadata may omit or misreport its
-  // filename, so discover the sole archive from the directory we gave npm.
+  // npm versions disagree about what --json emits (including no record at all).
+  // Only the fresh destination and the archive's own manifest are authorities.
   const entries = fs.readdirSync(destination, { withFileTypes: true });
   if (
     entries.length !== 1 ||
@@ -51,6 +43,27 @@ function packedTarball(
   )
     throw new Error("npm pack did not create exactly one safe tarball");
   const tarball = path.join(destination, entries[0].name);
+  let manifest: unknown;
+  try {
+    const source = execFileSync("tar", ["-xOzf", tarball, "package/package.json"], {
+      maxBuffer: 1024 * 1024,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    manifest = JSON.parse(source);
+  } catch {
+    throw new Error("npm pack created an archive without a readable package manifest");
+  }
+  if (
+    !manifest ||
+    typeof manifest !== "object" ||
+    Array.isArray(manifest) ||
+    !Object.hasOwn(manifest, "name") ||
+    !Object.hasOwn(manifest, "version") ||
+    (manifest as { name: unknown }).name !== options.packageName ||
+    (manifest as { version: unknown }).version !== options.version
+  )
+    throw new Error("npm pack created an archive with a different package name or version");
   return tarball;
 }
 
@@ -89,14 +102,13 @@ export async function publishOrReuse(options: PublishOptions): Promise<PublishOu
     const packed = await options.run([
       "npm",
       "pack",
-      "--json",
       "--silent",
       "--pack-destination",
       destination,
     ]);
     const tarball = packedTarball(packed, destination, options);
-    // Compute SRI from the actual bytes. npm's pack JSON may omit or misreport
-    // metadata, and a later directory publish could repack a different tarball.
+    // Compute SRI from the validated archive bytes. A later directory publish
+    // could repack a different tarball.
     const expected = `sha512-${createHash("sha512").update(fs.readFileSync(tarball)).digest("base64")}`;
     const before = await lookupIntegrity(options);
     if (before.kind === "present") {
