@@ -280,17 +280,33 @@ test("SIGKILLed standalone owner is diagnosed and leaves a recovery witness befo
   ).rejects.toBeInstanceOf(RunInterruptedError);
 
   const ready = path.join(targetDir, `${runId}.ready`);
+  // This is deliberately a complete standalone role, not merely a process
+  // that happens to hold its session lease.  The child resumes the durable
+  // checkpoint, records *its own* identity, then blocks in the provider
+  // turn.  Killing it therefore leaves the same running checkpoint and argv
+  // (`role reviewer --target-dir ...`) as the external-CWD self-test that
+  // exposed #615.
   const child = Bun.spawn(
     [
       process.execPath,
       "--eval",
       `import * as fs from "node:fs";
-import { ProjectStore } from ${JSON.stringify(path.join(import.meta.dir, "..", "src", "project-store", "project-store.ts"))};
-import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
-const store = new ProjectStore(process.env.OWNER_LOST_TARGET);
-await store.resumeSession(process.env.OWNER_LOST_RUN, BACKGROUND_CONTEXT);
+import { createModels, fauxProvider } from "@earendil-works/pi-ai";
+import { defineRole } from ${JSON.stringify(path.join(import.meta.dir, "..", "src", "role.ts"))};
+import { runRoleStandalone } from ${JSON.stringify(path.join(import.meta.dir, "..", "src", "cli.ts"))};
+const faux = fauxProvider({ provider: "faux", models: [{ id: "faux-1", contextWindow: 200000 }] });
+const models = createModels();
+models.setProvider(faux.provider);
+const model = faux.getModel();
+const role = defineRole({ name: "reviewer", provider: "faux", modelId: model.id, systemPrompt: "You review.", activeToolNames: ["read", "bash"], cacheRetention: "none", contextBudget: { maxTokens: 100000, reserveTokens: 10000, keepRecentTokens: 20000 } }, model);
+faux.setResponses([() => new Promise(() => {})]);
+const started = runRoleStandalone({ role, model, models, targetDir: process.env.OWNER_LOST_TARGET, task: process.env.OWNER_LOST_TASK, runId: process.env.OWNER_LOST_RUN, resumeExisting: true });
 fs.writeFileSync(process.env.OWNER_LOST_READY, "ready");
-await Bun.sleep(60_000);`,
+await started;`,
+      "role",
+      "reviewer",
+      "--target-dir",
+      targetDir,
     ],
     {
       stdout: "ignore",
@@ -299,6 +315,7 @@ await Bun.sleep(60_000);`,
         ...process.env,
         OWNER_LOST_TARGET: targetDir,
         OWNER_LOST_RUN: runId,
+        OWNER_LOST_TASK: task,
         OWNER_LOST_READY: ready,
       },
     },
@@ -312,17 +329,20 @@ await Bun.sleep(60_000);`,
     }
     const store = new ProjectStore(targetDir);
     const checkpointPath = path.join(store.layout.runs, `standalone-${runId}.json`);
-    const checkpoint = store.readVersionedJson<Record<string, unknown>>(checkpointPath);
-    const identity = {
+    const claimDeadline = Date.now() + 10_000;
+    let identity: RunProcessIdentity | undefined;
+    while (identity?.pid !== child.pid) {
+      if (Date.now() > claimDeadline)
+        throw new Error("timed out waiting for child role to claim the checkpoint");
+      const checkpoint = store.readVersionedJson<{ process?: RunProcessIdentity }>(checkpointPath);
+      identity = checkpoint.value.process;
+      await Bun.sleep(25);
+    }
+    expect(identity).toEqual({
       pid: child.pid,
       startTime: processStartTime(child.pid),
-      groupId: child.pid,
-    };
-    store.writeVersionedJson(
-      checkpointPath,
-      { ...checkpoint.value, status: "running", process: identity },
-      checkpoint.version,
-    );
+      groupId: expect.any(Number),
+    });
     child.kill("SIGKILL");
     await child.exited;
 
@@ -341,7 +361,7 @@ await Bun.sleep(60_000);`,
       lastRecovery: {
         code: "owner_lost",
         reason: "pid_not_alive",
-        previousProcess: identity,
+        previousProcess: identity!,
       },
     });
     expect(inspectStandaloneRun(targetDir, runId)).toMatchObject({
