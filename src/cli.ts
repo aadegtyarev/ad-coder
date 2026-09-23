@@ -30,6 +30,7 @@ import {
   resolveProviderAdmissionController,
 } from "./cli/resolve-config";
 import { resolveResumeRun, resumeOrchestratorConfig, resumeSeedNote } from "./cli/resume";
+import { runsInspectCommand } from "./cli/runs-inspect";
 import { DEFAULT_KILL_AFTER_MS, runsStopCommand } from "./cli/runs-stop";
 import { ToolActivityRenderer } from "./cli/tool-activity";
 import { loadModelsConfigSeam, loadSettingsConfigSeam } from "./config/seam";
@@ -76,6 +77,7 @@ import { startOrchestrator } from "./orchestration/orchestrator";
 import { runPipeline } from "./orchestration/pipeline";
 import {
   consumeRunStopRequest,
+  inspectStandaloneRun,
   type RunProcessIdentity,
   readRunStopRequest,
   selfProcessIdentity,
@@ -701,6 +703,11 @@ export async function runRoleStandalone(params: {
            * witness file it is read from is consumed by this write.
            */
           stopRequest?: { requestedAt: number; requesterPid: number };
+        }
+      | {
+          /** A later observer proved the prior process is gone, not why. */
+          code: "owner_lost";
+          reason: "pid_not_alive" | "zombie" | "pid_reused";
         };
     /**
      * Safe terminal diagnosis for a failed attempt.  Do not persist a raw
@@ -709,6 +716,17 @@ export async function runRoleStandalone(params: {
      * other errors keep only their stable `internal_error` classification.
      */
     failure?: { code: string; message: string };
+    /**
+     * Safe evidence that this process recovered work after the previous owner
+     * disappeared before its closeout. It survives the new `running` owner so
+     * the event cannot be rewritten as a provider or compaction failure.
+     */
+    lastRecovery?: {
+      code: "owner_lost";
+      reason: "pid_not_alive" | "zombie" | "pid_reused";
+      detectedAt: number;
+      previousProcess: RunProcessIdentity;
+    };
   };
   const taskDigest = new Bun.CryptoHasher("sha256").update(params.task).digest("hex");
   let checkpoint: import("./project-store/types").VersionedState<Checkpoint>;
@@ -837,7 +855,33 @@ export async function runRoleStandalone(params: {
     // actually dead, `resumeSession` reclaims its versioned lease safely.
     session = await store.resumeSession(runId, BACKGROUND_CONTEXT);
     try {
-      const { pause: _pause, failure: _failure, result: _result, ...resumed } = prior;
+      let recoveredPrior = prior;
+      if (prior.status === "running") {
+        const inspection = inspectStandaloneRun(params.targetDir, runId);
+        if (inspection.status === "owner_lost" && prior.process !== undefined) {
+          // This separate atomic write is intentional. If this process dies
+          // before it can publish its own identity, the next observer still
+          // sees why the old owner was replaced rather than a second opaque
+          // `running` record.
+          checkpoint = store.writeVersionedJson(
+            checkpointPath,
+            {
+              ...prior,
+              status: "paused",
+              pause: { code: "owner_lost", reason: inspection.reason },
+              lastRecovery: {
+                code: "owner_lost",
+                reason: inspection.reason,
+                detectedAt: Date.now(),
+                previousProcess: prior.process,
+              },
+            },
+            checkpoint.version,
+          );
+          recoveredPrior = checkpoint.value;
+        }
+      }
+      const { pause: _pause, failure: _failure, result: _result, ...resumed } = recoveredPrior;
       checkpoint = store.writeVersionedJson(
         checkpointPath,
         {
@@ -4314,9 +4358,9 @@ const COMMANDS: readonly CommandDefinition[] = [
   },
   {
     name: "runs",
-    description: "Stop one run by the process identity its own record carries.",
+    description: "Inspect or stop one run by the process identity its own record carries.",
     positionals: [
-      { name: "<stop>", description: "Action: stop." },
+      { name: "<inspect|stop>", description: "Action: inspect or stop." },
       {
         name: "<run-id>",
         description: "Run identifier; its record lives under <target>/.ad-coder/runs/.",
@@ -4361,18 +4405,25 @@ const COMMANDS: readonly CommandDefinition[] = [
     ],
     run: ({ positionals, flags, booleans }) => {
       const action = positionals[1];
-      if (action === undefined) fail("runs requires an action: stop");
-      if (action !== "stop") fail(`unknown runs action: ${action} (only stop exists)`);
+      if (action === undefined) fail("runs requires an action: inspect or stop");
+      if (action !== "inspect" && action !== "stop")
+        fail(`unknown runs action: ${action} (expected inspect or stop)`);
       const runId = positionals[2];
-      if (runId === undefined) fail("runs stop requires a run id");
-      if (positionals[3] !== undefined) fail("runs stop accepts exactly one run id");
+      if (runId === undefined) fail(`runs ${action} requires a run id`);
+      if (positionals[3] !== undefined) fail(`runs ${action} accepts exactly one run id`);
       try {
         assertRunId(runId);
       } catch (error) {
         fail(errorMessage(error));
       }
       const targetArg = flags["--target-dir"];
-      if (targetArg === undefined) fail("--target-dir is required for runs stop");
+      if (targetArg === undefined) fail(`--target-dir is required for runs ${action}`);
+      if (action === "inspect")
+        return runsInspectCommand({
+          runId,
+          targetDir: targetArg,
+          json: booleans["--json"] === true,
+        });
       const kill = booleans["--kill"] === true;
       const killAfterMs =
         parseNonNegativeIntegerFlag("--kill-after-ms", flags["--kill-after-ms"]) ??

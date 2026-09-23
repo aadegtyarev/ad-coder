@@ -83,6 +83,7 @@ import type {
   SessionLimitSnapshot,
   SessionLimits,
   SpawnOverride,
+  StandaloneRunInspection,
   StepCost,
   StepResult,
   StepView,
@@ -152,6 +153,7 @@ import {
   GitHubBacklogStore,
   importLdoArtifacts,
   inspectImportedLdoWork,
+  inspectStandaloneRun,
   isWorkflowModule,
   Ledger,
   LiveRetryCoordinator,
@@ -330,6 +332,7 @@ test("the package is importable by its published name", () => {
   expect(typeof deriveContextBudget).toBe("function");
   expect(typeof assertSummarizerWindow).toBe("function");
   expect(typeof stopRun).toBe("function");
+  expect(typeof inspectStandaloneRun).toBe("function");
   expect(DEFAULT_RUN_STOP_KILL_AFTER_MS).toBe(2_000);
   expect(typeof stampDeliveryText).toBe("function");
   expect(typeof stampCheckErrors).toBe("function");
@@ -337,6 +340,7 @@ test("the package is importable by its published name", () => {
   const _budgetPercents: BudgetPercents | undefined = undefined;
   const _contextBudgetPercents: ContextBudgetPercents | undefined = undefined;
   const _configurableRole: ConfigurableRole | undefined = undefined;
+  const _standaloneRunInspection: StandaloneRunInspection | undefined = undefined;
   const _resolvableProvider: ResolvableProvider | undefined = undefined;
   const _resolveConfigOpts: ResolvePipelineConfigOptions | undefined = undefined;
   const _storeConfig: ProjectStoreConfig | undefined = undefined;

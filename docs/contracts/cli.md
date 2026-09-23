@@ -8,6 +8,13 @@
 
 Rules for ad-coder's command-line front. A violation is always blocking.
 
+- 2026-09-23: `ad-coder runs inspect <run-id> --target-dir <dir>` is the
+  read-only counterpart of `runs stop`. Its human and `--json` forms expose the
+  shared standalone-owner diagnosis: recorded terminal/pause state, a live
+  owner, `owner_lost` (dead, zombie, or reused PID), or explicitly
+  `owner_unknown` when the host cannot prove the identity. It never signals,
+  writes, or attributes a lost owner to provider or compaction failure.
+
 - 2026-09-11: The CLI is a THIN front over the programmatic core (see
   `architecture.md`). Its whole command surface — every command, every option,
   every positional argument, each with a one-line description — is declared in

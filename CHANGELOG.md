@@ -21,6 +21,11 @@ enforces that dated release headings go in non-increasing date order
   terminal review outcome without another provider call, and duplicate replay
   cannot append a second stamp for the same reviewer run id.
 
+- **A hard-killed standalone role is visible and recoverable.** Run inspection
+  now distinguishes a proven lost worker from provider or compaction failures.
+  Resume preserves that durable owner-loss witness before taking over the
+  session and reconciling its saved lane.
+
 ## [0.181.18] - 2026-09-23
 
 ### Fixed

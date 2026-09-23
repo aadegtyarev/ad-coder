@@ -8,6 +8,14 @@ lock is acquired. A lock is considered stale only with dead/zombie process
  evidence or a mismatched available process start-time witness, never from PID
 alone.
 
+A standalone role checkpoint that says `running` while its recorded PID/start
+time owner is proved dead, zombie, or reused is a typed read-only
+`owner_lost` result. It is not evidence of a provider, summarizer, terminal, or
+transport failure. Inspection is available through the shared core and machine
+CLI; explicit resume records the safe lost-owner witness before replacing the
+process identity, then reconciles the saved lane instead of blindly repeating an
+unknown external action.
+
 For library, CLI, workflow, provider, and tool authors, this contract answers: how
 does a failed operation remain understandable and actionable to humans and stable
 for machines?
