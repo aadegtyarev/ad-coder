@@ -176,8 +176,13 @@ function readJsonObject(result: RegistryCommandResult): Record<string, unknown> 
       // Invalid complete lines are npm transport warnings, not JSON values.
     }
   }
-  const [value] = values;
-  return values.length === 1 && value !== null && typeof value === "object" && !Array.isArray(value)
+  if (values.length !== 1) return null;
+  const [parsed] = values;
+  // npm 12 wraps a field query in a singleton array where npm 10/11 returned
+  // the field value directly. Normalize only that exact transport shape: an
+  // empty, multi-value, or nested array remains ambiguous and fails closed.
+  const value = Array.isArray(parsed) && parsed.length === 1 ? parsed[0] : parsed;
+  return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
 }

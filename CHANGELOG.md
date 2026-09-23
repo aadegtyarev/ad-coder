@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.181.49] - 2026-09-24
+
+### Fixed
+
+- Accept npm 12's exact singleton-object wrapper for `dist --json` readiness
+  metadata while still rejecting empty, multiple, nested, partial, or otherwise
+  ambiguous registry payloads.
+
 ## [0.181.48] - 2026-09-24
 
 ### Fixed
