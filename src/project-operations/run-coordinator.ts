@@ -41,6 +41,7 @@ import {
   ConfiguredToolsUnavailableError,
   EmptyTurnError,
   ProviderRejectionError,
+  ProviderUnavailableError,
   RunnerError,
   SuspendedRunError,
 } from "../runner/errors";
@@ -525,6 +526,7 @@ function pauseCauseFrom(sourceError: unknown, recurrence: number): PipelinePause
   const typed =
     sourceError instanceof RunnerError ||
     sourceError instanceof EmptyTurnError ||
+    sourceError instanceof ProviderUnavailableError ||
     sourceError instanceof CostAnomalyBlockedError ||
     sourceError instanceof ConfiguredToolsUnavailableError ||
     sourceError instanceof SuspendedRunError ||

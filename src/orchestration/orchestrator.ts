@@ -36,6 +36,7 @@ import {
   ProviderLimitError,
   ProviderQuotaError,
   ProviderRejectionError,
+  ProviderUnavailableError,
   RunInterruptedError,
   RunnerError,
   resolveTargetDir,
@@ -926,6 +927,9 @@ const SAFE_HOUSE_ERRORS = [
   // non-credential status was parsed the message stays verbatim the pinned
   // "verify authentication and retry" wording.
   EmptyTurnError,
+  // `provider_unavailable` is a fixed class with a validated run id only. It
+  // deliberately carries no response body, status, prompt, or credential.
+  ProviderUnavailableError,
   ProviderRejectionError,
   // Field-by-field audit (errors contract 2026-09-16 / 2026-09-19):
   // `code` is the authored literal `provider_quota`; `status` is the literal

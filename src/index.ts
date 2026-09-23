@@ -578,6 +578,7 @@ export {
   ProviderLimitError,
   ProviderQuotaError,
   ProviderRejectionError,
+  ProviderUnavailableError,
   providerLimitFrom,
   providerQuotaFrom,
   providerRejectionStatusFrom,

@@ -156,6 +156,7 @@ import { defineRole } from "./role";
 import {
   assertRunId,
   EmptyTurnError,
+  ProviderUnavailableError,
   RunInterruptedError,
   resolveTargetDir,
 } from "./runner/errors";
@@ -1057,7 +1058,7 @@ export async function runRoleStandalone(params: {
       // empty-turn class.  Unknown Error.message values may carry a provider
       // body, prompt, or credentials, so their durable projection is fixed.
       const failure =
-        error instanceof EmptyTurnError
+        error instanceof EmptyTurnError || error instanceof ProviderUnavailableError
           ? { code: error.code, message: error.message }
           : {
               code: "internal_error",
@@ -4673,6 +4674,14 @@ function errorMessage(error: unknown): string {
  * a process spawn (`docs/contracts/errors.md`, `docs/contracts/architecture.md`).
  */
 export function projectCliError(error: unknown): Record<string, unknown> {
+  if (error instanceof ProviderUnavailableError)
+    return {
+      code: error.code,
+      detail: error.runId,
+      text: error.message,
+      retryable: error.retryable,
+      nextAction: "retry the run, or select another configured model or provider",
+    };
   if (error instanceof UpdateError)
     return {
       code: error.code,
@@ -4725,13 +4734,15 @@ export function projectCliError(error: unknown): Record<string, unknown> {
 /** Render a failed CLI invocation as the human line, including its recovery action. */
 export function renderCliError(error: unknown): string {
   const action =
-    error instanceof UpdateError
-      ? error.nextAction
-      : error instanceof QueueSaturatedError || error instanceof AdmissionCancelledError
+    error instanceof ProviderUnavailableError
+      ? "retry the run, or select another configured model or provider"
+      : error instanceof UpdateError
         ? error.nextAction
-        : error instanceof SessionNotAcquiredError
-          ? SessionNotAcquiredError.NEXT_ACTION
-          : undefined;
+        : error instanceof QueueSaturatedError || error instanceof AdmissionCancelledError
+          ? error.nextAction
+          : error instanceof SessionNotAcquiredError
+            ? SessionNotAcquiredError.NEXT_ACTION
+            : undefined;
   return `ad-coder: ${errorMessage(error)}${action === undefined ? "" : `; ${action}`}\n`;
 }
 

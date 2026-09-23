@@ -26,6 +26,7 @@ import {
   GenerationTruncatedError,
   ProviderQuotaError,
   ProviderRejectionError,
+  ProviderUnavailableError,
 } from "../runner/errors";
 import { SessionLimitError } from "../session-limits";
 import { announcePauseOnce, pauseAnnouncementKey } from "./pause-notice";
@@ -1098,6 +1099,19 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
                 message: `provider rejected the request with HTTP ${error.status}`,
                 action: "inspect the request this role sends (model id, tool schemas, parameters)",
                 retryable: false,
+              },
+              mode,
+            ),
+          );
+          reason = "turn_failed";
+        } else if (isInstanceOf(error, ProviderUnavailableError)) {
+          params.error.write(
+            renderFailure(
+              {
+                code: error.code,
+                message: "provider did not return a response after its retry attempts",
+                action: "retry the run, or select another configured model or provider",
+                retryable: true,
               },
               mode,
             ),

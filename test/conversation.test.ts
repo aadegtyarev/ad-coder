@@ -38,7 +38,7 @@ import { WakePump } from "../src/orchestration/wake";
 import { ProjectStore } from "../src/project-store/project-store";
 import type { Role } from "../src/role";
 import { defineRole } from "../src/role";
-import { EmptyTurnError } from "../src/runner/errors";
+import { ProviderUnavailableError } from "../src/runner/errors";
 import { defineTool } from "../src/runner/tool";
 import { SessionLimitController, SessionLimitError } from "../src/session-limits";
 
@@ -545,6 +545,22 @@ test("a message-embedded 429 quota refusal surfaces as a typed quota outcome thr
   }
 });
 
+test("a statusless generic assistant error is provider-unavailable through conversation", async () => {
+  const { faux, models, model, role } = harnessFixture();
+  const session = await new MemorySessionRepo().create({}, BACKGROUND_CONTEXT);
+  faux.setResponses([
+    () => {
+      throw new Error("provider failed without a response");
+    },
+  ]);
+  const conversation = await startConversation({ role, targetDir, models, model, session });
+  try {
+    await expect(conversation.step("do it")).rejects.toBeInstanceOf(ProviderUnavailableError);
+  } finally {
+    await conversation.close();
+  }
+});
+
 test("a message-embedded non-credential provider failure keeps its bounded cause on the empty-turn error through conversation (#418)", async () => {
   const { faux, models, model, role } = harnessFixture();
   const session = await new MemorySessionRepo().create({}, BACKGROUND_CONTEXT);
@@ -779,7 +795,7 @@ test("a conversation settles a session's interrupted operation before it prompts
   expect(durableText()).toContain("after resume");
 });
 
-test("#428: a session killed mid-assistant-effect replays safely and its resumed turn settles as a typed empty-turn failure (measured pin)", async () => {
+test("#428: a session killed mid-assistant-effect replays safely and its resumed turn settles as provider-unavailable", async () => {
   // MEASUREMENT NOTE (filled after the red run).
   const { faux, models, model, role } = harnessFixture();
   // The kill happens while the ASSISTANT effect is pending: pi-agent-core
@@ -845,19 +861,13 @@ test("#428: a session killed mid-assistant-effect replays safely and its resumed
     // run found it. The vendor replays the orphaned operation recorded at
     // `assistant.effect_pending` with no provider call (synthetic settle),
     // so the resumed turn proceeds normally into the harness -- and then the
-    // recovery settles the replayed generation as EmptyTurnError -- a typed
-    // outcome, not a plain Error, and NOT a stuck lane:
-    expect(cause).toBeInstanceOf(EmptyTurnError);
-    expect((cause as { code: string }).code).toBe("empty_turn");
-    // The typed message pins the OPEN QUESTION from the ticket verbatim: its
-    // "verify authentication and retry" advice fits a declined provider
-    // credential, not a previous turn that was killed mid-stream and replayed
-    // as an interrupted marker. The operator asked whether that advice should
-    // change; that question is deliberately NOT fixed in this PR -- this
-    // assertion documents the measured state as-is.
-    expect((cause as Error).message).toBe(
-      "the provider returned a failed empty turn; verify authentication and retry (provider code assistant_error)",
-    );
+    // recovery settles the replayed generation as a statusless generic
+    // assistant_error. It is not an authentication problem: no provider
+    // response arrived, so it is a typed, retryable unavailable outcome rather
+    // than a stuck lane or misleading credential advice.
+    expect(cause).toBeInstanceOf(ProviderUnavailableError);
+    expect((cause as { code: string }).code).toBe("provider_unavailable");
+    expect((cause as Error).message).toContain("select another configured model or provider");
     // The typed error still locates the run for programmatic callers.
     expect((cause as { runId: string }).runId).toBe(runId);
     // And it fails immediately, before any provider call the same way the

@@ -91,6 +91,38 @@ export class EmptyTurnError extends Error {
 export const PROVIDER_ERROR_CODE_BOUND = /^[A-Za-z0-9_.-]{1,64}$/;
 
 /**
+ * pi-agent-core exhausted its own provider retry policy without receiving a
+ * provider status, error token, assistant text, or usage.  Its
+ * `assistant_error` label is an envelope code, not evidence that credentials
+ * failed.  Keep this separate from `EmptyTurnError`, which owns the
+ * credential-classified 401/403 and genuine empty-answer paths.
+ */
+export class ProviderUnavailableError extends Error {
+  override readonly name = "ProviderUnavailableError";
+  readonly code = "provider_unavailable" as const;
+  readonly retryable = true as const;
+
+  constructor(readonly runId: string) {
+    super(
+      "the provider did not return a response after its retry attempts; retry the run, or select another configured model or provider",
+    );
+  }
+}
+
+/**
+ * Match only pi-agent-core's generic settled envelope after every owned
+ * provider class has been checked. A status or a bounded provider token is
+ * evidence that belongs to `EmptyTurnError`'s existing projection instead.
+ */
+export function isStatuslessAssistantError(
+  harnessCode: unknown,
+  cause: ProviderErrorCause | undefined,
+  hasZeroUsage: boolean,
+): boolean {
+  return harnessCode === "assistant_error" && cause === undefined && hasZeroUsage;
+}
+
+/**
  * A provider response settled as a deferred suspension instead of a settled
  * turn: the conveniences this boundary serves (single-turn `runRole`, one
  * workflow step) do not resume deferrals.

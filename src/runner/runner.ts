@@ -53,8 +53,10 @@ import {
   ConfiguredToolsUnavailableError,
   EmptyTurnError,
   GenerationTruncatedError,
+  isStatuslessAssistantError,
   ProviderQuotaError,
   ProviderRejectionError,
+  ProviderUnavailableError,
   providerErrorCauseFrom,
   providerLimitFrom,
   providerQuotaFrom,
@@ -1110,6 +1112,8 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
               message: finalMessage.errorMessage,
             }),
           });
+        if (isStatuslessAssistantError(result.error?.code, cause, true))
+          throw new ProviderUnavailableError(runId);
         throw new EmptyTurnError(runId, result.error?.code, cause?.status, cause?.code);
       }
       if (text.trim() === "") {

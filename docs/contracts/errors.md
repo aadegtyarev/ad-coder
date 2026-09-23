@@ -54,6 +54,14 @@ for machines?
 - Test failure output and recovery instructions as public behavior. Provider
   timeout, cancellation, and retry behavior must be explicit and configurable;
   automatic retry is never inferred for a potentially non-idempotent operation.
+- 2026-09-23: A statusless generic `assistant_error` with no answer and zero
+  usage is `provider_unavailable`, not an authentication failure. It means the
+  provider delivered no usable response after the SDK's own retry policy; the
+  safe projection carries the validated run id, is retryable, and says to retry
+  or select another configured model or provider. A status or bounded provider
+  cause remains its existing classification, including credential-bearing
+  `empty_turn` outcomes. This translation never adds an outer automatic retry
+  or fallback for a potentially non-idempotent operation.
 - 2026-09-16: A rejection carries the reason, not only the code, and a boundary
   that translates an error keeps the causal detail. A model holding
   `invalid_follow_up` cannot tell which field it got wrong, so its only move is

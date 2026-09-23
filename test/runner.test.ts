@@ -34,6 +34,7 @@ import {
   ProviderLimitError,
   ProviderQuotaError,
   ProviderRejectionError,
+  ProviderUnavailableError,
   providerLimitFrom,
   providerQuotaFrom,
   providerRejectionStatusFrom,
@@ -614,6 +615,25 @@ test("#356: a message-embedded 429 quota refusal surfaces as a typed quota outco
     status: 429,
     providerCode: "insufficient_quota",
   });
+});
+
+test("a statusless generic assistant error is provider-unavailable, not an authentication failure", async () => {
+  const { faux, models, model, role } = harnessFixture();
+  // pi-agent-core has already exhausted its own retry policy when this settles
+  // as assistant_error. There is no provider response from which auth or quota
+  // can be inferred.
+  faux.setResponses([
+    () => {
+      throw new Error("provider failed without a response");
+    },
+  ]);
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-provider-unavailable-"));
+  const thrown = await runRole({ role, targetDir: tmp, models, model, prompt: "do it" }).catch(
+    (error: unknown) => error,
+  );
+  expect(thrown).toBeInstanceOf(ProviderUnavailableError);
+  expect(thrown).toMatchObject({ code: "provider_unavailable", retryable: true });
+  expect((thrown as Error).message).not.toContain("authentication");
 });
 
 test("#418: a non-allow-list provider status still names its cause in the empty-turn fallback", async () => {
