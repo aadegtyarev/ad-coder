@@ -441,7 +441,7 @@ test("a statusless provider failure settles its standalone run with safe recover
     status: "failed",
     failure: {
       code: "provider_unavailable",
-      message: expect.stringContaining("did not return a response"),
+      message: expect.stringContaining("without a usable answer or HTTP status"),
     },
   });
 });

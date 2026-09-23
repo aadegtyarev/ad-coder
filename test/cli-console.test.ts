@@ -690,7 +690,7 @@ test("a statusless provider failure asks for retry or rerouting, never authentic
     error,
     authenticationCommand: "ad-coder auth login --provider openrouter --target-dir '/tmp/project'",
   });
-  expect(error.text()).toContain("provider did not return a response");
+  expect(error.text()).toContain("without a usable answer or HTTP status");
   expect(error.text()).toContain("select another configured model or provider");
   expect(error.text()).not.toContain("auth login");
 });

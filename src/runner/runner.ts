@@ -58,6 +58,7 @@ import {
   ProviderRejectionError,
   ProviderUnavailableError,
   providerErrorCauseFrom,
+  providerFailureDiagnosticFrom,
   providerLimitFrom,
   providerQuotaFrom,
   providerRejectionStatusFrom,
@@ -1113,7 +1114,11 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
             }),
           });
         if (isStatuslessAssistantError(result.error?.code, cause, true))
-          throw new ProviderUnavailableError(runId);
+          throw new ProviderUnavailableError(
+            runId,
+            providerFailureDiagnosticFrom(result.error) ??
+              providerFailureDiagnosticFrom({ message: finalMessage?.errorMessage }),
+          );
         throw new EmptyTurnError(runId, result.error?.code, cause?.status, cause?.code);
       }
       if (text.trim() === "") {

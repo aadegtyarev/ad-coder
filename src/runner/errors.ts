@@ -101,12 +101,74 @@ export class ProviderUnavailableError extends Error {
   override readonly name = "ProviderUnavailableError";
   readonly code = "provider_unavailable" as const;
   readonly retryable = true as const;
+  /** Authored diagnostic code extracted from a known SDK error shape, if any. */
+  readonly diagnosticCode: ProviderFailureDiagnostic | undefined;
 
-  constructor(readonly runId: string) {
+  constructor(
+    readonly runId: string,
+    diagnosticCode?: ProviderFailureDiagnostic,
+  ) {
+    const boundedDiagnostic =
+      diagnosticCode !== undefined && PROVIDER_FAILURE_DIAGNOSTICS.has(diagnosticCode)
+        ? diagnosticCode
+        : undefined;
     super(
-      "the provider did not return a response after its retry attempts; retry the run, or select another configured model or provider",
+      "the provider operation failed without a usable answer or HTTP status" +
+        (boundedDiagnostic === undefined ? "" : ` (diagnostic ${boundedDiagnostic})`) +
+        "; retry the run, or select another configured model or provider",
     );
+    this.diagnosticCode = boundedDiagnostic;
   }
+}
+
+/**
+ * Provider text is uncontrolled: SDKs can append response bodies, URLs, and
+ * echoed request values. Only a fixed code for a recognisable SDK transport
+ * or finish-reason shape may leave this boundary. No substring of the source
+ * message is copied into a diagnostic.
+ */
+export type ProviderFailureDiagnostic =
+  | "fetch_failed"
+  | "connection_reset"
+  | "connection_refused"
+  | "connection_timeout"
+  | "dns_unavailable"
+  | "response_timeout"
+  | "response_body_missing"
+  | "response_incomplete"
+  | "provider_network_error"
+  | "provider_content_filter";
+
+const PROVIDER_FAILURE_DIAGNOSTICS = new Set<ProviderFailureDiagnostic>([
+  "fetch_failed",
+  "connection_reset",
+  "connection_refused",
+  "connection_timeout",
+  "dns_unavailable",
+  "response_timeout",
+  "response_body_missing",
+  "response_incomplete",
+  "provider_network_error",
+  "provider_content_filter",
+]);
+
+export function providerFailureDiagnosticFrom(
+  error: unknown,
+): ProviderFailureDiagnostic | undefined {
+  if (error === null || typeof error !== "object") return undefined;
+  const message = (error as { message?: unknown }).message;
+  if (typeof message !== "string") return undefined;
+  if (/^(?:TypeError: )?fetch failed$/.test(message)) return "fetch_failed";
+  if (/\b(?:ECONNRESET|UND_ERR_SOCKET)\b/.test(message)) return "connection_reset";
+  if (/\bECONNREFUSED\b/.test(message)) return "connection_refused";
+  if (/\b(?:ETIMEDOUT|UND_ERR_CONNECT_TIMEOUT)\b/.test(message)) return "connection_timeout";
+  if (/\b(?:ENOTFOUND|EAI_AGAIN)\b/.test(message)) return "dns_unavailable";
+  if (/\bUND_ERR_HEADERS_TIMEOUT\b/.test(message)) return "response_timeout";
+  if (message === "No response body") return "response_body_missing";
+  if (message === "Stream ended without finish_reason") return "response_incomplete";
+  if (message === "Provider finish_reason: network_error") return "provider_network_error";
+  if (message === "Provider finish_reason: content_filter") return "provider_content_filter";
+  return undefined;
 }
 
 /**

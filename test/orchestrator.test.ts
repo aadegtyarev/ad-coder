@@ -409,7 +409,7 @@ test("run_role projects its thrown errors with reason kept and leak withheld", a
     throw new ProviderUnavailableError("run-abc");
   });
   expect(await callTool(unavailable, { role: "auditor", task: "x" })).toBe(
-    "error: provider_unavailable (the provider did not return a response after its retry attempts; retry the run, or select another configured model or provider; run run-abc)",
+    "error: provider_unavailable (the provider operation failed without a usable answer or HTTP status; retry the run, or select another configured model or provider; run run-abc)",
   );
   // Nothing uncontrolled in an unrecognised error -- message, stack -- may
   // reach the projection; the inert constructor name is the diagnosable part.

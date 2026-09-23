@@ -4680,6 +4680,7 @@ export function projectCliError(error: unknown): Record<string, unknown> {
       detail: error.runId,
       text: error.message,
       retryable: error.retryable,
+      ...(error.diagnosticCode === undefined ? {} : { diagnosticCode: error.diagnosticCode }),
       nextAction: "retry the run, or select another configured model or provider",
     };
   if (error instanceof UpdateError)
@@ -4734,15 +4735,13 @@ export function projectCliError(error: unknown): Record<string, unknown> {
 /** Render a failed CLI invocation as the human line, including its recovery action. */
 export function renderCliError(error: unknown): string {
   const action =
-    error instanceof ProviderUnavailableError
-      ? "retry the run, or select another configured model or provider"
-      : error instanceof UpdateError
+    error instanceof UpdateError
+      ? error.nextAction
+      : error instanceof QueueSaturatedError || error instanceof AdmissionCancelledError
         ? error.nextAction
-        : error instanceof QueueSaturatedError || error instanceof AdmissionCancelledError
-          ? error.nextAction
-          : error instanceof SessionNotAcquiredError
-            ? SessionNotAcquiredError.NEXT_ACTION
-            : undefined;
+        : error instanceof SessionNotAcquiredError
+          ? SessionNotAcquiredError.NEXT_ACTION
+          : undefined;
   return `ad-coder: ${errorMessage(error)}${action === undefined ? "" : `; ${action}`}\n`;
 }
 

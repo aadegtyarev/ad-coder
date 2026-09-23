@@ -5,7 +5,7 @@ import type { Usage } from "@earendil-works/pi-ai";
 // Bounded provider-cause extraction (issue #418) lives beside the other
 // anchored readers it shares its inputs and invariants with. The import is
 // acyclic: runner/errors imports nothing from the ledger.
-import { providerErrorCauseFrom } from "../runner/errors";
+import { providerErrorCauseFrom, providerFailureDiagnosticFrom } from "../runner/errors";
 import type { LedgerRecord } from "./types";
 import { toolCallCounts, usageAmounts } from "./usage";
 
@@ -268,6 +268,10 @@ export class Ledger {
         providerErrorMessage !== undefined
           ? providerErrorCauseFrom({ message: providerErrorMessage })
           : undefined;
+      const providerDiagnostic =
+        providerErrorMessage !== undefined && providerError === undefined
+          ? providerFailureDiagnosticFrom({ message: providerErrorMessage })
+          : undefined;
       const record: LedgerRecord = {
         ts: Date.now(),
         runId: event.runId,
@@ -282,6 +286,7 @@ export class Ledger {
         ...(Object.keys(counts).length > 0 && { toolCalls: counts }),
         ...(this.requestBytes !== undefined && { requestBytes: this.requestBytes }),
         ...(providerError !== undefined && { providerError }),
+        ...(providerDiagnostic !== undefined && { providerDiagnostic }),
       };
       this.sink.write(record);
     } catch (error) {

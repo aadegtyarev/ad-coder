@@ -1109,7 +1109,7 @@ export async function runConsole(params: RunConsoleParams): Promise<ConsoleRunRe
             renderFailure(
               {
                 code: error.code,
-                message: "provider did not return a response after its retry attempts",
+                message: error.message,
                 action: "retry the run, or select another configured model or provider",
                 retryable: true,
               },

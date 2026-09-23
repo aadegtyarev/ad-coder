@@ -2026,6 +2026,15 @@ test("a machine front projects an update failure with its code, retryability, an
     retryable: true,
     nextAction: "retry the run, or select another configured model or provider",
   });
+  expect(projectCliError(new ProviderUnavailableError("run-9f2a", "fetch_failed"))).toMatchObject({
+    code: "provider_unavailable",
+    diagnosticCode: "fetch_failed",
+  });
+  expect(
+    renderCliError(new ProviderUnavailableError("run-9f2a", "fetch_failed")).match(
+      /retry the run/g,
+    ),
+  ).toHaveLength(1);
 });
 
 test("a human front states the update failure and its recovery action on one line", () => {

@@ -52,6 +52,7 @@ import {
   ProviderRejectionError,
   ProviderUnavailableError,
   providerErrorCauseFrom,
+  providerFailureDiagnosticFrom,
   providerQuotaFrom,
   providerRejectionStatusFrom,
   resolveTargetDir,
@@ -970,7 +971,11 @@ export async function startConversation(config: ConversationConfig): Promise<Con
           const hasZeroUsage =
             (finalMessage?.usage?.output ?? 0) === 0 && (finalMessage?.usage?.reasoning ?? 0) === 0;
           if (isStatuslessAssistantError(result.error?.code, cause, hasZeroUsage))
-            throw new ProviderUnavailableError(runId);
+            throw new ProviderUnavailableError(
+              runId,
+              providerFailureDiagnosticFrom(result.error) ??
+                providerFailureDiagnosticFrom({ message: finalMessage?.errorMessage }),
+            );
           throw new EmptyTurnError(runId, result.error?.code, cause?.status, cause?.code);
         }
         // A settled-SUCCESS turn with no answer text is still not a completed

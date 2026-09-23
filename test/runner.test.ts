@@ -35,6 +35,7 @@ import {
   ProviderQuotaError,
   ProviderRejectionError,
   ProviderUnavailableError,
+  providerFailureDiagnosticFrom,
   providerLimitFrom,
   providerQuotaFrom,
   providerRejectionStatusFrom,
@@ -634,6 +635,40 @@ test("a statusless generic assistant error is provider-unavailable, not an authe
   expect(thrown).toBeInstanceOf(ProviderUnavailableError);
   expect(thrown).toMatchObject({ code: "provider_unavailable", retryable: true });
   expect((thrown as Error).message).not.toContain("authentication");
+});
+
+test("a statusless SDK failure exposes only an authored diagnostic", async () => {
+  const { faux, models, model, role } = harnessFixture();
+  faux.setResponses([
+    () => {
+      throw new Error("connect ETIMEDOUT private.example:443 token=never-publish-me");
+    },
+  ]);
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-provider-diagnostic-"));
+  const thrown = await runRole({ role, targetDir: tmp, models, model, prompt: "do it" }).catch(
+    (error: unknown) => error,
+  );
+  expect(thrown).toMatchObject({
+    code: "provider_unavailable",
+    diagnosticCode: "connection_timeout",
+  });
+  expect(JSON.stringify(thrown)).not.toContain("never-publish-me");
+  expect((thrown as Error).message).not.toContain("private.example");
+});
+
+test("statusless diagnostic extraction rejects uncontrolled provider prose", () => {
+  expect(providerFailureDiagnosticFrom({ message: "No response body" })).toBe(
+    "response_body_missing",
+  );
+  expect(providerFailureDiagnosticFrom({ message: "Provider finish_reason: content_filter" })).toBe(
+    "provider_content_filter",
+  );
+  expect(
+    providerFailureDiagnosticFrom({ message: "body says fetch failed; password=hunter2" }),
+  ).toBeUndefined();
+  const error = new ProviderUnavailableError("run-1", "secret prose" as never);
+  expect(error.diagnosticCode).toBeUndefined();
+  expect(JSON.stringify(error)).not.toContain("secret prose");
 });
 
 test("#418: a non-allow-list provider status still names its cause in the empty-turn fallback", async () => {

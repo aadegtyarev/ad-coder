@@ -927,8 +927,9 @@ const SAFE_HOUSE_ERRORS = [
   // non-credential status was parsed the message stays verbatim the pinned
   // "verify authentication and retry" wording.
   EmptyTurnError,
-  // `provider_unavailable` is a fixed class with a validated run id only. It
-  // deliberately carries no response body, status, prompt, or credential.
+  // `provider_unavailable` carries a validated run id and an optional authored
+  // diagnostic from a fixed allow-list. No response body, prompt, or credential
+  // crosses this projection.
   ProviderUnavailableError,
   ProviderRejectionError,
   // Field-by-field audit (errors contract 2026-09-16 / 2026-09-19):
