@@ -11,6 +11,16 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.19] - 2026-09-23
+
+### Fixed
+
+- **A standalone reviewer no longer loses an accepted structured verdict when
+  a later tool reaches a stage limit or the host stops.** `submit_verdict`
+  saves the validated object before reporting tool success. Resume reuses that
+  terminal review outcome without another provider call, and duplicate replay
+  cannot append a second stamp for the same reviewer run id.
+
 ## [0.181.18] - 2026-09-23
 
 ### Fixed

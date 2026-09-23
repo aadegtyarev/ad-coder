@@ -25,6 +25,7 @@ import {
 } from "../src/orchestration/run-stop";
 import { StageLimitError } from "../src/orchestration/stage-limits";
 import {
+  buildSubmitVerdictTool,
   REVIEW_SUBMISSION_RESTART,
   REVIEW_SUBMISSION_RETRY,
   reviewRetryTask,
@@ -1047,6 +1048,65 @@ test("a standalone run that settles inside the closeout reserve relays the fact"
   });
   expect(resumed.text).toContain("completed after the raised limit");
   expect(store_read(targetDir, runId).status).toBe("complete");
+});
+
+test("a submitted standalone verdict survives a post-submit limit and a fresh-process resume", async () => {
+  const { faux, models, model, role } = fixture();
+  const reviewerRole = defineRole(
+    { ...role, activeToolNames: [...(role.activeToolNames ?? []), "submit_verdict"] },
+    model,
+  );
+  const runId = `durable-verdict-${crypto.randomUUID()}`;
+  const task = "review the durable verdict";
+  const firstCapture = {};
+  // The first tool accepts the verdict, then the following tool in the same
+  // response reaches the hard stage limit.  This deterministically puts the
+  // submission before a failed closeout without depending on a provider race.
+  faux.setResponses([
+    fauxAssistantMessage([
+      fauxToolCall("submit_verdict", {
+        status: "approved",
+        issues: [],
+        summary: "checked",
+      }),
+      fauxToolCall("read", { path: "not-reached.txt" }),
+    ]),
+  ]);
+  const first = await runRoleStandalone({
+    role: reviewerRole,
+    model,
+    models,
+    targetDir,
+    task,
+    runId,
+    verdictCapture: firstCapture,
+    tools: [buildSubmitVerdictTool(firstCapture, runId)],
+    stageLimits: { maxToolTurns: 1 },
+  });
+  expect(firstCapture).toMatchObject({ verdict: { status: "approved", summary: "checked" } });
+  const checkpointPath = path.join(targetDir, ".ad-coder", "runs", `standalone-${runId}.json`);
+  expect(JSON.parse(fs.readFileSync(checkpointPath, "utf8")).value).toMatchObject({
+    status: "complete",
+    verdict: { status: "approved", summary: "checked" },
+  });
+
+  // A new capture represents a new CLI process.  It has no queued faux
+  // response: resume must hydrate the durable verdict and settle it without a
+  // second provider request or submit_verdict call.
+  const resumedCapture = {};
+  const resumed = await runRoleStandalone({
+    role: reviewerRole,
+    model,
+    models,
+    targetDir,
+    task,
+    runId,
+    resumeExisting: true,
+    verdictCapture: resumedCapture,
+    tools: [buildSubmitVerdictTool(resumedCapture, runId)],
+  });
+  expect(resumedCapture).toMatchObject({ verdict: { status: "approved", summary: "checked" } });
+  expect(resumed.cost).toBe(first.cost);
 });
 
 test("a normal standalone run carries no stageCloseout", async () => {
