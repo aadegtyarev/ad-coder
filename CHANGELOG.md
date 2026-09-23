@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.181.45] - 2026-09-23
+
+### Fixed
+
+- Keep npm tarball-fetch exceptions out of release terminal and CI logs while
+  retaining a safe, actionable readiness failure class.
+
 ## [0.181.42] - 2026-09-23
 
 ### Fixed

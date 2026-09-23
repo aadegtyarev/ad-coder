@@ -108,6 +108,25 @@ test("registry readiness rejects a downloaded tarball whose bytes disagree with 
   );
 });
 
+test("registry readiness does not reflect a tarball fetch exception into logs", async () => {
+  const fetcherSecret = "https://token:registry-secret@example.invalid/private-tarball";
+  const failure = await waitForRegistryReadiness({
+    packageName: "ad-coder-dev",
+    version: "0.181.21",
+    maxAttempts: 1,
+    delayMs: 0,
+    run: async (argv) => (argv[3] === "dist" ? reply(matchingDist) : reply('"0.181.21"')),
+    fetchTarball: async () => {
+      throw new Error(`network refused ${fetcherSecret}`);
+    },
+  }).catch((error: unknown) => error);
+  expect(failure).toBeInstanceOf(RegistryPropagationPendingError);
+  const message = (failure as RegistryPropagationPendingError).message;
+  expect(message).toContain("tarball fetch failed before an HTTP response");
+  expect(message).not.toContain(fetcherSecret);
+  expect(message).not.toContain("network refused");
+});
+
 test("registry readiness rejects malformed, ambiguous, and non-string noisy JSON", async () => {
   for (const stdout of [
     'npm warn cli\n"0.181.22\n',

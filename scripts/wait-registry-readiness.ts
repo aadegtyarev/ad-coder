@@ -148,8 +148,12 @@ async function tarballObservation(
     return integrity === metadata.integrity
       ? "tarball integrity matched"
       : "tarball integrity mismatched";
-  } catch (error) {
-    return `tarball fetch failed (${error instanceof Error ? error.message : String(error)})`;
+  } catch {
+    // A fetch implementation may put credentials, URLs, or a response body in
+    // its exception message. This observation reaches terminal and CI logs, so
+    // retain the useful, stable failure class without ever reflecting that
+    // uncontrolled message.
+    return "tarball fetch failed before an HTTP response";
   }
 }
 
