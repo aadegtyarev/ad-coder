@@ -207,6 +207,61 @@ test("an interrupted standalone role persists a resumable pause and releases its
   expect(store.readVersionedJson<{ status: string }>(checkpointPath).value.status).toBe("complete");
 });
 
+test("a standalone resume uses its durable run identity without repeating private task text", async () => {
+  const { faux, models, model, role } = fixture();
+  const runId = `id-only-resume-${crypto.randomUUID()}`;
+  const abortController = new AbortController();
+  abortController.abort();
+
+  await expect(
+    runRoleStandalone({
+      role,
+      model,
+      models,
+      targetDir,
+      task: "review the private original task",
+      runId,
+      abortSignal: abortController.signal,
+    }),
+  ).rejects.toBeInstanceOf(RunInterruptedError);
+
+  faux.setResponses([fauxAssistantMessage("resumed by durable identity")]);
+  await expect(
+    runRoleStandalone({ role, model, models, targetDir, runId, resumeExisting: true }),
+  ).resolves.toMatchObject({ text: "resumed by durable identity" });
+});
+
+test("a supplied standalone resume task remains an exact digest assertion", async () => {
+  const { models, model, role } = fixture();
+  const runId = `task-mismatch-${crypto.randomUUID()}`;
+  const abortController = new AbortController();
+  abortController.abort();
+
+  await expect(
+    runRoleStandalone({
+      role,
+      model,
+      models,
+      targetDir,
+      task: "review the original change",
+      runId,
+      abortSignal: abortController.signal,
+    }),
+  ).rejects.toBeInstanceOf(RunInterruptedError);
+
+  await expect(
+    runRoleStandalone({
+      role,
+      model,
+      models,
+      targetDir,
+      task: "review a different change",
+      runId,
+      resumeExisting: true,
+    }),
+  ).rejects.toMatchObject({ message: "standalone checkpoint task does not match" });
+});
+
 test("resume reclaims a new-format session lease left by a dead standalone worker", async () => {
   const { faux, models, model, role } = fixture();
   const runId = `dead-worker-${crypto.randomUUID()}`;

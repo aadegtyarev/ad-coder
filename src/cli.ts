@@ -577,7 +577,12 @@ export async function runRoleStandalone(params: {
   model: Model<Api>;
   models: Models;
   targetDir: string;
-  task: string;
+  /**
+   * The task for a new role run, or an optional identity assertion on resume.
+   * Omit it only with `resumeExisting`: the durable conversation already holds
+   * the original task, while the checkpoint deliberately retains only its digest.
+   */
+  task?: string;
   runId?: string;
   resumeExisting?: boolean;
   ledgerSink?: LedgerSink;
@@ -619,6 +624,12 @@ export async function runRoleStandalone(params: {
   /** Relay of the recorded stage closeout; absent for normal completions (issue #327). */
   stageCloseout?: StageCloseoutFact;
 }> {
+  if (params.task === undefined && params.resumeExisting !== true)
+    throw new ProjectStoreError(
+      "invalid_config",
+      params.targetDir,
+      "standalone role requires a task unless resuming an existing run",
+    );
   const runId = params.runId ?? crypto.randomUUID();
   const store = new ProjectStore(params.targetDir, params.projectStoreConfig);
   const checkpointPath = path.join(store.layout.runs, `standalone-${store.validateId(runId)}.json`);
@@ -706,7 +717,14 @@ export async function runRoleStandalone(params: {
      */
     failure?: { code: string; message: string };
   };
-  const taskDigest = new Bun.CryptoHasher("sha256").update(params.task).digest("hex");
+  // Do not copy task text into the checkpoint just to make a resume convenient:
+  // it would turn a bounded identity record into a second private transcript.
+  // A supplied task remains an exact tamper/mix-up assertion; without one, the
+  // explicit durable run id is the capability to reopen its existing session.
+  const taskDigest =
+    params.task === undefined
+      ? undefined
+      : new Bun.CryptoHasher("sha256").update(params.task).digest("hex");
   let checkpoint: import("./project-store/types").VersionedState<Checkpoint>;
   let stageLimitInitial: Checkpoint["pause"] extends infer _
     ?
@@ -732,7 +750,7 @@ export async function runRoleStandalone(params: {
         checkpointPath,
         "standalone checkpoint provider/model does not match",
       );
-    if (prior.taskDigest !== taskDigest)
+    if (taskDigest !== undefined && prior.taskDigest !== taskDigest)
       throw new ProjectStoreError(
         "invalid_config",
         checkpointPath,
@@ -778,6 +796,12 @@ export async function runRoleStandalone(params: {
     );
     consumeRunStopRequest(store, runId);
   } else {
+    if (taskDigest === undefined)
+      throw new ProjectStoreError(
+        "invalid_config",
+        checkpointPath,
+        "standalone role requires a task unless resuming an existing run",
+      );
     checkpoint = store.writeVersionedJson(
       checkpointPath,
       {
@@ -870,35 +894,40 @@ export async function runRoleStandalone(params: {
       ...(params.providerAdmissionController !== undefined && {
         providerAdmissionController: params.providerAdmissionController,
       }),
-    }).runRole(params.role, params.model, params.task, {
-      runId,
-      session,
-      ...(params.resumeExisting === true && { resumeActiveOperation: true }),
-      // Closeout deliberately lets the model settle a partial final answer.
-      // A resumed standalone run must therefore admit the original task as a
-      // continuation instead of replaying that settled partial result.
-      ...(params.resumeExisting === true && { resumePromptOnSettled: true }),
-      ...(stageLimitInitial !== undefined && { stageLimitInitial }),
-      stageLimitObserver: (snapshot) => {
-        latestStageLimitSnapshot = snapshot;
-        const { elapsedMs, modelTurns, toolTurns, inputTokens, lastInputTokens, costUsd } =
-          snapshot;
-        updateCheckpoint((current) => ({
-          ...current,
-          cumulativeUsage: {
-            elapsedMs,
-            modelTurns,
-            toolTurns,
-            inputTokens,
-            lastInputTokens,
-            costUsd,
-          },
-        }));
+    }).runRole(
+      params.role,
+      params.model,
+      params.task ?? "Continue the original task from the durable session.",
+      {
+        runId,
+        session,
+        ...(params.resumeExisting === true && { resumeActiveOperation: true }),
+        // Closeout deliberately lets the model settle a partial final answer.
+        // A resumed standalone run must therefore admit the original task as a
+        // continuation instead of replaying that settled partial result.
+        ...(params.resumeExisting === true && { resumePromptOnSettled: true }),
+        ...(stageLimitInitial !== undefined && { stageLimitInitial }),
+        stageLimitObserver: (snapshot) => {
+          latestStageLimitSnapshot = snapshot;
+          const { elapsedMs, modelTurns, toolTurns, inputTokens, lastInputTokens, costUsd } =
+            snapshot;
+          updateCheckpoint((current) => ({
+            ...current,
+            cumulativeUsage: {
+              elapsedMs,
+              modelTurns,
+              toolTurns,
+              inputTokens,
+              lastInputTokens,
+              costUsd,
+            },
+          }));
+        },
+        ...(params.ledgerSink !== undefined && { ledgerSink: params.ledgerSink }),
+        ...(params.tools !== undefined && { tools: params.tools }),
+        ...(params.abortSignal !== undefined && { abortSignal: params.abortSignal }),
       },
-      ...(params.ledgerSink !== undefined && { ledgerSink: params.ledgerSink }),
-      ...(params.tools !== undefined && { tools: params.tools }),
-      ...(params.abortSignal !== undefined && { abortSignal: params.abortSignal }),
-    });
+    );
   } catch (error) {
     try {
       await session.close(BACKGROUND_CONTEXT);
@@ -2900,18 +2929,21 @@ async function roleCommand(
 ): Promise<void> {
   const name = assertKnownRole(positionals[1]);
   const task = positionals[2];
-  if (task === undefined) fail("missing <task>");
+  const resumeRunId = flags["--resume-run"];
+  if (task === undefined && resumeRunId === undefined)
+    fail("missing <task> (or pass --resume-run to continue its original task)");
   const targetDirArg = flags["--target-dir"];
   if (targetDirArg === undefined) fail("--target-dir is required for the role command");
 
   const configOptions = buildConfigOptions(targetDirArg, flags);
   const config = resolvePipelineConfig({
     ...configOptions,
-    task,
+    // Config resolution still needs a task-shaped value, but an id-only resume
+    // must not guess or persist the original private task a second time.
+    task: task ?? "Continue the original task from the durable session.",
   });
 
   const spec = roleSpecFor(config, name as RoleName);
-  const resumeRunId = flags["--resume-run"];
   // Resolved before the tools, because `submit_verdict` threads this run id onto
   // any rejection it reports.
   const standaloneRunId = resumeRunId ?? crypto.randomUUID();
@@ -2998,7 +3030,11 @@ async function roleCommand(
       model: spec.model,
       models: config.models,
       targetDir: configOptions.targetDir,
-      task: attemptTask,
+      // The first id-only resume intentionally has no task assertion. Any
+      // later reviewer retry is a new run and receives its generated task.
+      ...(resumeRunId !== undefined && attemptRunId === standaloneRunId && task === undefined
+        ? {}
+        : { task: attemptTask }),
       runId: attemptRunId,
       ...(resumeRunId !== undefined && attemptRunId === standaloneRunId
         ? { resumeExisting: true }
@@ -3027,7 +3063,7 @@ async function roleCommand(
       return await runReviewWithSubmissionRetry({
         run: (attemptRunId, attemptTask) => runOnce(attemptRunId, attemptTask, standaloneRole),
         firstRunId: standaloneRunId,
-        task,
+        task: task ?? "Continue the original task from the durable session.",
         retries: keepsVerdictTool,
         submitted: () => verdictCapture.verdict !== undefined || verdictCapture.error !== undefined,
       });
@@ -3037,7 +3073,7 @@ async function roleCommand(
         `ad-coder: standalone checkpoint=${expectedCheckpointPath} runId=${standaloneRunId}\n`,
       );
       process.stderr.write(
-        `ad-coder: resume with role ${name} <same-task> --resume-run ${standaloneRunId} and adjusted limits\n`,
+        `ad-coder: resume with role ${name} --resume-run ${standaloneRunId} and adjusted limits\n`,
       );
       if (error instanceof RunInterruptedError && receivedSignal !== undefined) {
         process.exitCode = receivedSignal === "SIGINT" ? 130 : 143;
@@ -4227,13 +4263,18 @@ const COMMANDS: readonly CommandDefinition[] = [
         name: `<${ROLE_NAMES.join("|")}>`,
         description: "Role to run.",
       },
-      { name: "<task>", description: "Task for the role." },
+      {
+        name: "[task]",
+        description:
+          "Task for the role; omit only with --resume-run to continue its original task.",
+      },
     ],
     options: [
       {
         name: "--resume-run",
         value: "<id>",
-        description: "Resume this standalone role from its durable checkpoint.",
+        description:
+          "Resume this standalone role from its durable checkpoint; the task is optional and, if supplied, must match exactly.",
       },
       ...PIPELINE_OPTIONS,
     ],
