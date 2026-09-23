@@ -1,12 +1,12 @@
 import { expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { type PublishOptions, publishOrReuse } from "../scripts/publish-registry-package";
 import type { RegistryCommandResult } from "../scripts/wait-registry-readiness";
 
-const packageBytes = Buffer.from("one packed package, published unchanged");
-const integrity = `sha512-${createHash("sha512").update(packageBytes).digest("base64")}`;
 const filename = "ad-coder-dev-0.181.24-dev.123.tgz";
 const ok = (stdout: string): RegistryCommandResult => ({ exitCode: 0, stdout, stderr: "" });
 const absent = (): RegistryCommandResult => ({
@@ -14,9 +14,28 @@ const absent = (): RegistryCommandResult => ({
   stdout: "",
   stderr: "npm error code E404\n",
 });
-// npm pack metadata can omit both `filename` and `integrity`.
 const metadata = { name: "ad-coder-dev", version: "0.181.24-dev.123" };
-const packed = ok(JSON.stringify([metadata]));
+const packed = ok("");
+
+function archiveBytes(
+  manifest: unknown,
+  marker = "one packed package, published unchanged",
+): Buffer {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-test-pack-"));
+  try {
+    fs.mkdirSync(path.join(root, "package"));
+    fs.writeFileSync(path.join(root, "package", "package.json"), `${JSON.stringify(manifest)}\n`);
+    fs.writeFileSync(path.join(root, "package", "README.md"), marker);
+    const archive = path.join(root, "fixture.tgz");
+    execFileSync("tar", ["-czf", archive, "-C", root, "package"]);
+    return fs.readFileSync(archive);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+const packageBytes = archiveBytes(metadata);
+const integrity = `sha512-${createHash("sha512").update(packageBytes).digest("base64")}`;
 
 function options(
   replies: RegistryCommandResult[],
@@ -31,7 +50,7 @@ function options(
     run: async (argv) => {
       calls.push(argv);
       if (argv[1] === "pack" && replies[0]?.exitCode === 0) {
-        const destination = argv[5];
+        const destination = argv[4];
         if (!destination) throw new Error("pack destination missing");
         for (const artifact of artifacts)
           fs.writeFileSync(path.join(destination, artifact), contents);
@@ -53,24 +72,28 @@ test("an unpublished version is published once with its configured dist-tag", as
   expect(await publishOrReuse(options([packed, absent(), ok("published")], calls))).toBe(
     "published",
   );
-  const destination = calls[0]?.[5];
+  const destination = calls[0]?.[4];
   if (!destination) throw new Error("pack destination missing");
   expect(calls).toEqual([
-    ["npm", "pack", "--json", "--silent", "--pack-destination", destination],
+    ["npm", "pack", "--silent", "--pack-destination", destination],
     ["npm", "view", "ad-coder-dev@0.181.24-dev.123", "dist.integrity", "--json", "--prefer-online"],
     ["npm", "publish", path.join(destination, filename), "--tag", "latest"],
   ]);
   expect(fs.existsSync(destination)).toBe(false);
 });
 
-test("a misleading pack filename cannot redirect or block publication", async () => {
-  for (const reported of ["missing.tgz", "../escape.tgz", "/tmp/other.tgz"]) {
+test("empty, malformed, and misleading npm pack output cannot redirect or block publication", async () => {
+  for (const output of [
+    "",
+    "not json",
+    JSON.stringify([{ ...metadata, filename: "../escape.tgz", integrity: "sha512-false" }]),
+    JSON.stringify([{ ...metadata, name: "other-package", version: "other-version" }]),
+  ]) {
     const calls: string[][] = [];
-    const reply = ok(JSON.stringify([{ ...metadata, filename: reported }]));
-    expect(await publishOrReuse(options([reply, absent(), ok("published")], calls))).toBe(
+    expect(await publishOrReuse(options([ok(output), absent(), ok("published")], calls))).toBe(
       "published",
     );
-    expect(calls[2]?.[2]).toBe(path.join(calls[0]?.[5] ?? "", filename));
+    expect(calls[2]?.[2]).toBe(path.join(calls[0]?.[4] ?? "", filename));
   }
 });
 
@@ -87,7 +110,7 @@ test("a rerun reuses only the identical published tarball", async () => {
   expect(mismatchCalls).toHaveLength(2);
 });
 
-test("registry integrity is checked against tarball bytes, not optional pack metadata", async () => {
+test("registry integrity is checked against tarball bytes, regardless of pack output", async () => {
   const calls: string[][] = [];
   const misleading = ok(JSON.stringify([{ ...metadata, integrity: "sha512-not-the-tarball" }]));
   expect(await publishOrReuse(options([misleading, ok(JSON.stringify(integrity))], calls))).toBe(
@@ -101,21 +124,22 @@ test("registry integrity is checked against tarball bytes, not optional pack met
       options(
         [packed, ok(JSON.stringify(integrity))],
         changedCalls,
-        Buffer.from("different bytes"),
+        archiveBytes(metadata, "different bytes"),
       ),
     ),
   ).rejects.toThrow("different tarball integrity");
   expect(changedCalls).toHaveLength(2);
 });
 
-test("invalid pack metadata cannot trigger publication", async () => {
-  for (const packReply of [
-    ok(JSON.stringify([{ ...metadata, version: "other-version" }])),
-    ok(JSON.stringify([])),
-    ok(JSON.stringify([null])),
+test("wrong or unreadable archive manifest cannot trigger publication", async () => {
+  for (const contents of [
+    archiveBytes({ ...metadata, name: "other-package" }),
+    archiveBytes({ ...metadata, version: "other-version" }),
+    archiveBytes({ name: metadata.name }),
+    Buffer.from("not a tarball"),
   ]) {
     const calls: string[][] = [];
-    await expect(publishOrReuse(options([packReply], calls))).rejects.toThrow();
+    await expect(publishOrReuse(options([packed], calls, contents))).rejects.toThrow();
     expect(calls).toHaveLength(1);
   }
 });
@@ -142,7 +166,7 @@ test("a symlinked tarball cannot trigger publication", async () => {
   testOptions.run = async (argv) => {
     const result = await originalRun(argv);
     if (argv[1] === "pack") {
-      const destination = argv[5];
+      const destination = argv[4];
       if (!destination) throw new Error("pack destination missing");
       const tarball = path.join(destination, filename);
       fs.unlinkSync(tarball);
