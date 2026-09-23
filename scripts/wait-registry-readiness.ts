@@ -51,12 +51,23 @@ export class RegistryPropagationPendingError extends Error {
 
 function readJsonString(result: RegistryCommandResult): string | null {
   if (result.exitCode !== 0) return null;
-  try {
-    const value: unknown = JSON.parse(result.stdout);
-    return typeof value === "string" ? value : null;
-  } catch {
-    return null;
+  // npm normally prints one JSON value, but a runner can prepend or append its
+  // own npm warnings to stdout. Treat whole non-empty lines as candidates: a
+  // JSON value must still be complete on its line, and exactly one value must
+  // be present. Searching for a quoted substring would turn damaged output or
+  // a warning's quoted configuration name into a successful readiness check.
+  const values: unknown[] = [];
+  for (const line of result.stdout.split(/\r?\n/u)) {
+    const candidate = line.trim();
+    if (candidate === "") continue;
+    try {
+      values.push(JSON.parse(candidate));
+    } catch {
+      // This line is transport noise, not a complete JSON value.
+    }
   }
+  if (values.length !== 1) return null;
+  return typeof values[0] === "string" ? values[0] : null;
 }
 
 function observation(result: RegistryCommandResult, expected: string): string {

@@ -40,6 +40,40 @@ test("registry readiness waits for both the exact version and latest dist-tag", 
   expect(sleeps).toEqual([7]);
 });
 
+test("registry readiness accepts one complete JSON string amid npm warning lines", async () => {
+  const run: RegistryCommandRunner = async () =>
+    reply(
+      'npm warn cli npm v11.5.1 does not support Node.js v20.18.0\n"0.181.22"\nnpm warn Unknown user config "always-auth"\n',
+    );
+  await expect(
+    waitForRegistryReadiness({
+      packageName: "ad-coder-dev",
+      version: "0.181.22",
+      maxAttempts: 1,
+      delayMs: 0,
+      run,
+    }),
+  ).resolves.toEqual({ attempts: 1 });
+});
+
+test("registry readiness rejects malformed, ambiguous, and non-string noisy JSON", async () => {
+  for (const stdout of [
+    'npm warn cli\n"0.181.22\n',
+    'npm warn cli\n"0.181.22"\n"0.181.22"\n',
+    'npm warn cli\n["0.181.22"]\n',
+  ]) {
+    const failure = await waitForRegistryReadiness({
+      packageName: "ad-coder-dev",
+      version: "0.181.22",
+      maxAttempts: 1,
+      delayMs: 0,
+      run: async () => reply(stdout),
+    }).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(RegistryPropagationPendingError);
+    expect((failure as RegistryPropagationPendingError).message).toContain("returned invalid JSON");
+  }
+});
+
 test("registry readiness times out without attempting another publish", async () => {
   const calls: string[][] = [];
   const run: RegistryCommandRunner = async (argv) => {
