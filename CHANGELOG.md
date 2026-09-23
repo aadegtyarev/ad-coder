@@ -11,6 +11,14 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.22] - 2026-09-23
+
+### Fixed
+
+- **Registry readiness now tolerates npm warning lines without accepting
+  damaged output.** It extracts one complete JSON string from command output;
+  malformed, ambiguous, and non-string values still leave publication pending.
+
 ## [0.181.21] - 2026-09-23
 
 ### Fixed
