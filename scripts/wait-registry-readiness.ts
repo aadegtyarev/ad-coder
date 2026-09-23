@@ -109,14 +109,71 @@ export function readJsonString(result: RegistryCommandResult): string | null {
 
 function readJsonObject(result: RegistryCommandResult): Record<string, unknown> | null {
   if (result.exitCode !== 0) return null;
+  const spans: Array<{ start: number; end: number }> = [];
   const values: unknown[] = [];
-  for (const line of result.stdout.split(/\r?\n/u)) {
+  let cursor = 0;
+  while (cursor < result.stdout.length) {
+    const objectStart = result.stdout.indexOf("{", cursor);
+    const arrayStart = result.stdout.indexOf("[", cursor);
+    const starts = [objectStart, arrayStart].filter((start) => start >= 0);
+    if (starts.length === 0) break;
+    const start = Math.min(...starts);
+    // A closing delimiter outside a complete value is a truncated or damaged
+    // payload, never harmless npm noise.
+    if (/[}\]]/u.test(result.stdout.slice(cursor, start))) return null;
+    const closers: string[] = [];
+    let inString = false;
+    let escaped = false;
+    let end = -1;
+    for (let index = start; index < result.stdout.length; index += 1) {
+      const char = result.stdout[index];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (char === "\\") escaped = true;
+        else if (char === '"') inString = false;
+        continue;
+      }
+      if (char === '"') inString = true;
+      else if (char === "{") closers.push("}");
+      else if (char === "[") closers.push("]");
+      else if (char === "}" || char === "]") {
+        if (closers.pop() !== char) return null;
+        if (closers.length === 0) {
+          end = index + 1;
+          break;
+        }
+      }
+    }
+    if (end < 0 || inString) return null;
+    const candidate = result.stdout.slice(start, end);
+    try {
+      values.push(JSON.parse(candidate));
+    } catch {
+      return null;
+    }
+    spans.push({ start, end });
+    cursor = end;
+  }
+  if (/[}\]]/u.test(result.stdout.slice(cursor))) return null;
+
+  // Preserve the old ambiguity rule for complete primitive JSON lines around
+  // the object. Invalid warning lines are noise; a second valid JSON value is
+  // an ambiguous registry response and must fail closed.
+  let residual = "";
+  let previous = 0;
+  for (const span of spans) {
+    residual += result.stdout.slice(previous, span.start);
+    residual += "\n";
+    previous = span.end;
+  }
+  residual += result.stdout.slice(previous);
+  for (const line of residual.split(/\r?\n/u)) {
     const candidate = line.trim();
     if (candidate === "") continue;
     try {
       values.push(JSON.parse(candidate));
     } catch {
-      // See readJsonString: only a complete, standalone JSON value is trusted.
+      // Invalid complete lines are npm transport warnings, not JSON values.
     }
   }
   const [value] = values;

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.181.48] - 2026-09-24
+
+### Fixed
+
+- Accept npm's pretty multiline `dist --json` object in release readiness while
+  still rejecting partial, multiple, or otherwise ambiguous registry payloads.
+
 ## [0.181.47] - 2026-09-24
 
 ### Fixed
