@@ -11,6 +11,14 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.30] - 2026-09-23
+
+### Fixed
+
+- **A blocked wake startup no longer hangs.** Startup now settles after it
+  observes an active or recovery-blocked lane, leaving the durable wake
+  unhandled for delivery when that lane next settles.
+
 ## [0.181.29] - 2026-09-23
 
 ### Fixed
