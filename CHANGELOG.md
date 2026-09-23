@@ -24,6 +24,46 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.46] - 2026-09-23
+
+### Fixed
+
+- **Durable wait reads now reject untyped record fields.** Every exposed copy
+  is explicitly whitelisted, and the state-size guard measures the actual
+  versioned storage envelope on every mutation.
+
+## [0.181.44] - 2026-09-23
+
+### Fixed
+
+- **Durable wait records have a mandatory byte ceiling.** Valid-shaped but
+  oversized persisted state now fails a typed, content-free refusal before any
+  wait read surface exposes it; new and mutated records are bounded too.
+
+## [0.181.43] - 2026-09-23
+
+### Fixed
+
+- **Wait recovery retains an in-flight reconciliation witness after a
+  cancellation or deadline.** A late adapter response now remains explicitly
+  uncertain instead of losing the durable evidence or being reported as a
+  generic non-pending wait. Persisted wait events and evidence are also
+  shape-checked and bounded before reopening or exposing them.
+
+## [0.181.42] - 2026-09-23
+
+### Added
+
+- **Durable core wait state machine.** `WaitService` persists typed,
+  secret-safe wait identities and bounded versioned lifecycle events through
+  `ProjectStore`. Its adapter reconciliation seam checkpoints dispatch before
+  any external effect and refuses replay after an uncertain crash boundary;
+  timer, process, CLI, and create-front concerns remain outside this core.
+
+- **Durable wait contracts.** Waiting, recovery, cursor reconciliation, and
+  wake-delivery boundaries define the headless service's typed, secret-safe
+  records and checkpoint-before-report semantics.
+
 ## [0.181.41] - 2026-09-23
 
 ### Fixed
@@ -79,7 +119,6 @@ enforces that dated release headings go in non-increasing date order
   evidence.** Resume rejects a still-live or unidentifiable owner, while a
   missing, dead, reused, or argv-mismatched process can safely yield its
   durable session to one recovering role.
-
 ## [0.181.30] - 2026-09-23
 
 ### Fixed
