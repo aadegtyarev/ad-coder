@@ -11,6 +11,17 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.21] - 2026-09-23
+
+### Fixed
+
+- **A successful npm publish now waits for the registry before calling the
+  release usable.** The release job publishes exactly once, then makes bounded
+  read-only checks that the exact package version resolves and `latest` names
+  it. A slow registry reports an explicit propagation-pending failure rather
+  than trying an impossible duplicate publish. `ad-coder update` calls the
+  channel target “registry latest” so that wording does not imply a local fact.
+
 ## [0.181.20] - 2026-09-23
 
 ### Fixed

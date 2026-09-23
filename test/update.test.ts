@@ -331,7 +331,7 @@ test("a registry-installed dev package updates itself, never the GitHub package"
     expect(result).toMatchObject({
       mode: "global-registry",
       checkoutDir: fixture.packageDir,
-      branch: "latest",
+      branch: "registry latest",
       upstream: "npm",
       previousRevision: "0.54.2-dev.4",
       revision: "0.63.0-dev.16",
@@ -626,7 +626,7 @@ function updateResult(overrides: Partial<UpdateResult> = {}): UpdateResult {
   return {
     mode: "global-registry",
     checkoutDir: "/install/global/ad-coder",
-    branch: "latest",
+    branch: "registry latest",
     upstream: "npm",
     previousRevision: "0.67.0-dev.23",
     revision: "0.67.0-dev.23",
@@ -639,16 +639,16 @@ test("the update line prints a registry version whole, never a truncation of it"
   const line = formatUpdateResult(updateResult());
   // Issue #364: `0.67.0-dev.23` sliced to twelve characters is `0.67.0-dev.2`,
   // a different well-formed version, so a current install read as a downgrade.
-  expect(line).toBe("ad-coder: already current latest (version 0.67.0-dev.23)");
+  expect(line).toBe("ad-coder: already current registry latest (version 0.67.0-dev.23)");
   expect(line).not.toContain("(0.67.0-dev.2)");
 });
 
 test("the update line prints a short registry version whole too", () => {
   expect(formatUpdateResult(updateResult({ revision: "0.67.0" }))).toBe(
-    "ad-coder: already current latest (version 0.67.0)",
+    "ad-coder: already current registry latest (version 0.67.0)",
   );
   expect(formatUpdateResult(updateResult({ revision: "0.67.0", changed: true }))).toBe(
-    "ad-coder: updated latest (version 0.67.0)",
+    "ad-coder: updated registry latest (version 0.67.0)",
   );
 });
 

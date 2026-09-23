@@ -24,6 +24,11 @@ surprising existing users, and what evidence makes an installable release valid?
   version unchanged is blocking. Installable changes additionally require a
   reproducible locked install and bounded packed-artifact smoke. The binary must
   report the exact version; never reuse a version previously offered from `main`.
+- **Npm publication is not release-ready until a bounded registry check proves
+  both the exact `package@version` lookup and that channel's `latest` dist-tag
+  resolve to the expected version.** A propagation timeout names that state and
+  performs no second publish; immutable package versions make republishing an
+  error, not a recovery.
 - Before publication, inspect the exact tracked and packed file sets for credentials,
   private keys, local runtime state, unexpected generated data, and licensing
   mistakes. Publication stops on uncertainty; absence of an optional external
