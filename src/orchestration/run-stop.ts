@@ -283,9 +283,11 @@ export function inspectStandaloneRun(targetDir: string, runId: string): Standalo
       runId,
       recordedStatus,
       nextAction:
-        recordedStatus === "paused"
-          ? "resume the role explicitly when ready"
-          : "inspect the recorded result or start a new role run",
+        recordedStatus === "starting"
+          ? "wait for the role to finish starting; if its owner is gone, resume this durable run"
+          : recordedStatus === "paused"
+            ? "resume the role explicitly when ready"
+            : "inspect the recorded result or start a new role run",
       ...(record.lastRecovery === undefined ? {} : { lastRecovery: record.lastRecovery }),
     };
   const identity = record.identity;

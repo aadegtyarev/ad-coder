@@ -11,6 +11,15 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.32] - 2026-09-23
+
+### Fixed
+
+- **Standalone role starts now recover atomically.** A durable `starting`
+  intent exists before session creation; after a hard stop, explicit resume
+  verifies the former owner and safely creates or reopens the one session
+  before making a provider request.
+
 ## [0.181.31] - 2026-09-23
 
 ### Fixed

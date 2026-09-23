@@ -634,6 +634,8 @@ export async function runRoleStandalone(params: {
   interruptSignal?: () => "SIGINT" | "SIGTERM" | undefined;
   /** A reviewer handoff persisted before submit_verdict acknowledges success. */
   verdictCapture?: VerdictCapture;
+  /** Test-only synchronization seam for the durable start boundary. */
+  beforeSessionCreate?: () => void | Promise<void>;
 }): Promise<{
   text: string;
   cost: number;
@@ -662,7 +664,12 @@ export async function runRoleStandalone(params: {
      * advertised as a live `running` role: the record is what `runs status`,
      * resume, and recovery read after the launcher has exited.
      */
-    status: "running" | "paused" | "complete" | "failed";
+    /**
+     * `starting` is the durable intent to create the session. It is written
+     * before the session exists, so a hard death in that interval is safe to
+     * resume and cannot be mistaken for a provider turn.
+     */
+    status: "starting" | "running" | "paused" | "complete" | "failed";
     /**
      * The process that owns (last owned) this run, recorded by the run's own
      * process at start and re-recorded by the process that resumes (issue
@@ -743,7 +750,7 @@ export async function runRoleStandalone(params: {
    * line for another target or role is positive evidence that this record is
    * orphaned; an unreadable process remains held rather than guessed at.
    */
-  const inspectRunningCheckpoint = (candidate: Checkpoint): "live" | "orphaned" | "unknown" => {
+  const inspectOwnedCheckpoint = (candidate: Checkpoint): "live" | "orphaned" | "unknown" => {
     if (candidate.process === undefined) return "orphaned";
     const inspected = verifyStopTarget({
       identity: candidate.process,
@@ -857,7 +864,7 @@ export async function runRoleStandalone(params: {
             checkpointPath,
             "standalone checkpoint was lost",
           );
-        const state = inspectRunningCheckpoint(current.value);
+        const state = inspectOwnedCheckpoint(current.value);
         if (state === "live")
           throw new ProjectStoreError(
             "version_conflict",
@@ -934,7 +941,27 @@ export async function runRoleStandalone(params: {
     // refuse the second launcher without letting it overwrite the checkpoint's
     // process identity with a process that never ran.  Once the predecessor is
     // actually dead, `resumeSession` reclaims its versioned lease safely.
-    session = await store.resumeSession(runId, BACKGROUND_CONTEXT);
+    if (prior.status === "starting") {
+      // A start intent is durable before `createSession`. Recovery therefore
+      // opens-or-creates under the normal session lease: either side of a
+      // crash at that boundary has one session and no provider prompt yet.
+      const state = inspectOwnedCheckpoint(prior);
+      if (state === "live")
+        throw new ProjectStoreError(
+          "version_conflict",
+          checkpointPath,
+          "standalone role is still starting in its recorded process",
+        );
+      if (state === "unknown")
+        throw new ProjectStoreError(
+          "version_conflict",
+          checkpointPath,
+          "standalone role start cannot be identified safely",
+        );
+      session = await store.openOrCreateSession(runId, BACKGROUND_CONTEXT);
+    } else {
+      session = await store.resumeSession(runId, BACKGROUND_CONTEXT);
+    }
     try {
       let recoveredPrior = prior;
       if (prior.status === "running") {
@@ -1000,12 +1027,20 @@ export async function runRoleStandalone(params: {
           lastInputTokens: 0,
           costUsd: 0,
         },
-        status: "running",
+        // Do not advertise a provider operation before a session can record
+        // it. This start intent is the recovery point for a hard process exit.
+        status: "starting",
         process: selfProcessIdentity(),
       },
       0,
     );
+    await params.beforeSessionCreate?.();
     session = await store.createSession(runId, BACKGROUND_CONTEXT);
+    checkpoint = store.writeVersionedJson(
+      checkpointPath,
+      { ...checkpoint.value, status: "running" },
+      checkpoint.version,
+    );
   }
   if (params.verdictCapture !== undefined) {
     params.verdictCapture.persistVerdict = async (verdict) => {
