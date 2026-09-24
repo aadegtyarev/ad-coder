@@ -31,6 +31,11 @@ This contract owns preservation and recovery of every durable ad-coder state.
   resumes runnable work or schedules its next wake without requiring an
   operator to reconstruct context or choose a lost transition; it never silently
   starts a blank replacement or reports a partial restoration as complete.
+- A standalone resume may settle an identical closeout when it made no new
+  successful tool progress (including idempotent finalization). If successful
+  tool results were added and the provider repeats the prior closeout exactly,
+  it pauses with `stale_closeout` instead of completing; the durable tool
+  results remain in order, and the pause evidence contains no provider text.
 - A checkpoint records a settled or pending context-handoff state: prior and
   target route, reason, conversion/compaction evidence, and whether a request
   was in flight. Resume completes or safely rolls back that handoff exactly once;

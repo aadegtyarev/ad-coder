@@ -730,6 +730,11 @@ export async function runRoleStandalone(params: {
           observed: number;
         }
       | {
+          /** The provider repeated a closeout after making successful progress. */
+          code: "stale_closeout";
+          detail: string;
+        }
+      | {
           code: "interrupted";
           /**
            * Which signal ended the run (issue #479): an external stop is not
@@ -832,6 +837,18 @@ export async function runRoleStandalone(params: {
     });
   };
   let latestStageLimitSnapshot: Readonly<StageLimitSnapshot> | undefined;
+  // This prior text is retained only in memory for the resume boundary; it is
+  // never copied into checkpoint diagnostics.
+  let resumedCloseoutText: string | undefined;
+  let resumedSuccessfulToolResults: number | undefined;
+  const successfulToolResultCount = async (target: Session): Promise<number> => {
+    const entries = await target.findEntries({ type: "message", order: "asc" }, BACKGROUND_CONTEXT);
+    return entries.filter((entry) => {
+      if (entry.type !== "message") return false;
+      const message = entry.message as { role?: unknown; isError?: unknown };
+      return message.role === "toolResult" && message.isError !== true;
+    }).length;
+  };
   // A session-open failure used to escape before the checkpoint recorded its
   // terminal outcome, leaving a dead process advertised as `running` forever.
   // This closeout settles the attempt before rethrowing: an ambiguous journal
@@ -880,11 +897,20 @@ export async function runRoleStandalone(params: {
     await session.close(BACKGROUND_CONTEXT);
     const readable = await store.resumeSession(runId, BACKGROUND_CONTEXT);
     let text: string;
+    let successfulToolsAfterResume: number | undefined;
     try {
       text = await extractFinalText(readable, BACKGROUND_CONTEXT);
+      if (resumedCloseoutText !== undefined && resumedSuccessfulToolResults !== undefined)
+        successfulToolsAfterResume = await successfulToolResultCount(readable);
     } finally {
       await readable.close(BACKGROUND_CONTEXT);
     }
+    const staleCloseout =
+      resumedCloseoutText !== undefined &&
+      resumedSuccessfulToolResults !== undefined &&
+      successfulToolsAfterResume !== undefined &&
+      successfulToolsAfterResume > resumedSuccessfulToolResults &&
+      text === resumedCloseoutText;
     const durableResult = {
       text,
       cost: operation.cost,
@@ -893,6 +919,32 @@ export async function runRoleStandalone(params: {
       observations: operation.observations,
     };
     const closeout = operation.stageCloseout;
+    if (staleCloseout) {
+      updateCheckpoint((current) => {
+        const {
+          pause: _pause,
+          failure: _failure,
+          result: _result,
+          settledOperation: _operation,
+          ...resumed
+        } = current;
+        return {
+          ...resumed,
+          status: "paused",
+          pause: {
+            code: "stale_closeout",
+            detail: "resume produced the prior closeout after successful tool activity",
+          },
+        };
+      });
+      return {
+        text,
+        cost: operation.cost,
+        ledgerPath: operation.ledgerPath,
+        observations: operation.observations,
+        ...(operation.stageCloseout !== undefined && { stageCloseout: operation.stageCloseout }),
+      };
+    }
     updateCheckpoint((current) => {
       const {
         pause: _pause,
@@ -1158,6 +1210,10 @@ export async function runRoleStandalone(params: {
     }
     if (checkpoint.value.settledOperation !== undefined)
       return await finalizeSettledOperation(checkpoint.value.settledOperation);
+    if (prior.pause?.code === "stage_closeout" && prior.result !== undefined) {
+      resumedCloseoutText = prior.result.text;
+      resumedSuccessfulToolResults = await successfulToolResultCount(session);
+    }
   } else {
     if (taskDigest === undefined)
       throw new ProjectStoreError(
