@@ -82,6 +82,29 @@ export class EmptyTurnError extends Error {
 }
 
 /**
+ * The provider settled a turn whose assistant text still carries terminal
+ * tool-protocol framing that exact-serialization recovery did not admit
+ * (issue #635): an envelope a transport dropped and recovery declined must
+ * never cross the message boundary as a successful prose answer.
+ *
+ * Fail-closed on purpose: the residual markup is never parsed or executed.
+ * Every carried field is harness-authored and bounded -- the run id and this
+ * fixed diagnostic code and wording -- so the durable failure projection
+ * (docs/contracts/errors.md, issue #418) can carry the class verbatim without
+ * reflecting provider text, tool arguments, command text, URLs, credentials,
+ * or arbitrary tool names.
+ */
+export class ToolTransportMalformedError extends Error {
+  override readonly name = "ToolTransportMalformedError";
+  readonly code = "malformed_tool_transport" as const;
+  constructor(readonly runId: string) {
+    super(
+      "the provider returned tool-call transport in its answer text that exact recovery did not accept; no tool was executed; retry the turn, or file a diagnostic report if it recurs",
+    );
+  }
+}
+
+/**
  * A strict-charset provider error-code token; anything else is dropped, never
  * truncated (`docs/contracts/errors.md`, 2026-09-19 issue #418). Exported as
  * the CANONICAL bound: every other boundary that renders a typed `code` into a
@@ -89,7 +112,6 @@ export class EmptyTurnError extends Error {
  * drain in `src/orchestration/wake.ts`).
  */
 export const PROVIDER_ERROR_CODE_BOUND = /^[A-Za-z0-9_.-]{1,64}$/;
-
 /**
  * pi-agent-core exhausted its own provider retry policy without receiving a
  * provider status, error token, assistant text, or usage.  Its

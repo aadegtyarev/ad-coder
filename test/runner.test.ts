@@ -13,6 +13,7 @@ import {
   createProvider,
   fauxAssistantMessage,
   fauxProvider,
+  fauxText,
   fauxThinking,
   fauxToolCall,
   Type,
@@ -44,6 +45,7 @@ import {
   providerRejectionStatusFrom,
   RunnerError,
   resolveTargetDir,
+  ToolTransportMalformedError,
   truncatedGenerationFrom,
 } from "../src/runner/errors";
 import {
@@ -356,6 +358,35 @@ test("runRole drives one turn to a settled result and lands the ledger under tar
 
   const underCwd = path.join(process.cwd(), LEDGER_BASE_DIR, `${result.runId}.jsonl`);
   expect(fs.existsSync(underCwd)).toBe(false);
+});
+
+test("#635: runRole rejects unrecovered tool transport without invoking it or reflecting secrets", async () => {
+  const { faux, models, model, role } = fixtureWithActiveTools(["sentinel"]);
+  const calls: string[] = [];
+  const sentinel = recordingTool("sentinel", calls);
+  const envelope = [
+    "<｜｜DSML｜｜tool_calls>",
+    '<｜｜DSML｜｜ invoke name="sentinel">',
+    '<｜｜DSML｜｜ parameter name="note" string="true">SECRET_SENTINEL</｜｜DSML｜｜ parameter>',
+    "</｜｜DSML｜｜ invoke>",
+    "</｜｜DSML｜｜tool_calls>",
+  ].join("\n");
+  faux.setResponses([fauxAssistantMessage([fauxText(envelope)], { stopReason: "stop" })]);
+
+  const error = await runRole({
+    role,
+    targetDir,
+    models,
+    model,
+    prompt: "do not execute",
+    tools: [sentinel],
+  }).catch((cause) => cause);
+
+  expect(error).toBeInstanceOf(ToolTransportMalformedError);
+  expect(error).toMatchObject({ code: "malformed_tool_transport" });
+  expect(calls).toEqual([]);
+  expect(JSON.stringify(error)).not.toContain("SECRET_SENTINEL");
+  expect(String(error)).not.toContain("SECRET_SENTINEL");
 });
 
 test("runRole rejects an expired stage before provider dispatch", async () => {

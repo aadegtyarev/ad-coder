@@ -58,9 +58,13 @@ import {
   providerRejectionStatusFrom,
   resolveTargetDir,
   SuspendedRunError,
+  ToolTransportMalformedError,
   truncatedGenerationFrom,
 } from "../runner/errors";
-import { wrapModelsForToolCallRecovery } from "../runner/native-tool-calls";
+import {
+  detectUnrecoveredToolTransport,
+  wrapModelsForToolCallRecovery,
+} from "../runner/native-tool-calls";
 import type { Tool } from "../runner/tool";
 import type { SessionLimits } from "../session-limits";
 import { SessionLimitController } from "../session-limits";
@@ -923,6 +927,9 @@ export async function startConversation(config: ConversationConfig): Promise<Con
         throw new SuspendedRunError(runId);
       }
       const finalMessage = await newestAssistantMessage(session, context);
+      if (detectUnrecoveredToolTransport(finalMessage)) {
+        throw new ToolTransportMalformedError(runId);
+      }
       const assistantText = assistantMessageText(finalMessage);
       if (result.status !== "completed") {
         // The harness could not produce the compaction this run needed, so the

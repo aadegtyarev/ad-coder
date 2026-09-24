@@ -67,9 +67,10 @@ import {
   RunnerError,
   resolveTargetDir,
   SuspendedRunError,
+  ToolTransportMalformedError,
   truncatedGenerationFrom,
 } from "./errors";
-import { wrapModelsForToolCallRecovery } from "./native-tool-calls";
+import { detectUnrecoveredToolTransport, wrapModelsForToolCallRecovery } from "./native-tool-calls";
 import type { Tool } from "./tool";
 
 /**
@@ -1085,6 +1086,9 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
       });
       if (compactionLost !== undefined) throw compactionLost;
       const finalMessage = await newestAssistantMessage(session, context);
+      if (detectUnrecoveredToolTransport(finalMessage)) {
+        throw new ToolTransportMalformedError(runId);
+      }
       const text = assistantMessageText(finalMessage);
       // An admission refusal settles as a stream-terminal error message (the
       // stream must return synchronously), and the durable drive composes
@@ -1171,6 +1175,9 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
       // jsonl. A text block or a tool call is usable content; only silence --
       // thinking-only or empty -- classifies here.
       const finalMessage = await newestAssistantMessage(session, context);
+      if (detectUnrecoveredToolTransport(finalMessage)) {
+        throw new ToolTransportMalformedError(runId);
+      }
       if (assistantMessageText(finalMessage).trim() === "") {
         const truncated = truncatedGenerationFrom(finalMessage);
         if (truncated !== undefined) {
