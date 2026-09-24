@@ -11,6 +11,12 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.55] - 2026-09-24
+
+### Fixed
+
+- Pause a standalone resume with typed `stale_closeout` evidence when it makes successful tool progress but repeats the prior terminal closeout. Tool results remain durable and are not replayed; no-progress and idempotent resumes retain their existing behavior (#634).
+
 ## [0.181.54] - 2026-09-24
 
 ### Fixed

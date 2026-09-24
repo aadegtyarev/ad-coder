@@ -1078,6 +1078,7 @@ function store_read(
 ): {
   status: string;
   pause?: Record<string, unknown>;
+  result?: unknown;
 } {
   const store = new ProjectStore(target);
   return store.readVersionedJson<{
@@ -1626,6 +1627,71 @@ test("a standalone run that settles inside the closeout reserve relays the fact"
   });
   expect(resumed.text).toContain("completed after the raised limit");
   expect(store_read(targetDir, runId).status).toBe("complete");
+});
+
+test("resume pauses a byte-identical closeout after successful tool progress", async () => {
+  const { faux, models, model, role } = fixture();
+  const runId = `stale-closeout-${crypto.randomUUID()}`;
+  const task = "review the closing change";
+  fs.writeFileSync(path.join(targetDir, "stale-closeout.txt"), "safe\\n");
+  faux.setResponses([
+    fauxAssistantMessage(fauxToolCall("read", { path: "stale-closeout.txt" })),
+    { ...fauxAssistantMessage("closeout A"), responseId: "response-a" },
+  ]);
+  await runRoleStandalone({
+    role,
+    model,
+    models,
+    targetDir,
+    task,
+    runId,
+    stageLimits: { maxToolTurns: 2, finalResponseReserveToolTurns: 1 },
+  });
+
+  faux.setResponses([
+    fauxAssistantMessage(fauxToolCall("read", { path: "stale-closeout.txt" })),
+    { ...fauxAssistantMessage("closeout A"), responseId: "response-b" },
+  ]);
+  const resumed = await runRoleStandalone({
+    role,
+    model,
+    models,
+    targetDir,
+    task,
+    runId,
+    resumeExisting: true,
+    stageLimits: { maxToolTurns: 4, finalResponseReserveToolTurns: 1 },
+  });
+  expect(resumed.text).toBe("closeout A");
+  const checkpoint = store_read(targetDir, runId);
+  expect(checkpoint.status).toBe("paused");
+  expect(checkpoint.pause).toEqual({
+    code: "stale_closeout",
+    detail: "resume produced the prior closeout after successful tool activity",
+  });
+  expect(checkpoint.result).toBeUndefined();
+
+  const store = new ProjectStore(targetDir);
+  const session = await store.resumeSession(runId, BACKGROUND_CONTEXT);
+  try {
+    const entries = await session.findEntries({ type: "message" }, BACKGROUND_CONTEXT);
+    const successfulTools = entries.filter(
+      (entry) =>
+        entry.type === "message" && entry.message.role === "toolResult" && !entry.message.isError,
+    );
+    expect(successfulTools).toHaveLength(2);
+    const responseIds = entries
+      .flatMap((entry) =>
+        entry.type === "message" && entry.message.role === "assistant"
+          ? [entry.message.responseId]
+          : [],
+      )
+      .filter((id): id is string => id !== undefined);
+    expect(responseIds).toEqual(["response-b", "response-a"]);
+    expect(new Set(responseIds).size).toBe(2);
+  } finally {
+    await session.close(BACKGROUND_CONTEXT);
+  }
 });
 
 test("a submitted standalone verdict survives a post-submit limit and a fresh-process resume", async () => {
