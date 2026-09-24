@@ -53,6 +53,13 @@ const small = (tag: string) => userMessage(`${tag}:${"y".repeat(400)}`); // ~100
 // only the field the code reads. No network, no catalog lookup.
 const localModel = { contextWindow: 16_000 } as unknown as Model<Api>;
 
+/** A minimal full-request shape for the pre-flight assertions (issue #630). */
+const testRequest = (messages: AgentMessage[]) => ({
+  systemPrompt: "You plan.",
+  tools: [],
+  messages,
+});
+
 /**
  * A preparation shaped like the harness's own: the evicted history arrives as
  * `messagesToSummarize`, the recent tail is retained verbatim, and the file
@@ -540,7 +547,9 @@ test("assertTurnFitsBudget returns void when the irreducible tail plus reserve f
     },
     localModel,
   );
-  expect(() => assertTurnFitsBudget(role, [small("a"), small("b")], localModel)).not.toThrow();
+  expect(() =>
+    assertTurnFitsBudget(role, testRequest([small("a"), small("b")]), localModel),
+  ).not.toThrow();
 });
 
 test("assertTurnFitsBudget reports the runtime model window as its effective ceiling", () => {
@@ -560,7 +569,7 @@ test("assertTurnFitsBudget reports the runtime model window as its effective cei
   // The final message alone (~1000 tokens) is the irreducible tail floor.
   let caught: unknown;
   try {
-    assertTurnFitsBudget(role, [small("a"), big()], smallerRuntimeModel);
+    assertTurnFitsBudget(role, testRequest([small("a"), big()]), smallerRuntimeModel);
   } catch (error) {
     caught = error;
   }
@@ -673,7 +682,7 @@ test("assertContextFitsBudget reports the runtime window for disabled compaction
   const secret = `disabled-context-secret:${"z".repeat(4000)}`;
   let caught: unknown;
   try {
-    assertContextFitsBudget(role, [userMessage(secret)], smallerRuntimeModel);
+    assertContextFitsBudget(role, testRequest([userMessage(secret)]), smallerRuntimeModel);
   } catch (error) {
     caught = error;
   }
@@ -682,5 +691,7 @@ test("assertContextFitsBudget reports the runtime window for disabled compaction
   expect(error.effectiveCeiling).toBe(500);
   expect(error.message).toContain("effective ceiling 500");
   expect(error.message).not.toContain(secret);
-  expect(() => assertTurnFitsBudget(role, [big(), small("tail")], localModel)).not.toThrow();
+  expect(() =>
+    assertTurnFitsBudget(role, testRequest([big(), small("tail")]), localModel),
+  ).not.toThrow();
 });

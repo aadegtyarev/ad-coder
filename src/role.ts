@@ -4,7 +4,8 @@ import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import type { ContextBudget } from "./context/budget";
 import { validateContextBudget } from "./context/budget";
 import type { CompactionMode } from "./context/compactor";
-import { durableCompactionSettings } from "./context/compactor";
+import { COMPACTION_SAFETY_PROMPT, durableCompactionSettings } from "./context/compactor";
+import { type EstimatorTool, estimateOverheadTokens, grantedTools } from "./context/estimate";
 
 const CACHE_RETENTIONS: readonly CacheRetention[] = ["none", "short", "long"];
 const THINKING_LEVELS: readonly ThinkingLevel[] = [
@@ -55,6 +56,11 @@ export interface RoleRunDeps {
    * compaction switched off and leaves the whole budget to the pre-flight.
    */
   compactionMode?: CompactionMode;
+  /**
+   * The tool definitions this run will register; the role's allow-list is applied inside the estimator so
+   * the derived compaction threshold matches what the request will grant.
+   */
+  tools?: readonly EstimatorTool[];
 }
 
 /**
@@ -150,7 +156,18 @@ export function toHarnessOptions(role: Role, deps: RoleRunDeps): AgentHarnessOpt
     // nothing at all.
     compaction:
       (deps.compactionMode ?? "auto") === "auto"
-        ? durableCompactionSettings(role.contextBudget, deps.model.contextWindow)
+        ? durableCompactionSettings(
+            role.contextBudget,
+            deps.model.contextWindow,
+            // The harness reports a system prompt plus the safety prompt on
+            // every auto-mode turn, so derive the threshold from BOTH against
+            // the granted tools (issue #630): otherwise the full request can
+            // drift past the budget that compaction thought it was guarding.
+            estimateOverheadTokens({
+              systemPrompt: `${role.systemPrompt}\n\n${COMPACTION_SAFETY_PROMPT}`,
+              tools: grantedTools(role.activeToolNames, deps.tools ?? []),
+            }),
+          )
         : { enabled: false, reserveTokens: 0, keepRecentTokens: 0 },
   };
 }

@@ -1184,7 +1184,11 @@ test("auto compaction consumes a distinct provider summary before the normal res
     const summaryAt = calls.indexOf("summary");
     expect(summaryAt).toBeGreaterThan(0);
     expect(calls[summaryAt + 1]).toBe("role");
-    expect(calls.filter((kind) => kind === "role")).toHaveLength(6);
+    // The derived threshold subtracts the full-request overhead (issue #630):
+    // the effective system prompt plus the granted tools ride EVERY turn, so
+    // the harness fires one turn earlier than a dialogue-only measure would
+    // -- that is the corrected crossing of the role's own budget.
+    expect(calls.filter((kind) => kind === "role")).toHaveLength(7);
     expect(controller.snapshot().admittedTurns).toBe(calls.length);
     expect(calls.filter((kind) => kind === "summary")).toHaveLength(1);
   } finally {

@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test";
 import type { Session } from "@earendil-works/pi-agent-core";
+import { COMPACTION_SAFETY_PROMPT } from "../src/context/compactor";
+import { estimateOverheadTokens } from "../src/context/estimate";
 import type { Role } from "../src/role";
 import { defineRole, resolveRoleModel, toHarnessOptions } from "../src/role";
 
@@ -92,17 +94,23 @@ test("toHarnessOptions passes the system prompt through verbatim and maps the bu
   expect(opts.systemPrompt).toBe(valid.systemPrompt);
   expect(typeof opts.systemPrompt).toBe("string");
   // Auto is the resolved default, and the harness reserve is DERIVED from the
-  // role's own threshold -- `contextWindow - (maxTokens - reserveTokens)` -- so
-  // both strategies fire at the same number. The budget's own numbers are not
-  // mirrored: the harness reserve is not the role's reserve.
+  // role's own threshold minus the full-request overhead (issue #630): the
+  // system prompt (plus the auto-mode safety prompt) and granted tools are
+  // part of the request, so the harness fires `overheadTokens` earlier to
+  // compact when the FULL context crosses the budget.
+  const overhead = estimateOverheadTokens({
+    systemPrompt: `${valid.systemPrompt}\n\n${COMPACTION_SAFETY_PROMPT}`,
+    tools: [],
+  });
   expect(opts.compaction).toEqual({
     enabled: true,
     reserveTokens:
-      runModel.contextWindow - (valid.contextBudget.maxTokens - valid.contextBudget.reserveTokens),
+      runModel.contextWindow -
+      (valid.contextBudget.maxTokens - valid.contextBudget.reserveTokens - overhead),
     keepRecentTokens: valid.contextBudget.keepRecentTokens,
   });
   expect(runModel.contextWindow - (opts.compaction?.reserveTokens ?? 0)).toBe(
-    valid.contextBudget.maxTokens - valid.contextBudget.reserveTokens,
+    valid.contextBudget.maxTokens - valid.contextBudget.reserveTokens - overhead,
   );
   expect(opts.streamOptions?.cacheRetention).toBe(valid.cacheRetention);
   expect(opts.model).toBe(runModel);
