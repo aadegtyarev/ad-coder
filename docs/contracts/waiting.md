@@ -103,6 +103,13 @@ process runner, or a front-only feature.
   the last returned sequence as `nextCursor`. A cursor behind retained history
   sets `gap`; consumers reconcile from `get`/`reopen` rather than treating a
   page as complete history. An empty page retains the supplied cursor.
+- `listIds(after, limit)` enumerates durable wait ids as a bounded keyset page
+  strictly after `after`, returning the last returned id as `nextCursor` and
+  `""` once the set is exhausted. It resumes from the last id, not a numeric
+  offset, so a wait removed mid-enumeration or a restart resuming mid-cursor
+  cannot silently skip progress. `gap` is set exactly when the supplied
+  boundary wait no longer exists in the durable id set; consumers recover by
+  re-enumerating from the start.
 - `poll` only makes reconciliation eligible after its configured interval; it
   never schedules or busy-waits. The interval is required and at least the
   positive `minPollIntervalMs`; `events` has no interval.

@@ -795,6 +795,47 @@ export class BackgroundRunManager {
     }
     return pending;
   }
+  /**
+   * Add one durable wait-derived wake window. The terminal timestamp is part of
+   * the identity so a retry/restart cannot duplicate a terminal transition,
+   * while a later terminal transition remains observable.
+   */
+  recordWakeWindow(
+    runId: string,
+    kind: WakeKind,
+    terminalAt: number,
+  ): { recorded: boolean; runId: string; kind: WakeKind; terminalAt: number } {
+    if (this.closed) throw new BackgroundRunError("closed");
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(runId) || !WAKE_INITIATING_LIFECYCLES.includes(kind))
+      throw new BackgroundRunError("invalid_request", runId);
+    if (!Number.isSafeInteger(terminalAt) || terminalAt < 0)
+      throw new BackgroundRunError("invalid_request", runId);
+    const entry = this.entries.get(runId);
+    if (entry === undefined) throw new BackgroundRunError("not_found", runId);
+    const existing = entry.wake.entries.find(
+      (wake) => wake.kind === kind && wake.firstAt === terminalAt,
+    );
+    if (existing !== undefined) return { recorded: false, runId, kind, terminalAt };
+    entry.wake.entries.push({
+      kind,
+      firstAt: terminalAt,
+      lastAt: terminalAt,
+      count: 1,
+      handled: false,
+    });
+    if (entry.wake.entries.length > this.limits.maxWakeEntriesPerRun) {
+      const evictable = entry.wake.entries.filter((wake) => wake.handled);
+      while (entry.wake.entries.length > this.limits.maxWakeEntriesPerRun) {
+        const oldest = evictable.shift();
+        if (oldest === undefined) break;
+        const index = entry.wake.entries.indexOf(oldest);
+        if (index >= 0) entry.wake.entries.splice(index, 1);
+      }
+    }
+    this.persist(entry);
+    this.notify(entry);
+    return { recorded: true, runId, kind, terminalAt };
+  }
   /** Mark the named wake kinds handled for a run, on durable state and in memory. */
   markWakesHandled(runId: string, wakes: readonly PendingWake[] | readonly WakeKind[]): void {
     if (this.closed) throw new BackgroundRunError("closed");

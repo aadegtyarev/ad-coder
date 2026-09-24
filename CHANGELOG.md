@@ -11,6 +11,16 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.56] - 2026-09-24
+
+### Added
+
+- Add a bounded, restart-safe wait host that reconciles durable waits and projects terminal state into existing owner-scoped wake windows without creating front or event-bus turns.
+
+### Fixed
+
+- Make wait-derived wake projection idempotent and validate owner, kind, and terminal timestamp while preserving legacy wake records.
+
 ## [0.181.55] - 2026-09-24
 
 ### Fixed

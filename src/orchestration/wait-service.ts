@@ -1,4 +1,5 @@
 import * as crypto from "node:crypto";
+import * as fs from "node:fs";
 import type { ProjectStore } from "../project-store/project-store";
 import { ProjectStoreError, type VersionedState } from "../project-store/types";
 import type { WaitSourceAdapterRegistry } from "./wait-adapters";
@@ -248,6 +249,52 @@ export class WaitService {
 
   get(id: string): WaitRecord {
     return copyRecord(this.read(id));
+  }
+
+  /**
+   * Bounded keyset enumeration of durable wait ids. Pages return ids strictly
+   * after the `after` boundary and resume from the last id, not from a numeric
+   * offset, so a wait removed mid-enumeration or a restart that resumes at a
+   * non-empty cursor cannot silently skip progress. `gap` is a durable-signal
+   * type (it narrows away when no gap), and is set exactly when the supplied
+   * boundary wait no longer exists in the id set: consumers recover by
+   * re-enumerating from the start, because entries may have been created or
+   * removed under the boundary since the previous page.
+   */
+  listIds(
+    after = "",
+    limit = this.limits.maxEventsPerWait,
+  ): { ids: string[]; nextCursor: string; gap: boolean } {
+    if (
+      typeof after !== "string" ||
+      (after !== "" && !WAIT_ID.test(after)) ||
+      !Number.isSafeInteger(limit) ||
+      limit <= 0
+    )
+      throw new WaitServiceError("invalid_request");
+    const ids = fs
+      .readdirSync(this.store.layout.waits, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && /^[A-Za-z0-9_-]{1,64}$/.test(entry.name))
+      .map((entry) => entry.name)
+      .sort();
+    let start = 0;
+    let gap = false;
+    if (after !== "") {
+      start = ids.findIndex((id) => id > after);
+      if (start === -1) start = ids.length;
+      // The boundary itself is gone: the caller's resume point is no longer
+      // anchored in durable state, so report the gap instead of pretending
+      // the page is a complete continuation.
+      if (!ids.includes(after)) gap = true;
+    }
+    const page = ids.slice(start, start + limit);
+    return {
+      ids: page,
+      // A full page continues from its last id; anything less means the set
+      // is exhausted and the next sweep starts over.
+      nextCursor: page.length === limit ? (page[page.length - 1] ?? "") : "",
+      gap,
+    };
   }
 
   events(id: string, cursor = 0, limit = this.limits.maxEventsPerWait): WaitEventPage {

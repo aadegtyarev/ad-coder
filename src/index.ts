@@ -350,6 +350,8 @@ export {
   WaitSourceAdapterRegistry,
   WaitSourceAdapterRegistryError,
 } from "./orchestration/wait-adapters";
+export type { WaitHostOptions, WaitHostScanResult } from "./orchestration/wait-host";
+export { WaitHost } from "./orchestration/wait-host";
 export type {
   CreateWaitInput,
   WaitCondition,

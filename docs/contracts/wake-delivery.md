@@ -29,7 +29,15 @@ from render-only activity notices.
 ## Wait integration and configuration
 
 `WaitService` only persists typed lifecycle events; a host derives any wake from
-that durable state after it commits. It never gives an adapter, timer, or front
+that durable state after it commits. The wait host projects persisted terminal
+transitions onto existing kinds below without inventing a new one. Cancellation
+is a normal durable wake per the waiting contract: an operator-chosen
+cancellation still owes the owning run a decision (retry, replacement, or a
+reported outcome), so `cancelled` projects onto `operator_attention` — the
+existing window for "a state the orchestrator has to decide on" — exactly like
+`unavailable`. Mapping: `satisfied`→`completed`, `failed`→`failed`,
+`timed_out`→`timed_out`, `stalled`→`paused`, `cancelled`/`unavailable`→
+`operator_attention`. It never gives an adapter, timer, or front
 authority to create a model turn. Wake retention and drain bounds are positive,
 configurable safety limits (`maxWakeEntriesPerRun`, `maxWakesPerTurn`) described
 in [configuration](config.md). They are configurable but zero does not disable
