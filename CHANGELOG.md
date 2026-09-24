@@ -11,6 +11,12 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.57] - 2026-09-24
+
+### Changed
+
+- **The orchestrator contract is audited against the current code, by rule and slice (issue #570).** The 2026-09-21 audit is removed: it addressed clauses as K0–K12 against a 589-line contract that #596 replaced with the current 60-line `docs/contracts/orchestrator.md`, and it marked wait-service rules absent although the wait service had already landed. Its replacement audits each guarantee of the current contract by that contract's own line numbers, records the command executed and its real result, and states explicitly what remains unverified (`docs/reviews/slices/orchestrator-g1-task-states.md` is the first slice). Result: 5 guarantees conforming, 4 violating.
+
 ## [0.181.55] - 2026-09-24
 
 ### Fixed
@@ -571,6 +577,13 @@ enforces that dated release headings go in non-increasing date order
 
 ### Changed
 - **Skill loads now render as `Skill <skill-id>` in tool activity (issue #569).**
+
+## [0.170.0] - 2026-09-21
+
+### Changed
+- **Added the orchestrator contract audit (issue #570).** The dated review records
+  current-base evidence for landing-contract clauses K0–K12 and separately
+  identifies a precedence collision with the accepted project rules.
 
 ## [0.164.0] - 2026-09-21
 
