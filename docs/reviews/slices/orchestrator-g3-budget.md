@@ -1,4 +1,4 @@
-# Slice audit: orchestrator guarantee `orchestrator.md:16` (g3-budget)
+# Slice audit: orchestrator guarantee `orchestrator.md:22` (g3-budget)
 Audit base: ff07c9988923aeb4fa0b66106f3574103eb4b4cd, date 2026-09-24.
 Rule text: "- Before work starts, the budget is accepted, counter-estimated with evidence,
   or honestly left blocked for a decision. It never proceeds with an unknown budget by
@@ -59,7 +59,7 @@ lane funding (`task-estimation.md` lane-reserve clause), TUI surfaces — all `u
   tool's shape but only for the operator, never before work.
 
 ## Gaps and unverified
-- The g2-intake verdict's caveat stands here too: `orchestrator.md:14` vs `:16` use "budget"
+- The g2-intake verdict's caveat stands here too: `orchestrator.md:13` vs `:22` use "budget"
   without a definition (sentence-level work budget vs context-token budget vs stage cost
   ceilings). A clarifying contract edit should precede the fix; as written, the sum of
   evidence (no gate, no consumer of the forecast, CLI-only unknown-printed exit 0) supports

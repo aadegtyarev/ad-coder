@@ -17,13 +17,13 @@ scoped to the surfaces its slice examined; read the slice before acting on it.
 | --- | --- | --- | --- | --- |
 | `docs/contracts/orchestrator.md:9` | task states: WIP/blocked/closed, no quietly stopped state | conforming | [g1](slices/orchestrator-g1-task-states.md) | — |
 | `docs/contracts/orchestrator.md:13` | intake states outcome, scope exclusions, mode, task shape, budget | violating | [g2](slices/orchestrator-g2-intake.md) | no intake surface states outcome, scope exclusions, budget, or ambiguity |
-| `docs/contracts/orchestrator.md:16` | budget accepted / counter-estimated / blocked before work | violating | [g3](slices/orchestrator-g3-budget.md) | no budget gate on any dispatch surface; the one forecast is CLI-report only |
-| `docs/contracts/orchestrator.md:19` | advance without operator message or explicitly ask | conforming | [g4](slices/orchestrator-g4-advance-or-ask.md) | — |
-| `docs/contracts/orchestrator.md:22` | durable wake delivery; wait names object/condition, finite timeout | conforming | [g5](slices/orchestrator-g5-wake-delivery.md) | — (one clause conflicts with the owning sub-contract — see below) |
-| `docs/contracts/orchestrator.md:27` | material decisions, waits, next steps written to the operator session as they occur; wake summary; never premature complete | conforming | [g6](slices/orchestrator-g6-visible-decisions.md) | — |
-| `docs/contracts/orchestrator.md:32` | claims cite artefacts; no refusal-as-success; green from step list | conforming | [g7](slices/orchestrator-g7-claims-cite-artifacts.md) | — |
-| `docs/contracts/orchestrator.md:35` | closeout reports outcome, evidence, ledger cost across rounds, budget remainder, ceilings | violating | [g8](slices/orchestrator-g8-closeout-report.md) | no "budget remainder" figure; no configured-estimate vs provider-billing distinction |
-| `docs/contracts/orchestrator.md:39` | read target project's working conventions before acting; durable decisions in repo docs | violating | [g9](slices/orchestrator-g9-project-conventions.md) | no prompt line or mechanism makes the orchestrator read conventions before acting |
+| `docs/contracts/orchestrator.md:22` | budget accepted / counter-estimated / blocked before work | violating | [g3](slices/orchestrator-g3-budget.md) | no budget gate on any dispatch surface; the one forecast is CLI-report only |
+| `docs/contracts/orchestrator.md:31` | advance without operator message or explicitly ask | conforming | [g4](slices/orchestrator-g4-advance-or-ask.md) | — |
+| `docs/contracts/orchestrator.md:34` | durable wake delivery; wait names object/condition, finite timeout | conforming | [g5](slices/orchestrator-g5-wake-delivery.md) | — (one clause conflicts with the owning sub-contract — see below) |
+| `docs/contracts/orchestrator.md:39` | material decisions, waits, next steps written to the operator session as they occur; wake summary; never premature complete | conforming | [g6](slices/orchestrator-g6-visible-decisions.md) | — |
+| `docs/contracts/orchestrator.md:44` | claims cite artefacts; no refusal-as-success; green from step list | conforming | [g7](slices/orchestrator-g7-claims-cite-artifacts.md) | — |
+| `docs/contracts/orchestrator.md:47` | closeout reports outcome, evidence, ledger cost across rounds, budget remainder, ceilings | violating | [g8](slices/orchestrator-g8-closeout-report.md) | no "budget remainder" figure; no configured-estimate vs provider-billing distinction |
+| `docs/contracts/orchestrator.md:51` | read target project's working conventions before acting; durable decisions in repo docs | violating | [g9](slices/orchestrator-g9-project-conventions.md) | no prompt line or mechanism makes the orchestrator read conventions before acting |
 
 Count: 5 conforming, 4 violating, 0 `contract_missing_evidence`, 0 head-verdict
 `unverified` (violating: g2, g3, g8, g9); no slice covered every surface of its guarantee.
@@ -80,11 +80,11 @@ Count: 5 conforming, 4 violating, 0 `contract_missing_evidence`, 0 head-verdict
 ## Cross-slice inconsistency flagged
 
 No two slices contradict each other; each of two slices flags a contradiction
-between its guarantee and its owning text. g5: `orchestrator.md:22` demands a
+between its guarantee and its owning text. g5: `orchestrator.md:34` demands a
 wait "has a finite timeout", but `waiting.md:29` (the owning sub-contract)
 permits an **optional** deadline and `src/orchestration/wait-service.ts:71-75`
 implements exactly that (contract-conflict, medium). g2/g3 additionally flag
-that `orchestrator.md` uses "budget" at lines 14/16 without a definition — those
+that `orchestrator.md` uses "budget" at lines 13/22 without a definition — those
 fixes may need a clarifying contract edit before code.
 
 A follow-up audit of the remaining `docs/contracts/` corpus would have to audit

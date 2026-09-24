@@ -1,4 +1,4 @@
-# Slice audit: orchestrator guarantee `orchestrator.md:27` (g6-visible-decisions)
+# Slice audit: orchestrator guarantee `orchestrator.md:39` (g6-visible-decisions)
 Audit base: ff07c9988923aeb4fa0b66106f3574103eb4b4cd, date 2026-09-24.
 Rule text: "- The orchestrator writes its material decisions, starts, waits, and next steps
   to the operator-facing session as they occur. A wake produces a short summary

@@ -1,6 +1,10 @@
 # Autonomy contract
 
 This contract owns operator authority, task budget, and ceiling adjustment.
+The task budget is the whole-task work limit for one task, spent across all of
+its rounds; [Compaction](compaction.md) owns the role context budget and
+[Stage-limit calibration](stage-limit-calibration.md) owns the per-stage
+cost ceilings: neither is the task budget this contract governs.
 
 ## Guarantees
 
@@ -42,5 +46,7 @@ records.
 - [Configuration](config.md) owns resolution of settings and ceilings.
 - [Stage-limit calibration](stage-limit-calibration.md) owns measured raise data.
 - [Orchestrator](orchestrator.md) owns task state and closeout.
+- [Compaction](compaction.md) owns the role context budget, separate from
+  the task budget this contract owns.
 - [Task estimation](task-estimation.md) owns full-cycle forecast and feedback.
 - [Delegation](delegation.md) owns role and workflow selection.

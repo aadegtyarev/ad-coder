@@ -24,8 +24,13 @@ feedback.
   durable estimation observations. They feed the one-probe-or-decompose
   mechanism in [work decomposition](work-decomposition.md).
 - Observations record predicted and actual task shape, path, routes, ceilings,
-  role rounds, cost, reserve outcome, and decomposition or probe result. They
-  are bounded, secret-free evidence, never a penalty, reputation score, or
+  role rounds, cost, reserve outcome, and decomposition or probe result. The
+  measured task shape is that predicted-and-actual work profile: model, role or
+  stage, and size class as the forecast states it before dispatch and as
+  observations record it afterwards — the same key the learned-ceiling
+  records of [Autonomy](autonomy.md) and
+  [Stage-limit calibration](stage-limit-calibration.md) reuse. Observations are
+  bounded, secret-free evidence, never a penalty, reputation score, or
   automatic punishment for an honest estimate correction.
 - The orchestrator has a read-only planning-feedback tool that returns relevant
   aggregated prior observations and current forecast variance before intake,

@@ -1,4 +1,4 @@
-# Slice audit: orchestrator guarantee `orchestrator.md:35` (g8-closeout-report)
+# Slice audit: orchestrator guarantee `orchestrator.md:47` (g8-closeout-report)
 Audit base: ff07c9988923aeb4fa0b66106f3574103eb4b4cd, date 2026-09-24.
 Rule text: "- A closed task reports completed or failed outcome, evidence, ledger-derived
   total cost across all rounds, budget remainder, and required ceilings. It
