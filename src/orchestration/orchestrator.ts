@@ -58,8 +58,12 @@ import {
   BackgroundRunManager,
 } from "./background-runs";
 import {
+  type BudgetCounterEstimate,
+  counterEstimateBudget,
+  counterEstimatedStatement,
+} from "./counter-estimate";
+import {
   type BudgetDecision,
-  BudgetGateError,
   BudgetWaitError,
   type DurableIntakeRecord,
   type IntakeStatement,
@@ -73,7 +77,7 @@ import { pipelinePauseFromCheckpoint } from "./pipeline";
 import { COMPLEXITY_RUBRIC, CONTRACT_INDEX } from "./plan";
 import type { WorkflowSession } from "./session";
 import { autoDriver, createWorkflowSession } from "./session";
-import { STAGE_LIMIT_KEY, type StageLimitReason } from "./stage-limits";
+import { STAGE_LIMIT_KEY, type StageLimitReason, type StageLimits } from "./stage-limits";
 import { isSubmissionToolName } from "./submission-tools";
 import { assertTransitionOffered, DriveError } from "./transition-guard";
 import {
@@ -315,6 +319,14 @@ export interface OrchestratorDeps {
   backgroundHostLauncher?: import("./background-runs").BackgroundHostLauncher;
   /** Injection seam for tests/embedders to own the background-run executor; defaults to the real pipeline executor. */
   backgroundRunExecutor?: BackgroundRunExecutor;
+  /**
+   * Resolved per-role stage-limit overlay for the pre-work budget counter-
+   * estimate. Resident means the shipped calibrated table
+   * (`DEFAULT_ROLE_STAGE_LIMITS`) is the basis; a host that resolves its own
+   * role limits supplies them so the estimate names the ceilings the run
+   * will ACTUALLY use. Each value is the run's real ceiling data.
+   */
+  budgetCeilings?: Partial<Record<ProfileRole, StageLimits>>;
 }
 
 /**
@@ -386,6 +398,14 @@ export interface Orchestrator {
   recordIntake(task: string, statement: IntakeStatement, budget: BudgetDecision): string;
   /** Read a recorded intake back by id; absent when never recorded. */
   readIntake(id: string): DurableIntakeRecord | undefined;
+  /**
+   * Counter-estimate the whole-task budget for a task from the recorded
+   * per-role stage ceilings, with evidence, or `undefined` when no estimate
+   * with evidence can be produced (a required role's ceiling is absent or
+   * disabled, i.e. unlimited). `complexity` is the same pre-read
+   * classification the dispatch itself carries (issue #264).
+   */
+  budgetCounterEstimate(task: string, complexity?: Complexity): BudgetCounterEstimate | undefined;
 }
 
 /**
@@ -798,6 +818,14 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
   };
   const readIntake = (id: string): DurableIntakeRecord | undefined => intakeStore.get(id);
 
+  // The counter-estimate basis (docs/contracts/orchestrator.md:22, branch 2):
+  // the resolved role ceilings when the host supplies them, the shipped
+  // calibrated table when it does not. `undefined` means the needed role
+  // ceiling is absent or disabled -- an unlimited role has no basis -- and
+  // the gate then honestly stops instead of estimating.
+  const budgetCounterEstimate = (_task: string, complexity?: Complexity) =>
+    counterEstimateBudget(complexity, deps.budgetCeilings);
+
   const showCost = (): CostReport => {
     let totalCost = 0;
     for (const record of sink.records()) {
@@ -826,6 +854,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     foregroundExists,
     recordIntake,
     readIntake,
+    budgetCounterEstimate,
   };
 }
 
@@ -1003,9 +1032,11 @@ const SAFE_HOUSE_ERRORS = [
   CostAnomalyBlockedError,
   // Intake/budget gate errors (audit slices g2/g3): `code` is the authored
   // literal, `detail` is a names-only source/next-action token, and the
-  // message is an authored fixed string naming the three legal budget states
-  // and the wait -- no task text, paths, or payload crosses.
-  BudgetGateError,
+  // message is an authored fixed string naming the wait and the legal budget
+  // states -- no task text, paths, or payload crosses. There is no refusal
+  // error for an UNstated budget: the gate counter-estimates that case; the
+  // remaining safe errors are the wait and the shape refusals in
+  // `ProjectOperationsError` (`invalid_budget_decision`, `invalid_intake`).
   BudgetWaitError,
 ] as const;
 
@@ -1298,19 +1329,43 @@ export function buildBuiltInPipelineTools(core: Orchestrator): Tool[] {
    * other caller's.
    */
   /**
-   * The pre-work budget gate (docs/contracts/orchestrator.md, audit slices
-   * g2/g3). Extracts the intake statement + budget decision from the tool's
-   * `intake` field, records them durably BEFORE any work starts, and refuses
-   * the dispatch when neither is present, when the decision names none of the
-   * three legal kinds, or when the budget is explicitly blocked. The tool's
-   * busy paths never dispatch before this returns.
+   * The pre-work budget gate (docs/contracts/orchestrator.md:22). Work starts
+   * only when a DECISION with evidence is on record:
+   *
+   * - the caller states a budget decision -> validate it and use it:
+   *   accepted, counter_estimated (must carry evidence), or blocked (named,
+   *   resumable);
+   * - the caller states nothing -> the core COUNTER-ESTIMATES the budget
+   *   from the recorded per-role ceilings (branch 2: "counter-estimated with
+   *   evidence"), RECORDS that decision with its evidence, and proceeds --
+   *   an unstated budget is a decided budget, not an unknown one;
+   * - no counter-estimate with evidence is producible (no forecast basis) ->
+   *   work does NOT start: the honest blocked wait, named and resumable;
+   * - a half-stated or explicitly unknown decision never reaches a record at
+   *   all -- the schema-refusal path keeps the "never proceeds unknown by
+   *   implication" rule exact.
+   *
+   * The tool's busy paths never dispatch before this returns.
    */
   const gatedIntake = (
     task: string,
+    complexity: Complexity | undefined,
     raw: unknown,
     source: string,
   ): { id: string; statement: IntakeStatement; budget: BudgetDecision } => {
-    if (raw === undefined) throw new BudgetGateError(source);
+    if (raw === undefined) {
+      // Branch 2 (and its honest stop): decide, record, then proceed.
+      const estimate = core.budgetCounterEstimate(task, complexity);
+      if (estimate === undefined) throw new BudgetWaitError(`${source}:no_forecast_basis`);
+      const statement = counterEstimatedStatement(estimate);
+      const budget: BudgetDecision = {
+        kind: "counter_estimated",
+        evidence: estimate.evidence,
+        reason: "counter-estimated at the pre-work gate: the dispatch stated no budget decision",
+      };
+      const id = core.recordIntake(task, statement, budget);
+      return { id, statement, budget };
+    }
     const statement = parseIntakeStatement(raw, "intake");
     const budget = parseBudgetDecision(
       (raw as Record<string, unknown>).budgetDecision,
@@ -1343,7 +1398,7 @@ export function buildBuiltInPipelineTools(core: Orchestrator): Tool[] {
   const runPipelineTool = defineTool({
     name: RUN_PIPELINE_TOOL_NAME,
     description:
-      "Run a full autonomous pipeline (plan -> [security] -> code <-> review) for a task and report the outcome and cost. Executes code within the fixed working directory. Before work starts this tool records the intake statement and requires a pre-work budget decision: pass intake.budgetDecision.kind as accepted, counter_estimated (with intake.budgetDecision.evidence), or blocked -- a dispatch without one does not start.",
+      "Run a full autonomous pipeline (plan -> [security] -> code <-> review) for a task and report the outcome and cost. Executes code within the fixed working directory. Before work starts this tool records the intake statement and decides the budget: pass intake.budgetDecision.kind as accepted, counter_estimated (with intake.budgetDecision.evidence), or blocked; when the intake is omitted the orchestrator counter-estimates the budget from the recorded stage ceilings, records that decision with its evidence, and proceeds -- no dispatch ever runs with an undecided budget.",
     label: "run pipeline",
     parameters: Type.Object({
       task: Type.String(),
@@ -1378,7 +1433,12 @@ export function buildBuiltInPipelineTools(core: Orchestrator): Tool[] {
     }),
     async execute(_toolCallId, params) {
       try {
-        const intake = gatedIntake(params.task, params.intake, RUN_PIPELINE_TOOL_NAME);
+        const intake = gatedIntake(
+          params.task,
+          params.complexity,
+          params.intake,
+          RUN_PIPELINE_TOOL_NAME,
+        );
         const run = await core.runPipeline(params.task, params.complexity);
         const summary =
           `pipeline complete: runId=${run.runId} approved=${run.result.approved} ` +
@@ -1402,7 +1462,7 @@ export function buildBuiltInPipelineTools(core: Orchestrator): Tool[] {
   const startPipelineTool = defineTool({
     name: START_PIPELINE_TOOL_NAME,
     description:
-      "Start the built-in pipeline in an isolated background conversation and return immediately. Records the intake statement first and requires a pre-work budget decision (intake.budgetDecision.kind: accepted, counter_estimated with evidence, or blocked); a dispatch without one does not start.",
+      "Start the built-in pipeline in an isolated background conversation and return immediately. Records the intake statement first and decides the budget before work starts (intake.budgetDecision.kind: accepted, counter_estimated with evidence, or blocked); when the intake is omitted the orchestrator counter-estimates the budget from the recorded stage ceilings, records that decision with its evidence, and proceeds -- no dispatch ever runs with an undecided budget.",
     label: "start pipeline",
     parameters: Type.Object({
       task: Type.String(),
@@ -1430,7 +1490,7 @@ export function buildBuiltInPipelineTools(core: Orchestrator): Tool[] {
     }),
     async execute(_toolCallId, params) {
       try {
-        gatedIntake(params.task, params.intake, START_PIPELINE_TOOL_NAME);
+        gatedIntake(params.task, undefined, params.intake, START_PIPELINE_TOOL_NAME);
         const started = await core.backgroundRuns.startDetached(params.task);
         return {
           content: [{ type: "text", text: `pipeline requested: runId=${started.runId}` }],

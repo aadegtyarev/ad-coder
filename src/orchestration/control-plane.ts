@@ -11,6 +11,7 @@ import { MAX_PROVIDER_RETRY_HINT_MS, ProviderLimitError } from "../runner/errors
 import type { Tool } from "../runner/tool";
 import { defineTool } from "../runner/tool";
 import type { SessionLimitController, SessionLimitSnapshot } from "../session-limits";
+import { counterEstimateBudget } from "./counter-estimate";
 import { deriveChildSpecs } from "./decompose";
 import {
   type BudgetDecision,
@@ -884,23 +885,42 @@ export class OrchestratorControlPlane {
       state = this.write(state, { ...state.value, status: "cancelled", updatedAt: this.now() });
       return safeStatus(state.value);
     }
-    // The pre-work budget gate (docs/contracts/orchestrator.md, audit slice
-    // g3): a depth-0 run moves from queued intent to WORK only when its budget
-    // is accepted or counter-estimated. Without a decided budget the run stops
-    // honestly in `awaiting_decision` with a `decision.required` event -- a
-    // named, resumable state -- instead of proceeding unknown by implication.
-    // Depth-0 only: child runs inherit the parent's authorized budget, so a
+    // The pre-work budget gate (docs/contracts/orchestrator.md:22), depth-0
+    // only: child runs inherit the parent's authorized budget, so a
     // decomposition chain re-gating each child would deadlock the very
     // decomposition this run may itself require.
+    //
+    // The rule has three lawful branches, and refusing an UNSTATED budget is
+    // not the only one here either: when no decision is on record, the
+    // orchestrator itself COUNTER-ESTIMATES the budget from the recorded
+    // per-role stage ceilings, records that decision WITH its evidence, and
+    // proceeds. Only when no estimate with evidence can be produced (no
+    // forecast basis) does the gate honestly stop: `awaiting_decision` with a
+    // `decision.required` event -- a named, resumable state -- never an
+    // implicit proceed with an unknown budget, and never an implicit stop
+    // either.
     if (state.value.depth === 0 && state.value.budgetDecision === undefined) {
-      state = this.write(
-        state,
-        this.withEvent(
-          { ...state.value, status: "awaiting_decision", updatedAt: this.now() },
-          "decision.required",
-        ),
-      );
-      return safeStatus(state.value);
+      const estimate = counterEstimateBudget(undefined);
+      if (estimate !== undefined) {
+        state = this.write(state, {
+          ...state.value,
+          budgetDecision: {
+            kind: "counter_estimated" as const,
+            evidence: estimate.evidence,
+            reason: "counter-estimated at the pre-work gate: no budget decision was stated",
+          },
+          updatedAt: this.now(),
+        });
+      } else {
+        state = this.write(
+          state,
+          this.withEvent(
+            { ...state.value, status: "awaiting_decision", updatedAt: this.now() },
+            "decision.required",
+          ),
+        );
+        return safeStatus(state.value);
+      }
     }
     if (
       state.value.depth === 0 &&

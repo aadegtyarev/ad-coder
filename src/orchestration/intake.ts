@@ -10,8 +10,11 @@ import { ProjectStoreError } from "../project-store/types";
  * measured task shape, budget, ceilings, and any ambiguity that changes the
  * result; and BEFORE work starts the budget is exactly one of accepted,
  * counter-estimated (with evidence), or explicitly blocked for a decision.
- * This module owns those two statement shapes, their validation, the gate
- * error, and the durable record both live under.
+ * This module owns those two statement shapes, their validation, and the
+ * durable record both live under. The block/wait error is here too: it names
+ * the decided wait, never a refusal of an unstated budget -- the counter-
+ * estimate path (src/orchestration/counter-estimate.ts) supplies the third
+ * branch so an unstated budget is decided, not fatal.
  *
  * The budget here is the WHOLE-TASK work budget [Autonomy] defines -- never the
  * role context budget [Compaction] owns and never the per-stage cost ceilings
@@ -23,8 +26,6 @@ import { ProjectStoreError } from "../project-store/types";
 export const INTAKE_ERROR_CODE = "invalid_intake";
 /** Authored code for a budget block that does not say one of the three kinds. */
 export const BUDGET_DECISION_ERROR_CODE = "invalid_budget_decision";
-/** Authored code raised by the gate when a dispatch arrives with no budget decision. */
-export const BUDGET_ABSENT_CODE = "budget_absent";
 
 /** Bounded, secret-free statement sizes so no free-text field can flood a record. */
 const MAX_STATEMENT_CHARS = 2_000;
@@ -210,32 +211,16 @@ export function isWorkStartableBudget(decision: BudgetDecision): boolean {
   return decision.kind === "accepted" || decision.kind === "counter_estimated";
 }
 
-/**
- * The gate: raised on a dispatch that arrives without a decided pre-work
- * budget. The message is an AUTHORED fixed string (safe to project) naming the
- * three legal states, the next action, and that the task stays WIP -- never an
- * implicit stop, never a quiet proceed.
- */
-export class BudgetGateError extends Error {
-  override readonly name = "BudgetGateError";
-  /** The dispatch surface the gate fired on (a fixed handler-supplied token). */
-  readonly source: string;
-
-  constructor(source: string) {
-    super(
-      `${source} did not start work: no pre-work budget decision. Before work starts the budget must be accepted, counter-estimated with recorded evidence, or explicitly blocked for a decision; it never proceeds unknown by implication. The task stays WIP, stopped on the budget decision (docs/contracts/orchestrator.md).`,
-    );
-    this.source = source;
-  }
-}
-
-/** What the gate projects over a SAFE path goes under this code. */
+/** The SAFE-path surface code for the wait error below. */
 export const BUDGET_BLOCKED_HEADER = "budget_blocked";
 
 /**
- * Raised on a dispatch whose budget is EXPLICITLY blocked. This is the honest
- * wait state, not a refusal: the message names the decided state and the next
- * action, and no work starts.
+ * Raised when work does not start and the task waits for a budget decision:
+ * EITHER the dispatch's stated budget is explicitly blocked, OR there is no
+ * decision on record and no counter-estimate could be produced with evidence
+ * (detail `no_forecast_basis`) -- the guarantee's two honest stop states. The
+ * message names the state and the next action; the task stays WIP, and no
+ * work starts, with no work run, since runPipeline is not entered.
  */
 export class BudgetWaitError extends Error {
   override readonly name = "BudgetWaitError";
@@ -244,7 +229,7 @@ export class BudgetWaitError extends Error {
 
   constructor(detail: string) {
     super(
-      `budget blocked, waiting for a decision: ${detail}: work did not start; resume after the budget decision resolves`,
+      `budget blocked, waiting for a decision: ${detail}: work did not start; resume after the budget decision resolves (state one: accepted, counter-estimated with evidence, or blocked / name the next action)`,
     );
     this.code = BUDGET_BLOCKED_HEADER;
     this.detail = detail;

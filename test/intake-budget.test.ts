@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { createOrchestratorControlPlane } from "../src/orchestration/control-plane";
+import { counterEstimateBudget } from "../src/orchestration/counter-estimate";
 import {
   BUDGET_BLOCKED_HEADER,
   type BudgetDecision,
@@ -15,6 +16,7 @@ import {
 import {
   buildBuiltInPipelineTools,
   RUN_PIPELINE_TOOL_NAME,
+  type RunPipelineResult,
   START_PIPELINE_TOOL_NAME,
 } from "../src/orchestration/orchestrator";
 import type { PipelineResult } from "../src/orchestration/types";
@@ -49,7 +51,7 @@ const intakePayload = (
   statement: IntakeStatement,
 ): Record<string, unknown> & { budgetDecision: unknown } => {
   const { budgetDecision, ...rest } = statement as unknown as Record<string, unknown>;
-  return { ...(rest as unknown), budgetDecision };
+  return { ...rest, budgetDecision };
 };
 
 const approvedPipeline: PipelineResult = {
@@ -59,6 +61,18 @@ const approvedPipeline: PipelineResult = {
   verdicts: [{ status: "approved", issues: [], summary: "ok" }],
   runIds: [],
   stageMetrics: [],
+};
+
+/**
+ * The tool-map lookup used by these tests. Indexing a `Record<string, Tool>`
+ * yields `Tool | undefined`, so the fixture lookup honestly THROWS on a
+ * missing built-in -- the same narrowing pattern test/builtin-tools.test.ts
+ * and test/orchestrator.test.ts already use -- instead of asserting non-null.
+ */
+const requiredTool = (tools: Record<string, Tool>, name: string): Tool => {
+  const found = tools[name];
+  if (found === undefined) throw new Error(`the built-in tool '${name}' is missing`);
+  return found;
 };
 
 async function callTool(tool: Tool, params: Record<string, unknown>): Promise<string> {
@@ -75,6 +89,13 @@ async function callTool(tool: Tool, params: Record<string, unknown>): Promise<st
 interface ToolCoreOptions {
   /** When set, dispatches are recorded instead of executing the pipeline. */
   runPipeline?: (task: string) => PipelineResult;
+  /**
+   * When `false`, the core reports NO producible counter-estimate (no forecast
+   * basis), which is the honest blocked state; default `true`
+   * counter-estimates with the REAL shipped machinery (counterEstimateBudget),
+   * so the gate that answers this test is not a stub.
+   */
+  counterEstimate?: boolean;
 }
 
 /** A minimal built-in-tool core: the g2/g3 intake store is real, the rest is stubbed. */
@@ -92,7 +113,19 @@ function fixtureCore(options: ToolCoreOptions = {}) {
     readIntake(id: string): DurableIntakeRecord | undefined {
       return store.get(id);
     },
-    async runPipeline(task: string): Promise<{ runId: string; result: PipelineResult }> {
+    // The REAL counter-estimate over the shipped calibration table (same
+    // function the real core calls); `counterEstimate: false` is the
+    // no-forecast-basis core the honest blocked state is demonstrated on.
+    budgetCounterEstimate(
+      _task: string,
+      complexity?: "trivial" | "medium" | "complex",
+    ): ReturnType<typeof counterEstimateBudget> {
+      return options.counterEstimate === false ? undefined : counterEstimateBudget(complexity);
+    },
+    // The stub returns the REAL run-record shape, `RunPipelineResult`:
+    // `perStep` and `totalCost` are part of that record (the run_pipeline tool
+    // formats cost from them), so the stub carries an honest empty cost.
+    async runPipeline(task: string): Promise<RunPipelineResult> {
       startedViaPipeline.push(task);
       return {
         runId: `pipe-${startedViaPipeline.length}`,
@@ -127,30 +160,63 @@ const blockedStatement = (): IntakeStatement =>
   });
 
 // ---------------------------------------------------------------------------
-// 1. Negative/characterization: no decided budget -> work does NOT start.
+// 1. The gate decides BEFORE work starts (docs/contracts/orchestrator.md:22):
+//    work starts only with a DECISION on record that carries evidence. An
+//    unstated budget is not refused and never proceeds unknown -- the gate
+//    counter-estimates it, records the decision WITH its evidence, then
+//    dispatches; with no producible counter-estimate (no forecast basis) the
+//    dispatch stops honestly instead.
 // ---------------------------------------------------------------------------
 
-test("run_pipeline and start_pipeline refuse to start work without a budget decision", async () => {
+test("without a stated decision work starts only on a recorded counter-estimate, never without a forecast basis", async () => {
+  // No stated intake, estimate producible: the gate decides -- records the
+  // counter-estimate WITH evidence -- and only then starts work.
   const fx = fixtureCore();
-  const gateRun = await callTool(fx.tools[RUN_PIPELINE_TOOL_NAME], { task: "gate the pipeline" });
-  expect(gateRun).toContain("error: BudgetGateError");
-  expect(gateRun).toContain("no pre-work budget decision");
-  expect(gateRun).toContain("accepted, counter-estimated");
-  const gateStart = await callTool(fx.tools[START_PIPELINE_TOOL_NAME], {
+  const estimateRun = await callTool(requiredTool(fx.tools, RUN_PIPELINE_TOOL_NAME), {
+    task: "unstated budget",
+  });
+  expect(estimateRun).toContain("pipeline complete");
+  expect(estimateRun).toContain("budget=counter_estimated");
+  const id = /intakeId=([0-9a-f]{32})/.exec(estimateRun)![1]!;
+  const recorded = fx.core.readIntake(id);
+  // The start is authorized by the DECISION on record, and it carries
+  // evidence: this is what keeps the proceed from being an unknown proceed.
+  expect(recorded?.budget.kind).toBe("counter_estimated");
+  expect(recorded?.budget.reason).toContain("counter-estimated at the pre-work gate");
+  expect(recorded?.budget.evidence?.length ?? 0).toBeGreaterThan(0);
+  expect(recorded?.budget.evidence?.join("\n")).toContain("recorded ceiling coder:maxCostUsd=");
+  expect(recorded?.statement.budget.source).toBe("estimate");
+  expect(recorded?.statement.budget.ceilingUsd).toBeGreaterThan(0);
+  expect(fx.startedViaPipeline).toEqual(["unstated budget"]);
+  const estimateStart = await callTool(requiredTool(fx.tools, START_PIPELINE_TOOL_NAME), {
+    task: "unstated background dispatch",
+  });
+  expect(estimateStart).toContain("pipeline requested");
+  expect(fx.startedDetached).toEqual(["unstated background dispatch"]);
+
+  // The honest stop: no decision on record AND no producible counter-estimate
+  // (no forecast basis) -> work does NOT start, on either surface.
+  const blockedFx = fixtureCore({ counterEstimate: false });
+  const gateRun = await callTool(requiredTool(blockedFx.tools, RUN_PIPELINE_TOOL_NAME), {
     task: "gate the pipeline",
   });
-  expect(gateStart).toContain("error: BudgetGateError");
-  expect(gateStart).toContain("no pre-work budget decision");
+  expect(gateRun).toContain("error: budget_blocked");
+  expect(gateRun).toContain("no_forecast_basis");
+  const gateStart = await callTool(requiredTool(blockedFx.tools, START_PIPELINE_TOOL_NAME), {
+    task: "gate the pipeline",
+  });
+  expect(gateStart).toContain("error: budget_blocked");
+  expect(gateStart).toContain("no_forecast_basis");
   // No surface dispatched: neither pipeline nor background run was entered.
-  expect(fx.startedViaPipeline).toHaveLength(0);
-  expect(fx.startedDetached).toHaveLength(0);
+  expect(blockedFx.startedViaPipeline).toHaveLength(0);
+  expect(blockedFx.startedDetached).toHaveLength(0);
 });
 
 test("an intake with a half-stated budget (no decision kind) is also refused", async () => {
   const fx = fixtureCore();
   const { budgetDecision: _missing, ...rest } = intakePayload(acceptedStatement());
   expect(_missing).toEqual({ kind: "accepted" });
-  const refused = await callTool(fx.tools[RUN_PIPELINE_TOOL_NAME], {
+  const refused = await callTool(requiredTool(fx.tools, RUN_PIPELINE_TOOL_NAME), {
     task: "gate the pipeline",
     intake: rest as unknown,
   });
@@ -164,7 +230,7 @@ test("an intake with a half-stated budget (no decision kind) is also refused", a
 
 test("an accepted budget decision lets run_pipeline start work", async () => {
   const fx = fixtureCore();
-  const text = await callTool(fx.tools[RUN_PIPELINE_TOOL_NAME], {
+  const text = await callTool(requiredTool(fx.tools, RUN_PIPELINE_TOOL_NAME), {
     task: "accepted budget dispatch",
     intake: intakePayload(acceptedStatement()),
   });
@@ -181,7 +247,7 @@ test("an accepted budget decision lets run_pipeline start work", async () => {
 test("a counter-estimated budget is accepted only with evidence, and the evidence is recorded", async () => {
   // Without evidence the counter-estimate is not a decision at all.
   const refusingCore = fixtureCore();
-  const refused = await callTool(refusingCore.tools[RUN_PIPELINE_TOOL_NAME], {
+  const refused = await callTool(requiredTool(refusingCore.tools, RUN_PIPELINE_TOOL_NAME), {
     task: "counter without evidence",
     intake: intakePayload(intake("counter_estimated")),
   });
@@ -190,7 +256,7 @@ test("a counter-estimated budget is accepted only with evidence, and the evidenc
 
   // With evidence the dispatch proceeds and the evidence is durably recorded.
   const fx = fixtureCore();
-  const text = await callTool(fx.tools[RUN_PIPELINE_TOOL_NAME], {
+  const text = await callTool(requiredTool(fx.tools, RUN_PIPELINE_TOOL_NAME), {
     task: "counter with evidence",
     intake: counterStatement() as never,
   });
@@ -260,7 +326,7 @@ test("a blocked budget waits honestly in a named, resumable state, then resumes"
   expect(wait.message).toContain("work did not start");
   // ...and the tools enforce it, too -- the dispatch never reaches the core:
   const fx = fixtureCore();
-  const blockedTool = await callTool(fx.tools[START_PIPELINE_TOOL_NAME], {
+  const blockedTool = await callTool(requiredTool(fx.tools, START_PIPELINE_TOOL_NAME), {
     task: "blocked dispatch",
     intake: blockedStatement() as never,
   });
