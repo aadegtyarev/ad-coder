@@ -2,7 +2,9 @@ import { expect, test } from "bun:test";
 import type { AssistantMessage, Models, TextContent, ToolCall } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage, fauxText } from "@earendil-works/pi-ai";
 import {
+  detectUnrecoveredToolTransport,
   recoverNativeToolCalls,
+  textHasUnrecoveredToolTransport,
   wrapModelsForToolCallRecovery,
 } from "../src/runner/native-tool-calls";
 
@@ -25,6 +27,14 @@ const DSML_INVOKE_SERIALIZATION = [
   "</｜｜DSML｜｜ calls>",
 ].join("\n");
 
+const CAPTURED_TOOL_CALLS_SERIALIZATION = [
+  "<｜｜DSML｜｜tool_calls>",
+  '<｜｜DSML｜｜ invoke name="bash">',
+  '<｜｜DSML｜｜ parameter name="command" string="true">echo sentinel-secret</｜｜DSML｜｜ parameter>',
+  "</｜｜DSML｜｜ invoke>",
+  "</｜｜DSML｜｜tool_calls>",
+].join("\n");
+
 const MINIMAX_INVOKE_SERIALIZATION = [
   '<invoke name="submit_plan">',
   '<parameter name="complexity">"high"</parameter>',
@@ -38,6 +48,22 @@ function messageEndingWith(serialization: string, suffix = ""): AssistantMessage
     { stopReason: "stop" },
   );
 }
+
+/** Issue #635: an unrecovered terminal envelope is classified without reading its arguments. */
+test("detects captured tool_calls framing but not prose or structured calls", () => {
+  expect(textHasUnrecoveredToolTransport(`answer\n${CAPTURED_TOOL_CALLS_SERIALIZATION}`)).toBe(
+    true,
+  );
+  expect(textHasUnrecoveredToolTransport(`Here is an example: <invoke name="bash">`)).toBe(false);
+  expect(
+    detectUnrecoveredToolTransport({
+      content: [
+        { type: "text", text: CAPTURED_TOOL_CALLS_SERIALIZATION },
+        { type: "toolCall", name: "bash", arguments: { command: "safe" } },
+      ],
+    }),
+  ).toBe(false);
+});
 
 /** Gate 1: a structured tool call anywhere means no recovery, byte for byte. */
 test("a message that already carries a structured tool call is left untouched", () => {

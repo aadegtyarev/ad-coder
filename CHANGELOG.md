@@ -11,6 +11,12 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.54] - 2026-09-24
+
+### Fixed
+
+- Reject unrecovered terminal tool-protocol envelopes at both role and conversation boundaries instead of returning them as successful text. The bounded malformed-transport failure takes precedence over stage closeout, never executes pseudo calls, and carries no provider text or arguments (#635).
+
 ## [0.181.53] - 2026-09-24
 
 ### Added

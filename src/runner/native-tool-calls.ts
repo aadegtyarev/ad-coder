@@ -241,3 +241,157 @@ export function wrapModelsForToolCallRecovery(
     },
   });
 }
+
+/**
+ * Terminal tool-transport classification (issue #635).
+ *
+ * Recovery above repairs only the exact serialization it can prove safe to
+ * execute. When it declines -- a shape it does not accept (the captured
+ * `tool_calls` outer delimiters), an ungranted name, anything at all after the
+ * closing token -- a message whose text still ENDS in a well-formed tool-call
+ * envelope must not cross the shared message boundary as prose success: the
+ * turn settles, stage closeout relays it, and the pseudo call is preserved as
+ * a plausible-looking result text. The classifier below fails that closed,
+ * at the outcome boundary, without parsing or executing arguments.
+ *
+ * Structural, provider-neutral, narrowly allow-listed: the trailing region of
+ * the text must parse ENTIRELY (no stray prose, no unbalanced or mid-text
+ * markup) as the same two serialization grammars recovery reads, ending in a
+ * closing tag. Prose discussion or XML examples that merely CONTAIN the
+ * tokens, or end in something other than a closed envelope, classify as
+ * ordinary text. A message that already carries a structured tool-call block
+ * is never reclassified (rule 1 of the boundary).
+ */
+
+/** How far back a terminal envelope is searched for: further back only buys prose false matches. */
+const TRANSPORT_SCAN_LIMIT = 20_000;
+
+type ToolProtoKind = "calls" | "invoke" | "parameter";
+
+interface ToolProtoTag {
+  open: boolean;
+  kind: ToolProtoKind;
+  /** Index just past the tag. */
+  end: number;
+}
+
+/** The bare channel delimiter opens a region only when no calls region is open. */
+function bareDelimiterTag(
+  text: string,
+  index: number,
+  stack: readonly ToolProtoKind[],
+  seenCallsOpen: boolean,
+): ToolProtoTag | undefined {
+  if (!text.startsWith(DSML, index) || text.charAt(index - 1) === "<") return undefined;
+  const open = !seenCallsOpen && !stack.includes("calls");
+  return { open, kind: "calls", end: index + DSML.length };
+}
+
+/** An allow-listed `<...>` tool-protocol tag at `index`, opens well-attributed, closes bare. */
+function bracketedToolProtoTag(text: string, index: number): ToolProtoTag | undefined {
+  const match = new RegExp(
+    `^<(/?)\\s*(?:${DSML_ESCAPED}\\s*)?(tool_calls|calls|invoke|parameter)((?:\\s+[^<>]*?)?)>`,
+  ).exec(text.slice(index, index + 512));
+  if (match === null || match[1] === undefined || match[2] === undefined) return undefined;
+  const close = match[1] !== "";
+  const kind = match[2] as ToolProtoKind;
+  const attributes = match[3] ?? "";
+  if (close)
+    return attributes.trim() === ""
+      ? { open: false, kind, end: index + match[0].length }
+      : undefined;
+  if (kind === "calls" && attributes.trim() !== "") return undefined;
+  if (
+    (kind === "invoke" || kind === "parameter") &&
+    !/^\s*name="[^"\s]+"(?:\s+string="(?:true|false)")?$/.test(attributes)
+  )
+    return undefined;
+  return { open: true, kind, end: index + match[0].length };
+}
+
+/**
+ * Whether `source` from `start` to its end parses as a balanced terminal
+ * tool-call envelope: tags nest properly, at least one invoke element closes,
+ * and the last non-whitespace is a close tag -- the terminal framing is a
+ * tool-call serialization, not trailing prose.
+ */
+function parsesTerminalToolEnvelope(source: string, start: number): boolean {
+  const stack: ToolProtoKind[] = [];
+  let sawInvoke = false;
+  let seenCallsOpen = false;
+  let i = start;
+  for (;;) {
+    while (i < source.length && /\s/.test(source.charAt(i))) i++;
+    if (i >= source.length) return sawInvoke && stack.length === 0;
+    const tag =
+      bracketedToolProtoTag(source, i) ?? bareDelimiterTag(source, i, stack, seenCallsOpen);
+    if (tag !== undefined) {
+      if (tag.open) {
+        if (tag.kind === "invoke") sawInvoke = true;
+        if (tag.kind === "calls") seenCallsOpen = true;
+        stack.push(tag.kind);
+      } else if (stack.pop() !== tag.kind) {
+        return false;
+      }
+      i = tag.end;
+      continue;
+    }
+    // Free text is structural only between a parameter's tags: the argument
+    // VALUE is consumed, never parsed and never reflected into any projection.
+    if (stack[stack.length - 1] === "parameter") {
+      const next = source.indexOf("<", i);
+      if (next === -1) return false;
+      i = next;
+      continue;
+    }
+    return false;
+  }
+}
+
+/**
+ * Whether `text` ends in terminal tool-protocol framing (issue #635). Text is
+ * not typed: callers at the durable boundary read assistant text that has
+ * already left the model shape, and a non-string simply carries no framing.
+ */
+export function textHasUnrecoveredToolTransport(text: unknown): boolean {
+  if (typeof text !== "string") return false;
+  const trimmed = text.trimEnd();
+  if (trimmed.length === 0) return false;
+  const source =
+    trimmed.length > TRANSPORT_SCAN_LIMIT ? trimmed.slice(-TRANSPORT_SCAN_LIMIT) : trimmed;
+  const opens = new RegExp(`<(?:${DSML_ESCAPED}\\s*)?(?:tool_calls|calls|invoke)(?=>|\\s)`, "g");
+  for (const match of source.matchAll(opens)) {
+    if (parsesTerminalToolEnvelope(source, match.index)) return true;
+  }
+  let at = 0;
+  for (;;) {
+    const index = source.indexOf(DSML, at);
+    if (index === -1) break;
+    if (source.charAt(index - 1) !== "<" && parsesTerminalToolEnvelope(source, index)) return true;
+    at = index + DSML.length;
+  }
+  return false;
+}
+
+/**
+ * Message-level classification for the settled-assistant boundary, structural
+ * enough to accept both a pi-ai `AssistantMessage` and the durable
+ * `SettledTurnMessage` projection (field access is guarded, never trusted).
+ */
+export function detectUnrecoveredToolTransport(message: unknown): boolean {
+  const content =
+    message !== null && typeof message === "object" && "content" in message
+      ? (message as { content: unknown }).content
+      : undefined;
+  if (!Array.isArray(content)) return false;
+  let lastText: string | undefined;
+  for (const block of content) {
+    if (block === null || typeof block !== "object" || !("type" in block)) continue;
+    const type = (block as { type: unknown }).type;
+    // Rule 1: a structured tool-call block wins; recovery proved this turn.
+    if (type === "toolCall") return false;
+    if (type === "text" && typeof (block as { text: unknown }).text === "string")
+      lastText = (block as { text: string }).text;
+  }
+  return lastText !== undefined && textHasUnrecoveredToolTransport(lastText);
+}

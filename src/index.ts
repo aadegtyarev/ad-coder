@@ -636,6 +636,7 @@ export {
   RunnerError,
   resolveTargetDir,
   SuspendedRunError,
+  ToolTransportMalformedError,
 } from "./runner/errors";
 export type { RoleRunner, RoleRunnerConfig, RunRoleOptions } from "./runner/role-runner";
 export { createRoleRunner } from "./runner/role-runner";

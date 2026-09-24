@@ -14,6 +14,7 @@ import {
   createProvider,
   fauxAssistantMessage,
   fauxProvider,
+  fauxText,
   fauxThinking,
   fauxToolCall,
   Type,
@@ -40,7 +41,7 @@ import { WakePump } from "../src/orchestration/wake";
 import { ProjectStore } from "../src/project-store/project-store";
 import type { Role } from "../src/role";
 import { defineRole } from "../src/role";
-import { ProviderUnavailableError } from "../src/runner/errors";
+import { ProviderUnavailableError, ToolTransportMalformedError } from "../src/runner/errors";
 import { defineTool } from "../src/runner/tool";
 import { SessionLimitController, SessionLimitError } from "../src/session-limits";
 
@@ -115,6 +116,46 @@ test("a two-turn conversation retains history on the live session branch", async
     const assistants = messages.filter((e) => e.message.role === "assistant");
     expect(users.length).toBeGreaterThanOrEqual(2);
     expect(assistants.length).toBeGreaterThanOrEqual(2);
+  } finally {
+    await conversation.close();
+  }
+});
+
+test("#635: ConversationSession.step rejects unrecovered tool transport without invoking it", async () => {
+  const { faux, models, model, role } = harnessFixture(["sentinel"]);
+  const calls: string[] = [];
+  const sentinel = recordingTool("sentinel", calls);
+  const session = await new MemorySessionRepo().create({}, BACKGROUND_CONTEXT);
+  faux.setResponses([
+    fauxAssistantMessage(
+      [
+        fauxText(
+          [
+            "<｜｜DSML｜｜tool_calls>",
+            '<｜｜DSML｜｜ invoke name="sentinel">',
+            '<｜｜DSML｜｜ parameter name="note" string="true">SECRET_SENTINEL</｜｜DSML｜｜ parameter>',
+            "</｜｜DSML｜｜ invoke>",
+            "</｜｜DSML｜｜tool_calls>",
+          ].join("\n"),
+        ),
+      ],
+      { stopReason: "stop" },
+    ),
+  ]);
+  const conversation = await startConversation({
+    role,
+    targetDir,
+    models,
+    model,
+    session,
+    tools: [sentinel],
+  });
+  try {
+    const error = await conversation.step("do not execute").catch((cause) => cause);
+    expect(error).toBeInstanceOf(ToolTransportMalformedError);
+    expect(error).toMatchObject({ code: "malformed_tool_transport" });
+    expect(calls).toEqual([]);
+    expect(JSON.stringify(error)).not.toContain("SECRET_SENTINEL");
   } finally {
     await conversation.close();
   }
