@@ -1,5 +1,7 @@
 export type ProjectOperationsErrorCode =
   | "invalid_follow_up"
+  | "invalid_intake"
+  | "invalid_budget_decision"
   | "resource_limit"
   | "unsafe_destination"
   | "invalid_transition"
