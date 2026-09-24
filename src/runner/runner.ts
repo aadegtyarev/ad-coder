@@ -746,6 +746,7 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
     models,
     model: params.model,
     compactionMode: compaction.mode,
+    tools,
   });
   const effectiveSystemPrompt =
     compaction.mode === "auto"
@@ -961,9 +962,19 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
         pending,
       ];
       if (compaction.mode === "auto") {
-        assertTurnFitsBudget(params.role, messages, params.model);
+        assertTurnFitsBudget(
+          params.role,
+          // Full request, issue #630: the effective system prompt and the
+          // granted tools are measured against the budget beside the dialogue.
+          { systemPrompt: effectiveSystemPrompt, tools, messages },
+          params.model,
+        );
       } else {
-        assertContextFitsBudget(params.role, messages, params.model);
+        assertContextFitsBudget(
+          params.role,
+          { systemPrompt: effectiveSystemPrompt, tools, messages },
+          params.model,
+        );
       }
     }
     params.stageLimitController?.assertActive();

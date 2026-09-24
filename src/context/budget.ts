@@ -99,6 +99,8 @@ export class ContextBudgetError extends Error {
   readonly reserveTokens: number;
   readonly keepRecentTokens: number;
   readonly measuredTokens: number;
+  /** System prompt + tool definitions included in `measuredTokens`, when it was estimated. */
+  readonly overheadTokens?: number;
 
   constructor(fields: {
     role: string;
@@ -107,6 +109,7 @@ export class ContextBudgetError extends Error {
     reserveTokens: number;
     keepRecentTokens: number;
     measuredTokens: number;
+    overheadTokens?: number;
     reason?: string;
     /**
      * Replaces the default tail. A condition whose only way out is NOT a retry
@@ -125,5 +128,6 @@ export class ContextBudgetError extends Error {
     this.reserveTokens = fields.reserveTokens;
     this.keepRecentTokens = fields.keepRecentTokens;
     this.measuredTokens = fields.measuredTokens;
+    if (fields.overheadTokens !== undefined) this.overheadTokens = fields.overheadTokens;
   }
 }

@@ -455,11 +455,16 @@ export async function startConversation(config: ConversationConfig): Promise<Con
     models,
     model: config.model,
     compactionMode: compaction.mode,
+    tools,
   });
+  const effectiveSystemPrompt =
+    compaction.mode === "auto"
+      ? `${config.role.systemPrompt}\n\n${COMPACTION_SAFETY_PROMPT}`
+      : config.role.systemPrompt;
   const options: AgentHarnessOptions<ExecutionToolContext> = {
     ...base,
     ...(compaction.mode === "auto" && {
-      systemPrompt: `${base.systemPrompt}\n\n${COMPACTION_SAFETY_PROMPT}`,
+      systemPrompt: effectiveSystemPrompt,
     }),
     tools,
     toolContext,
@@ -794,9 +799,27 @@ export async function startConversation(config: ConversationConfig): Promise<Con
         pending,
       ];
       if (compaction.mode === "auto") {
-        assertTurnFitsBudget(role, messages, config.model);
+        assertTurnFitsBudget(
+          role,
+          // Full request, issue #630: measure the effective system prompt and
+          // granted tools beside the dialogue, not the dialogue alone.
+          {
+            systemPrompt: effectiveSystemPrompt,
+            messages,
+            ...(options.tools !== undefined && { tools: options.tools }),
+          },
+          config.model,
+        );
       } else {
-        assertContextFitsBudget(role, messages, config.model);
+        assertContextFitsBudget(
+          role,
+          {
+            systemPrompt: effectiveSystemPrompt,
+            messages,
+            ...(options.tools !== undefined && { tools: options.tools }),
+          },
+          config.model,
+        );
       }
     } catch (error) {
       stepping = false;

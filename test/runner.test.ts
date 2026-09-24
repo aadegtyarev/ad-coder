@@ -19,6 +19,8 @@ import {
 } from "@earendil-works/pi-ai";
 import { ContextBudgetError } from "../src/context/budget";
 import type { Summarizer } from "../src/context/compactor";
+import { COMPACTION_SAFETY_PROMPT } from "../src/context/compactor";
+import { estimateOverheadTokens } from "../src/context/estimate";
 import { CostAnomalyBlockedError, CostAnomalyDetector } from "../src/economics/cost-anomaly";
 import { LEDGER_BASE_DIR } from "../src/ledger/ledger";
 import type { ToolActivityRecord } from "../src/observability/tool-activity";
@@ -1157,12 +1159,18 @@ test("the harness compaction threshold is derived from the RUNTIME window", () =
     model,
   );
   const session = {} as Parameters<typeof toHarnessOptions>[1]["session"];
+  // Auto mode appends the safety prompt to the role's system prompt, and the
+  // derived threshold subtracts that full-request overhead (issue #630).
+  const overhead = estimateOverheadTokens({
+    systemPrompt: `${role.systemPrompt}\n\n${COMPACTION_SAFETY_PROMPT}`,
+    tools: [],
+  });
   const atOwnWindow = toHarnessOptions(role, { session, models, model });
   expect(atOwnWindow.compaction).toEqual({
     enabled: true,
-    // 200_000 - (1100 - 100), so the harness fires at 1000 -- the role's own
-    // threshold, on a window 200x its budget.
-    reserveTokens: 199_000,
+    // 200_000 - (1100 - 100 - overhead), so the harness fires at the role's
+    // own full-request threshold, on a window 200x its budget.
+    reserveTokens: 199_000 + overhead,
     keepRecentTokens: 250,
   });
   const narrower = { ...model, contextWindow: 500 } as Model<Api>;

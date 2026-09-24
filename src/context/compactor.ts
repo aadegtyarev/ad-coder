@@ -271,17 +271,26 @@ export function selectRecentTail(
 /**
  * Map a role's own context budget onto the harness's durable compaction.
  *
- * The harness compacts when the measured context exceeds
- * `contextWindow - reserveTokens`; ad-coder's policy compacts at
- * `maxTokens - reserveTokens`. Equating the two thresholds is the whole
- * mapping, and it is why the harness reserve is NOT the role's reserve:
+ * The harness compacts when its measured context exceeds
+ * `contextWindow - reserveTokens`; ad-coder's policy compacts when the FULL
+ * request -- system prompt and granted tools included, issue #630 -- exceeds
+ * `maxTokens - reserveTokens`. The harness's own measure is dialogue-only
+ * (pi-agent-core's `estimateContextTokens` over the message list), so the
+ * full-request overhead `overheadTokens` is subtracted from the threshold:
+ * the harness must fire when the part it can see crosses the budget MINUS the
+ * part it cannot. Equating the two thresholds with that correction is the
+ * whole mapping, and it is why the harness reserve is NOT the role's reserve:
  *
- *   reserve(harness) = contextWindow - (maxTokens - reserve(budget))
+ *   threshold(harness) = maxTokens - reserveTokens - overheadTokens
+ *   reserve(harness)   = contextWindow - threshold(harness)
  *
- * In the shipped default (maxTokens = 0.8 x window, reserve = 0.1 x window) the
- * harness reserve comes out at 0.3 x window, and both strategies fire at
- * 0.7 x window. `keepRecentTokens` maps verbatim -- it is the same idea in both
- * (the recent tail a compaction never evicts).
+ * In the shipped default (maxTokens = 0.8 x window, reserve = 0.1 x window)
+ * with no overhead the harness reserve comes out at 0.3 x window, and both
+ * strategies fire at 0.7 x window. With overhead O the harness fires O tokens
+ * EARLIER -- the guarantee is that the full request is compacted before it can
+ * cross the budget, never that it be allowed to drift right up to it.
+ * `keepRecentTokens` maps verbatim -- it is the same idea in both (the recent
+ * tail a compaction never evicts).
  *
  * The clamp matters for a role paired at call time with a model smaller than
  * the one it was defined against: there `maxTokens - reserve` can exceed the
@@ -291,10 +300,12 @@ export function selectRecentTail(
 export function durableCompactionSettings(
   budget: ContextBudget,
   contextWindow: number,
+  overheadTokens = 0,
 ): CompactionSettings {
+  const threshold = Math.max(1, budget.maxTokens - budget.reserveTokens - overheadTokens);
   return {
     enabled: true,
-    reserveTokens: Math.max(0, contextWindow - (budget.maxTokens - budget.reserveTokens)),
+    reserveTokens: Math.max(0, contextWindow - threshold),
     keepRecentTokens: budget.keepRecentTokens,
   };
 }

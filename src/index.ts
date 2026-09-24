@@ -74,7 +74,19 @@ export {
   SUMMARIZATION_PROMPT,
   SummarizerUnavailableError,
 } from "./context/compactor";
-export { assertContextFitsBudget, assertTurnFitsBudget } from "./context/preflight";
+export {
+  type EstimatorTool,
+  estimateFullRequestTokens,
+  estimateOverheadTokens,
+  type FullRequestContext,
+  type FullRequestEstimate,
+  grantedTools,
+} from "./context/estimate";
+export {
+  assertContextFitsBudget,
+  assertTurnFitsBudget,
+  type RoleRequestContext,
+} from "./context/preflight";
 export type {
   ConsoleCommandArgument,
   ConsoleCommandDefinition,

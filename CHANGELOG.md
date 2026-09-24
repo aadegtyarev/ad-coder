@@ -11,6 +11,29 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.52] - 2026-09-24
+
+### Fixed
+
+- Measure the FULL request a provider will receive -- the role's system prompt
+  plus the tool definitions it grants, beside the dialogue -- in one shared
+  Context estimator, and refuse, compact, or admit on that number (#630).
+  The pre-provider assertions in the runner and the conversation now apply it
+  to both the turn (irreducible-tail) and the disabled-compaction (complete
+  context) checks, so an over-budget turn is refused before transport rather
+  than counted only after the provider reports it. The derived harness
+  compaction threshold subtracts that request overhead, so auto compaction
+  fires when the full context crosses the role's budget, not when a
+  dialogue-only measure does. System-prompt and tool overhead is added ONLY
+  when no usable prior assistant usage exists: provider-reported usage is
+  computed over the whole request it saw, so from the first billable response
+  onward the provider's own number governs and adding the overhead again would
+  double-count exactly the bytes every later request reuses. The summarizer's
+  input stays the evicted dialogue alone -- its own one-shot prompt and
+  `tools: []` -- so system and tool text never enter a summary. Diagnostics
+  remain content-free: error bodies carry role names and token numbers only,
+  never message or prompt text.
+
 ## [0.181.51] - 2026-09-24
 
 ### Fixed
