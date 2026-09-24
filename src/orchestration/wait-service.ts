@@ -1,6 +1,7 @@
 import * as crypto from "node:crypto";
 import type { ProjectStore } from "../project-store/project-store";
 import { ProjectStoreError, type VersionedState } from "../project-store/types";
+import type { WaitSourceAdapterRegistry } from "./wait-adapters";
 
 /** The durable schema version, independent of ProjectStore's CAS envelope. */
 export const WAIT_RECORD_VERSION = 1;
@@ -46,6 +47,8 @@ export interface WaitTarget {
 }
 export interface WaitCondition {
   kind: string;
+  /** Optional numeric threshold used by observation-only adapters (for example timers). */
+  at?: number;
 }
 export interface WaitSource {
   adapter: string;
@@ -165,27 +168,42 @@ const TERMINAL = new Set<WaitLifecycle>([
  * from an adapter event.
  */
 export class WaitService {
-  private readonly adapters = new Map<string, WaitSourceAdapter>();
+  private readonly adapterRegistry: { get(id: string, version: number): WaitSourceAdapter };
   private readonly limits: WaitServiceLimits;
 
   constructor(
     private readonly store: ProjectStore,
-    adapters: readonly WaitSourceAdapter[],
+    adapters: readonly WaitSourceAdapter[] | WaitSourceAdapterRegistry,
     limits: Partial<WaitServiceLimits> = {},
     private readonly now: () => number = Date.now,
   ) {
     this.limits = { ...DEFAULT_WAIT_SERVICE_LIMITS, ...limits };
     if (Object.values(this.limits).some((value) => !Number.isSafeInteger(value) || value <= 0))
       throw new WaitServiceError("invalid_request");
-    for (const adapter of adapters) {
-      if (
-        !SAFE_ID.test(adapter.id) ||
-        !Number.isSafeInteger(adapter.version) ||
-        adapter.version <= 0
-      )
-        throw new WaitServiceError("invalid_adapter");
-      if (this.adapters.has(adapter.id)) throw new WaitServiceError("invalid_adapter");
-      this.adapters.set(adapter.id, adapter);
+    if (Array.isArray(adapters)) {
+      const registry = new Map<string, WaitSourceAdapter>();
+      for (const adapter of adapters) {
+        if (
+          !SAFE_ID.test(adapter.id) ||
+          !Number.isSafeInteger(adapter.version) ||
+          adapter.version <= 0 ||
+          typeof adapter.validate !== "function" ||
+          typeof adapter.reconcile !== "function" ||
+          registry.has(adapter.id)
+        )
+          throw new WaitServiceError("invalid_adapter");
+        registry.set(adapter.id, adapter);
+      }
+      this.adapterRegistry = {
+        get(id, version) {
+          const adapter = registry.get(id);
+          if (adapter === undefined || adapter.version !== version)
+            throw new WaitServiceError("invalid_adapter");
+          return adapter;
+        },
+      };
+    } else {
+      this.adapterRegistry = adapters as WaitSourceAdapterRegistry;
     }
   }
 
@@ -205,7 +223,7 @@ export class WaitService {
       id,
       lifecycle: "pending",
       source: copySource(input.source),
-      condition: { kind: input.condition.kind },
+      condition: copyCondition(input.condition),
       owner: { kind: input.owner.kind, id: input.owner.id },
       policy: copyPolicy(input.policy),
       ...(input.deadlineAt === undefined ? {} : { deadlineAt: input.deadlineAt }),
@@ -290,7 +308,7 @@ export class WaitService {
         waitId: id,
         operationId,
         source: copySource(dispatched.source),
-        condition: { kind: dispatched.condition.kind },
+        condition: copyCondition(dispatched.condition),
       });
       this.validateObservation(observation);
     } catch (error) {
@@ -415,15 +433,22 @@ export class WaitService {
     return value;
   }
   private adapterFor(source: WaitSource): WaitSourceAdapter {
-    const adapter = this.adapters.get(source.adapter);
-    if (adapter === undefined || adapter.version !== source.version)
+    try {
+      return this.adapterRegistry.get(source.adapter, source.version);
+    } catch (error) {
+      if (error instanceof WaitServiceError) throw error;
       throw new WaitServiceError("invalid_adapter");
-    return adapter;
+    }
   }
   private validateInput(input: CreateWaitInput): void {
     if (!input || typeof input !== "object") throw new WaitServiceError("invalid_request");
     this.validateSource(input.source);
-    if (!plainObject(input.condition, ["kind"]) || !SAFE_KIND.test(input.condition?.kind ?? ""))
+    if (
+      !plainObject(input.condition, ["kind", "at"]) ||
+      !SAFE_KIND.test(input.condition?.kind ?? "") ||
+      (input.condition.at !== undefined &&
+        (!Number.isSafeInteger(input.condition.at) || input.condition.at < 0))
+    )
       throw new WaitServiceError("invalid_request");
     if (!plainObject(input.owner, ["kind", "id"])) throw new WaitServiceError("invalid_request");
     if (
@@ -583,6 +608,11 @@ function validEvidence(value: unknown): value is WaitEvidence {
   );
 }
 
+function copyCondition(condition: WaitCondition): WaitCondition {
+  return condition.at === undefined
+    ? { kind: condition.kind }
+    : { kind: condition.kind, at: condition.at };
+}
 function copySource(source: WaitSource): WaitSource {
   return {
     adapter: source.adapter,
@@ -622,7 +652,7 @@ function copyRecord(record: WaitRecord): WaitRecord {
     id: record.id,
     lifecycle: record.lifecycle,
     source: copySource(record.source),
-    condition: { kind: record.condition.kind },
+    condition: copyCondition(record.condition),
     owner: { kind: record.owner.kind, id: record.owner.id },
     policy: copyPolicy(record.policy),
     ...(record.deadlineAt === undefined ? {} : { deadlineAt: record.deadlineAt }),
