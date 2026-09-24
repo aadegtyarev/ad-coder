@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { clearsOnExplicitAct } from "../project-operations/run-coordinator";
 import { ProjectStore } from "../project-store/project-store";
 import { ProjectStoreError } from "../project-store/types";
-import type { RunPipelineResult, StepCost } from "./orchestrator";
+import type { BudgetCloseout, RunPipelineResult, StepCost } from "./orchestrator";
 import { type RunProcessIdentity, selfProcessIdentity } from "./run-stop";
 import type { PipelinePause, PipelinePauseCause } from "./types";
 import {
@@ -152,6 +152,14 @@ export interface BackgroundTerminalOutcome extends BackgroundRunStatus {
   approved?: boolean;
   rounds?: number;
   verdict?: string;
+  /**
+   * The closeout guarantee's budget half (ceiling + source, ledger-derived
+   * spend, unstated-never remainder, provider billing), reported when the run
+   * settled through the coordinator and an intake budget exists for its task;
+   * omitted when the run never settled a pipeline result (worker exit,
+   * cancel, timeout, launch failure).
+   */
+  budgetCloseout?: BudgetCloseout;
 }
 /** A paused run reports through the same surface, with the same shape. */
 export interface BackgroundPausedOutcome extends BackgroundRunStatus {
@@ -520,6 +528,7 @@ export class BackgroundRunManager {
         approved: result.result.approved,
         rounds: result.result.rounds,
         ...(lastVerdict === undefined ? { verdict: "not_run" } : { verdict: lastVerdict.status }),
+        ...(result.budgetCloseout !== undefined && { budgetCloseout: result.budgetCloseout }),
       };
       this.append(entry, "completed", { metrics: { ...entry.metrics } });
     });
@@ -680,6 +689,7 @@ export class BackgroundRunManager {
       approved: result.result.approved,
       rounds: result.result.rounds,
       ...(lastVerdict === undefined ? { verdict: "not_run" } : { verdict: lastVerdict.status }),
+      ...(result.budgetCloseout !== undefined && { budgetCloseout: result.budgetCloseout }),
     };
     this.append(entry, "completed", { metrics: { ...entry.metrics } }, false);
     this.persist(entry);
@@ -1314,6 +1324,65 @@ function copyMetrics(value: { steps: number; totalCost: number }): {
 } {
   return { steps: value.steps, totalCost: value.totalCost };
 }
+/**
+ * A signed dollar figure that may legitimately be negative -- the budget
+ * remainder, whose negative value IS the overrun. Unlike `finiteNumber`'s
+ * non-negative rule, this accepts any finite number: clamping or rejecting a
+ * negative remainder at the reader would erase the overrun the closeout must
+ * keep stating.
+ */
+function signedNumber(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value))
+    throw new TypeError("record contains an invalid number");
+  return value;
+}
+/**
+ * Strict reader for a terminal outcome's `budgetCloseout`: exactly the fields
+ * the writers build on `BudgetCloseout`, with the same reader/writer symmetry
+ * (issue #430) `parseOutcome` keeps for its own fields -- an unknown or
+ * missing field from a drifted record throws instead of being silently
+ * ignored. The provider-billing pair is validated as a pair: an amount with
+ * nothing reported (or a `true` flag with no amount) is a corrupted record,
+ * not a zero.
+ */
+function parseBudgetCloseout(value: unknown): BudgetCloseout {
+  const object = strictObject(value, [
+    "ceilingUsd",
+    "ceilingSource",
+    "spendUsd",
+    "remainderUsd",
+    "providerBillingReported",
+    "providerBillingUsd",
+  ]);
+  if (typeof object.providerBillingReported !== "boolean")
+    throw new TypeError("record contains an invalid boolean");
+  if (object.providerBillingUsd !== undefined && finiteNumber(object.providerBillingUsd) < 0)
+    throw new TypeError("record contains an invalid number");
+  if (object.providerBillingReported !== (object.providerBillingUsd !== undefined))
+    throw new TypeError("record contains an inconsistent provider billing");
+  return {
+    ceilingUsd: finiteNumber(object.ceilingUsd),
+    ceilingSource: enumValue(object.ceilingSource, ["operator", "estimate"] as const),
+    spendUsd: finiteNumber(object.spendUsd),
+    remainderUsd: signedNumber(object.remainderUsd),
+    providerBillingReported: object.providerBillingReported,
+    ...(object.providerBillingUsd === undefined
+      ? {}
+      : { providerBillingUsd: finiteNumber(object.providerBillingUsd) }),
+  };
+}
+function copyBudgetCloseout(closeout: BudgetCloseout): BudgetCloseout {
+  return {
+    ceilingUsd: closeout.ceilingUsd,
+    ceilingSource: closeout.ceilingSource,
+    spendUsd: closeout.spendUsd,
+    remainderUsd: closeout.remainderUsd,
+    providerBillingReported: closeout.providerBillingReported,
+    ...(closeout.providerBillingUsd === undefined
+      ? {}
+      : { providerBillingUsd: closeout.providerBillingUsd }),
+  };
+}
 function parsePause(value: unknown): BackgroundRunPause {
   const object = strictObject(value, ["phase", "code", "action", "limitReason", "limit", "cause"]);
   const pause = enumValue(object.phase, PAUSE_PHASES);
@@ -1417,6 +1486,7 @@ function parseOutcome(value: unknown, runId: string): BackgroundTerminalOutcome 
     "approved",
     "rounds",
     "verdict",
+    "budgetCloseout",
   ]);
   if (object.runId !== runId) throw new TypeError("outcome run does not match record");
   const lifecycle = enumValue(object.lifecycle, TERMINAL_LIFECYCLES);
@@ -1443,6 +1513,9 @@ function parseOutcome(value: unknown, runId: string): BackgroundTerminalOutcome 
       : {
           verdict: enumValue(object.verdict, ["approved", "changes_requested", "not_run"] as const),
         }),
+    ...(object.budgetCloseout === undefined
+      ? {}
+      : { budgetCloseout: parseBudgetCloseout(object.budgetCloseout) }),
   };
 }
 function copyOutcome(outcome: BackgroundRunOutcome): BackgroundTerminalOutcome {
@@ -1463,6 +1536,9 @@ function copyOutcome(outcome: BackgroundRunOutcome): BackgroundTerminalOutcome {
     ...(outcome.approved === undefined ? {} : { approved: outcome.approved }),
     ...(outcome.rounds === undefined ? {} : { rounds: outcome.rounds }),
     ...(outcome.verdict === undefined ? {} : { verdict: outcome.verdict }),
+    ...(outcome.budgetCloseout === undefined
+      ? {}
+      : { budgetCloseout: copyBudgetCloseout(outcome.budgetCloseout) }),
   };
 }
 /**

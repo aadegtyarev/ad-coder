@@ -1,4 +1,4 @@
-import type { Model } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Model, Models } from "@earendil-works/pi-ai";
 
 /**
  * Capture of what a provider says it ACTUALLY billed for one response, as
@@ -146,6 +146,104 @@ function wrapFetch(inner: typeof fetch, capture: ChargeCapture): typeof fetch {
  * replacing it: another layer's `onPayload` or injected `fetch` keeps working,
  * because a measurement must never be the reason a request behaves differently.
  */
+/**
+ * A per-run total of what the provider reported billing.
+ *
+ * The closeout guarantee (docs/contracts/orchestrator.md:49-50) asks a closed
+ * task to distinguish configured estimates from provider billing BY NAME.
+ * The expectation half of that comparison is already ledger-derived; the
+ * billed half exists only per response on the wire, so SOMETHING has to own
+ * the per-run accumulation. This is it: a Models-wrap layer that mirrors
+ * `CostAnomalyDetector.wrap`'s choreography but only ACCUMULATES -- it never
+ * admits, never blocks, and never replaces any other layer on the chain
+ * (instrumenting chains prior `onPayload`/`fetch`, and asking a reporting
+ * provider for its charge is chained the same way, so billing is still
+ * requested when the anomaly detector is disabled: the closeout's report of
+ * "the provider reported no billing" must not be an artifact of which
+ * detectors happen to be on).
+ *
+ * The provider reported NO billing for the run (not $0) exactly when no
+ * response it served carried a billed amount: that is reported as an absence,
+ * the same rule `chargedUsdFromUsage` follows per response.
+ */
+export interface ChargedBillingTally {
+  /** The wrapped Models: every generation call still passes through unchanged. */
+  models: Models;
+  /**
+   * Dollars the provider reported billing across this tally's responses.
+   * `undefined` means the provider reported none -- stated, never shown as 0.
+   */
+  chargedUsd(): number | undefined;
+}
+
+export function tallyChargedBilling(models: Models): ChargedBillingTally {
+  let reportedUsd = 0;
+  let reportedCount = 0;
+  const settle = (_message: AssistantMessage | undefined, capture: ChargeCapture): void => {
+    // The amount arrives on the wire, not on the settled message: the capture
+    // is the only place it read this response's charge.
+    if (capture.chargedUsd === undefined) return;
+    reportedUsd += capture.chargedUsd;
+    reportedCount += 1;
+  };
+  const instrument = (args: unknown[], capture: ChargeCapture): unknown[] => {
+    const next = [...args];
+    const last = next.length - 1;
+    const target =
+      last >= 1 && (typeof next[last] === "object" || next[last] === undefined) ? last : -1;
+    if (target === -1) return next;
+    next[target] = instrumentChargedCost(next[target], capture);
+    return next;
+  };
+  return {
+    models: modelsProxy(models, settle, instrument),
+    chargedUsd: () => (reportedCount === 0 ? undefined : reportedUsd),
+  };
+}
+
+function modelsProxy(
+  models: Models,
+  settle: (message: AssistantMessage | undefined, capture: ChargeCapture) => void,
+  instrument: (args: unknown[], capture: ChargeCapture) => unknown[],
+): Models {
+  const promiseMethods = new Set(["complete", "completeSimple", "fetchDeferred"]);
+  const streamMethods = new Set(["stream", "streamSimple", "streamDeferred"]);
+  return new Proxy(models, {
+    get(target, property, receiver) {
+      const value = Reflect.get(target, property, receiver);
+      if (typeof property !== "string" || typeof value !== "function") return value;
+      if (promiseMethods.has(property)) {
+        return (...args: unknown[]) => {
+          const capture: ChargeCapture = {};
+          const operation = Reflect.apply(
+            value,
+            target,
+            instrument(args, capture),
+          ) as Promise<AssistantMessage>;
+          return operation.then((message) => {
+            settle(message, capture);
+            return message;
+          });
+        };
+      }
+      if (streamMethods.has(property)) {
+        return (...args: unknown[]) => {
+          const capture: ChargeCapture = {};
+          const stream = Reflect.apply(value, target, instrument(args, capture)) as {
+            result(): Promise<AssistantMessage>;
+          };
+          void stream.result().then(
+            (message) => settle(message, capture),
+            () => undefined,
+          );
+          return stream;
+        };
+      }
+      return value;
+    },
+  });
+}
+
 export function instrumentChargedCost(
   options: unknown,
   capture: ChargeCapture,

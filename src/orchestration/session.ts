@@ -736,6 +736,7 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
           output: observed?.output ?? 0,
           reasoning: observed?.reasoning ?? 0,
           costUsd: observed?.costUsd ?? 0,
+          ...(observed?.chargedUsd !== undefined && { chargedUsd: observed.chargedUsd }),
           requestBytes: observed.requestBytes,
           readFiles: [...(observed?.readFiles ?? [])],
           readFilesTotal: observed?.readFilesTotal ?? 0,

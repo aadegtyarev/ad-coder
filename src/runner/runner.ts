@@ -23,6 +23,7 @@ import {
   resolveCompactionPolicy,
 } from "../context/compactor";
 import { assertContextFitsBudget, assertTurnFitsBudget } from "../context/preflight";
+import { tallyChargedBilling } from "../economics/charged-cost";
 import type { CostAnomalyDetector } from "../economics/cost-anomaly";
 import type { LedgerSink } from "../ledger/ledger";
 import { FileLedgerSink, Ledger } from "../ledger/ledger";
@@ -194,6 +195,14 @@ export interface RoleObservations {
   output: number;
   reasoning?: number;
   costUsd?: number;
+  /**
+   * Dollars the PROVIDER reported billing across this run's settled responses
+   * (the `ChargeCapture` amount off the wire), distinct from `costUsd` -- which
+   * is what our own price list computes from tokens. Absent when the provider
+   * reported no billed amount for any response: the closeout surfaces state
+   * that absence rather than printing a zero that reads as a measured amount.
+   */
+  chargedUsd?: number;
   /**
    * Issue #469 clamp trace: provider rounds whose `reasoning > output` anomaly
    * was absorbed. Absent when nothing was clamped, so ordinary observations
@@ -698,6 +707,14 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
       limitedModels,
     tools.map((tool) => tool.name),
   );
+  // PROVIDER BILLING TALLY (the closeout guarantee's billing half): wrapped
+  // INSIDE the admission controller and OUTSIDE the tool-call repair, so it
+  // accumulates exactly the purchases the session actually settled while the
+  // refusal ordering above is untouched. It reads passively -- a run's billing
+  // measurement must never be the reason a request behaves differently -- and
+  // reports `undefined` when the provider never named a billed amount.
+  const billing = tallyChargedBilling(recoveredModels);
+  const billedUsd = billing.chargedUsd();
   // ADMISSION OUTERMOST: the wrapper applied last is entered first, and the
   // provider's own client can only be opened through it, so a saturated scope
   // refuses before session/stage/cost-anomaly reserve anything and before
@@ -708,10 +725,10 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
   // `admissionScopeKey`, so only the SHA-256 digest is ever persisted.
   const models =
     params.providerAdmissionController?.wrap(
-      recoveredModels,
+      billing.models,
       params.model.provider,
       params.model.provider,
-    ) ?? recoveredModels;
+    ) ?? billing.models;
   const explicitPolicy =
     params.compaction ??
     (params.summarizer === undefined ? undefined : { mode: "auto", summarizer: params.summarizer });
@@ -1227,6 +1244,7 @@ export async function runRole(params: RunRoleParams): Promise<RunRoleResult> {
         output: usage.output,
         reasoning: usage.reasoning,
         costUsd: usage.costUsd,
+        ...(billedUsd !== undefined && { chargedUsd: billedUsd }),
         // Issue #469: the clamp trace rides with the observations that are
         // already persisted into the run record; absent when nothing was
         // clamped so ordinary runs stay byte-identical.

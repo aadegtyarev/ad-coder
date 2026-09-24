@@ -92,6 +92,7 @@ import {
   OrchestrationError,
   type PipelineConfig,
   type PipelineResult,
+  type PipelineStageMetrics,
   type Plan,
   type TransitionKind,
   type Verdict,
@@ -203,6 +204,48 @@ export interface RunPipelineResult {
   perStep: StepCost[];
   /** Sum of `perStep` costs for this run. */
   totalCost: number;
+  /**
+   * The closeout guarantee's budget half (docs/contracts/orchestrator.md:47-50):
+   * ceiling, ledger-derived spend, remainder, and the provider-billing
+   * distinction. Absent ONLY when no intake budget was recorded for this task
+   * (a run that never went through the pre-work gate; every dispatch does).
+   */
+  budgetCloseout?: BudgetCloseout;
+}
+
+/**
+ * The budget remainder and the configured-estimate / provider-billing
+ * distinction, as one closed run reports them.
+ *
+ * THE COST FIGURES ARE TWO DIFFERENT MEASUREMENTS AND THE REPORT NAMES BOTH:
+ * `spendUsd` is ledger-derived (`usage.cost.total` over every ledger record on
+ * the shared sink -- our price list over the settled tokens), while
+ * `providerBilling.usd` is what the provider said it actually billed
+ * (`src/economics/charged-cost.ts`, the wire-captured `ChargeCapture` amount),
+ * summed over the stages that reported one. A provider that reports none is
+ * stated as an absence, never as zero: a zero provider billing would read as
+ * a measured "billed nothing", which no run has ever earned.
+ */
+export interface BudgetCloseout {
+  /** The whole-task work ceiling in USD, as [Autonomy] defines the budget. */
+  ceilingUsd: number;
+  /** Who established the ceiling -- the estimate-vs-billing distinction's first half. */
+  ceilingSource: "operator" | "estimate";
+  /** Ledger-derived spend across all rounds: every ledger record on the shared sink. */
+  spendUsd: number;
+  /**
+   * `ceilingUsd - spendUsd`. NOT clamped at zero and never omitted when
+   * negative: a negative remainder IS the overrun, stated below and in the
+   * operator-facing text as such.
+   */
+  remainderUsd: number;
+  /** Whether the provider reported any billed amount for this run. */
+  providerBillingReported: boolean;
+  /**
+   * Sum of the billed amounts the provider DID report, when it reported any;
+   * may be less than the full run when only some stages' providers report one.
+   */
+  providerBillingUsd?: number;
 }
 
 export interface DecompositionResult {
@@ -496,6 +539,11 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       if (control?.cancelled()) throw new BackgroundCancellation();
       control?.onStage(step);
     });
+    const budgetCloseout = buildBudgetCloseout(
+      readIntake(ProjectStoreIntakeStore.idForTask(task)),
+      perStep.reduce((sum, entry) => sum + entry.cost, 0),
+      completed.result?.stageMetrics ?? [],
+    );
     if (completed.result === undefined) {
       // The pause outranks a pending decision ON PURPOSE (issue #261): the
       // coordinator deletes the pause when a decision resolves, so a pause
@@ -534,6 +582,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       result: completed.result,
       perStep,
       totalCost,
+      ...(budgetCloseout !== undefined && { budgetCloseout }),
     };
     backgroundRuns.projectForegroundResult(completed.checkpoint.runId, pipelineResult);
     return pipelineResult;
@@ -1040,6 +1089,60 @@ const SAFE_HOUSE_ERRORS = [
   BudgetWaitError,
 ] as const;
 
+/**
+ * Build the closeout guarantee's budget half for one settled run, or
+ * `undefined` when no intake budget is on record for this task (a run that
+ * never went through the pre-work gate; every dispatch records one).
+ */
+function buildBudgetCloseout(
+  record: DurableIntakeRecord | undefined,
+  spendUsd: number,
+  stageMetrics: readonly PipelineStageMetrics[],
+): BudgetCloseout | undefined {
+  if (record === undefined) return undefined;
+  const ceiling = record.statement.budget;
+  const charged = stageMetrics.reduce((sum, metric) => sum + (metric.chargedUsd ?? 0), 0);
+  return {
+    ceilingUsd: ceiling.ceilingUsd,
+    ceilingSource: ceiling.source,
+    spendUsd,
+    remainderUsd: ceiling.ceilingUsd - spendUsd,
+    providerBillingReported: stageMetrics.some((metric) => metric.chargedUsd !== undefined),
+    ...(stageMetrics.some((metric) => metric.chargedUsd !== undefined) && {
+      providerBillingUsd: charged,
+    }),
+  };
+}
+
+/**
+ * Format the closeout's budget half as operator-facing text. Every figure is
+ * named, and the provider-billing line states its source while the ceiling
+ * states whether it was an operator-stated budget or a configured estimate.
+ * A negative remainder is an OVERRUN and is stated as one -- never clamped
+ * to zero and never omitted (the clause the g8 slice found missing).
+ */
+export function formatBudgetCloseout(closeout: BudgetCloseout): string {
+  const overrun = closeout.remainderUsd < 0;
+  return [
+    `${
+      closeout.ceilingSource === "estimate" ? "configured estimate" : "operator-stated budget"
+    }: ceiling ${fmtUsd(closeout.ceilingUsd)} USD (source: ${closeout.ceilingSource})`,
+    `ledger-derived spend across all rounds: ${fmtUsd(closeout.spendUsd)} USD`,
+    `budget remainder: ${fmtUsd(closeout.remainderUsd)} USD`,
+    ...(overrun
+      ? [`overrun: ${fmtUsd(-closeout.remainderUsd)} USD over the ceiling -- not within budget`]
+      : []),
+    closeout.providerBillingReported && closeout.providerBillingUsd !== undefined
+      ? `provider billing: ${fmtUsd(closeout.providerBillingUsd)} USD as reported billed by the provider (distinct from the ledger-derived spend computed from the configured price table)`
+      : "provider billing: no billed amount was reported by the provider (not zero; the ledger-derived spend above is our price-list computation, not a provider bill)",
+  ].join("\n");
+}
+
+/** Bounded money rendering: six decimals, never scientific notation. */
+function fmtUsd(value: number): string {
+  return value.toFixed(6);
+}
+
 /** Render a `StepCost[]` + total as a compact, safe cost summary. */
 function formatCost(
   perStep: StepCost[],
@@ -1448,7 +1551,7 @@ export function buildBuiltInPipelineTools(core: Orchestrator): Tool[] {
           content: [
             {
               type: "text",
-              text: `${summary}\n${formatStageMetrics(run.result)}\n${formatCost(run.perStep, run.totalCost)}`,
+              text: `${summary}\n${formatStageMetrics(run.result)}\n${formatCost(run.perStep, run.totalCost)}${run.budgetCloseout === undefined ? "" : `\n${formatBudgetCloseout(run.budgetCloseout)}`}`,
             },
           ],
           details: undefined,
@@ -1631,7 +1734,7 @@ export function buildBuiltInPipelineTools(core: Orchestrator): Tool[] {
           content: [
             {
               type: "text",
-              text: `${summary}\n${formatStageMetrics(run.result)}\n${formatCost(run.perStep, run.totalCost)}`,
+              text: `${summary}\n${formatStageMetrics(run.result)}\n${formatCost(run.perStep, run.totalCost)}${run.budgetCloseout === undefined ? "" : `\n${formatBudgetCloseout(run.budgetCloseout)}`}`,
             },
           ],
           details: undefined,
