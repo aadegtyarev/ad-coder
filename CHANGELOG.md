@@ -11,6 +11,15 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.53] - 2026-09-24
+
+### Added
+
+- Add production wait-source adapters for durable standalone/coordinator run
+  records and observation-only timers. Missing or malformed sources become typed
+  unavailable observations; adapters persist and return only identifiers and
+  numbers, and timers never schedule work (#612).
+
 ## [0.181.52] - 2026-09-24
 
 ### Fixed

@@ -338,6 +338,18 @@ export type {
 export { OrchestrationError } from "./orchestration/types";
 export type { VerdictCapture } from "./orchestration/verdict";
 export { buildSubmitVerdictTool, SUBMIT_VERDICT_TOOL_NAME } from "./orchestration/verdict";
+export type { TimerWaitClock } from "./orchestration/wait-adapters";
+export {
+  createProductionWaitSourceRegistry,
+  createRunWaitAdapter,
+  createTimerWaitAdapter,
+  RUN_WAIT_ADAPTER_ID,
+  TIMER_WAIT_ADAPTER_ID,
+  WAIT_ADAPTER_VERSION,
+  WaitAdapterValidationError,
+  WaitSourceAdapterRegistry,
+  WaitSourceAdapterRegistryError,
+} from "./orchestration/wait-adapters";
 export type {
   CreateWaitInput,
   WaitCondition,
