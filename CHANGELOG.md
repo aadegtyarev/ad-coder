@@ -11,6 +11,12 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.57] - 2026-09-24
+
+### Changed
+
+- **The orchestrator contract audit (issue #570) is recorded as a dated review document.** It states current-base evidence for landing-contract clauses K0–K12 against the base it was written on (0.164.0); later merges moved that base, so the document is a dated record, not a current conformance claim (docs/contracts/meta-contract.md requires a code audit to resolve target-vs-code drift).
+
 ## [0.181.55] - 2026-09-24
 
 ### Fixed
@@ -571,6 +577,13 @@ enforces that dated release headings go in non-increasing date order
 
 ### Changed
 - **Skill loads now render as `Skill <skill-id>` in tool activity (issue #569).**
+
+## [0.170.0] - 2026-09-21
+
+### Changed
+- **Added the orchestrator contract audit (issue #570).** The dated review records
+  current-base evidence for landing-contract clauses K0–K12 and separately
+  identifies a precedence collision with the accepted project rules.
 
 ## [0.164.0] - 2026-09-21
 
