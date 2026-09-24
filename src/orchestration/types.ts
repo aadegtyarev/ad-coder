@@ -529,6 +529,14 @@ export interface PipelineStageMetrics {
   reasoning?: number;
   /** Provider-reported total; never recomputed. */
   costUsd?: number;
+  /**
+   * Dollars the PROVIDER reported actually billing for this stage (the
+   * `ChargeCapture` amount off the wire) -- a different measurement from
+   * `costUsd`, which is our price list over tokens. Absent when the provider
+   * reported no billed amount, so closeouts state that absence by name rather
+   * than printing a zero that reads as a measured amount.
+   */
+  chargedUsd?: number;
   requestBytes: {
     systemPrompt: number;
     prompt: number;

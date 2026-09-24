@@ -11,7 +11,22 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
-## [0.181.59] - 2026-09-24
+## [0.181.60] - 2026-09-24
+
+### Added
+
+- **Budget closeout on settled runs (orchestrator audit slice g8,
+  `docs/reviews/slices/orchestrator-g8-closeout-report.md`).** A closed run now
+  reports the closeout guarantee's budget half: ceiling and its source
+  (operator-stated or configured estimate), ledger-derived spend across all
+  rounds, an unclamped remainder whose negative value is stated as an overrun,
+  and provider billing -- a wire-captured figure (`src/economics/charged-cost.ts`)
+  kept BY NAME apart from the ledger-derived spend, with a provider that
+  reported no billed amount stated as an absence, never shown as zero. The
+  report rides the `run_pipeline`/`pipeline_status` tool text, the
+  `RunPipelineResult` (`budgetCloseout`), terminal background outcomes, and role
+  observations (`chargedUsd`), with strict reader/writer symmetry on the durable
+  records.
 
 ### Added
 
