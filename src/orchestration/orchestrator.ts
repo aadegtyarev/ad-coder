@@ -57,6 +57,18 @@ import {
   type BackgroundRunLimits,
   BackgroundRunManager,
 } from "./background-runs";
+import {
+  type BudgetDecision,
+  BudgetGateError,
+  BudgetWaitError,
+  type DurableIntakeRecord,
+  type IntakeStatement,
+  type IntakeStore,
+  MemoryIntakeStore,
+  ProjectStoreIntakeStore,
+  parseBudgetDecision,
+  parseIntakeStatement,
+} from "./intake";
 import { pipelinePauseFromCheckpoint } from "./pipeline";
 import { COMPLEXITY_RUBRIC, CONTRACT_INDEX } from "./plan";
 import type { WorkflowSession } from "./session";
@@ -366,6 +378,14 @@ export interface Orchestrator {
   /** Safe lookup for the foreground coordinator record; never returns task content. */
   foregroundStatus(runId: string): ForegroundRunProjection | undefined;
   foregroundExists(runId: string): boolean;
+  /**
+   * Validate and durably record the pre-work intake statement and budget
+   * decision for a task. Keyed deterministically by the task's hash, read
+   * back with `readIntake` after a restart or context boundary.
+   */
+  recordIntake(task: string, statement: IntakeStatement, budget: BudgetDecision): string;
+  /** Read a recorded intake back by id; absent when never recorded. */
+  readIntake(id: string): DurableIntakeRecord | undefined;
 }
 
 /**
@@ -759,6 +779,25 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
   };
   const foregroundExists = (runId: string): boolean => readForeground(runId) !== undefined;
 
+  // The pre-work intake store (audit slices g2/g3). With a durable target it
+  // lives in the managed runs layout, the same ProjectStore versioned-JSON
+  // mechanism the control-plane run records use; without one it stays
+  // process-local, and the gate still functions for the session.
+  const intakeStore: IntakeStore =
+    deps.backgroundTargetDir === undefined
+      ? new MemoryIntakeStore()
+      : new ProjectStoreIntakeStore(new ProjectStore(deps.backgroundTargetDir));
+  const recordIntake = (
+    task: string,
+    statement: IntakeStatement,
+    budget: BudgetDecision,
+  ): string => {
+    const id = ProjectStoreIntakeStore.idForTask(task);
+    intakeStore.set(id, statement, budget, new Date().toISOString());
+    return id;
+  };
+  const readIntake = (id: string): DurableIntakeRecord | undefined => intakeStore.get(id);
+
   const showCost = (): CostReport => {
     let totalCost = 0;
     for (const record of sink.records()) {
@@ -785,6 +824,8 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     isStepping,
     foregroundStatus,
     foregroundExists,
+    recordIntake,
+    readIntake,
   };
 }
 
@@ -960,6 +1001,12 @@ const SAFE_HOUSE_ERRORS = [
   StageLimitError,
   StageCloseoutError,
   CostAnomalyBlockedError,
+  // Intake/budget gate errors (audit slices g2/g3): `code` is the authored
+  // literal, `detail` is a names-only source/next-action token, and the
+  // message is an authored fixed string naming the three legal budget states
+  // and the wait -- no task text, paths, or payload crosses.
+  BudgetGateError,
+  BudgetWaitError,
 ] as const;
 
 /** Render a `StepCost[]` + total as a compact, safe cost summary. */
@@ -1250,6 +1297,30 @@ export function buildBuiltInPipelineTools(core: Orchestrator): Tool[] {
    * object is validated by `assertRaisedLimits` at the core boundary like any
    * other caller's.
    */
+  /**
+   * The pre-work budget gate (docs/contracts/orchestrator.md, audit slices
+   * g2/g3). Extracts the intake statement + budget decision from the tool's
+   * `intake` field, records them durably BEFORE any work starts, and refuses
+   * the dispatch when neither is present, when the decision names none of the
+   * three legal kinds, or when the budget is explicitly blocked. The tool's
+   * busy paths never dispatch before this returns.
+   */
+  const gatedIntake = (
+    task: string,
+    raw: unknown,
+    source: string,
+  ): { id: string; statement: IntakeStatement; budget: BudgetDecision } => {
+    if (raw === undefined) throw new BudgetGateError(source);
+    const statement = parseIntakeStatement(raw, "intake");
+    const budget = parseBudgetDecision(
+      (raw as Record<string, unknown>).budgetDecision,
+      "intake.budgetDecision",
+    );
+    if (budget.kind === "blocked") throw new BudgetWaitError(budget.nextAction ?? "stated");
+    const id = core.recordIntake(task, statement, budget);
+    return { id, statement, budget };
+  };
+
   const raisedLimitsFrom = (
     role: string | undefined,
     reason: string | undefined,
@@ -1272,7 +1343,7 @@ export function buildBuiltInPipelineTools(core: Orchestrator): Tool[] {
   const runPipelineTool = defineTool({
     name: RUN_PIPELINE_TOOL_NAME,
     description:
-      "Run a full autonomous pipeline (plan -> [security] -> code <-> review) for a task and report the outcome and cost. Executes code within the fixed working directory.",
+      "Run a full autonomous pipeline (plan -> [security] -> code <-> review) for a task and report the outcome and cost. Executes code within the fixed working directory. Before work starts this tool records the intake statement and requires a pre-work budget decision: pass intake.budgetDecision.kind as accepted, counter_estimated (with intake.budgetDecision.evidence), or blocked -- a dispatch without one does not start.",
     label: "run pipeline",
     parameters: Type.Object({
       task: Type.String(),
@@ -1281,14 +1352,38 @@ export function buildBuiltInPipelineTools(core: Orchestrator): Tool[] {
       complexity: Type.Optional(
         Type.Union([Type.Literal("trivial"), Type.Literal("medium"), Type.Literal("complex")]),
       ),
+      // Intake statement + budget decision. Validated and recorded by the
+      // core (g2/g3): the gate stays in the handler, never in the schema.
+      intake: Type.Optional(
+        Type.Object({
+          outcome: Type.String(),
+          scopeExclusions: Type.Array(Type.String()),
+          mode: Type.String(),
+          taskShape: Type.Object({
+            complexity: Type.String(),
+            stage: Type.String(),
+            sizeClass: Type.String(),
+          }),
+          budget: Type.Object({ ceilingUsd: Type.Number(), source: Type.String() }),
+          ceilings: Type.Array(Type.String()),
+          resultChangingAmbiguities: Type.Array(Type.String()),
+          budgetDecision: Type.Object({
+            kind: Type.String(),
+            evidence: Type.Optional(Type.Array(Type.String())),
+            nextAction: Type.Optional(Type.String()),
+            reason: Type.Optional(Type.String()),
+          }),
+        }),
+      ),
     }),
     async execute(_toolCallId, params) {
       try {
+        const intake = gatedIntake(params.task, params.intake, RUN_PIPELINE_TOOL_NAME);
         const run = await core.runPipeline(params.task, params.complexity);
         const summary =
           `pipeline complete: runId=${run.runId} approved=${run.result.approved} ` +
           `rounds=${run.result.rounds} review=${lastReviewStatus(run.result)} ` +
-          `gates=${lastGateStatus(run.result)}`;
+          `gates=${lastGateStatus(run.result)} intakeId=${intake.id} budget=${intake.budget.kind}`;
         return {
           content: [
             {
@@ -1307,11 +1402,35 @@ export function buildBuiltInPipelineTools(core: Orchestrator): Tool[] {
   const startPipelineTool = defineTool({
     name: START_PIPELINE_TOOL_NAME,
     description:
-      "Start the built-in pipeline in an isolated background conversation and return immediately. The only parameter is untrusted task data.",
+      "Start the built-in pipeline in an isolated background conversation and return immediately. Records the intake statement first and requires a pre-work budget decision (intake.budgetDecision.kind: accepted, counter_estimated with evidence, or blocked); a dispatch without one does not start.",
     label: "start pipeline",
-    parameters: Type.Object({ task: Type.String() }),
+    parameters: Type.Object({
+      task: Type.String(),
+      intake: Type.Optional(
+        Type.Object({
+          outcome: Type.String(),
+          scopeExclusions: Type.Array(Type.String()),
+          mode: Type.String(),
+          taskShape: Type.Object({
+            complexity: Type.String(),
+            stage: Type.String(),
+            sizeClass: Type.String(),
+          }),
+          budget: Type.Object({ ceilingUsd: Type.Number(), source: Type.String() }),
+          ceilings: Type.Array(Type.String()),
+          resultChangingAmbiguities: Type.Array(Type.String()),
+          budgetDecision: Type.Object({
+            kind: Type.String(),
+            evidence: Type.Optional(Type.Array(Type.String())),
+            nextAction: Type.Optional(Type.String()),
+            reason: Type.Optional(Type.String()),
+          }),
+        }),
+      ),
+    }),
     async execute(_toolCallId, params) {
       try {
+        gatedIntake(params.task, params.intake, START_PIPELINE_TOOL_NAME);
         const started = await core.backgroundRuns.startDetached(params.task);
         return {
           content: [{ type: "text", text: `pipeline requested: runId=${started.runId}` }],

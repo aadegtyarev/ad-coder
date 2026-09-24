@@ -11,6 +11,31 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.59] - 2026-09-24
+
+### Added
+
+- **Pre-work intake statement and budget gate for pipeline dispatches
+  (orchestrator audit slices g2/g3).** Before a pipeline dispatch starts work
+  it must carry an intake statement (outcome, scope exclusions, mode, measured
+  task shape, whole-task budget, named ceilings, result-changing
+  ambiguities) and a budget decision that is exactly one of accepted,
+  counter_estimated with recorded evidence, or explicitly blocked with a next
+  action. The new `src/orchestration/intake.ts` owns those statement shapes,
+  their validation, the gate errors (`BudgetGateError` for an undecided
+  budget, `BudgetWaitError` for an explicitly blocked one), and the durable
+  intake record backed by `ProjectStore` versioned JSON in the managed runs
+  layout, so a recorded statement reads back intact after a restart or
+  context boundary. `run_pipeline` and `start_pipeline` refuse a dispatch
+  without a decided budget and never reach the pipeline; the control-plane's
+  depth-0 `resume` holds a run in the named, resumable `awaiting_decision`
+  state with a `decision.required` event until a budget decision is recorded
+  (child runs inherit the parent's authorized budget and do not re-gate).
+  Covered by `test/intake-budget.test.ts`, including the negative proof that
+  dispatches with no decided budget start no work.
+  Cited: docs/reviews/slices/orchestrator-g2-intake.md,
+  docs/reviews/slices/orchestrator-g3-budget.md.
+
 ## [0.181.58] - 2026-09-24
 
 ### Changed

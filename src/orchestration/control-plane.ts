@@ -12,6 +12,13 @@ import type { Tool } from "../runner/tool";
 import { defineTool } from "../runner/tool";
 import type { SessionLimitController, SessionLimitSnapshot } from "../session-limits";
 import { deriveChildSpecs } from "./decompose";
+import {
+  type BudgetDecision,
+  type IntakeStatement,
+  isWorkStartableBudget,
+  parseBudgetDecision,
+  parseIntakeStatement,
+} from "./intake";
 import type { PipelineResult, PipelineStageMetrics, Verdict } from "./types";
 
 export type RunMode = "auto" | "manual";
@@ -91,6 +98,10 @@ export interface DurableRunRecord {
   operations?: RunOperationalSummary;
   /** Persisted so process reconstruction cannot reset the automatic retry ceiling. */
   automaticRetryAttempts?: number;
+  /** The pre-work intake statement (audit slice g2); set at start or when resolved. */
+  intake?: IntakeStatement;
+  /** The pre-work budget decision (audit slice g3); depth-0 runs may not start without one. */
+  budgetDecision?: BudgetDecision;
 }
 
 export type ControlPlaneEventType =
@@ -151,6 +162,8 @@ export interface RunReport {
   stageMetrics: PipelineStageMetrics[];
   checkpointPath: string;
   backlog: { destination: string; file?: string; count: number };
+  /** The pre-work budget decision's kind, or `absent` when undecided. */
+  budget: { decision: "absent" | BudgetDecision["kind"] };
 }
 
 export interface RunOperationalSummary {
@@ -360,6 +373,10 @@ export interface StartRunInput {
   task: string;
   mode: RunMode;
   scope?: Partial<RunScope>;
+  /** Optional validated intake statement, recorded durably on the run record. */
+  intake?: unknown;
+  /** Optional pre-work budget decision; depth-0 work cannot start without a decided one. */
+  budget?: unknown;
 }
 
 export interface ResumeRunInput {
@@ -387,6 +404,8 @@ export interface SafeRunStatus {
   /** Escalation signal, present only when the review stop rule settled the run. */
   escalation?: PipelineResult["escalation"];
   externalLimit?: ExternalLimit;
+  /** The pre-work budget decision's safe shape; absent means undecided. */
+  budgetDecision?: { kind: BudgetDecision["kind"]; nextAction?: string };
 }
 
 export interface SafeDecisionStatus {
@@ -475,6 +494,14 @@ function safeStatus(record: DurableRunRecord): SafeRunStatus {
     ...(record.result !== undefined && { outcome: record.result.outcome }),
     ...(record.result?.escalation !== undefined && { escalation: record.result.escalation }),
     ...(record.externalLimit !== undefined && { externalLimit: record.externalLimit }),
+    ...(record.budgetDecision !== undefined && {
+      budgetDecision: {
+        kind: record.budgetDecision.kind,
+        ...(record.budgetDecision.nextAction !== undefined && {
+          nextAction: record.budgetDecision.nextAction,
+        }),
+      },
+    }),
   };
 }
 
@@ -581,6 +608,13 @@ export class OrchestratorControlPlane {
       throw new ProjectOperationsError("invalid_config", "mode");
     if (input.mode === "auto" && this.deps.resolveAutoDecision === undefined)
       throw new ProjectOperationsError("invalid_config", "resolveAutoDecision");
+    // Intake statement + budget decision are optional at start (a start is a
+    // persisted intent, not work) but must validate WHEN given: an invalid or
+    // half-stated budget may never live on the record at all.
+    const intake: IntakeStatement | undefined =
+      input.intake === undefined ? undefined : parseIntakeStatement(input.intake, "start.intake");
+    const budget: BudgetDecision | undefined =
+      input.budget === undefined ? undefined : parseBudgetDecision(input.budget, "start.budget");
     let admitted: DurableRunRecord | undefined;
     try {
       this.deps.store.mutateVersionedJson<ControlPlaneIndex>(this.indexPath(), (current) => {
@@ -621,6 +655,8 @@ export class OrchestratorControlPlane {
           providerTurnInFlight: false,
           eventSequence: 0,
           events: [],
+          ...(intake !== undefined && { intake }),
+          ...(budget !== undefined && { budgetDecision: budget }),
         };
         this.deps.store.writeVersionedJson(this.recordPath(id), admitted, 0);
         return {
@@ -673,6 +709,36 @@ export class OrchestratorControlPlane {
   /** Trusted host view. Model-facing tools must use status/list safe projections instead. */
   record(id: string): DurableRunRecord {
     return structuredClone(this.read(id).value);
+  }
+
+  /**
+   * Record the pre-work budget decision (and optionally the intake statement)
+   * for a depth-0 run. Manual authority boundary: only trusted host/CLI code
+   * should expose this method, like resolveDecisionFromOperator. Only a run
+   * stuck on the budget decision may take one; work STARTS on the next resume.
+   */
+  recordBudgetDecision(id: string, rawBudget: unknown, rawIntake?: unknown): SafeRunStatus {
+    const budget = parseBudgetDecision(rawBudget, "recordBudgetDecision.budget");
+    const intake: IntakeStatement | undefined =
+      rawIntake === undefined
+        ? undefined
+        : parseIntakeStatement(rawIntake, "recordBudgetDecision.intake");
+    const state = this.read(id);
+    if (state.value.depth !== 0)
+      throw new ProjectOperationsError("invalid_follow_up", "budget.depth");
+    const resolvable = ["queued", "awaiting_decision"] as const;
+    if (!(resolvable as readonly string[]).includes(state.value.status))
+      throw new ProjectOperationsError("invalid_follow_up", "budget.status");
+    return safeStatus(
+      this.write(state, {
+        ...state.value,
+        budgetDecision: budget,
+        ...(intake !== undefined && { intake }),
+        // A decision resolves the wait; the run returns to plain queued intent.
+        status: "queued",
+        updatedAt: this.now(),
+      }).value,
+    );
   }
 
   async requestDecision(id: string, request: DecisionRequest): Promise<DecisionRecord> {
@@ -816,6 +882,40 @@ export class OrchestratorControlPlane {
     if (state.value.providerTurnInFlight) return safeStatus(state.value);
     if (state.value.cancelRequested && !state.value.providerTurnInFlight) {
       state = this.write(state, { ...state.value, status: "cancelled", updatedAt: this.now() });
+      return safeStatus(state.value);
+    }
+    // The pre-work budget gate (docs/contracts/orchestrator.md, audit slice
+    // g3): a depth-0 run moves from queued intent to WORK only when its budget
+    // is accepted or counter-estimated. Without a decided budget the run stops
+    // honestly in `awaiting_decision` with a `decision.required` event -- a
+    // named, resumable state -- instead of proceeding unknown by implication.
+    // Depth-0 only: child runs inherit the parent's authorized budget, so a
+    // decomposition chain re-gating each child would deadlock the very
+    // decomposition this run may itself require.
+    if (state.value.depth === 0 && state.value.budgetDecision === undefined) {
+      state = this.write(
+        state,
+        this.withEvent(
+          { ...state.value, status: "awaiting_decision", updatedAt: this.now() },
+          "decision.required",
+        ),
+      );
+      return safeStatus(state.value);
+    }
+    if (
+      state.value.depth === 0 &&
+      state.value.budgetDecision !== undefined &&
+      !isWorkStartableBudget(state.value.budgetDecision)
+    ) {
+      // An explicitly BLOCKED budget is an honest wait for a decision, same
+      // state semantics as undecided: no work, named next action.
+      state = this.write(
+        state,
+        this.withEvent(
+          { ...state.value, status: "awaiting_decision", updatedAt: this.now() },
+          "decision.required",
+        ),
+      );
       return safeStatus(state.value);
     }
     if (
@@ -1143,6 +1243,7 @@ export class OrchestratorControlPlane {
       stageMetrics: this.stageMetrics(record),
       checkpointPath: record.operations?.checkpointPath ?? this.recordPath(id),
       backlog: structuredClone(record.operations?.backlog ?? { destination: "skipped", count: 0 }),
+      budget: { decision: record.budgetDecision?.kind ?? "absent" },
     };
   }
 
