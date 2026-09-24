@@ -154,16 +154,6 @@ export function createRunWaitAdapter(store: ProjectStore): WaitSourceAdapter {
   };
 }
 
-export function createStandaloneRunWaitAdapter(store: ProjectStore): WaitSourceAdapter {
-  const adapter = createRunWaitAdapter(store);
-  return { ...adapter, id: "standalone" };
-}
-
-export function createCoordinatorRunWaitAdapter(store: ProjectStore): WaitSourceAdapter {
-  const adapter = createRunWaitAdapter(store);
-  return { ...adapter, id: "coordinator" };
-}
-
 export interface TimerWaitClock {
   now(): number;
 }
@@ -211,12 +201,3 @@ export function createProductionWaitSourceRegistry(
     createTimerWaitAdapter(clock),
   ]);
 }
-
-export function createProductionWaitSourceAdapters(
-  store: ProjectStore,
-  clock?: TimerWaitClock,
-): readonly WaitSourceAdapter[] {
-  return createProductionWaitSourceRegistry(store, clock).values();
-}
-
-export const productionWaitSourceAdapters = createProductionWaitSourceAdapters;

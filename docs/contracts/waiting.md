@@ -32,6 +32,12 @@ process runner, or a front-only feature.
   task text, and credentials are never wait state or evidence.
 - Persisted record, event, and evidence shapes are closed: an unknown field is
   a typed refusal, never a field copied through `get`, `events`, or `reopen`.
+  A persisted `WaitCondition` is exactly `{ kind: string }` or
+  `{ kind: string, at: number }`, where `at` is an optional non-negative safe
+  integer (`0 <= at <= Number.MAX_SAFE_INTEGER`) used as an observation
+  threshold by the timer adapter. This bound keeps the condition numeric,
+  finite, and content-free; it is not a delay, callback, or secret-bearing
+  payload.
 - Only a registered adapter at the record's exact version validates a source and
   reconciles it. Adapters receive the safe source and condition plus a minted
   operation id; they do not supply arbitrary persisted fields.

@@ -65,6 +65,31 @@ test("run validation is typed and unsafe target IDs are unavailable", async () =
   }
 });
 
+test("corrupt and non-object run records stay untouched and become unavailable", async () => {
+  const { root, store } = fixture(null);
+  try {
+    const adapter = createRunWaitAdapter(store);
+    for (const [id, bytes] of [
+      ["corrupt", '{"version":1,'],
+      ["scalar", "42"],
+    ] as const) {
+      const recordPath = path.join(store.layout.runs, `standalone-${id}.json`);
+      fs.writeFileSync(recordPath, bytes, "utf8");
+      expect(
+        await adapter.reconcile({
+          waitId: "w",
+          operationId: "o",
+          source: { adapter: "run", version: 1, target: { kind: "standalone", id } },
+          condition: { kind: "terminal" },
+        }),
+      ).toEqual({ lifecycle: "unavailable", evidence: "source_unavailable" });
+      expect(fs.readFileSync(recordPath, "utf8")).toBe(bytes);
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("missing and malformed run records are unavailable and leak no source fields", async () => {
   const { root, store } = fixture(null);
   try {
