@@ -69,7 +69,17 @@ test("every shipped skill opens by stating that its instruction is mandatory", (
   for (const skill of shipped) {
     const text = fs.readFileSync(path.join(dir, skill.name, "instructions.md"), "utf8");
     const [first, second] = text.split("\n");
-    expect(first).toBe(opening);
+    const manifest = JSON.parse(
+      fs.readFileSync(path.join(dir, skill.name, "skill.json"), "utf8"),
+    ) as { always?: boolean };
+    if (manifest.always === true) {
+      // An always skill is pasted unprompted, not selected by a trigger, so it
+      // opens by stating that instead -- while keeping the mandatory rule.
+      expect(first).toContain("pasted unconditionally");
+      expect(first).toContain("mandatory");
+    } else {
+      expect(first).toBe(opening);
+    }
     // The statement is its own paragraph, so it cannot be read as the opening
     // sentence of the technique it introduces.
     expect(second).toBe("");
@@ -113,7 +123,8 @@ test("every shipped description is written as a trigger, not a topic", () => {
   for (const skill of shipped) {
     const manifest = JSON.parse(
       fs.readFileSync(path.join(dir, skill.name, "skill.json"), "utf8"),
-    ) as { description: string };
+    ) as { description: string; always?: boolean };
+    if (manifest.always === true) continue;
     expect(manifest.description).toContain("Use when");
     expect(manifest.description).toContain("Phrases:");
   }
@@ -673,10 +684,13 @@ test("an always skill is pasted, never catalogued, and never loadable", async ()
     "always-for-planner",
   ]);
   expect(unconditionalSkills("coder", isolated(root))).toEqual([]);
-  // The shipped catalogue is untouched: nothing declares always or requires, so
-  // the orchestrator still sees rows (and a loader) exactly as before.
+  // The shipped catalogue is untouched: nothing declares requires, so the
+  // orchestrator still sees rows (and a loader) exactly as before. Since 0.181.61
+  // exactly one shipped skill is always, and it is the orchestrator's own.
   expect(skillCatalogue("orchestrator").length).toBeGreaterThan(0);
-  expect(unconditionalSkills("orchestrator")).toEqual([]);
+  expect(unconditionalSkills("orchestrator").map((skill) => skill.id)).toEqual([
+    "project-conventions",
+  ]);
 
   const tool = buildLoadSkillTool({ role: "planner", ...isolated(root) });
   const call = tool.execute as unknown as (
@@ -797,4 +811,45 @@ test("plugin names come from registered tool names, not from configuration", () 
   // An unrelated tool proves nothing, and a configured-but-unregistered group
   // cannot be smuggled in by name alone.
   expect(pluginNamesFromToolNames(["run_gates", "web"])).toEqual([]);
+});
+
+test("the orchestrator's kit pastes the project-conventions skill unprompted", () => {
+  // The g9 guarantee: the orchestrator must carry the read-conventions rule on
+  // every turn, not behind an opt-in delivery-event trigger.
+  const kit = roleSkillKit({ role: "orchestrator" });
+  expect(kit.appendix).toContain("## project-conventions@1");
+  expect(kit.appendix).toContain("locate and read");
+  expect(unconditionalSkills("orchestrator")).toContainEqual(
+    expect.objectContaining({ id: "project-conventions", always: true }),
+  );
+});
+
+test("the pasted project-conventions text names the concrete convention documents", () => {
+  const kit = roleSkillKit({ role: "orchestrator" });
+  const pasted = kit.appendix.split("## project-conventions@1")[1] ?? "";
+  for (const document of ["AGENTS.md", "CLAUDE.md", "CONTRIBUTING", "docs/contracts/"]) {
+    expect(pasted).toContain(document);
+  }
+});
+
+test("project-conventions is not pasted into a role it was not declared for", () => {
+  const kit = roleSkillKit({ role: "reviewer" });
+  expect(kit.appendix).not.toContain("project-conventions");
+  expect(unconditionalSkills("reviewer")).toEqual(
+    expect.not.arrayContaining([expect.objectContaining({ id: "project-conventions" })]),
+  );
+});
+
+test("prompts/orchestrator.md itself carries the read-conventions rule", () => {
+  const prompt = fs.readFileSync(path.join(REPO_ROOT, "prompts", "orchestrator.md"), "utf8");
+  for (const phrase of [
+    "read its working conventions",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "CONTRIBUTING",
+    "docs/contracts/",
+    "durable decisions in the project's own",
+  ]) {
+    expect(prompt).toContain(phrase);
+  }
 });

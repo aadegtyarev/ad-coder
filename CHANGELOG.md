@@ -11,6 +11,24 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.61] - 2026-09-24
+
+### Added
+
+- **The orchestrator reads the target project's working conventions before acting
+  (orchestrator audit slice g9,
+  `docs/reviews/slices/orchestrator-g9-project-conventions.md`, the audit's
+  tracked entry in `docs/reviews/2026-09-24-orchestrator-contract-audit-index.md`).** A new shipped skill, `project-conventions`
+  (`prompts/skills/project-conventions/`), declares `always: true` for the
+  orchestrator, so its instructions -- locate and read the target project's own
+  working conventions (`AGENTS.md`/`CLAUDE.md` if present, `CONTRIBUTING`,
+  `docs/contracts/*.md`, and its test and build entry points), state where they
+  are, and keep durable decisions in those documents rather than in chat -- are
+  pasted into the orchestrator's prompt on every turn, without an opt-in
+  delivery-event trigger. `prompts/orchestrator.md` now carries the same rule
+  beside its existing read-before-claiming and no-chat-memory guidance: the skill
+  is the mechanism, the prompt is the rule.
+
 ## [0.181.60] - 2026-09-24
 
 ### Added

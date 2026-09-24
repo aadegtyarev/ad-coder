@@ -1,0 +1,7 @@
+{
+  "id": "project-conventions",
+  "version": "1",
+  "description": "Project conventions. Pasted into the orchestrator's prompt unconditionally: before acting on a target project, read that project's own working conventions and keep durable decisions in its documents.",
+  "roles": ["orchestrator"],
+  "always": true
+}

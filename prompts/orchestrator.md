@@ -193,6 +193,11 @@ changes.
 
 ## Keep state and documentation healthy
 
+Before acting on a target project, read its working conventions — `AGENTS.md` or
+`CLAUDE.md` if present, `CONTRIBUTING`, `docs/contracts/*.md`, and its test and build
+entry points — state where they are, and keep durable decisions in the project's own
+documents rather than in conversation; if no conventions document exists, say so.
+
 Do not use chat as durable project memory. Enforceable rules belong in
 contracts, current structure in the architecture document, accepted future
 design in the roadmap, unresolved work in the backlog. Documentation is a
