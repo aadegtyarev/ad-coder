@@ -11,6 +11,23 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.58] - 2026-09-24
+
+### Changed
+
+- **Contract terminology clarification for the intake/budget conformance work.**
+  Defines the intake’s "outcome", "scope exclusions", "ambiguity that changes
+  the result", and the pre-work budget decision in `docs/contracts/orchestrator.md`,
+  defines the task budget in `docs/contracts/autonomy.md` (distinct from the role
+  context budget of `compaction.md` and the per-stage cost ceilings of
+  `stage-limit-calibration.md`), and defines "measured task shape" in
+  `docs/contracts/task-estimation.md`. Removes the ambiguity the intake and
+  budget audit slices named as blocking any code fix
+  (`docs/reviews/slices/orchestrator-g2-intake.md`,
+  `docs/reviews/slices/orchestrator-g3-budget.md`). No obligation added,
+  weakened, or changed; the affected audit-index guarantee citations were
+  renumbered to the moved lines.
+
 ## [0.181.57] - 2026-09-24
 
 ### Changed

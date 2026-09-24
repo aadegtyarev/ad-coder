@@ -1,4 +1,4 @@
-# Slice audit: orchestrator guarantee `orchestrator.md:32` (g7-claims-cite-artifacts)
+# Slice audit: orchestrator guarantee `orchestrator.md:44` (g7-claims-cite-artifacts)
 Audit base: ff07c9988923aeb4fa0b66106f3574103eb4b4cd, date 2026-09-24.
 Rule text: "- Claims about a run cite an artefact; otherwise they are hypotheses. Reports do
   not prestate verdicts, paraphrase a refusal or abort as success, or call an

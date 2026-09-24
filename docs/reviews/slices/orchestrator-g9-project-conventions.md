@@ -1,4 +1,4 @@
-# Slice audit: orchestrator guarantee `orchestrator.md:39` (g9-project-conventions)
+# Slice audit: orchestrator guarantee `orchestrator.md:51` (g9-project-conventions)
 Audit base: ff07c9988923aeb4fa0b66106f3574103eb4b4cd, date 2026-09-24.
 Rule text: "- The orchestrator reads the target project's working conventions before acting.
   Durable decisions belong in repository documents and state, not conversation."
@@ -30,7 +30,7 @@ command end-to-end.
 | `grep -n "durable project memory\|Do not use chat" prompts/orchestrator.md` | line 196 `Do not use chat as durable project memory. Enforceable rules belong in` — the only clause-2 implementation found; no test contains that phrase |
 
 ## Evidence read
-- `docs/contracts/orchestrator.md:39-40` — the audited bullet, quoted verbatim above.
+- `docs/contracts/orchestrator.md:51-52` — the audited bullet, quoted verbatim above.
 - `prompts/orchestrator.md:1-60, 145-175, 186-197` — read in full: routing/inspection
   rules ("Read the relevant source before claiming how it behaves", line 151) but NO
   instruction to read the target project's conventions file before acting; the

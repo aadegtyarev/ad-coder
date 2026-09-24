@@ -1,4 +1,4 @@
-# Slice audit: orchestrator guarantee `orchestrator.md:22` (g5-wake-delivery)
+# Slice audit: orchestrator guarantee `orchestrator.md:34` (g5-wake-delivery)
 Audit base: ff07c9988923aeb4fa0b66106f3574103eb4b4cd, date 2026-09-24.
 Rule text: "- Long-running work has durable event- or timer-based wake delivery. The product,
   not an orchestrator turn, polls sources without push support. A wait names its
@@ -68,7 +68,7 @@ test/orchestrator-wake.test.ts):
   restates the same guarantees (durable, owner-scoped, restart-survivable, drain bound,
   handled only after delivery checkpoint) and lines 33-36 additionally require the
   operator summary and not reporting a still-WIP task as complete. NOTE: this bullet at
-  `orchestrator.md:22` does NOT name `wake-delivery.md`; the citation it makes is
+  `orchestrator.md:34` does NOT name `wake-delivery.md`; the citation it makes is
   `[Waiting](waiting.md)` — wake-delivery.md exists and governs in practice, and this
   slice reads it as the governing sub-contract.
 - `src/orchestration/wait-service.ts:71-75, 117, 229, 286-287` — `deadlineAt` is OPTIONAL
@@ -78,7 +78,7 @@ test/orchestrator-wake.test.ts):
   but only when a deadline was supplied.
 
 ## Findings
-- [contract-conflict, medium] `orchestrator.md:22` requires "A wait ... has a finite
+- [contract-conflict, medium] `orchestrator.md:34` requires "A wait ... has a finite
   timeout", but the owning contract it delegates to, `waiting.md:29`, specifies an
   "**optional** absolute deadline", and `src/orchestration/wait-service.ts:71-75` implements
   exactly that. Two contracts disagree on one surface. Safe next step: an operator decision

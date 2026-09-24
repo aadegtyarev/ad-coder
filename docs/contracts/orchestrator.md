@@ -10,12 +10,24 @@ execution. Roles execute work, while stages are workflow phases.
   There is no quietly stopped state: the orchestrator can name its state,
   durable evidence, and next event or action. A new message, restart, or context
   boundary does not close an unfinished task.
-- Intake states the outcome, scope exclusions, mode, measured task shape,
-  budget, ceilings, and any ambiguity that changes the result. It decomposes
+- Intake states the outcome, scope exclusions, mode, measured task shape
+  ([Task estimation](task-estimation.md) defines it), budget, ceilings, and any
+  ambiguity that changes the result. The intake outcome is the intended end
+  state of the task's work on the target project, not the settled task outcome
+  the closeout guarantee reports. Scope exclusions name the work stated as
+  outside this task. An ambiguity that changes the result is an unresolved
+  question about the outcome, scope, or acceptance criteria whose differing
+  readings would lead to different work. It decomposes
   large tasks rather than requiring operator-supplied slices.
 - Before work starts, the budget is accepted, counter-estimated with evidence,
   or honestly left blocked for a decision. It never proceeds with an unknown
-  budget by implication.
+  budget by implication. The budget is the whole-task work budget
+  [Autonomy](autonomy.md) defines, not the role context budget that
+  [Compaction](compaction.md) owns and not the per-stage cost ceilings whose
+  values [Stage-limit calibration](stage-limit-calibration.md) records and
+  whose raise [Autonomy](autonomy.md) owns. This contract owns the pre-work
+  budget decision: acceptance, counter-estimate, or blocked state is decided
+  under this rule before any work starts.
 - An unfinished task advances without a new operator message or explicitly asks
   for a decision. A deliberate foreground interrupt preserves durable WIP and
   waits for the next operator input; it does not invent an automatic turn.

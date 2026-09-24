@@ -1,4 +1,4 @@
-# Slice audit: orchestrator guarantee `orchestrator.md:19` (g4-advance-or-ask)
+# Slice audit: orchestrator guarantee `orchestrator.md:31` (g4-advance-or-ask)
 Audit base: ff07c9988923aeb4fa0b66106f3574103eb4b4cd, date 2026-09-24.
 Rule text: "- An unfinished task advances without a new operator message or explicitly asks
   for a decision. A deliberate foreground interrupt preserves durable WIP and
