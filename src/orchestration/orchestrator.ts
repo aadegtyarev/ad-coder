@@ -1298,6 +1298,7 @@ export function buildRunRoleTool(
     complexity?: Complexity,
   ) => Promise<DelegatedRoleResult>,
   sessionFacts?: RunRoleSessionFacts,
+  gatedIntake?: ReturnType<typeof buildGatedIntake>,
 ): Tool {
   // With session facts the description carries the live routing; the fallback
   // keeps the plain role list for hosts that build the tool outside a resolved
@@ -1328,6 +1329,34 @@ Only the roles named above are callable; calling a "not configured" role fails w
       complexity: Type.Optional(
         Type.Union([Type.Literal("trivial"), Type.Literal("medium"), Type.Literal("complex")]),
       ),
+      // The same intake/budget gate the gated tools carry (slice
+      // orchestrator-g2b-conversation-intake): a delegated turn is work, so it
+      // starts only behind the same decision-on-record seam. Optional because
+      // the ONE gate already decides the unstated case -- counter-estimate,
+      // record, proceed -- so an ordinary conversational start does not
+      // refuse. Absent here means the gate is not wired (hosts building the
+      // tool outside a session); absent in params means unstated budget.
+      intake: Type.Optional(
+        Type.Object({
+          outcome: Type.String(),
+          scopeExclusions: Type.Array(Type.String()),
+          mode: Type.String(),
+          taskShape: Type.Object({
+            complexity: Type.String(),
+            stage: Type.String(),
+            sizeClass: Type.String(),
+          }),
+          budget: Type.Object({ ceilingUsd: Type.Number(), source: Type.String() }),
+          ceilings: Type.Array(Type.String()),
+          resultChangingAmbiguities: Type.Array(Type.String()),
+          budgetDecision: Type.Object({
+            kind: Type.String(),
+            evidence: Type.Optional(Type.Array(Type.String())),
+            nextAction: Type.Optional(Type.String()),
+            reason: Type.Optional(Type.String()),
+          }),
+        }),
+      ),
     }),
     async execute(_toolCallId, params) {
       try {
@@ -1338,6 +1367,9 @@ Only the roles named above are callable; calling a "not configured" role fails w
             `unknown delegated role; expected one of ${DELEGATABLE_ROLE_NAMES.join(", ")}`,
           );
         }
+        // The gate runs AFTER the schema-level role validation and BEFORE any
+        // delegation callback: same ordering rule as the gated tools.
+        gatedIntake?.(params.task, params.complexity, params.intake, RUN_ROLE_TOOL_NAME);
         const result = await runRole(
           params.role as DelegatableRoleName,
           params.task,
@@ -1385,6 +1417,57 @@ Only the roles named above are callable; calling a "not configured" role fails w
  * a tool call. Leaves are permissive `Type.String()` so the core's own guards
  * stay the gate, mirroring `buildSubmitVerdictTool`.
  */
+/**
+ * The pre-work intake/budget gate, hoisted OUT of `buildBuiltInPipelineTools`
+ * into a factory so the conversational start paths can reach the SAME gate
+ * (audit slice orchestrator-g2b-conversation-intake, verdict `violating`):
+ * a delegated `run_role` turn is work starting, so it must start only behind
+ * the same decision-on-record seam `run_pipeline`/`start_pipeline` use. There
+ * is deliberately ONE gate: the conversational callers call this factory's
+ * closure, they do not re-implement the branches.
+ *
+ * Budget rule (docs/contracts/orchestrator.md:22), from the factory that
+ * already owns it:
+ * - raw undefined -> counter-estimate from the recorded per-role ceilings and
+ *   RECORD the decision with its evidence, then proceed (an unstated budget
+ *   is decided, not unknown); no producible estimate -> `BudgetWaitError`,
+ *   the honest named wait;
+ * - raw stated -> validated statement + decision; blocked -> the same wait;
+ * - half-stated / explicitly unknown -> schema refusal, no record, no start.
+ */
+export function buildGatedIntake(
+  core: Pick<Orchestrator, "budgetCounterEstimate" | "recordIntake">,
+) {
+  return (
+    task: string,
+    complexity: Complexity | undefined,
+    raw: unknown,
+    source: string,
+  ): { id: string; statement: IntakeStatement; budget: BudgetDecision } => {
+    if (raw === undefined) {
+      // Branch 2 (and its honest stop): decide, record, then proceed.
+      const estimate = core.budgetCounterEstimate(task, complexity);
+      if (estimate === undefined) throw new BudgetWaitError(`${source}:no_forecast_basis`);
+      const statement = counterEstimatedStatement(task, estimate);
+      const budget: BudgetDecision = {
+        kind: "counter_estimated",
+        evidence: estimate.evidence,
+        reason: "counter-estimated at the pre-work gate: the dispatch stated no budget decision",
+      };
+      const id = core.recordIntake(task, statement, budget);
+      return { id, statement, budget };
+    }
+    const statement = parseIntakeStatement(raw, "intake");
+    const budget = parseBudgetDecision(
+      (raw as Record<string, unknown>).budgetDecision,
+      "intake.budgetDecision",
+    );
+    if (budget.kind === "blocked") throw new BudgetWaitError(budget.nextAction ?? "stated");
+    const id = core.recordIntake(task, statement, budget);
+    return { id, statement, budget };
+  };
+}
+
 export function buildBuiltInPipelineTools(core: Orchestrator): Tool[] {
   const decomposeTaskTool = defineTool({
     name: DECOMPOSE_TASK_TOOL_NAME,
@@ -1432,52 +1515,12 @@ export function buildBuiltInPipelineTools(core: Orchestrator): Tool[] {
    * other caller's.
    */
   /**
-   * The pre-work budget gate (docs/contracts/orchestrator.md:22). Work starts
-   * only when a DECISION with evidence is on record:
-   *
-   * - the caller states a budget decision -> validate it and use it:
-   *   accepted, counter_estimated (must carry evidence), or blocked (named,
-   *   resumable);
-   * - the caller states nothing -> the core COUNTER-ESTIMATES the budget
-   *   from the recorded per-role ceilings (branch 2: "counter-estimated with
-   *   evidence"), RECORDS that decision with its evidence, and proceeds --
-   *   an unstated budget is a decided budget, not an unknown one;
-   * - no counter-estimate with evidence is producible (no forecast basis) ->
-   *   work does NOT start: the honest blocked wait, named and resumable;
-   * - a half-stated or explicitly unknown decision never reaches a record at
-   *   all -- the schema-refusal path keeps the "never proceeds unknown by
-   *   implication" rule exact.
-   *
-   * The tool's busy paths never dispatch before this returns.
+   * The pre-work budget gate (docs/contracts/orchestrator.md:22), CLOSED OVER
+   * from the module-level factory above: its branches and refusal codes are
+   * defined once there, and both gated tools -- and, through the same factory,
+   * `run_role` -- call identical logic.
    */
-  const gatedIntake = (
-    task: string,
-    complexity: Complexity | undefined,
-    raw: unknown,
-    source: string,
-  ): { id: string; statement: IntakeStatement; budget: BudgetDecision } => {
-    if (raw === undefined) {
-      // Branch 2 (and its honest stop): decide, record, then proceed.
-      const estimate = core.budgetCounterEstimate(task, complexity);
-      if (estimate === undefined) throw new BudgetWaitError(`${source}:no_forecast_basis`);
-      const statement = counterEstimatedStatement(estimate);
-      const budget: BudgetDecision = {
-        kind: "counter_estimated",
-        evidence: estimate.evidence,
-        reason: "counter-estimated at the pre-work gate: the dispatch stated no budget decision",
-      };
-      const id = core.recordIntake(task, statement, budget);
-      return { id, statement, budget };
-    }
-    const statement = parseIntakeStatement(raw, "intake");
-    const budget = parseBudgetDecision(
-      (raw as Record<string, unknown>).budgetDecision,
-      "intake.budgetDecision",
-    );
-    if (budget.kind === "blocked") throw new BudgetWaitError(budget.nextAction ?? "stated");
-    const id = core.recordIntake(task, statement, budget);
-    return { id, statement, budget };
-  };
+  const gatedIntake = buildGatedIntake(core);
 
   const raisedLimitsFrom = (
     role: string | undefined,
@@ -2056,7 +2099,38 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
             backgroundRunExecutor: config.backgroundRunExecutor,
           }),
         });
-  // The session's resolved delegation surface rides on the tool description:
+  // The ONE gate, closed over this session's core for the conversational
+  // start paths (slice orchestrator-g2b-conversation-intake): the delegated
+  // `run_role` turn records the same intake statement + budget decision the
+  // gated pipeline tools record. Roles-only sessions have no core; the
+  // closure then stands on the same durable store layout and the same pure
+  // estimator the core itself would wrap (deps.budgetCeilings has no
+  // production supplier, so the shipped calibration table is the parity
+  // basis either way) -- no second gate, no refusal of an ordinary start.
+  const conversationalIntake =
+    core !== undefined
+      ? buildGatedIntake(core)
+      : buildGatedIntake(standaloneIntakeCore(config.targetDir));
+
+  /**
+   * A roles-only session has no pipeline core to own the intake store, but
+   * the gate's invariant is not negotiable -- the delegated turn still
+   * records. Same durable layout the core builds
+   * (`<target>/.ad-coder/runs/intake-<id>.json`, id = sha256(task)[:32]),
+   * same paired estimator the core itself wraps.
+   */
+  function standaloneIntakeCore(targetDir: string) {
+    const store = new ProjectStoreIntakeStore(new ProjectStore(targetDir));
+    return {
+      recordIntake(task: string, statement: IntakeStatement, budget: BudgetDecision): string {
+        const id = ProjectStoreIntakeStore.idForTask(task);
+        store.set(id, statement, budget, new Date().toISOString());
+        return id;
+      },
+      budgetCounterEstimate: (_task: string, complexity?: Complexity) =>
+        counterEstimateBudget(complexity),
+    };
+  }
   // which roles exist, on which models, and which world the tools describe
   // (roles only vs roles plus workflow). Assembled from the seed's resolved
   // facts -- the same source the startup banner prints -- never authored prose.
@@ -2067,111 +2141,123 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
           route: seed.delegatedRoute,
           workflows: enabledModules.map((module) => module.name),
         };
-  const delegatedRoleTool = buildRunRoleTool(async (name, task, complexity) => {
-    // Resolve worker roles lazily: disabling the pipeline does not construct its
-    // graph, yet every role remains independently callable by the Orchestrator.
-    // A classified tier rides with the call (issues #263/#264): the tool schema
-    // is the validation point, and the tier replaces the built-in default at
-    // resolveProfile's sink, so the delegate routes on the assessment.
-    const resolved = resolvePipelineConfig({
-      ...sharedConfig,
-      task,
-      ...(complexity !== undefined && { defaultComplexity: complexity }),
-    });
-    const base =
-      name === "planner"
-        ? resolved.roles.planner
-        : name === "researcher"
-          ? resolved.roles.researcher
-          : name === "security"
-            ? resolved.roles.security
-            : name === "coder"
-              ? resolved.roles.coder
-              : name === "reviewer"
-                ? resolved.roles.reviewer
-                : resolved.roles.auditor;
-    if (base === undefined) {
-      throw new OrchestratorError("invalid_role", name, `role ${name} is not configured`);
-    }
-    const runnableKit = roleKit(name);
-    const writable = name === "coder";
-    // Plugin tools plus the loader, the way the runner registers tools: an
-    // activeToolNames entry with no registered object would be a listed tool
-    // the conversation could never call.
-    const delegatedTools = [
-      ...(resolved.pluginToolsForModel?.(base.model) ?? resolved.pluginTools ?? []),
-      ...(runnableKit.includeLoadTool ? [runnableKit.buildTool()] : []),
-    ];
-    const availablePluginNames = delegatedTools.map((tool) => tool.name);
-    // A delegated invocation delivers by assistant text, not by the pipeline's
-    // submission tools, and nothing here registers their objects. Inheriting
-    // the pipeline role's activeToolNames wholesale carried `submit_plan`,
-    // `submit_verdict` and `submit_follow_up` into that list (#236): the
-    // provider rejected the whole request as `configured_tools_unavailable`,
-    // and the turn settled empty. Filter them out so the listed names match
-    // what the prompt already promises: "do not expect pipeline submission
-    // tools".
-    const inheritedToolNames = (base.role.activeToolNames ?? []).filter(
-      (tool) => !isSubmissionToolName(tool),
-    );
-    const role = defineRole(
-      {
-        ...base.role,
-        name,
-        // A planner reached this way rates complexity like any other, so it
-        // needs the same definition the pipeline's plan stage sends. Without
-        // it the tier came from whatever the model assumed a tier meant.
-        // The role spec from the resolver carries its catalogue or pin and
-        // names the loader when skills are listed; the independent-invocation
-        // framing rides on top of exactly that prompt.
-        systemPrompt: `${base.role.systemPrompt}\n\nThis is an independent role invocation. Return the complete result as assistant text; do not expect pipeline submission tools.\n\n${COMPLEXITY_RUBRIC}`,
-        activeToolNames: [
-          ...new Set([
-            "read",
-            "bash",
-            ...(writable ? ["write", "edit"] : []),
-            ...inheritedToolNames,
-            ...availablePluginNames,
-          ]),
-        ],
-      },
-      base.model,
-    );
-    const before = sink.records().length;
-    const conversation = await (config.startDelegatedConversation ?? startConversationImpl)({
-      role,
-      targetDir: config.targetDir,
-      models: resolved.models,
-      model: base.model,
-      tools: delegatedTools,
-      ledgerSink: sink,
-      sessionLimitController: controller,
-      // The delegated `run_role` turn reaches a provider the same way any other
-      // turn does, so an operator block applies to it too.
-      ...(resolved.costAnomalyDetector !== undefined && {
-        costAnomalyDetector: resolved.costAnomalyDetector,
-      }),
-      ...(resolved.providerAdmissionController !== undefined && {
-        providerAdmissionController: resolved.providerAdmissionController,
-      }),
-      activityChannel,
-      ...(config.toolActivity !== undefined && { toolActivity: config.toolActivity }),
-      ...(resolved.compaction !== undefined && { compaction: resolved.compaction }),
-      ...(resolved.projectStoreConfig !== undefined && {
-        projectStoreConfig: resolved.projectStoreConfig,
-      }),
-    });
-    try {
-      const turn = await conversation.step(task, { step: `role:${name}` });
-      const cost = sink
-        .records()
-        .slice(before)
-        .reduce((sum, record) => sum + record.usage.cost.total, 0);
-      return { role: name, text: turn.assistantText, cost };
-    } finally {
-      await conversation.close();
-    }
-  }, sessionFacts);
+  const delegatedRoleTool = buildRunRoleTool(
+    async (name, task, complexity) => {
+      // The pre-work gate FIRST (docs/contracts/orchestrator.md:22), through the
+      // same factory the gated tools use (~zero duplicated logic): an intake
+      // statement and a budget decision are on record (or the same honest
+      // `budget_blocked` wait the gated tools raise) before anything below runs
+      // -- no resolvePipelineConfig, no delegate conversation, no provider call.
+      // g2b slice: this is the same invariant run_pipeline/start_pipeline
+      // already enforce at their own call sites.
+      conversationalIntake?.(task, complexity, undefined, RUN_ROLE_TOOL_NAME);
+      // Resolve worker roles lazily: disabling the pipeline does not construct its
+      // graph, yet every role remains independently callable by the Orchestrator.
+      // A classified tier rides with the call (issues #263/#264): the tool schema
+      // is the validation point, and the tier replaces the built-in default at
+      // resolveProfile's sink, so the delegate routes on the assessment.
+      const resolved = resolvePipelineConfig({
+        ...sharedConfig,
+        task,
+        ...(complexity !== undefined && { defaultComplexity: complexity }),
+      });
+      const base =
+        name === "planner"
+          ? resolved.roles.planner
+          : name === "researcher"
+            ? resolved.roles.researcher
+            : name === "security"
+              ? resolved.roles.security
+              : name === "coder"
+                ? resolved.roles.coder
+                : name === "reviewer"
+                  ? resolved.roles.reviewer
+                  : resolved.roles.auditor;
+      if (base === undefined) {
+        throw new OrchestratorError("invalid_role", name, `role ${name} is not configured`);
+      }
+      const runnableKit = roleKit(name);
+      const writable = name === "coder";
+      // Plugin tools plus the loader, the way the runner registers tools: an
+      // activeToolNames entry with no registered object would be a listed tool
+      // the conversation could never call.
+      const delegatedTools = [
+        ...(resolved.pluginToolsForModel?.(base.model) ?? resolved.pluginTools ?? []),
+        ...(runnableKit.includeLoadTool ? [runnableKit.buildTool()] : []),
+      ];
+      const availablePluginNames = delegatedTools.map((tool) => tool.name);
+      // A delegated invocation delivers by assistant text, not by the pipeline's
+      // submission tools, and nothing here registers their objects. Inheriting
+      // the pipeline role's activeToolNames wholesale carried `submit_plan`,
+      // `submit_verdict` and `submit_follow_up` into that list (#236): the
+      // provider rejected the whole request as `configured_tools_unavailable`,
+      // and the turn settled empty. Filter them out so the listed names match
+      // what the prompt already promises: "do not expect pipeline submission
+      // tools".
+      const inheritedToolNames = (base.role.activeToolNames ?? []).filter(
+        (tool) => !isSubmissionToolName(tool),
+      );
+      const role = defineRole(
+        {
+          ...base.role,
+          name,
+          // A planner reached this way rates complexity like any other, so it
+          // needs the same definition the pipeline's plan stage sends. Without
+          // it the tier came from whatever the model assumed a tier meant.
+          // The role spec from the resolver carries its catalogue or pin and
+          // names the loader when skills are listed; the independent-invocation
+          // framing rides on top of exactly that prompt.
+          systemPrompt: `${base.role.systemPrompt}\n\nThis is an independent role invocation. Return the complete result as assistant text; do not expect pipeline submission tools.\n\n${COMPLEXITY_RUBRIC}`,
+          activeToolNames: [
+            ...new Set([
+              "read",
+              "bash",
+              ...(writable ? ["write", "edit"] : []),
+              ...inheritedToolNames,
+              ...availablePluginNames,
+            ]),
+          ],
+        },
+        base.model,
+      );
+      const before = sink.records().length;
+      const conversation = await (config.startDelegatedConversation ?? startConversationImpl)({
+        role,
+        targetDir: config.targetDir,
+        models: resolved.models,
+        model: base.model,
+        tools: delegatedTools,
+        ledgerSink: sink,
+        sessionLimitController: controller,
+        // The delegated `run_role` turn reaches a provider the same way any other
+        // turn does, so an operator block applies to it too.
+        ...(resolved.costAnomalyDetector !== undefined && {
+          costAnomalyDetector: resolved.costAnomalyDetector,
+        }),
+        ...(resolved.providerAdmissionController !== undefined && {
+          providerAdmissionController: resolved.providerAdmissionController,
+        }),
+        activityChannel,
+        ...(config.toolActivity !== undefined && { toolActivity: config.toolActivity }),
+        ...(resolved.compaction !== undefined && { compaction: resolved.compaction }),
+        ...(resolved.projectStoreConfig !== undefined && {
+          projectStoreConfig: resolved.projectStoreConfig,
+        }),
+      });
+      try {
+        const turn = await conversation.step(task, { step: `role:${name}` });
+        const cost = sink
+          .records()
+          .slice(before)
+          .reduce((sum, record) => sum + record.usage.cost.total, 0);
+        return { role: name, text: turn.assistantText, cost };
+      } finally {
+        await conversation.close();
+      }
+    },
+    sessionFacts,
+    conversationalIntake,
+  );
   // The reviewer cover over the orchestrator's OWN bounded trivial edits (issue
   // #388). Defined only when the guard is installed AND a reviewer is reachable
   // (`trivialPlan.reviewerCover`): a session whose route leaves the reviewer
