@@ -11,6 +11,30 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.63] - 2026-09-24
+
+### Fixed
+
+- **A run reaped in the pre-claim window names a recovery the operator can
+  actually perform (orchestrator contract 9-12: a state names its next
+  action; the same rule its own test suite settles as "a paused run names a
+  recovery the operator can actually perform").** The 0.181.62 reap wrote
+  `lifecycle: "failed"` with `recovery: "resume_pipeline"` while its own
+  `recoveryDetail` (`CLAIM_DEADLINE_DETAIL`) said the opposite: "start the
+  task again with a new background start -- there is no checkpoint to
+  resume." The worker never claimed, so no coordinator checkpoint exists;
+  following the named `resume_pipeline` route throws `not_found`
+  (`RunCoordinator` refuses a `resumeExisting` run id without a checkpoint),
+  making the structured field an instruction that does not work. The reaped
+  record now carries `recovery: "inspect_events"` -- the same value the
+  ordinary failed paths (`failLaunch`, the executor-error catch) write for
+  `lifecycle: "failed"` -- with the claim-deadline detail unchanged as the
+  operator-facing what-happened / what-to-do sentence. A mid-run abandoning
+  still names `resume_pipeline`, because that failure has a checkpoint to
+  resume; the two failed states stay distinct, and a test pins the reaped
+  recovery against the ordinary failed path's value so the two cannot drift
+  apart silently.
+
 ## [0.181.62] - 2026-09-24
 
 ### Fixed

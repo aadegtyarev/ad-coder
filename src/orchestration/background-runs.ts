@@ -1200,7 +1200,12 @@ export class BackgroundRunManager {
           runId: entry.runId,
           lifecycle: "failed" as const,
           metrics,
-          recovery: "resume_pipeline" as const,
+          // The same recovery every other `failed` record carries (failLaunch,
+          // the executor-error catch): inspect the events. NOT resume_pipeline
+          // -- the worker never claimed, so there is no coordinator checkpoint
+          // to resume; the resume tool answers not_found for this run id, and
+          // the detail below says what actually works: start the task again.
+          recovery: "inspect_events" as const,
           recoveryDetail: CLAIM_DEADLINE_DETAIL,
         },
         events: [

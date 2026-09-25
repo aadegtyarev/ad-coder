@@ -218,7 +218,12 @@ test("a detached worker that dies before claiming reaps to a named failed state 
   expect(status.lifecycle).toBe("failed");
   const outcome = reconnected.result(requested.runId); // no more not_terminal
   if (outcome.lifecycle !== "failed") throw new Error("expected failed outcome");
-  expect(outcome.recovery).toBe("resume_pipeline");
+  // The worker never claimed, so there is NO checkpoint to resume: naming
+  // resume_pipeline would route the operator to a tool that answers not_found
+  // (RunCoordinator throws for a resumeExisting run id without a checkpoint).
+  // The state is `failed`, so it carries the recovery every other failed
+  // record carries -- the same value the ordinary failed path writes.
+  expect(outcome.recovery).toBe("inspect_events");
   expect(outcome.recoveryDetail).toBe(CLAIM_DEADLINE);
   expect(CLAIM_DEADLINE).toContain("requested");
   expect(CLAIM_DEADLINE).toContain("start the task again");
@@ -329,6 +334,146 @@ test("two managers reopening the same state dir reconcile a dead pre-claim run e
   expect(mergedSecond).toHaveLength(1);
   await first.close();
   await second.close();
+});
+
+test("a reaped pre-claim record's recovery matches the ordinary failed path's (no drift)", async () => {
+  // The reaped pre-claim record and an ordinary failed record share the same
+  // lifecycle, so they must share the same recovery: the field is read as
+  // "what to do next", and two writers answering differently for one state
+  // means one of them is lying. The reaped value is asserted AGAINST the value
+  // the ordinary failed path just produced -- not against a copied literal --
+  // so the two paths cannot drift apart silently.
+  const ordinaryDir = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-ordinary-failed-")),
+  );
+  const ownerId = crypto.randomUUID();
+  // failLaunch: the host launcher throws before any worker exists.
+  const failing = new BackgroundRunManager(
+    async () => completedResult("unused"),
+    { closeDrainMs: 0 },
+    ordinaryDir,
+    ownerId,
+    () => {
+      throw new Error("host launch refused");
+    },
+  );
+  let launchError: BackgroundRunError | undefined;
+  try {
+    await failing.startDetached("ordinary failure");
+  } catch (error) {
+    launchError = error as BackgroundRunError;
+  }
+  expect(launchError?.code).toBe("launch_failed");
+  await failing.close(true);
+  const files = fs.readdirSync(path.join(ordinaryDir, ".ad-coder", "runs", "background"));
+  expect(files).toHaveLength(1);
+  const ordinaryRunId = files[0]!.replace(/\.json$/, "");
+  const ordinaryReader = new BackgroundRunManager(
+    async () => {
+      throw new Error("failed runs must not execute again");
+    },
+    {},
+    ordinaryDir,
+    ownerId,
+  );
+  const ordinary = ordinaryReader.result(ordinaryRunId);
+  if (ordinary.lifecycle !== "failed") throw new Error("expected failed outcome");
+  await ordinaryReader.close();
+
+  // The reaped pre-claim record, in its own state dir.
+  const reapedDir = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-reaped-recovery-")),
+  );
+  const owner = new BackgroundRunManager(
+    async () => {
+      throw new Error("detached worker never runs the pipeline");
+    },
+    { leaseMs: 30, closeDrainMs: 0 },
+    reapedDir,
+    ownerId,
+    () => undefined,
+  );
+  const requested = await owner.startDetached("stuck pre-claim task");
+  await owner.close();
+  await new Promise((resolve) => setTimeout(resolve, 120)); // past the claim deadline
+  const reconnected = new BackgroundRunManager(
+    async () => {
+      throw new Error("reaped runs must not execute again");
+    },
+    { leaseMs: 30 },
+    reapedDir,
+    ownerId,
+  );
+  const reaped = reconnected.result(requested.runId);
+  if (reaped.lifecycle !== "failed") throw new Error("expected failed outcome");
+
+  // Same lifecycle, same recovery -- and that recovery is the one the failed
+  // paths actually write, so the assertion fails loudly if either changes.
+  expect(reaped.recovery).toBe(ordinary.recovery);
+  expect(reaped.recovery).toBe("inspect_events");
+  // The triple agrees with itself: failed lifecycle, the failed-path recovery,
+  // and the claim-deadline detail whose instruction is performable (start a
+  // new background start) and never names the resume of a missing checkpoint.
+  expect(reaped.recoveryDetail).toBe(CLAIM_DEADLINE);
+  expect(CLAIM_DEADLINE).toContain("start the task again");
+  expect(CLAIM_DEADLINE).toContain("there is no checkpoint to resume");
+  expect(CLAIM_DEADLINE).not.toContain("resume_pipeline");
+  await reconnected.close();
+});
+
+test("a run with a resumable checkpoint still names resume_pipeline when its worker vanishes mid-run", async () => {
+  // The pre-claim honesty fix must not blur the two failed states: a run that
+  // DID claim and record coordinator stages has a checkpoint, so resuming it
+  // is a real action and its failed record keeps recovery resume_pipeline.
+  // One state dir holds both records; the reconnected manager reaps the
+  // pre-claim one and abandons the mid-run one in the same load().
+  const targetDir = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-two-failures-")),
+  );
+  const ownerId = crypto.randomUUID();
+  const manager = new BackgroundRunManager(
+    () => new Promise<RunPipelineResult>(() => {}),
+    { leaseMs: 60_000, closeDrainMs: 0 },
+    targetDir,
+    ownerId,
+    () => undefined, // the detached worker never claims: pre-claim death
+  );
+  const requested = await manager.startDetached("dies before claiming");
+  const midRun = manager.start("vanishes mid-run");
+  await waitUntil(() => manager.status(midRun.runId).lifecycle === "started", 2000);
+  await manager.close(true);
+
+  // The mid-run record keeps its checkpoint but its worker is gone: strip the
+  // lease the way a dead worker's stale record reads (same seam as the
+  // abandoned-run test above).
+  const record = backgroundRecord(targetDir, midRun.runId);
+  const value = record.value;
+  if (value === undefined) throw new Error("expected a wrapped durable record");
+  delete value.lease;
+  fs.writeFileSync(backgroundFile(targetDir, midRun.runId), JSON.stringify(record), {
+    mode: 0o600,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 120)); // past the claim deadline
+
+  const reconnected = new BackgroundRunManager(
+    async () => {
+      throw new Error("dead runs must not execute again");
+    },
+    { leaseMs: 30 },
+    targetDir,
+    ownerId,
+  );
+  const reaped = reconnected.result(requested.runId);
+  if (reaped.lifecycle !== "failed") throw new Error("expected failed outcome");
+  expect(reaped.recovery).toBe("inspect_events");
+  expect(reaped.recoveryDetail).toBe(CLAIM_DEADLINE);
+  const abandoned = reconnected.result(midRun.runId);
+  if (abandoned.lifecycle !== "failed") throw new Error("expected failed outcome");
+  // The checkpoint exists here, so the resume route stays named -- a different
+  // recovery for a different failure, in the SAME lifecycle.
+  expect(abandoned.recovery).toBe("resume_pipeline");
+  expect(abandoned.recoveryDetail).toBe(RESUME_PIPELINE_DETAIL);
+  await reconnected.close();
 });
 
 test("default paging bounds a run with 503 events and rejects zero paging ceilings", async () => {
