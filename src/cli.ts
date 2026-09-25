@@ -181,7 +181,12 @@ import {
   stampCheckErrors,
   stampDeliveryText,
 } from "./stamp/cli";
-import { recordReviewStampFromResult, resolveStampRequirement } from "./stamp/record-review-stamp";
+import {
+  captureReviewedTreeForRound,
+  ReviewedTreeMovedError,
+  recordReviewStampFromResult,
+  resolveStampRequirement,
+} from "./stamp/record-review-stamp";
 import { findingsReportLines } from "./stamp/verdict-findings";
 import { formatUpdateResult, UpdateError, updateAdCoder } from "./update/updater";
 import {
@@ -243,6 +248,26 @@ function failGate(reasons: string, action: string): never {
     process.exit(2);
   }
   process.stderr.write(`ad-coder: ${reasons}\n${action}\n`);
+  process.exit(2);
+}
+
+/**
+ * The reviewed-tree refusal's own failure path: the settle at stamp time
+ * detected that the review round itself moved the tree under review, so the
+ * reason AND the recovery are already one authored message
+ * (`reviewedTreeMovedMessage`) -- the human front prints exactly that line and
+ * nothing more (repeating the action as a second line would answer "what
+ * changed and what now" with the same clause twice). A machine front gets the
+ * typed `reviewed_tree_moved` shape with the same text and action.
+ */
+function failReviewedTreeMoved(error: ReviewedTreeMovedError): never {
+  if (machineJsonFront) {
+    process.stderr.write(
+      `${JSON.stringify({ error: { code: error.code, text: error.message, retryable: false, nextAction: error.nextAction } })}\n`,
+    );
+    process.exit(2);
+  }
+  process.stderr.write(`ad-coder: ${error.message}\n`);
   process.exit(2);
 }
 
@@ -3404,6 +3429,19 @@ async function roleCommand(
   const onSigterm = () => interrupt("SIGTERM");
   process.once("SIGINT", onSigint);
   process.once("SIGTERM", onSigterm);
+  // Round-tree integrity (issue #570 follow-up): the settle's stamp is
+  // compared against the tree the round STARTED from, so the standalone
+  // reviewer's baseline is taken HERE, before the first attempt runs. A
+  // resumed round with an existing capture keeps its original start
+  // (captureReviewedTreeForRound never re-anchors); later submission attempts
+  // are the same round and recapture nothing -- the tree must be what the
+  // round started from, not what an earlier attempt left.
+  if (keepsVerdictTool)
+    captureReviewedTreeForRound(
+      configOptions.targetDir,
+      standaloneRunId,
+      config.requireStamp ?? "auto",
+    );
   const runOnce = async (
     attemptRunId: string,
     attemptTask: string,
@@ -3529,18 +3567,30 @@ async function roleCommand(
     // findings artifact (issue #466) is written from this front as it is from
     // the pipeline fronts -- without it a `changes_requested` settle here could
     // only stamp a count, never persist the findings themselves.
-    const outcome = recordReviewStampFromResult(
-      configOptions.targetDir,
-      {
-        approved: verdict.status === "approved",
-        runIds: [standaloneRunId],
-        stageMetrics: [{ stage: "review:1", provider: spec.model.provider, model: spec.model.id }],
-        reviewRan: true,
-        verdicts: [{ status: verdict.status, issues: verdict.issues, summary: verdict.summary }],
-      },
-      new Date(),
-      config.requireStamp,
-    );
+    let outcome: ReturnType<typeof recordReviewStampFromResult>;
+    try {
+      outcome = recordReviewStampFromResult(
+        configOptions.targetDir,
+        {
+          approved: verdict.status === "approved",
+          runIds: [standaloneRunId],
+          stageMetrics: [
+            { stage: "review:1", provider: spec.model.provider, model: spec.model.id },
+          ],
+          reviewRan: true,
+          verdicts: [{ status: verdict.status, issues: verdict.issues, summary: verdict.summary }],
+        },
+        new Date(),
+        config.requireStamp,
+      );
+    } catch (error) {
+      // A refusal is only THIS one class (issue #570 follow-up): the round moved
+      // the tree under review, stamping nothing -- both fronts render the
+      // refusal with the moved paths and the recovery. Every other throw keeps
+      // the entry point's failure path.
+      if (error instanceof ReviewedTreeMovedError) failReviewedTreeMoved(error);
+      throw error;
+    }
     // The bounded findings report BESIDE the count line (issue #466): the count
     // line above is what a consumer greps and it stays; these lines are what
     // make a `changes_requested` round actionable from the settle output alone,
@@ -5035,6 +5085,18 @@ export function projectCliError(error: unknown): Record<string, unknown> {
       code: error.code,
       text: error.message,
       retryable: error.retryable,
+      nextAction: error.nextAction,
+    };
+  // The round-tree integrity refusal (issue #570 follow-up) is typed public
+  // behavior, not an internal error: the code names the refusal, the text is
+  // the authored message (moves paths + recovery), and `detail` locates the
+  // capture the comparison was made against.
+  if (error instanceof ReviewedTreeMovedError)
+    return {
+      code: error.code,
+      detail: error.captureRef,
+      text: error.message,
+      retryable: false,
       nextAction: error.nextAction,
     };
   if (error instanceof UserProfileError) return { code: error.code, detail: error.detail };

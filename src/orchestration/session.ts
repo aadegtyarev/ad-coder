@@ -28,6 +28,7 @@ import type { Tool } from "../runner/tool";
 import { SessionLimitError } from "../session-limits";
 import { buildLoadSkillTool, LOAD_SKILL_TOOL_NAME } from "../skills/load-tool";
 import { pluginNamesFromToolNames } from "../skills/resolver";
+import { captureReviewedTreeForRound } from "../stamp/record-review-stamp";
 import {
   buildSubmitFollowUpTool,
   type FollowUpCapture,
@@ -1620,6 +1621,12 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
     const round = state.round;
     const attempt = stageAttempt(state, "review", `review:${round}`);
     const { runId } = attempt.stage;
+    // Round-tree integrity (issue #570 follow-up): the settle's stamp is
+    // compared against the tree the round STARTED from, so the baseline is
+    // taken HERE, before the reviewer's first turn. A resumed attempt reuses
+    // the capture for this stage's run id -- the capture writer has never
+    // written an anchor to the resume moment for the same round.
+    captureReviewedTreeForRound(config.targetDir, runId, config.requireStamp ?? "auto");
     // Fresh holder + tool PER ROUND: a stale verdict from an earlier round can
     // never be read as this round's (mirrors the old per-runId file keying).
     const capture: VerdictCapture = {};

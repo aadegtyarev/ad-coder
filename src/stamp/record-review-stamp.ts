@@ -23,7 +23,9 @@ import type { SettingsConfig, StampRequirement } from "../config/types";
 import {
   appendReviewStamp,
   computeTreeDigest,
+  computeTreeManifest,
   FRESH_STAMP_ACTION,
+  movedTreePaths,
   type ReviewStamp,
   type ReviewStampFailure,
   type ReviewStampVerification,
@@ -31,6 +33,8 @@ import {
   verifyReviewStamp,
 } from "./review-stamp";
 import {
+  VERDICT_FINDINGS_DIR,
+  VERDICT_FINDINGS_ID_PATTERN,
   VERDICT_FINDINGS_MAX_ISSUES,
   VERDICT_FINDINGS_TEXT_CHARS,
   writeVerdictFindings,
@@ -41,6 +45,150 @@ export type { ReviewStampFailure };
 /** The committed marker that turns stamp writing on for one repository. */
 export const STAMPS_MARKER_FILE = "ad-coder.stamps.json";
 
+/**
+ * Round-tree integrity (issue #570 follow-up): a review stamp answers "has the
+ * reviewed tree moved?" only against the tree AT STAMP TIME. Round 1 of this
+ * defect perturbed a source file, reported it restored, left it in the working
+ * tree -- and the settle then appended a stamp whose digest matched the
+ * PERTURBED tree, so the pre-merge gate passed over a tree that was never the
+ * change under review. The answer is a baseline captured at the START of the
+ * review round, compared HERE at the settle that would write the stamp.
+ *
+ * The capture is the stamp's own covered-path digest manifest
+ * (docs/contracts/review-evidence.md): `computeTreeManifest` over the same
+ * exclusion set, so an unchanged round hashes identically, a truly-restored
+ * perturbation hashes identically, and the stamps log itself stays excluded --
+ * the stamp write cannot invalidate its own gate.
+ */
+export const REVIEW_TREE_CAPTURE_SCHEMA_VERSION = 1;
+
+/** Store-relative file the baseline for one review round lives at. */
+export function reviewTreeCaptureRef(runId: string): string {
+  if (!VERDICT_FINDINGS_ID_PATTERN.test(runId))
+    throw new Error(`review tree capture runId must match ${String(VERDICT_FINDINGS_ID_PATTERN)}`);
+  return `${VERDICT_FINDINGS_DIR}/review-tree-${runId}.json`;
+}
+
+/** The `value` half of the envelope written to disk. */
+export interface ReviewedTreeCaptureValue {
+  schemaVersion: typeof REVIEW_TREE_CAPTURE_SCHEMA_VERSION;
+  runId: string;
+  /** The tree digest at round start, exactly as the stamp would speak it. */
+  digest: string;
+  /** path -> per-file sha256 for every covered tracked path at round start. */
+  coveredPaths: Record<string, string>;
+  /** LOCAL wall-clock ISO-8601 of the capture. */
+  capturedAt: string;
+}
+
+/**
+ * Capture the tree at the START of a review round (both fronts: the pipeline's
+ * review stage and the standalone reviewer), unless one is already on record:
+ * a round resumed from an earlier attempt -- or its run-finish hook replaying
+ * -- must keep the ORIGINAL start tree, never re-anchor to the resume moment.
+ * Returns the capture ref, or undefined when stamping cannot happen for this
+ * round at all (the same gating the writer applies, mirrored so targets that
+ * never stamp pay nothing).
+ */
+export function captureReviewedTreeForRound(
+  repoRoot: string,
+  runId: string,
+  requireStamp: StampRequirement,
+  now: Date = new Date(),
+): string | undefined {
+  if (!stampingEnabledForRound(repoRoot, requireStamp)) return undefined;
+  const ref = reviewTreeCaptureRef(runId);
+  const filePath = path.join(repoRoot, ref);
+  if (fs.existsSync(filePath)) return ref;
+  const stampsFile = readStampsMarker(repoRoot)?.file ?? "docs/reviews/stamps.log";
+  const manifest = computeTreeManifest(repoRoot, [stampsFile]);
+  const value: ReviewedTreeCaptureValue = {
+    schemaVersion: REVIEW_TREE_CAPTURE_SCHEMA_VERSION,
+    runId,
+    digest: manifest.digest,
+    coveredPaths: manifest.coveredPaths,
+    capturedAt: localIsoNow(now),
+  };
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, `${JSON.stringify({ version: 1, value }, null, 2)}\n`, "utf8");
+  return ref;
+}
+
+/** The writer's own stamp-turning predicate, applied at capture time as well. */
+function stampingEnabledForRound(repoRoot: string, requireStamp: StampRequirement): boolean {
+  if (requireStamp === "off") return false;
+  return requireStamp === "on" || readStampsMarker(repoRoot) !== undefined;
+}
+
+/**
+ * Read the capture for this run's review round: the NEWEST run id in run order
+ * that has one on disk. Earlier rounds' captures are superseded by later ones
+ * by construction (the coder may legitimately edit between rounds); a missing
+ * capture reads as "no comparison possible" -- pre-upgrade runs resumed after
+ * this change keep today's stamp behavior -- while a corrupt one fails LOUD:
+ * ad-coder's own durable record must never silently stop being the gate.
+ */
+export function readReviewedTreeCapture(
+  repoRoot: string,
+  runIds: readonly string[],
+): { ref: string; value: ReviewedTreeCaptureValue } | undefined {
+  for (const runId of [...runIds].reverse()) {
+    if (!VERDICT_FINDINGS_ID_PATTERN.test(runId)) continue;
+    const ref = reviewTreeCaptureRef(runId);
+    const filePath = path.join(repoRoot, ref);
+    if (!fs.existsSync(filePath)) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    } catch (error) {
+      throw new Error(`unreadable review-tree capture at ${ref}: ${String(error)}`);
+    }
+    const value = (parsed as { version?: unknown; value?: unknown } | null)?.value;
+    if (
+      typeof value !== "object" ||
+      value === null ||
+      (value as ReviewedTreeCaptureValue).schemaVersion !== REVIEW_TREE_CAPTURE_SCHEMA_VERSION
+    )
+      throw new Error(
+        `malformed review-tree capture at ${ref} -- restore it from the round's record or re-capture by re-running the round`,
+      );
+    return { ref, value: value as ReviewedTreeCaptureValue };
+  }
+  return undefined;
+}
+
+/** The recovery action a moved-tree refusal names, spelled once. */
+export const REVIEW_TREE_MOVED_ACTION = "restore the tree and re-run the round";
+
+/** Bounded failure text: list the paths (capped), keep the message one line. */
+export function reviewedTreeMovedMessage(movedPaths: readonly string[]): string {
+  const shown = movedPaths.slice(0, 20);
+  const rest = movedPaths.length - shown.length;
+  const list = `${shown.join(", ")}${rest > 0 ? ` (+${rest} more)` : ""}`;
+  return (
+    `the review round modified the tree under review: ${list} -- ` +
+    `a stamp would certify a tree that is not the reviewed change; ${REVIEW_TREE_MOVED_ACTION}`
+  );
+}
+
+/**
+ * The settle's refusal to certify a tree the round itself modified. Human and
+ * machine fronts both carry the moved paths; the words the operator reads are
+ * `reviewedTreeMovedMessage` plus the same action in the machine field.
+ */
+export class ReviewedTreeMovedError extends Error {
+  override readonly name = "ReviewedTreeMovedError";
+  readonly code = "reviewed_tree_moved";
+  readonly nextAction = REVIEW_TREE_MOVED_ACTION;
+  readonly captureRef: string;
+  constructor(
+    readonly movedPaths: readonly string[],
+    captureRef: string,
+  ) {
+    super(reviewedTreeMovedMessage(movedPaths));
+    this.captureRef = captureRef;
+  }
+}
 export interface StampsMarkerConfig {
   /** Committed log file the stamps append to (repo-relative). */
   file?: string;
@@ -184,10 +332,20 @@ export function recordReviewStampFromResult(
   const lastMetrics = result.stageMetrics.filter((entry) => entry.stage.startsWith("review:"));
   const reviewerMetrics = lastMetrics[lastMetrics.length - 1];
   const filePath = marker?.file ?? "docs/reviews/stamps.log";
+  // One traversal computes BOTH the stamp's digest and the comparison against
+  // the round's start capture (issue #570 follow-up). The refusal happens
+  // BEFORE anything is appended: a stamp must never certify a tree the round
+  // itself moved.
+  const currentManifest = computeTreeManifest(repoRoot, [filePath]);
+  const capture = readReviewedTreeCapture(repoRoot, result.runIds);
+  if (capture !== undefined) {
+    const moved = movedTreePaths(capture.value.coveredPaths, currentManifest.coveredPaths);
+    if (moved.length > 0) throw new ReviewedTreeMovedError(moved, capture.ref);
+  }
   const stamp: ReviewStamp = {
     // The digest excludes the stamp log itself: appending one stamp line
     // cannot count as the tree moving (src/stamp/review-stamp.ts).
-    treeDigest: computeTreeDigest(repoRoot, [filePath]),
+    treeDigest: currentManifest.digest,
     base: safeBase(repoRoot),
     verdict: result.approved ? "approved" : "changes_requested",
     reviewer: `${reviewerMetrics?.provider ?? "?"}/${reviewerMetrics?.model ?? "?"}`,

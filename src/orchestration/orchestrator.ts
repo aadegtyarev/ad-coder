@@ -48,7 +48,7 @@ import type { SessionLimitSnapshot, SessionLimits } from "../session-limits";
 import { SessionLimitController, SessionLimitError } from "../session-limits";
 import { pluginNamesFromToolNames } from "../skills/resolver";
 import { roleSkillKit } from "../skills/role-kit";
-import { recordReviewStampFromResult } from "../stamp/record-review-stamp";
+import { ReviewedTreeMovedError, recordReviewStampFromResult } from "../stamp/record-review-stamp";
 import { buildWebTools } from "../web/tools";
 import { resolveWorkflowModules } from "../workflows/registry";
 import type { OrchestratorWorkflowModule } from "../workflows/types";
@@ -1087,6 +1087,15 @@ const SAFE_HOUSE_ERRORS = [
   // remaining safe errors are the wait and the shape refusals in
   // `ProjectOperationsError` (`invalid_budget_decision`, `invalid_intake`).
   BudgetWaitError,
+  // Field-by-field audit (errors contract 2026-09-19 / issue #570):
+  // The reviewed-tree refusal (issue #570 follow-up, round-tree integrity):
+  // `code` is the authored literal `reviewed_tree_moved`; the message splices
+  // only the REPO-RELATIVE TRACKED paths the settle's own stamp manifest
+  // reported as moved -- names taken from `git ls-files`, capped at 20 with a
+  // count -- plus an authored recovery clause. Untracked files, provider
+  // payloads, and free text never enter the list, so the projection stays
+  // authored-bounded.
+  ReviewedTreeMovedError,
 ] as const;
 
 /**
