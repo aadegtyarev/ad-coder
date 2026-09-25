@@ -22,6 +22,17 @@ reader understand and use a product surface.
 - Document durable user, operator, or maintainer knowledge that code, tests,
   typed interfaces, and generated help cannot communicate clearly. Do not restate
   implementation line by line or create prose merely to satisfy a process.
+- Dated entries carry ONE clock: the operator's LOCAL calendar day (2026-09-17).
+  CHANGELOG release headings and `docs/contracts/` entries are dated from the
+  operator's local date, never `date -u`; the two clocks disagree on the
+  evening hours, so `bun run check:release` fails when the CHANGELOG's dated
+  release headings are out of non-increasing date order.
+- Within one working day every dated release heading carries the same local
+  date, so position in the file is then the only signal of which release is
+  newer (2026-09-25): dated release headings must also be in non-increasing
+  version order down the CHANGELOG, and `bun run check:release` fails when a
+  heading names a greater version than the lesser one dated the same day above
+  it.
 - Architecture documentation is a map, not a change log or implementation dump.
   It names components, connections, trust boundaries, and load-bearing decisions.
   Detailed algorithms belong with their subsystem or focused design document.

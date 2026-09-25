@@ -11,6 +11,22 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.68] - 2026-09-25
+
+### Fixed
+
+- **`bun run check:release` now also enforces non-increasing VERSION order of
+  dated release headings within a tied date (issue #575).** The gate only
+  checked date order, so within one working day -- every block carrying the
+  same local calendar day -- an arrangement that was newest-date-correct could
+  still be newest-version-wrong and stay green, as observed on PR #562 after a
+  rebase: the block the release would publish sat under an older one. Once
+  dates tie, position in the file is the only signal of which release is
+  newer; a heading naming a greater version than a lesser one dated the same
+  day now fails, naming both versions and the reorder action. Across days the
+  existing date rule still governs on its own, the package-version heading
+  check and the two-heading minimum are unchanged.
+
 ## [0.181.66] - 2026-09-25
 
 ### Fixed
@@ -752,17 +768,17 @@ enforces that dated release headings go in non-increasing date order
   pull requests, filing tickets, the ceiling-raise threshold, the readiness
   evidence set and the delivery surface itself are all settings.
 
-## [0.167.0] - 2026-09-21
-
-### Changed
-- **Skill loads now render as `Skill <skill-id>` in tool activity (issue #569).**
-
 ## [0.170.0] - 2026-09-21
 
 ### Changed
 - **Added the orchestrator contract audit (issue #570).** The dated review records
   current-base evidence for landing-contract clauses K0–K12 and separately
   identifies a precedence collision with the accepted project rules.
+
+## [0.167.0] - 2026-09-21
+
+### Changed
+- **Skill loads now render as `Skill <skill-id>` in tool activity (issue #569).**
 
 ## [0.164.0] - 2026-09-21
 
