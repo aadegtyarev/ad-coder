@@ -11,6 +11,25 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.65] - 2026-09-25
+
+### Fixed
+
+- **A second lock contender arriving inside the lock-publication window is
+  handled as contention, never as a fatal `unsafe_object` (issue #570).** The
+  versioned lock is published by hard-linking an already-written temporary
+  onto the lock path and unlinking the temporary afterwards, so between those
+  two calls the lock path legitimately has `nlink` 2. The acquisition's
+  destination check used the strict data-destination refusal (`nlink !== 1`),
+  so a contender arriving inside that window -- the issue #479 cancel/persist
+  race in CI -- died with `ProjectStoreError: destination is unsafe` instead
+  of entering the EEXIST / stale-reclaim / bounded-wait contention logic.
+  Lock paths now use a contention-safe check: a regular, non-symlink file is
+  contention (typed `version_conflict` on the bounded schedule), while a
+  symlink, a non-regular object, or a path outside the store root is still
+  refused with `unsafe_object`. Data destinations keep the strict check, so
+  hard-link attacks on published data remain blocked.
+
 ## [0.181.63] - 2026-09-24
 
 ### Fixed
