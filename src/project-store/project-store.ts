@@ -640,7 +640,7 @@ export class ProjectStore {
   }
 
   private acquireVersionedLock(lockPath: string): () => void {
-    this.assertDestination(lockPath);
+    this.assertLockDestination(lockPath);
     const identity = this.processIdentity();
     for (let attempt = 0; ; attempt += 1) {
       try {
@@ -681,7 +681,7 @@ export class ProjectStore {
   }
 
   private acquireLock(lockPath: string): () => void {
-    this.assertDestination(lockPath);
+    this.assertLockDestination(lockPath);
     try {
       return this.createLock(lockPath, { pid: process.pid });
     } catch (error) {
@@ -974,7 +974,7 @@ export class ProjectStore {
     lockPath: string,
     identity: { pid: number; startTime?: string; procfsCtimeNs?: string; token?: string },
   ): () => void {
-    this.assertDestination(lockPath);
+    this.assertLockDestination(lockPath);
     const ownedIdentity = { ...identity, token: identity.token ?? crypto.randomUUID() };
     const temporary = path.join(
       path.dirname(lockPath),
@@ -1380,6 +1380,29 @@ export class ProjectStore {
       const stat = fs.lstatSync(destination);
       if (stat.isSymbolicLink() || !stat.isFile() || stat.nlink !== 1)
         throw new ProjectStoreError("unsafe_object", destination, "destination is unsafe");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+
+  /**
+   * Destination check for LOCK paths only.  `createLock` publishes by linking
+   * an already-written temporary onto the lock path and unlinking the
+   * temporary afterwards, so between those two calls the lock path genuinely
+   * has nlink 2 (the publication protocol itself, not an attack).  A second
+   * writer arriving inside that window must see ordinary contention -- the
+   * EEXIST / stale-reclaim / bounded-wait logic below -- never a fatal
+   * `unsafe_object`.  A symlink or a non-regular object at the lock path is
+   * still refused exactly as before.  Data destinations keep the strict
+   * `assertDestination` (nlink 1), so hard-link attacks on published data
+   * remain blocked.
+   */
+  private assertLockDestination(lockPath: string): void {
+    this.assertInside(lockPath);
+    try {
+      const stat = fs.lstatSync(lockPath);
+      if (stat.isSymbolicLink() || !stat.isFile())
+        throw new ProjectStoreError("unsafe_object", lockPath, "destination is unsafe");
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }

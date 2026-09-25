@@ -187,6 +187,64 @@ describe("ProjectStore", () => {
     }
   });
 
+  test("a lock path published mid-link (nlink 2) is contention, not an unsafe object", () => {
+    const root = target();
+    const store = new ProjectStore(root, { lockRetry: { delaysMs: [5] } });
+    const file = path.join(store.layout.runs, "midlink_race.json");
+    store.writeVersionedJson(file, { seeded: true });
+    const lock = `${file}.lock`;
+    // Publish exactly as `createLock` does: write + fsync a temporary, then
+    // `linkSync` it onto the lock path BEFORE the temporary is unlinked. In
+    // that window the lock path legitimately has nlink 2. Issue #570: a second
+    // writer arriving here previously hit the strict nlink check and died with
+    // a fatal `unsafe_object` instead of entering the contention path.
+    const temporary = path.join(
+      path.dirname(lock),
+      `.${path.basename(lock)}.${crypto.randomUUID()}.lock`,
+    );
+    const fd = fs.openSync(
+      temporary,
+      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW,
+      0o600,
+    );
+    fs.writeFileSync(
+      fd,
+      `${JSON.stringify({ pid: process.pid, startTime: processStartTime(process.pid), token: crypto.randomUUID() })}\n`,
+    );
+    fs.fsyncSync(fd);
+    fs.linkSync(temporary, lock);
+    fs.closeSync(fd);
+    try {
+      expect(fs.lstatSync(lock).nlink).toBe(2);
+      // Must NOT throw `unsafe_object`: it reads the (live, self-owned) holder
+      // and fails with the same typed contention error the holder path uses.
+      expect(() => store.mutateVersionedJson(file, () => ({ second: true }))).toThrow(
+        new ProjectStoreError("version_conflict", lock, "managed state is locked"),
+      );
+    } finally {
+      fs.rmSync(lock, { force: true });
+      fs.rmSync(temporary, { force: true });
+    }
+  });
+
+  test("a symlink at the lock path is still refused as an unsafe destination", () => {
+    const root = target();
+    const store = new ProjectStore(root, { lockRetry: { delaysMs: [5] } });
+    const file = path.join(store.layout.runs, "symlink_lock.json");
+    store.writeVersionedJson(file, { seeded: true });
+    const lock = `${file}.lock`;
+    const outside = path.join(target(), "outside.txt");
+    fs.writeFileSync(outside, "outside");
+    fs.symlinkSync(outside, lock);
+    try {
+      expect(() => store.mutateVersionedJson(file, () => ({ second: true }))).toThrow(
+        new ProjectStoreError("unsafe_object", lock, "destination is unsafe"),
+      );
+    } finally {
+      fs.rmSync(lock, { force: true });
+    }
+  });
+
   test("direct writer uses the bounded versioned-lock protocol", async () => {
     const root = target();
     const store = new ProjectStore(root, { lockRetry: { delaysMs: [1, 1] } });
