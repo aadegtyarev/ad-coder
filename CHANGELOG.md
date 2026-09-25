@@ -38,7 +38,11 @@ enforces that dated release headings go in non-increasing date order
   (`counter-estimate: <first paragraph, bounded 200 chars> (mode: auto)`),
   so the record names the end state the dispatch asked for, not the gate's
   own prose -- string work on the task text, with no additional provider
-  call.
+  call. A `run_role` call that SUPPLIES its optional `intake` parameter now
+  has it honoured: the stated statement and budget decision are recorded as
+  given (a blocked one takes the same honest `budget_blocked` wait, starting
+  nothing), rather than silently discarded and replaced by a
+  counter-estimate.
 
 ## [0.181.65] - 2026-09-25
 

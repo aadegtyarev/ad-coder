@@ -1296,6 +1296,7 @@ export function buildRunRoleTool(
     role: DelegatableRoleName,
     task: string,
     complexity?: Complexity,
+    intake?: unknown,
   ) => Promise<DelegatedRoleResult>,
   sessionFacts?: RunRoleSessionFacts,
   gatedIntake?: ReturnType<typeof buildGatedIntake>,
@@ -1368,12 +1369,18 @@ Only the roles named above are callable; calling a "not configured" role fails w
           );
         }
         // The gate runs AFTER the schema-level role validation and BEFORE any
-        // delegation callback: same ordering rule as the gated tools.
+        // delegation callback: same ordering rule as the gated tools. The
+        // tool call's own `intake` rides with the callback (slice
+        // orchestrator-g2b-conversation-intake), so a stated budget is
+        // HONOURED -- recorded as stated, or refused as `budget_blocked`
+        // when it is blocked -- not silently replaced by a counter-estimate;
+        // absent means the gate's unstated branch decides.
         gatedIntake?.(params.task, params.complexity, params.intake, RUN_ROLE_TOOL_NAME);
         const result = await runRole(
           params.role as DelegatableRoleName,
           params.task,
           params.complexity,
+          params.intake,
         );
         // Do not claim "complete" for a stage that entered its closeout
         // reserve; the reason rides in the text the model reads (issue #327).
@@ -2142,15 +2149,19 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
           workflows: enabledModules.map((module) => module.name),
         };
   const delegatedRoleTool = buildRunRoleTool(
-    async (name, task, complexity) => {
+    async (name, task, complexity, intake) => {
       // The pre-work gate FIRST (docs/contracts/orchestrator.md:22), through the
       // same factory the gated tools use (~zero duplicated logic): an intake
       // statement and a budget decision are on record (or the same honest
       // `budget_blocked` wait the gated tools raise) before anything below runs
       // -- no resolvePipelineConfig, no delegate conversation, no provider call.
       // g2b slice: this is the same invariant run_pipeline/start_pipeline
-      // already enforce at their own call sites.
-      conversationalIntake?.(task, complexity, undefined, RUN_ROLE_TOOL_NAME);
+      // already enforce at their own call sites. The tool call's own `intake`
+      // rides through -- a stated budget is honoured (recorded as stated, or
+      // refused as `budget_blocked` when blocked), never silently discarded;
+      // `undefined` keeps the gate's unstated branch (counter-estimate,
+      // record, proceed), so an ordinary conversational start is not refused.
+      conversationalIntake?.(task, complexity, intake, RUN_ROLE_TOOL_NAME);
       // Resolve worker roles lazily: disabling the pipeline does not construct its
       // graph, yet every role remains independently callable by the Orchestrator.
       // A classified tier rides with the call (issues #263/#264): the tool schema

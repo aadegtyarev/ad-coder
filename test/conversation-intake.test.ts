@@ -243,3 +243,73 @@ test("run_pipeline through the shared seam still blocks honestly with no record 
   expect(started).toEqual([]);
   expect(store.get(ProjectStoreIntakeStore.idForTask("no basis"))).toBeUndefined();
 });
+
+// ---------------------------------------------------------------------------
+// (e) A SUPPLIED intake through the run_role tool is the statement that gets
+// recorded -- not silently discarded and replaced by a counter-estimate -- and
+// a supplied BLOCKED budget takes the same honest wait: nothing starts, no
+// record is written.
+// ---------------------------------------------------------------------------
+
+const statedIntake = {
+  outcome: `fix the flaky login test in src/auth/login.test.ts under the stated ceiling`,
+  scopeExclusions: ["docs/"],
+  mode: "auto",
+  taskShape: { complexity: "medium", stage: "fix", sizeClass: "single-file" },
+  budget: { ceilingUsd: 1.5, source: "operator" },
+  ceilings: ["coder:maxCostUsd=1.5"],
+  resultChangingAmbiguities: [],
+  budgetDecision: {
+    kind: "accepted",
+    evidence: ["operator stated a 1.5 USD ceiling for this dispatch"],
+  },
+};
+
+test("a supplied intake through run_role is the recorded statement, honoured over the counter-estimate", async () => {
+  const target = tempTarget("supplied-intake");
+  const runRole = await startGatedSession(target);
+  const text = await callTool(runRole, {
+    role: "coder",
+    task: TASK,
+    intake: statedIntake,
+  });
+
+  expect(text).toContain("coder complete"); // ordinary start was NOT refused
+
+  const rec = readRecord(target, TASK);
+  expect(rec).toBeDefined();
+  // The stated statement is what is on record, not a counter-estimate.
+  expect(rec?.statement.budget.source).toBe("operator");
+  expect(rec?.statement.budget.ceilingUsd).toBe(1.5);
+  expect(rec?.statement.outcome).toBe(statedIntake.outcome);
+  expect(rec?.statement.scopeExclusions).toEqual(["docs/"]);
+  // The budget decision is the stated one, with the stated kind.
+  expect(rec?.budget.kind).toBe("accepted");
+  expect(rec?.budget.evidence).toEqual(["operator stated a 1.5 USD ceiling for this dispatch"]);
+});
+
+test("a supplied blocked budget through run_role starts nothing, with no record written", async () => {
+  const target = tempTarget("supplied-blocked");
+  // Tripwire: if the delegate turn were ever started and stepped, this throws
+  // through `callTool` -- the blocked wait must fire before any delegation.
+  const runRole = await startGatedSession(target, () => {
+    throw new Error("the delegate must never run past the gate");
+  });
+  const text = await callTool(runRole, {
+    role: "coder",
+    task: TASK,
+    intake: {
+      ...statedIntake,
+      budgetDecision: {
+        kind: "blocked",
+        nextAction: "wait for the finance owner to raise the ceiling",
+      },
+    },
+  });
+
+  expect(text).toContain("error: budget_blocked");
+  expect(text).toContain("wait for the finance owner to raise the ceiling");
+  expect(
+    fs.readdirSync(path.join(target, ".ad-coder", "runs")).filter((n) => n.startsWith("intake-")),
+  ).toEqual([]);
+});
