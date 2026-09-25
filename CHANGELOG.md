@@ -11,6 +11,34 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.69] - 2026-09-25
+
+### Fixed
+
+- **The merge-stamp gate can no longer certify a tree the review round itself
+  modified (issue #570 follow-up).** Review round 1 of that defect perturbed a
+  source file, reported it restored, and left the changed value there;
+  the settle then appended an approved stamp whose digest matched the PERTURBED
+  tree, so `bun run stamp:check` saw a fresh, valid stamp over code that was
+  never the reviewed change. The settle now holds the tree the round STARTED
+  from and refuses to stamp over anything else. Both review fronts (the
+  pipeline's review stage and the standalone `ad-coder role reviewer`) capture
+  a covered-path digest manifest at round start -- same `git ls-files`
+  coverage as the stamp digest, same stamp-log exclusion, so an unchanged
+  round or a perturbation truly restored byte-for-byte hashes identically and
+  stamps exactly as before. The settle that writes the stamp compares against
+  that capture and, when any tracked path moved, throws
+  `ReviewedTreeMovedError` and appends NOTHING: the refusal names the moved
+  paths in one actionable line -- "the review round modified the tree under
+  review: <paths> -- a stamp would certify a tree that is not the reviewed
+  change; restore the tree and re-run the round" -- rendered on every front
+  (the standalone reviewer's stderr with exit 2, the machine front's typed
+  `reviewed_tree_moved` record, and the orchestrator tool fronts' error text).
+  A capture for the round persists beside the run record and is never
+  re-anchored on resume, so replaying or resuming a round compares against its
+  original start; a round with no capture on record (pre-upgrade runs) stamps
+  as before, and no pre-existing refusal is weakened.
+
 ## [0.181.68] - 2026-09-25
 
 ### Fixed

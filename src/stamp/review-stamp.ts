@@ -136,6 +136,26 @@ export function parseReviewStamp(line: string): ReviewStamp | string {
  * passes the marker-configured stamps path here.)
  */
 export function computeTreeDigest(repoRoot: string, excludePaths: readonly string[] = []): string {
+  return computeTreeManifest(repoRoot, excludePaths).digest;
+}
+
+/**
+ * The covered-path digest manifest the stamp contract speaks of
+ * (docs/contracts/review-evidence.md): the SAME covered-path digest the stamp
+ * digest folds, kept PER PATH so a comparison can NAME what moved instead of
+ * only answering "something did". The digest is identical to
+ * `computeTreeDigest`'s, by construction -- one fold, shared here.
+ */
+export interface TreeManifest {
+  digest: string;
+  /** path -> per-file content sha256 hex, one entry per covered tracked path. */
+  coveredPaths: Record<string, string>;
+}
+
+export function computeTreeManifest(
+  repoRoot: string,
+  excludePaths: readonly string[] = [],
+): TreeManifest {
   const listing = Bun.spawnSync(["git", "ls-files", "-z"], {
     cwd: repoRoot,
     stdout: "pipe",
@@ -150,13 +170,33 @@ export function computeTreeDigest(repoRoot: string, excludePaths: readonly strin
     .filter((entry) => entry !== "" && !excluded.has(entry))
     .sort();
   const hasher = createHash("sha256");
+  const coveredPaths: Record<string, string> = {};
   for (const entry of paths) {
     const content = fs.readFileSync(path.join(repoRoot, entry));
+    const perFile = createHash("sha256").update(content).digest("hex");
+    coveredPaths[entry] = perFile;
     hasher.update(`${entry}\0`);
-    hasher.update(createHash("sha256").update(content).digest("hex"));
+    hasher.update(perFile);
     hasher.update("\0");
   }
-  return hasher.digest("hex");
+  return { digest: hasher.digest("hex"), coveredPaths };
+}
+
+/**
+ * The paths that moved between a captured manifest and the current one: any
+ * tracked path whose content hash differs -- a deleted file reads as `undefined`
+ * against its captured hash -- plus tracked paths that exist only now. Same
+ * coverage as the digest: untracked paths never appear and never count.
+ */
+export function movedTreePaths(
+  before: Record<string, string>,
+  after: Record<string, string>,
+): string[] {
+  const moved: string[] = [];
+  for (const [entry, perFile] of Object.entries(before))
+    if (after[entry] !== perFile) moved.push(entry);
+  for (const entry of Object.keys(after)) if (before[entry] === undefined) moved.push(entry);
+  return moved.sort();
 }
 
 export interface ReviewStampVerification {

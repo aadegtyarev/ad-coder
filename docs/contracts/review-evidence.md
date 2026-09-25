@@ -41,6 +41,14 @@ proposed delivery.
   from its stamped parent matches an allowed path/glob and no covered path changed.
   The default ad-coder policy permits only `CHANGELOG.md` and `package.json` for
   this final version-resolution step; other projects declare their own paths.
+- The round that is reviewed OWNS its tree: each review front captures the
+  covered-path digest manifest at the START of the round (beside the run
+  record, never re-anchored on resume) and the settle that writes the stamp
+  refuses to append when any covered path moved since -- the stamp would
+  certify a tree that is not the reviewed change. The refusal names the moved
+  paths and the recovery: restore the tree and re-run the round. Untracked
+  paths and the stamp storage itself stay outside coverage, so settlement
+  paperwork never invalidates the gate.
 - Stamps exist only in this repository when its committed `ad-coder.stamps.json`
   marker enables them. They are never written into a target project.
 
