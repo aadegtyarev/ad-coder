@@ -82,16 +82,20 @@ export function counterEstimateBudget(
 
 /**
  * The intake statement that only exists because a counter-estimate was
- * produced: every field the intake contract names is present, honest about
- * what has actually happened at this point (outcome and size not yet assessed;
- * ambiguity list empty because nothing was stated), and free of the task text.
+ * produced: every field the intake contract names is present, and every
+ * task-derived field is derived from the task text itself -- arithmetic and
+ * string work on the dispatch, no provider call. The outcome names the END
+ * STATE the task's own wording asks for (docs/contracts/orchestrator.md:
+ * 15-17), not a task-agnostic gate restatement; scope exclusions and the
+ * ambiguity list stay empty because the gate derive step ran no analysis beyond
+ * the header cut, so claiming exclusions or ambiguities would be invention.
  */
 export function counterEstimatedStatement(
+  task: string,
   estimate: BudgetCounterEstimate,
 ): import("./intake").IntakeStatement {
   return {
-    outcome:
-      "run the stated task under the counter-estimated whole-task budget recorded at the pre-work gate",
+    outcome: counterEstimatedOutcome(task),
     scopeExclusions: [],
     mode: "auto",
     taskShape: {
@@ -105,4 +109,56 @@ export function counterEstimatedStatement(
     ),
     resultChangingAmbiguities: [],
   };
+}
+
+/**
+ * The intake OUTCOME for a counter-estimated record: the task ASKED for its
+ * own end state, so the statement names it in the task's words, not as a
+ * restatement of the gate. `counter-estimate` marks the caller -- honest that
+ * nobody analysed this task beyond the header cut below -- and `auto` is the
+ * mode the unattended dispatch runs under. String work on the task text; no
+ * provider call.
+ */
+export function counterEstimatedOutcome(task: string): string {
+  return `counter-estimate: ${firstParagraphLine(task)} (mode: auto)`;
+}
+
+/**
+ * The outcome reads the task ASKED for its end state, so quote its own
+ * wording: the first paragraph's first line. `counter-estimate:` marks the
+ * caller -- nobody analysed this dispatch beyond that header cut -- and
+ * `(mode: auto)` restates the statement's auto mode. The fold is by blank-line
+ * paragraphs, not by character count, bounded to 200 characters.
+ */
+function firstParagraphLine(task: string): string {
+  const first = task
+    .split(/\n\s*\n/)
+    .map((paragraph) => paragraph.trim())
+    .find((paragraph) => paragraph.length > 0);
+  const stated = first ?? "(the dispatch stated no task text)";
+  const bounded = stated.length <= 200 ? stated : stated.slice(0, 200);
+  return sanitizeOutcome(bounded);
+}
+
+/**
+ * Numbers, quotes, and controls on the record: no <, >, &, or ", a newline
+ * becomes one space (the record writes JSON; the fold above already split
+ * paragraphs), any control character is dropped, then trimmed. Quotes become
+ * apostrophes; apostrophes are kept (they are ordinary prose), so the loop
+ * never emits a raw double-quote or angle bracket.
+ */
+function sanitizeOutcome(phrase: string): string {
+  let out = "";
+  for (const ch of phrase.replace(/\s+/g, " ")) {
+    const code = ch.codePointAt(0) ?? 0;
+    // Control characters other than the whitespace already folded above
+    // (BEL, ESC, DEL, C1 range): dropped -- the outcome is prose.
+    if ((code < 32 && code !== 0) || (code >= 127 && code < 160)) continue;
+    if (ch === "<") out += "less than ";
+    else if (ch === ">") out += "greater than ";
+    else if (ch === "&") out += "and ";
+    else if (ch === '"') out += "'";
+    else out += ch;
+  }
+  return out.trim();
 }

@@ -11,6 +11,39 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.66] - 2026-09-25
+
+### Fixed
+
+- **A delegated `run_role` turn can no longer start provider work without an
+  intake statement and a budget decision on record (orchestrator contract
+  13-22: intake states the task's fields before work, and the budget is
+  decided before work starts; audit slice
+  `docs/reviews/slices/orchestrator-g2b-conversation-intake.md`, verdict
+  `violating`).** `run_pipeline`/`start_pipeline` were already gated through
+  the in-closure `gatedIntake`; the conversational start path was not. That
+  closure is now a module-level factory, `buildGatedIntake(core)`, and both
+  paths call the ONE gate: `run_role`'s tool calls it after the schema-level
+  role validation and before any delegation callback, recording intake into
+  the same bounded store (`<target>/.ad-coder/runs/intake-<sha256(task)[:32]>.json`
+  via `ProjectStoreIntakeStore`). An unstated budget is still not refused:
+  the gate counter-estimates from the recorded per-role ceilings, records the
+  decision with its evidence, and the delegate turn proceeds as before
+  (`roles-only` sessions, which have no core, close over the same durable
+  store and the same pure estimator -- the shipped calibration table). With
+  no producible counter-estimate the turn returns the same honest
+  `budget_blocked` / `no_forecast_basis` wait, with nothing started and no
+  file written. The counter-estimated intake's OUTCOME is also no longer the
+  task-agnostic placeholder: the statement now carries the task's own wording
+  (`counter-estimate: <first paragraph, bounded 200 chars> (mode: auto)`),
+  so the record names the end state the dispatch asked for, not the gate's
+  own prose -- string work on the task text, with no additional provider
+  call. A `run_role` call that SUPPLIES its optional `intake` parameter now
+  has it honoured: the stated statement and budget decision are recorded as
+  given (a blocked one takes the same honest `budget_blocked` wait, starting
+  nothing), rather than silently discarded and replaced by a
+  counter-estimate.
+
 ## [0.181.65] - 2026-09-25
 
 ### Fixed
