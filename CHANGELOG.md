@@ -11,6 +11,50 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.71] - 2026-09-25
+
+### Changed
+
+- **The whole-document audit of `docs/ARCHITECTURE.md` triggered by the
+  readability gate is delivered: four drift items fixed against the code, and
+  the document rewritten 1995 -> 1589 words, back under the gate's warning
+  threshold (record: `docs/reviews/2026-09-25-architecture-whole-document-audit.md`;
+  audited base 0.181.70, commit f6a8321).** The rule the audit executed is
+  `docs/contracts/documentation.md`'s "re-read a canonical document as a whole
+  when the readability gate reports it near its budget": `bun run check:docs`
+  reported the document at 1995 words against a 2000-word limit with a warning
+  threshold of 1600 (`docs/readability.json`'s
+  `maxArchitectureWords: 2000` x `architectureWarningRatio: 0.8`), printing
+  "(whole-document audit due)", which is what triggered it. Two audit rounds
+  read the document claim by claim against the current code with file:line
+  evidence. The four drift items and what the document states instead: (1) the
+  closeout-reserve sentence quoted defaults ("30 seconds, 4 turns, 8 tool
+  turns, 100,000 input tokens") that `DEFAULT_STAGE_LIMITS` at
+  `src/cli/resolve-config.ts:112-122` replaced long ago (90s / 12 model turns /
+  24 tool turns / 300k input tokens, changed at 0.62.0) -- it now names the
+  constant and points at the file instead of requoting numbers that rot; (2)
+  the pipeline graph omitted the conditional gates stage -- it now reads
+  `plan -> research? -> security? -> code -> gates? -> review`, stating that
+  the stage ships by default with seven declared project gates, exists only
+  when configured, and a red gate returns captured output to the coder, never
+  review; (3) the sentence "missing standards pause before code" named a
+  mechanism that exists nowhere in the code -- it is deleted, leaving the real
+  pre-code pause (plan validation) and the real contract-ID rule (the Planner
+  derives allowed IDs from validation's `CONTRACT_INDEX`); (4) the metrics
+  sentence said "system-prompt, handoff, and tool-definition bytes" -- the
+  categories are systemPrompt / prompt / toolDefinitions (`runner.ts:215-220`),
+  and "handoff" names nothing in the metrics, so it now reads
+  "systemPrompt/prompt/toolDefinitions request bytes". Everything else the
+  rounds verified held (stage-limit precedence, credentials, publication,
+  updater, orchestrator tool surface, waits/CAS/peer-uid, background runs,
+  context policy, handoff widening, `Models` layering, web/`inspect_image`)
+  stands as written. The rewrite compresses 1995 -> 1589 words by the gate's
+  own count (`trim().split(/\s+/).length`), keeping section order, the system
+  map, every link and all six "rules that are easy to break"; the residuals
+  the two rounds could not verify are carried verbatim in the audit record and
+  are NOT claimed fixed. The next whole-document audit falls due when the
+  document again reaches 1600 words by the gate's count.
+
 ## [0.181.70] - 2026-09-25
 
 ### Changed
