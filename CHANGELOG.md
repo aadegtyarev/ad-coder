@@ -11,6 +11,34 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.62] - 2026-09-24
+
+### Fixed
+
+- **A detached background run whose worker dies in the pre-claim window is no
+  longer a quietly stopped state (orchestrator contract 9-12, audit slice
+  `docs/reviews/slices/orchestrator-g1b-pipeline-drive-states.md`, verdict
+  `violating`).** `startDetached` resolves its host launch when the OS accepts
+  the spawned worker, not when the worker claims the record
+  (`src/cli.ts` `createBackgroundHostLauncher`); a worker that exits between
+  spawn and `claim()` left the durable record at `lifecycle: "requested"` with
+  `recovery: "wait"` forever -- named, but its named next event was unreachable:
+  no wake ever fired, `result()` threw `not_terminal`, and `load()` deliberately
+  never reaped an unclaimed `requested` record. Such a record is now reconciled,
+  at reopen (`load()`) and at every read-path refresh of a non-active record,
+  to the same state a mid-run abandoning takes -- `failed`, with
+  `recovery: "resume_pipeline"` -- once its claim deadline passes (one lease
+  window; `requested` records inside the deadline are left exactly as
+  launched). The reconciliation states its own evidence and next action in
+  `CLAIM_DEADLINE_DETAIL`: the record stayed `requested` with no claim past the
+  claim window, and since there is no checkpoint to resume, the honest action is
+  a new `background start`, not `resume_pipeline`. The durable write is decided
+  inside `mutateVersionedJson` against the record's actual bytes, so it is
+  idempotent and safe to run from two managers reopening the same state dir,
+  and a genuinely live detached run -- claimed or about to claim -- is never
+  reconciled away. Characterization tests cover the dead-pre-claim reconciliation,
+  the in-window liveness guard, and the two-manager idempotency.
+
 ## [0.181.61] - 2026-09-24
 
 ### Added

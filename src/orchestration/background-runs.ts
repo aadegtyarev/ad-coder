@@ -106,6 +106,20 @@ export const RESUME_PIPELINE_DETAIL =
  * as guidance, wastes their first move. The ceiling wording stays verbatim for
  * `stage_limit`/`stage_failed` and the pause-less paths (timed_out, abandoned).
  */
+/**
+ * The recovery wording a run reaped in the pre-claim window owes the operator
+ * (orchestrator contract "no quietly stopped state"): a detached worker that
+ * exits between spawn and `claim()` leaves the durable record at
+ * `lifecycle: "requested"` forever -- named, but with recovery "wait" that
+ * never happens and no wake. After a bounded claim deadline an unclaimed
+ * record is reconciled to `failed` with this detail: state, evidence, and next
+ * action in one line. There is deliberately NO coordinator checkpoint to
+ * resume, so the honest next action is to start the task again, not the
+ * `resume_pipeline` route a mid-run abandonment points at.
+ */
+export const CLAIM_DEADLINE_DETAIL =
+  "the detached worker never claimed this run: the durable record stayed lifecycle requested with no claim inside the claim window, so nothing will ever advance it; start the task again with a new background start -- there is no checkpoint to resume";
+
 export const RESUME_PIPELINE_NO_RAISE_DETAIL =
   "open `ad-coder console --target-dir <dir>` and ask the orchestrator to resume this run id with resume_pipeline; a resumable stage pause resumes with its original task and needs no ceiling raise; `background` has no resume action and `control resume` does not read background runs";
 
@@ -1017,6 +1031,7 @@ export class BackgroundRunManager {
     entry.outcome = persisted.outcome === undefined ? undefined : copyOutcome(persisted.outcome);
     entry.process = persisted.process;
     entry.wake = { entries: (persisted.wake?.entries ?? []).map((w) => ({ ...w })) };
+    if (persisted.lifecycle === "requested") this.reapStaleRequested(entry);
     if (changed) this.notify(entry);
   }
   private ensureWatcher(): void {
@@ -1121,6 +1136,97 @@ export class BackgroundRunManager {
     }
     return { events, nextCursor: events.at(-1)?.sequence ?? effective, gap };
   }
+  /**
+   * Reap a detached run stuck in the pre-claim window (orchestrator contract
+   * "no quietly stopped state", slice orchestrator-g1b-pipeline-drive-states).
+   *
+   * A record at `lifecycle: "requested"` whose claim never arrives can never
+   * be advanced: no lease heartbeat exists to watch it, `maxRunMs` is armed
+   * only at claim, and `requested` is deliberately never wake-initiating.
+   * Past a bounded claim deadline it is reconciled to `failed` with
+   * `CLAIM_DEADLINE_DETAIL` -- a named terminal state whose recovery is
+   * honest (the run really is dead, and a wake fires through the ordinary
+   * failed append).
+   *
+   * Liveness guards, so a genuinely live detached run is never reaped:
+   * - a fresh lease means a worker-process heartbeat is running or the worker
+   *   claimed milliseconds ago -- untouched (the claim itself is the event the
+   *   window is waiting for);
+   * - the deadline is anchored on the newest liveness witness: the last lease
+   *   heartbeat when a lease exists, else the durable `requested` event's
+   *   timestamp; the default deadline is one lease window (15s in
+   *   production), far outside any real spawn-to-claim duration.
+   *
+   * Concurrency/idempotency: the reconciliation is decided INSIDE the
+   * `mutateVersionedJson` compare-and-write over the durable record's actual
+   * bytes, so it re-checks every precondition against the current content and
+   * is a no-op once any writer (this manager, another process reopening the
+   * same state dir, or a re-run after `refresh`) has moved the record. The
+   * in-memory copy is then re-derived from the durable file by `refresh`, so
+   * no second event or wake is invented in memory.
+   */
+  private reapStaleRequested(entry: Entry): void {
+    if (this.store === undefined || this.stateDir === undefined) return;
+    if (entry.lifecycle !== "requested") return;
+    if (hasFreshLease(entry.lease, this.limits.leaseMs)) return;
+    const anchor =
+      entry.lease !== undefined
+        ? entry.lease.heartbeatAt
+        : (entry.events[0]?.timestamp ?? Date.now());
+    if (Date.now() - anchor < this.limits.leaseMs) return;
+    const file = path.join(this.stateDir, `${entry.runId}.json`);
+    let changed = false;
+    this.store.mutateVersionedJson<PersistedEntry>(file, (current) => {
+      const value = current?.value;
+      if (
+        value === undefined ||
+        value.lifecycle !== "requested" ||
+        hasFreshLease(value.lease, this.limits.leaseMs)
+      )
+        return value as PersistedEntry;
+      const durableAnchor =
+        value.lease !== undefined
+          ? value.lease.heartbeatAt
+          : (value.events[0]?.timestamp ?? Date.now());
+      if (Date.now() - durableAnchor < this.limits.leaseMs) return value as PersistedEntry;
+      changed = true;
+      const now = Date.now();
+      const metrics = copyMetrics(value.metrics);
+      return {
+        ...value,
+        lifecycle: "failed" as const,
+        ...{ lease: undefined },
+        outcome: {
+          runId: entry.runId,
+          lifecycle: "failed" as const,
+          metrics,
+          recovery: "resume_pipeline" as const,
+          recoveryDetail: CLAIM_DEADLINE_DETAIL,
+        },
+        events: [
+          ...value.events,
+          {
+            sequence: value.nextSequence,
+            runId: entry.runId,
+            lifecycle: "failed" as const,
+            timestamp: now,
+            errorCode: "internal_failure" as const,
+            metrics,
+          },
+        ],
+        nextSequence: value.nextSequence + 1,
+        wake: {
+          entries: [
+            ...(value.wake?.entries ?? []),
+            { kind: "failed" as const, firstAt: now, lastAt: now, count: 1, handled: false },
+          ],
+        },
+      };
+    });
+    entry.cancelled = true;
+    if (changed) this.refresh(entry.runId);
+  }
+
   private load(): void {
     if (this.stateDir === undefined) return;
     for (const name of fs.readdirSync(this.stateDir)) {
@@ -1167,6 +1273,13 @@ export class BackgroundRunManager {
           wake: { entries: (persisted.wake?.entries ?? []).map((w) => ({ ...w })) },
         };
         this.entries.set(entry.runId, entry);
+        if (entry.lifecycle === "requested" && !hasFreshLease(entry.lease, this.limits.leaseMs)) {
+          // The pre-claim window (slice orchestrator-g1b): a requested record
+          // with no live claim is reaped to a named, wakeable failed state
+          // instead of sitting at recovery "wait" forever. Inside the claim
+          // deadline it stays exactly as `startDetached` wrote it.
+          this.reapStaleRequested(entry);
+        }
         if (abandoned) {
           entry.lifecycle = "failed";
           entry.cancelled = true;

@@ -5,6 +5,7 @@ import * as path from "node:path";
 import {
   BackgroundRunError,
   BackgroundRunManager,
+  CLAIM_DEADLINE_DETAIL as CLAIM_DEADLINE,
   DEFAULT_BACKGROUND_RUN_LIMITS,
   MIN_BACKGROUND_EVENT_PAGE_BYTES,
   RESUME_PIPELINE_DETAIL,
@@ -181,6 +182,153 @@ test("terminal result includes verdict and aggregate usage and survives owner re
   expect(() => otherSession.status(runId)).toThrow(new BackgroundRunError("not_found"));
   await reconnected.close();
   await otherSession.close();
+});
+
+test("a detached worker that dies before claiming reaps to a named failed state past the claim deadline (g1b pre-claim window)", async () => {
+  const targetDir = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-preclaim-dead-")),
+  );
+  const ownerId = crypto.randomUUID();
+  // Host resolves without claiming: the spawned worker exits pre-claim.
+  const owner = new BackgroundRunManager(
+    async () => {
+      throw new Error("detached worker never runs the pipeline");
+    },
+    { leaseMs: 30, closeDrainMs: 0 },
+    targetDir,
+    ownerId,
+    () => undefined,
+  );
+  const requested = await owner.startDetached("stuck pre-claim task");
+  await owner.close();
+  await new Promise((resolve) => setTimeout(resolve, 120)); // past the claim deadline
+
+  // A second manager reopens the same state dir, as another process would.
+  const reconnected = new BackgroundRunManager(
+    async () => {
+      throw new Error("reaped runs must not execute again");
+    },
+    { leaseMs: 30 },
+    targetDir,
+    ownerId,
+  );
+  const status = reconnected.status(requested.runId);
+  // (a) the state stays NAMED: lifecycle is readable and the evidence + next
+  // action are in the outcome detail, not a bare "requested"/"wait" skeleton.
+  expect(status.lifecycle).toBe("failed");
+  const outcome = reconnected.result(requested.runId); // no more not_terminal
+  if (outcome.lifecycle !== "failed") throw new Error("expected failed outcome");
+  expect(outcome.recovery).toBe("resume_pipeline");
+  expect(outcome.recoveryDetail).toBe(CLAIM_DEADLINE);
+  expect(CLAIM_DEADLINE).toContain("requested");
+  expect(CLAIM_DEADLINE).toContain("start the task again");
+  // (b) recovery is honest: a wake actually fires off the durable record.
+  const wakes = reconnected.pendingWakes().filter((w) => w.runId === requested.runId);
+  expect(wakes).toHaveLength(1);
+  expect(wakes[0]?.kind).toBe("failed");
+  const record = backgroundRecord(targetDir, requested.runId).value;
+  if (record === undefined) throw new Error("expected a durable record");
+  expect(record.lifecycle).toBe("failed");
+  expect((record.events as { lifecycle: string }[]).map((e) => e.lifecycle)).toEqual([
+    "requested",
+    "failed",
+  ]);
+  // Reconciled repeatedly: still the same named state, one failed event, and
+  // the wake stays single (re-running the reconciliation raises nothing new).
+  expect(reconnected.status(requested.runId).lifecycle).toBe("failed");
+  const wakesAgain = reconnected.pendingWakes().filter((w) => w.runId === requested.runId);
+  expect(wakesAgain).toHaveLength(1);
+  await reconnected.close();
+});
+
+test("a live detached run unclaimed inside the claim window is not reconciled away (g1b liveness guard)", async () => {
+  const targetDir = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-preclaim-live-")),
+  );
+  const ownerId = crypto.randomUUID();
+  const owner = new BackgroundRunManager(
+    async () => {
+      throw new Error("not executed in this test");
+    },
+    { leaseMs: 60_000, closeDrainMs: 0 },
+    targetDir,
+    ownerId,
+    () => undefined,
+  );
+  const requested = await owner.startDetached("a worker is about to claim");
+  // The spawned worker has not claimed yet: milliseconds inside the window.
+  // A freshly reopened manager must leave the record exactly as launched.
+  const reconnected = new BackgroundRunManager(
+    async () => {
+      throw new Error("must not execute");
+    },
+    { leaseMs: 60_000 },
+    targetDir,
+    ownerId,
+  );
+  const status = reconnected.status(requested.runId);
+  expect(status.lifecycle).toBe("requested");
+  expect(status.recovery).toBe("wait");
+  expect(() => reconnected.result(requested.runId)).toThrow(
+    new BackgroundRunError("not_terminal", requested.runId), // still genuinely in flight
+  );
+  const record = backgroundRecord(targetDir, requested.runId).value;
+  if (record === undefined) throw new Error("expected a durable record");
+  expect(record.lifecycle).toBe("requested");
+  expect(record.lease).toBeUndefined();
+  await reconnected.close();
+  await owner.close();
+});
+
+test("two managers reopening the same state dir reconcile a dead pre-claim run exactly once (g1b concurrency)", async () => {
+  const targetDir = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-preclaim-two-")),
+  );
+  const ownerId = crypto.randomUUID();
+  const owner = new BackgroundRunManager(
+    async () => {
+      throw new Error("detached worker never runs the pipeline");
+    },
+    { leaseMs: 30, closeDrainMs: 0 },
+    targetDir,
+    ownerId,
+    () => undefined,
+  );
+  const requested = await owner.startDetached("two-reaper task");
+  await owner.close();
+  await new Promise((resolve) => setTimeout(resolve, 120));
+
+  const first = new BackgroundRunManager(
+    async () => {
+      throw new Error("must not execute");
+    },
+    { leaseMs: 30 },
+    targetDir,
+    ownerId,
+  );
+  const second = new BackgroundRunManager(
+    async () => {
+      throw new Error("must not execute");
+    },
+    { leaseMs: 30 },
+    targetDir,
+    ownerId,
+  );
+  expect(first.status(requested.runId).lifecycle).toBe("failed");
+  expect(second.status(requested.runId).lifecycle).toBe("failed");
+  const record = backgroundRecord(targetDir, requested.runId).value;
+  if (record === undefined) throw new Error("expected a durable record");
+  // No duplicate failed events from double reaping; one unhandled wake window.
+  expect(
+    (record.events as { lifecycle: string }[]).filter((e) => e.lifecycle === "failed"),
+  ).toHaveLength(1);
+  const merged = first.pendingWakes().filter((w) => w.runId === requested.runId);
+  expect(merged).toHaveLength(1);
+  expect(merged[0]?.count).toBe(1);
+  const mergedSecond = second.pendingWakes().filter((w) => w.runId === requested.runId);
+  expect(mergedSecond).toHaveLength(1);
+  await first.close();
+  await second.close();
 });
 
 test("default paging bounds a run with 503 events and rejects zero paging ceilings", async () => {
