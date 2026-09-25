@@ -27,9 +27,13 @@ process runner, or a front-only feature.
 - A wait record has schema version `WAIT_RECORD_VERSION`, a safe wait id, typed
   `source` (adapter, version, target kind/id), condition kind, owner kind/id,
   delivery policy, optional absolute deadline, recovery action, timestamps,
-  lifecycle, event sequence, and bounded event/evidence histories. These are
-  identifiers and enums only: URLs, commands, PIDs, headers, provider payloads,
-  task text, and credentials are never wait state or evidence.
+  lifecycle, event sequence, and bounded event/evidence histories. The deadline
+  is optional in the core: no default deadline is created, and a wait without
+  one never transitions to `timed_out`. [Orchestrator](orchestrator.md) owns
+  the orchestrator-side rule: an orchestrator wait carries a deadline its owner
+  set, or goes without one only by an explicit decision. These are identifiers
+  and enums only: URLs, commands, PIDs, headers, provider payloads, task text,
+  and credentials are never wait state or evidence.
 - Persisted record, event, and evidence shapes are closed: an unknown field is
   a typed refusal, never a field copied through `get`, `events`, or `reopen`.
   A persisted `WaitCondition` is exactly `{ kind: string }` or

@@ -91,3 +91,129 @@ A follow-up audit of the remaining `docs/contracts/` corpus would have to audit
 each contract against the current code at the same guarantee granularity, run
 its own executed evidence, and resolve the waiting.md/orchestrator.md deadline
 conflict and the undefined "budget" wording before fixing code.
+
+## Status update — 2026-09-25 (issue #570 series, current through 0.181.70)
+
+This section is a handover ledger, not a re-audit. It records what landed after
+the audit base and what each originally violating guarantee and named residual
+looks like now; the verdicts above are the 2026-09-24 verdicts and are left as
+written. Where this section states a residual is closed, the evidence is the
+named merge's own CHANGELOG entry plus the code and test locations listed; the
+unverified lists above keep their meaning unless a line here closes them by
+name.
+
+### Landed merges since the audit base
+
+| Merge | Version | What it landed | Audit item it touches |
+| --- | --- | --- | --- |
+| #640 | 0.181.58 | contract terminology: defines intake outcome, scope exclusions, ambiguity, and the pre-work budget in `orchestrator.md`, the task budget in `autonomy.md`, measured task shape in `task-estimation.md` | precondition the g2/g3 slices demanded before code; closes the "budget undefined" flag below |
+| #641 | 0.181.59 | pre-work intake statement + budget gate for `run_pipeline`/`start_pipeline` (`src/orchestration/intake.ts`; `BudgetWaitError`, `awaiting_decision`) | g2, g3 |
+| #642 | 0.181.60 | budget closeout on settled runs: remainder, ceiling source, provider billing kept apart (`src/economics/charged-cost.ts`) | g8 |
+| #643 | 0.181.61 | `project-conventions` skill (`always: true`, orchestrator) + the same rule in `prompts/orchestrator.md` | g9 |
+| #644 | 0.181.62 | reap of a detached run stuck in the pre-claim window (the g1b slice's violating finding) | g1 residual |
+| #645 | 0.181.63 | the reaped run names a recovery the operator can actually perform | g1 residual |
+| #646 | 0.181.66 | `run_role` start gating through the same intake gate; the counter-estimated outcome carries the task's own wording | g2, g3 |
+| #650 | 0.181.68 | `check:release` enforces non-increasing VERSION order within a tied date (issue #575) | none — process gate, not an audited guarantee row |
+| #651 | 0.181.69 | the merge stamp refuses a tree the review round itself modified (issue #570 follow-up) | none — not a table row; hardens the review-stamp artefact the g7 "green from a step list" clause leans on |
+
+### Per-guarantee state (the four rows marked violating above)
+
+- `orchestrator.md:13` intake (g2): fixed on the pipeline and delegated-
+  `run_role` dispatch surfaces. Evidence: `IntakeStatement` in
+  `src/orchestration/intake.ts` carries outcome, scopeExclusions, mode,
+  taskShape, budget, ceilings, and resultChangingAmbiguities; the gate is
+  `buildGatedIntake` (`src/orchestration/orchestrator.ts:1454`), called by
+  `run_pipeline`/`start_pipeline` (`:1539`) and by the `run_role` tool
+  (`:2173`); tests `test/intake-budget.test.ts` and
+  `test/conversation-intake.test.ts`. Still open: the g2b slice's remaining
+  surfaces — a `run_step` start is ungated (the tool takes only
+  `task`/`complexity`), the orchestrator's own direct-edit path is still "no
+  guard, no bound, no record" (`orchestrator.ts:2089-2090`), and the
+  conversation-prompt and CLI-drive surfaces are unverified.
+- `orchestrator.md:22` budget gate (g3): fixed on the same surfaces by #641 and
+  #646 — accepted, `counter_estimated` from the recorded per-role ceilings with
+  evidence recorded, or blocked as an honest `budget_blocked` wait
+  (`BudgetWaitError`, `orchestrator.ts:1466,1481`). Negative test: "without a
+  stated decision work starts only on a recorded counter-estimate, never
+  without a forecast basis" (`test/intake-budget.test.ts:171`). The slice's
+  `src/context/budget.ts` caveat is closed as moot, not confirmed-as-conforming:
+  #640 defines the pre-work budget as the whole-task work budget
+  `autonomy.md` owns, so the role context budget is no longer a possible reading
+  of this rule (see the resolution below). Still open: `run_step` and the
+  direct-edit path (same surfaces as g2); the full-cycle forecast and lane
+  reserves `task-estimation.md` names are not implemented beyond the
+  counter-estimate; cost-anomaly wiring and TUI parity unverified.
+- `orchestrator.md:47` closeout (g8): fixed by #642 (0.181.60). Evidence:
+  `buildBudgetCloseout`/`formatBudgetCloseout`
+  (`src/orchestration/orchestrator.ts:1102-1142`, record comment `:208-230`)
+  report the ceiling with its source (operator-stated vs configured estimate),
+  ledger-derived spend across rounds, an unclamped remainder whose negative
+  value is stated as an overrun, and provider billing kept by name apart
+  (`src/economics/charged-cost.ts`, `chargedUsd`); a provider that reported no
+  billed amount is stated as an absence, not zero. Tests:
+  `test/orchestrator-closeout.test.ts` (4 tests). Still open:
+  conversation-side close cost reporting, `src/stamp/delivery-signature.ts`
+  cost fields, live-provider billing routing.
+- `orchestrator.md:51` conventions (g9): fixed by #643 (0.181.61). Evidence:
+  the `project-conventions` skill (`prompts/skills/project-conventions/`,
+  `always: true`, role `orchestrator`) is pasted unconditionally via
+  `unconditionalSkills` (`src/skills/resolver.ts:423`), and
+  `prompts/orchestrator.md:196` carries the same rule; tests
+  `test/skills.test.ts:816-843`. Still open: clause-2 enforcement (durable
+  decisions to repo documents) remains prompt+skill text with no mechanical
+  check, and the delegated planner/coder prompts did not receive the rule.
+
+### Residual ledger (the "Unverified" section above, item by item)
+
+- g1: the background-run state-recording residual was executed as its own
+  follow-up slice (`orchestrator-g1b-pipeline-drive-states.md`, verdict
+  violating, narrowly) and fixed by #644 + #645 — CLOSED. The
+  `runPipeline`/`WorkflowState` exhaustiveness read (`src/orchestration/
+  types.ts:875`) was not touched by this series — OPEN.
+- g2: conversation-level intake — g2b executed it (violating) and #646 fixed
+  the `run_role` start; `run_step` and direct edits remain ungated — OPEN
+  (narrowed). CLI drive flows — OPEN.
+- g3: the `src/context/budget.ts` token-budget reading — CLOSED as moot by
+  #640's definition (the file is the role context budget compaction owns and is
+  deliberately not this rule's object). Full-cycle forecast / lane-reserve
+  code — OPEN (nothing found beyond the counter-estimate; not exhaustively
+  re-searched). Cost-anomaly wiring — OPEN. TUI parity — OPEN.
+- g4: foreground staleness with no pending wake; `conversation.step()` read in
+  full — OPEN (no change in this series).
+- g5: which product component polls sources at runtime — OPEN. Operator-message
+  interruption of a live wait mid-poll — OPEN. Visible separation of
+  unavailable-condition reports — OPEN. TUI, machine-API and telegram wait
+  surfaces — OPEN.
+- g6: wake-summary content quality — OPEN. Premature-completion ban with no
+  test — OPEN. Durable writes of non-wake decisions — OPEN.
+- g7: "otherwise they are hypotheses" code anchor — OPEN. `parseVerdict`
+  approval check unread — OPEN. Abort/cancel report surfaces — OPEN. (#651
+  hardened the stamp against a review round that perturbed the tree under
+  review, which protects the artefact this guarantee's clause leans on; it does
+  not close any named residual.)
+- g8: conversation-side close cost reporting — OPEN. `delivery-signature.ts`
+  cost fields — OPEN. Live-provider billing routing — OPEN.
+- g9: clause-2 enforcement beyond prompt advice — OPEN (the skill instructs it;
+  no mechanical check exists). Delegated planner/coder prompts — OPEN.
+
+### Cross-slice inconsistency resolutions
+
+- g5 deadline conflict — RESOLVED 2026-09-25 (this docs series, 0.181.70), in
+  the direction the owning sub-contract and the code support: the deadline is
+  optional. Code evidence: `deadlineAt?: number` — "Omit for no core deadline"
+  (`src/orchestration/wait-service.ts:73-74`), stored only when supplied
+  (`:229`), validated only when defined (`:472-475`), and
+  `timed_out`/`deadline_exceeded` produced only when a deadline exists
+  (`:286`); `DEFAULT_WAIT_SERVICE_LIMITS` (`:7-14`) contains no deadline
+  default, and no in-repo caller supplies or defaults one. The orchestrator's
+  guarantee is preserved by replacing the false clause with what actually
+  bounds the wait: `orchestrator.md`'s wait clause now states the decision
+  rule — an explicit owner-side deadline, or an explicit recorded decision to
+  wait without one, never silence — and its Failures section names a
+  deadline-less wait's exits; `waiting.md`'s wait-record guarantee now states
+  the core's no-default-deadline behaviour and cross-cites the orchestrator
+  rule. The original verdict text above is unchanged.
+- g2/g3 "budget" undefined — CLOSED by #640 (0.181.58), which defined the terms
+  in `orchestrator.md`, `autonomy.md`, and `task-estimation.md` before the code
+  fixes landed; this docs series adds only a forward pointer at the intake
+  clause's first mention of the word. The original flag above is unchanged.

@@ -11,6 +11,34 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.70] - 2026-09-25
+
+### Changed
+
+- **The orchestrator/waiting deadline conflict flagged by the #570 contract audit
+  is resolved in the direction the code and the owning sub-contract support
+  (docs/reviews/2026-09-24-orchestrator-contract-audit-index.md, cross-slice
+  inconsistency g5).** `orchestrator.md`'s wait clause demanded "a finite
+  timeout" while `waiting.md` -- the contract that owns wait records -- permits
+  an OPTIONAL absolute deadline, and the wait service implements exactly that:
+  `deadlineAt?` is stored only when its creator supplies one
+  (`src/orchestration/wait-service.ts`, "Omit for no core deadline"), is
+  validated only when defined, and `timed_out`/`deadline_exceeded` is produced
+  only when a deadline exists; `DEFAULT_WAIT_SERVICE_LIMITS` contains no
+  deadline default and no in-repo caller supplies one. The orchestrator's
+  guarantee is preserved, not dropped: the clause no longer claims a core
+  timeout the code does not honour, and instead states what actually bounds the
+  wait -- an explicit owner-side deadline (enforced by the core as `timed_out`)
+  or an explicit recorded decision to wait without one, never silence, with the
+  deadline-less wait visible, interruptible, and cancellable throughout; the
+  Failures section names a deadline-less wait's real exits. `waiting.md`'s
+  wait-record guarantee now states the core's no-default-deadline behaviour and
+  cites the orchestrator rule, so a reader of either document finds both. The
+  audit index gains a dated status-update section: the landed #570 merges with
+  their versions (#640/#641/#642/#643/#644/#645/#646/#650/#651), the current
+  state of each originally violating guarantee with evidence, and every named
+  residual marked open or closed with the reason. No code changed.
+
 ## [0.181.69] - 2026-09-25
 
 ### Fixed
