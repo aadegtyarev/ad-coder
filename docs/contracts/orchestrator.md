@@ -11,7 +11,8 @@ execution. Roles execute work, while stages are workflow phases.
   durable evidence, and next event or action. A new message, restart, or context
   boundary does not close an unfinished task.
 - Intake states the outcome, scope exclusions, mode, measured task shape
-  ([Task estimation](task-estimation.md) defines it), budget, ceilings, and any
+  ([Task estimation](task-estimation.md) defines it), budget (the pre-work
+  budget clause below defines which budget that is), ceilings, and any
   ambiguity that changes the result. The intake outcome is the intended end
   state of the task's work on the target project, not the settled task outcome
   the closeout guarantee reports. Scope exclusions name the work stated as
@@ -33,8 +34,14 @@ execution. Roles execute work, while stages are workflow phases.
   waits for the next operator input; it does not invent an automatic turn.
 - Long-running work has durable event- or timer-based wake delivery. The product,
   not an orchestrator turn, polls sources without push support. A wait names its
-  object and condition, has a finite timeout, reports unavailable conditions
-  separately, and is interrupted immediately by an operator message. [Waiting](waiting.md)
+  object and condition, reports unavailable conditions separately, and is
+  interrupted immediately by an operator message. An orchestrator never waits
+  forever by silence: the finite bound is an explicit decision, not a core
+  default. [Waiting](waiting.md) makes the wait record's absolute deadline
+  optional and the core creates no deadline unless its creator supplies one, so
+  a wait either carries a deadline its owner set at creation -- enforced by the
+  core as a `timed_out` terminal -- or goes without one only by an explicit
+  decision the operator can see, inspect, and cancel. [Waiting](waiting.md)
   owns the shared wait operation and adapters.
 - The orchestrator writes its material decisions, starts, waits, and next steps
   to the operator-facing session as they occur. A wake produces a short summary
@@ -54,7 +61,10 @@ execution. Roles execute work, while stages are workflow phases.
 ## Failures
 
 A lost wake-up must expose what is awaited and since when. A wait timeout wakes
-the task for escalation, plan change, or decision; it never loops silently.
+the task for escalation, plan change, or decision; it never loops silently. A
+wait created without a deadline never times out: the core creates no default
+deadline, so its exits are the condition, a failure or stall report, operator
+interruption, or explicit cancellation.
 
 ## Verification
 
