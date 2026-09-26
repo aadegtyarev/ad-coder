@@ -31,7 +31,13 @@ proposed delivery.
 - A blocker or major finding has a stable identity, bounded location, and
   objective closure criterion. Later verdicts account for every prior identity
   as `closed` with evidence or `remains`; `new` identifies a distinct finding.
-  Process bookkeeping belongs in the summary, never in product findings.
+  Process bookkeeping -- including external state the round can neither cause
+  nor observe from the reviewed tree (an unmerged pull request, an absent merge
+  commit, another round's or reviewer's pending action, an unfinished CI run,
+  an unpublished release) -- belongs in the summary, never in product findings;
+  a tree-side defect that works through such a state (a hook stripping a
+  newline from a committed file) stays a product finding, named with its
+  file:line.
 - When the bounded diff inventory reports removed non-empty test lines, the
   verdict accounts for each exactly once as restored or moved with a concrete
   destination.
