@@ -20,6 +20,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { SettingsConfig, StampRequirement } from "../config/types";
+import { coverageValidationError, resolveCoverageList } from "./review-coverage";
 import {
   appendReviewStamp,
   computeTreeDigest,
@@ -77,6 +78,12 @@ export interface ReviewedTreeCaptureValue {
   digest: string;
   /** path -> per-file sha256 for every covered tracked path at round start. */
   coveredPaths: Record<string, string>;
+  /**
+   * The coverage the capture was taken under (issue #566). ABSENT on captures
+   * written before the scope existed: those were taken over EVERY tracked
+   * file, and their settle keeps that pre-scope comparison.
+   */
+  coverage?: readonly string[];
   /** LOCAL wall-clock ISO-8601 of the capture. */
   capturedAt: string;
 }
@@ -101,12 +108,14 @@ export function captureReviewedTreeForRound(
   const filePath = path.join(repoRoot, ref);
   if (fs.existsSync(filePath)) return ref;
   const stampsFile = readStampsMarker(repoRoot)?.file ?? "docs/reviews/stamps.log";
-  const manifest = computeTreeManifest(repoRoot, [stampsFile]);
+  const coverage = resolveReviewCoverage(repoRoot);
+  const manifest = computeTreeManifest(repoRoot, [stampsFile], coverage);
   const value: ReviewedTreeCaptureValue = {
     schemaVersion: REVIEW_TREE_CAPTURE_SCHEMA_VERSION,
     runId,
     digest: manifest.digest,
     coveredPaths: manifest.coveredPaths,
+    coverage,
     capturedAt: localIsoNow(now),
   };
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -152,6 +161,16 @@ export function readReviewedTreeCapture(
       throw new Error(
         `malformed review-tree capture at ${ref} -- restore it from the round's record or re-capture by re-running the round`,
       );
+    // Issue #566: the coverage field is optional (pre-scope captures), but a
+    // PRESENT one must be well-formed -- a half-written coverage list must
+    // fail loud here, never become an empty or gobbled scope downstream.
+    const captureCoverage = (value as ReviewedTreeCaptureValue).coverage;
+    if (
+      captureCoverage !== undefined &&
+      (!Array.isArray(captureCoverage) ||
+        coverageValidationError(captureCoverage, "coverage") !== undefined)
+    )
+      throw new Error(`malformed review-tree capture at ${ref}: coverage is not a pattern list`);
     return { ref, value: value as ReviewedTreeCaptureValue };
   }
   return undefined;
@@ -192,6 +211,13 @@ export class ReviewedTreeMovedError extends Error {
 export interface StampsMarkerConfig {
   /** Committed log file the stamps append to (repo-relative). */
   file?: string;
+  /**
+   * The project's covered-path declaration (issue #566): `coverage` replaces
+   * the default scope wholesale, `coverage-add` extends it. Absent means the
+   * contract's default; see review-coverage.ts -- the ONE scope declaration.
+   */
+  coverage?: readonly string[];
+  coverageAdd?: readonly string[];
 }
 
 /** Marker config; undefined when the target is not stamped (the everywhere default). */
@@ -207,11 +233,37 @@ export function readStampsMarker(repoRoot: string): StampsMarkerConfig | undefin
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
     throw new Error(`malformed ${STAMPS_MARKER_FILE}: must be a JSON object`);
   for (const key of Object.keys(parsed as Record<string, unknown>))
-    if (key !== "file") throw new Error(`unknown field ${key} in ${STAMPS_MARKER_FILE}`);
+    if (key !== "file" && key !== "coverage" && key !== "coverage-add")
+      throw new Error(`unknown field ${key} in ${STAMPS_MARKER_FILE}`);
   const file = (parsed as { file?: unknown }).file;
   if (file !== undefined && (typeof file !== "string" || file === ""))
     throw new Error(`${STAMPS_MARKER_FILE}: file must be a non-empty repo-relative path`);
-  return file === undefined ? {} : { file };
+  const rawCoverage = (parsed as Record<string, unknown>).coverage;
+  const rawCoverageAdd = (parsed as Record<string, unknown>)["coverage-add"];
+  if (rawCoverage !== undefined && rawCoverageAdd !== undefined)
+    throw new Error(
+      `${STAMPS_MARKER_FILE}: declare coverage replace or coverage-add, not both -- which one governs must be unambiguous`,
+    );
+  const coverage = parseCoverageList(rawCoverage, "coverage");
+  const coverageAdd = parseCoverageList(rawCoverageAdd, "coverage-add");
+  return {
+    ...(file !== undefined ? { file } : {}),
+    ...(coverage !== undefined ? { coverage } : {}),
+    ...(coverageAdd !== undefined ? { coverageAdd } : {}),
+  };
+}
+
+/** Validate one marker coverage list shape, keeping the typed error loud. */
+function parseCoverageList(
+  raw: unknown,
+  key: "coverage" | "coverage-add",
+): readonly string[] | undefined {
+  if (raw === undefined) return undefined;
+  if (!Array.isArray(raw))
+    throw new Error(`${STAMPS_MARKER_FILE}: ${key} must be a list of glob patterns`);
+  const error = coverageValidationError(raw as readonly unknown[], key);
+  if (error !== undefined) throw new Error(error);
+  return raw as readonly string[];
 }
 
 /**
@@ -227,6 +279,22 @@ export function readStampsMarker(repoRoot: string): StampsMarkerConfig | undefin
  */
 export function resolveStampRequirement(settings: SettingsConfig | undefined): StampRequirement {
   return settings?.review.requireStamp ?? "auto";
+}
+
+/**
+ * The ONE resolution of the project's covered-path scope (issue #566): the
+ * committed stamps marker declares `coverage` (replace) or `coverage-add`
+ * (extend), and absence means the contract's default. The gate, the capture,
+ * the settle and the digest all call THIS -- and the CLI gate reads the same
+ * marker over `targetDir` that the writers do, so the two paths cannot
+ * disagree about "covered".
+ */
+export function resolveReviewCoverage(repoRoot: string): readonly string[] {
+  const marker = readStampsMarker(repoRoot);
+  return resolveCoverageList({
+    ...(marker?.coverage !== undefined ? { coverage: marker.coverage } : {}),
+    ...(marker?.coverageAdd !== undefined ? { coverageAdd: marker.coverageAdd } : {}),
+  });
 }
 
 export interface ReviewStampOutcome {
@@ -335,14 +403,30 @@ export function recordReviewStampFromResult(
   // One traversal computes BOTH the stamp's digest and the comparison against
   // the round's start capture (issue #570 follow-up). The refusal happens
   // BEFORE anything is appended: a stamp must never certify a tree the round
-  // itself moved.
-  const currentManifest = computeTreeManifest(repoRoot, [filePath]);
+  // itself moved. The compare runs under the CAPTURE's coverage (issue #566):
+  // a round that was reviewed under a scope refuses only on the paths THAT
+  // scope covered -- prose the project exempts moved mid-round does not fail
+  // the round. A pre-scope capture (no coverage field) keeps its original
+  // every-tracked-file comparison; here `undefined` coverage means the whole
+  // tracked tree, never an empty set.
   const capture = readReviewedTreeCapture(repoRoot, result.runIds);
+  // The manifest is folded under the coverage the round ran -- and a stamp
+  // written with no capture, under the project's current scope.
+  const compareCoverage =
+    capture !== undefined ? capture.value.coverage : resolveReviewCoverage(repoRoot);
+  const currentManifest = computeTreeManifest(repoRoot, [filePath], compareCoverage);
   if (capture !== undefined) {
-    const moved = movedTreePaths(capture.value.coveredPaths, currentManifest.coveredPaths);
+    const moved = movedTreePaths(
+      capture.value.coveredPaths,
+      currentManifest.coveredPaths,
+      compareCoverage,
+    );
     if (moved.length > 0) throw new ReviewedTreeMovedError(moved, capture.ref);
   }
-  const stamp: ReviewStamp = {
+  // The stamp answers for the coverage its round ran under, and for nothing
+  // else: a pre-scope capture settles into a pre-scope (coverage-less) stamp,
+  // whose gate keeps the full tracked-tree meaning.
+  const stampBase: ReviewStamp = {
     // The digest excludes the stamp log itself: appending one stamp line
     // cannot count as the tree moving (src/stamp/review-stamp.ts).
     treeDigest: currentManifest.digest,
@@ -359,6 +443,14 @@ export function recordReviewStampFromResult(
     // #466 fixes.
     findingsRef: findingsRef,
   };
+  // What was reviewed, by patterns: the contract's "reviewed path patterns".
+  // When a capture exists the stamp answers for the coverage the round
+  // ACTUALLY ran under -- `undefined` (the pre-scope meaning) for a round
+  // captured before the scope existed -- and otherwise for the project's
+  // current scope. The spread keeps the optional property ABSENT when
+  // undefined, which exactOptionalPropertyTypes distinguishes from null.
+  const stamp: ReviewStamp =
+    compareCoverage === undefined ? stampBase : { ...stampBase, coverage: compareCoverage };
   // A front can die after appendReviewStamp succeeds but before it has printed
   // its result or advanced its own checkpoint.  Replaying the same settled
   // reviewer outcome must not manufacture another stamp line.  Run ids are
@@ -554,9 +646,15 @@ export function checkReviewStamps(
         },
       ],
     };
+  // A stamp is verified against the tree folded under the coverage IT was
+  // written against (issue #566): a pre-scope stamp keeps its original
+  // every-tracked-file meaning (`undefined` = the whole tracked tree), a
+  // scoped stamp recomputes its own covered digest. The project's CURRENT
+  // declaration is separately verified against the stamp's so a scope
+  // change under an unchanged tree still forces re-review.
   let currentTreeDigest: string;
   try {
-    currentTreeDigest = computeTreeDigest(repoRoot, [stampsFile]);
+    currentTreeDigest = computeTreeDigest(repoRoot, [stampsFile], newest.parsed.coverage);
   } catch (error) {
     return {
       ok: false,
@@ -568,6 +666,10 @@ export function checkReviewStamps(
       ],
     };
   }
-  const failures = verifyReviewStamp(newest.parsed, currentTreeDigest);
+  const failures = verifyReviewStamp(
+    newest.parsed,
+    currentTreeDigest,
+    resolveReviewCoverage(repoRoot),
+  );
   return { ok: failures.length === 0, failures };
 }

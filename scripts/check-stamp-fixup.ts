@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { compareVersionFixup } from "../src/stamp/record-review-stamp";
-import { parseReviewStamp } from "../src/stamp/review-stamp";
+import { isCoveredPath } from "../src/stamp/review-coverage";
+import { foldTreeDigest, parseReviewStamp } from "../src/stamp/review-stamp";
 
 const defaultRoot = path.resolve(import.meta.dir, "..");
 
@@ -87,25 +88,30 @@ export function runStampFixup(root: string): void {
     }
   }
   const digest = (): string => {
+    // Coverage-relative (issue #566): the digest recomputes under the STAMP's
+    // OWN declared patterns -- shared fold and coverage helpers from
+    // src/stamp, never a second implementation of "covered" -- and keeps the
+    // pre-scope full tracked-tree meaning for stamps written before the
+    // scope existed.
+    const coverage = parsed.coverage;
     const paths = run(
       ["ls-tree", "-r", "--name-only", parent],
       `tree for parent revision ${parent}`,
     )
       .trim()
       .split("\n")
-      .filter((file) => file && file !== stampsFile)
+      .filter(
+        (file) =>
+          file && file !== stampsFile && (coverage === undefined || isCoveredPath(file, coverage)),
+      )
       .sort();
-    const hash = createHash("sha256");
-    for (const file of paths) {
-      hash.update(`${file}\0`);
-      hash.update(
-        createHash("sha256")
-          .update(run(["show", `${parent}:${file}`], `${parent}:${file}`))
-          .digest("hex"),
-      );
-      hash.update("\0");
-    }
-    return hash.digest("hex");
+    const entries = paths.map((file) => ({
+      path: file,
+      sha: createHash("sha256")
+        .update(run(["show", `${parent}:${file}`], `${parent}:${file}`))
+        .digest("hex"),
+    }));
+    return foldTreeDigest(entries);
   };
   const result = compareVersionFixup({
     reviewed,

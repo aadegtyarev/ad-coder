@@ -11,6 +11,33 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.72] - 2026-09-26
+
+### Changed
+
+- **The review stamp's tree digest is now coverage-relative (issue #566): the
+  gate knows which paths it covers, and a prose-only edit outside coverage no
+  longer invalidates the newest stamp the way a contract or source edit does.**
+  `src/stamp/review-coverage.ts` is now the ONE declaration of the covered-path
+  scope; `computeTreeManifest`/`computeTreeDigest` hash only covered tracked
+  paths (a pre-scope stamp written before the scope existed keeps its original
+  every-tracked-file meaning), the round-start capture and the settle's
+  `ReviewedTreeMovedError` compare covered paths only, and `checkReviewStamps`
+  verifies a stamp under the scope it was written against -- so a scope change
+  forces re-review even under an unchanged tree. The default scope is the
+  contract's `src/**`, `test/**`, `scripts/**`, `evals/**`, `docs/contracts/**`
+  extended additively by the role prompts (`prompts/**`), the harness entry
+  points (`bin/**`, `examples/**`), the CI workflow (`.github/workflows/**`),
+  and the named configuration files (`package.json`, `tsconfig.json`,
+  `biome.json`, `bunfig.toml`, `bun.lock`, `docs/readability.json`,
+  `ad-coder.stamps.json`, `AGENTS.md`, `CLAUDE.md`, `.gitignore`). Prose that
+  establishes no rule stays exempt -- `README.md`, `CHANGELOG.md`, `LICENSE`,
+  and `docs/**` outside `docs/contracts/**` -- and the stamp log itself remains
+  outside coverage, so a stamp append cannot invalidate its own gate. The
+  stale-stamp message again names the action, never the help: it says the tree
+  moved after the review and that a covered path (package.json included)
+  changed.
+
 ## [0.181.71] - 2026-09-25
 
 ### Changed

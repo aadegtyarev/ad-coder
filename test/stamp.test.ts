@@ -16,6 +16,7 @@ import {
   localIsoNow,
   readStampsMarker,
   recordReviewStampFromResult,
+  resolveReviewCoverage,
   STAMPS_MARKER_FILE,
 } from "../src/stamp/record-review-stamp";
 import {
@@ -169,6 +170,22 @@ function stampFixture() {
   };
 }
 
+/**
+ * A repo whose tracked surface spans coverage: a covered code file, a covered
+ * contract document, and an UNCOVERED prose document the declared scope
+ * deliberately exempts (the docs/deep-dive.md shape, issue #566).
+ */
+function coveredRepo(): string {
+  const root = gitRepo();
+  fs.mkdirSync(path.join(root, "src"), { recursive: true });
+  fs.mkdirSync(path.join(root, "docs/contracts"), { recursive: true });
+  fs.writeFileSync(path.join(root, "src", "gate.ts"), "export const x = 1;\n");
+  fs.writeFileSync(path.join(root, "docs", "contracts", "rules.md"), "# rules\n");
+  fs.writeFileSync(path.join(root, "docs", "deep-dive.md"), "# deep dive\n");
+  writeMarker(root, "stamps.log");
+  addAll(root);
+  return root;
+}
 test("a shallow checkout diagnoses missing stamp ancestry, then passes after CI deepens it", () => {
   const source = gitRepo();
   fs.writeFileSync(
@@ -527,21 +544,139 @@ test("a review stamp round-trips through render and parse", () => {
 });
 
 test("a stamp naming a digest no longer matching the tree is stale and must not pass", () => {
-  const root = gitRepo();
-  fs.writeFileSync(path.join(root, "f.txt"), "one\n");
-  writeMarker(root, "stamps.log");
-  addAll(root);
+  const root = coveredRepo();
   const before = computeTreeDigest(root);
-  expect(appendAndCheck(root, before).ok).toBe(true);
+  expect(appendAndCheck(root).ok).toBe(true);
 
-  // The cost of a stalled merge: the tree moved after the review -> stale.
-  fs.writeFileSync(path.join(root, "f.txt"), "two\n");
+  // The cost of a stalled merge: a COVERED path moved after the review -> stale.
+  fs.writeFileSync(path.join(root, "src", "gate.ts"), "two\n");
   addAll(root);
   const after = computeTreeDigest(root);
   expect(after).not.toBe(before);
   // No new review, no new stamp: the old stamp must no longer pass.
   expect(checkReviewStamps(root).ok).toBe(false);
   expect(checkReviewStamps(root).failures[0]?.reason).toContain("stale");
+});
+
+test("a prose-only change outside coverage does NOT invalidate the newest stamp (#566)", () => {
+  const root = coveredRepo();
+  expect(appendAndCheck(root).ok).toBe(true);
+  fs.writeFileSync(path.join(root, "docs", "deep-dive.md"), "# deep dive, reworded\n");
+  addAll(root);
+  // The stamp gate passes with the EXISTING stamp: prose that establishes no
+  // rule is exempt, and the digest only answers about covered paths.
+  const verification = checkReviewStamps(root);
+  expect(verification.ok).toBe(true);
+});
+
+test("a change to docs/contracts/** DOES invalidate the newest stamp (#566)", () => {
+  const root = coveredRepo();
+  expect(appendAndCheck(root).ok).toBe(true);
+  fs.writeFileSync(path.join(root, "docs", "contracts", "rules.md"), "# rules v2\n");
+  addAll(root);
+  const verification = checkReviewStamps(root);
+  expect(verification.ok).toBe(false);
+  expect(verification.failures[0]?.reason).toContain("the tree moved after the review");
+});
+
+test("a CHANGELOG edit is exempt prose and also does not invalidate (#566)", () => {
+  const root = coveredRepo();
+  expect(appendAndCheck(root).ok).toBe(true);
+  fs.appendFileSync(path.join(root, "CHANGELOG.md"), "## [x] - 2026-09-26\n");
+  fs.writeFileSync(path.join(root, "README.md"), "# readme\n");
+  addAll(root);
+  expect(checkReviewStamps(root).ok).toBe(true);
+});
+
+test("a covered-path RENAME still invalidates the newest stamp", () => {
+  const root = coveredRepo();
+  expect(appendAndCheck(root).ok).toBe(true);
+  fs.renameSync(path.join(root, "src", "gate.ts"), path.join(root, "src", "gate2.ts"));
+  addAll(root);
+  expect(checkReviewStamps(root).ok).toBe(false);
+});
+
+test("a project that replaces the scope in settings moves the boundary accordingly", () => {
+  const root = coveredRepo();
+  // The marker's settings REPLACE the default: prose in docs/** becomes
+  // covered (a project may declare its own stricter scope).
+  fs.writeFileSync(
+    path.join(root, STAMPS_MARKER_FILE),
+    JSON.stringify({ file: "stamps.log", coverage: ["src/**", "docs/**"] }),
+  );
+  expect(appendAndCheck(root).ok).toBe(true);
+  fs.writeFileSync(path.join(root, "docs", "deep-dive.md"), "# reworded\n");
+  addAll(root);
+  expect(checkReviewStamps(root).ok).toBe(false);
+  // ... and coverage-add EXTENDS the default instead of replacing it.
+  const additive = coveredRepo();
+  try {
+    fs.writeFileSync(
+      path.join(additive, STAMPS_MARKER_FILE),
+      JSON.stringify({ file: "stamps.log", "coverage-add": ["docs/**"] }),
+    );
+    expect(appendAndCheck(additive).ok).toBe(true);
+    // docs/** is now covered by the ADD, so prose there stales the stamp.
+    fs.writeFileSync(path.join(additive, "docs", "deep-dive.md"), "# reworded\n");
+    addAll(additive);
+    expect(checkReviewStamps(additive).ok).toBe(false);
+    // Restore the covered path; a README.md edit stays exempt prose.
+    fs.writeFileSync(path.join(additive, "docs", "deep-dive.md"), "# deep dive\n");
+    fs.writeFileSync(path.join(additive, "README.md"), "# readme, reworded\n");
+    addAll(additive);
+    expect(checkReviewStamps(additive).ok).toBe(true);
+  } finally {
+    fs.rmSync(additive, { recursive: true, force: true });
+  }
+});
+
+test("a scope changed after a stamp forces re-review even under an unchanged tree", () => {
+  const root = coveredRepo();
+  expect(appendAndCheck(root).ok).toBe(true);
+  // The newest stamp carries the scope it was written under; the marker now
+  // declares a different one. The tree did not move -- the CONTRACT did.
+  fs.writeFileSync(
+    path.join(root, STAMPS_MARKER_FILE),
+    JSON.stringify({ file: "stamps.log", coverage: ["src/**"] }),
+  );
+  const verification = checkReviewStamps(root);
+  expect(verification.ok).toBe(false);
+  expect(verification.failures[0]?.reason).toContain("the review scope changed");
+  // The stamp's own digest is verified under the stamp's OWN scope, so an
+  // unchanged tree is NOT additionally reported stale here.
+  expect(verification.failures[0]?.reason).not.toContain("stamp is stale");
+});
+
+test("a legacy pre-scope stamp keeps its original every-tracked-file meaning", () => {
+  const root = coveredRepo();
+  // A hand-written stamp in the pre-scope FORMAT (no coverage token, stamps
+  // written before issue #566): digest over the WHOLE tracked tree.
+  const fullDigest = computeTreeDigest(root, ["stamps.log"], undefined);
+  appendReviewStamp(root, "stamps.log", { ...stampFixture(), treeDigest: fullDigest });
+  // A pre-scope stamp never knew what was covered, so ANY tracked-path move --
+  // prose included -- stales it.
+  fs.writeFileSync(path.join(root, "docs", "deep-dive.md"), "# reworded\n");
+  addAll(root);
+  expect(checkReviewStamps(root).ok).toBe(false);
+  // ... and restoring the whole tree byte-for-byte makes it fresh again.
+  fs.writeFileSync(path.join(root, "docs", "deep-dive.md"), "# deep dive\n");
+  addAll(root);
+  expect(checkReviewStamps(root).ok).toBe(true);
+});
+
+test("the CI fixup fallback and the gate share one 'covered' implementation", () => {
+  // CI runs `stamp:check` (the same CLI gate); its failure fallback folds the
+  // stamp's parent tree under the stamp's own patterns THROUGH the same
+  // helpers, so the two paths cannot redefine coverage apart.
+  const fixup = fs.readFileSync(
+    path.join(import.meta.dir, "..", "scripts", "check-stamp-fixup.ts"),
+    "utf8",
+  );
+  expect(fixup).toContain('import { isCoveredPath } from "../src/stamp/review-coverage"');
+  expect(fixup).toContain('"../src/stamp/review-stamp"');
+  // The default scope is declared ONCE and imported - never re-spelled.
+  expect(fixup).not.toContain("DEFAULT_REVIEW_COVERAGE = ");
+  expect(fixup).not.toContain('"src/**"');
 });
 
 function writeMarker(root: string, file: string): void {
@@ -558,14 +693,16 @@ test("appending one more stamp line does not count as the tree moving", () => {
   fs.writeFileSync(path.join(root, "f.txt"), "one\n");
   writeMarker(root, "stamps.log");
   addAll(root);
-  const first = appendAndCheck(root, computeTreeDigest(root, ["stamps.log"]));
+  const first = appendAndCheck(root);
   expect(first.ok).toBe(true);
-  appendAndCheck(root, computeTreeDigest(root, ["stamps.log"]));
+  appendAndCheck(root);
   expect(checkReviewStamps(root).ok).toBe(true);
 });
 
-function appendAndCheck(root: string, digest: string): ReturnType<typeof checkReviewStamps> {
-  appendReviewStamp(root, "stamps.log", { ...stampFixture(), treeDigest: digest });
+function appendAndCheck(root: string): ReturnType<typeof checkReviewStamps> {
+  const coverage = resolveReviewCoverage(root);
+  const digest = computeTreeDigest(root, ["stamps.log"], coverage);
+  appendReviewStamp(root, "stamps.log", { ...stampFixture(), treeDigest: digest, coverage });
   return checkReviewStamps(root);
 }
 
@@ -573,7 +710,9 @@ test("a changes_requested verdict blocks the gate, and a fresh digest cannot exc
   const root = gitRepo();
   fs.writeFileSync(path.join(root, "f.txt"), "one\n");
   writeMarker(root, "stamps.log");
-  const digest = computeTreeDigest(root);
+  // The stamps below are pre-scope (no coverage token), so their fresh digest
+  // is the WHOLE tracked tree -- the meaning a pre-scope stamp certifies.
+  const digest = computeTreeDigest(root, ["stamps.log"], undefined);
   appendReviewStamp(root, "stamps.log", { ...stampFixture(), treeDigest: digest });
   fs.writeFileSync(path.join(root, "stamps.log"), ""); // isolate the second stamp
   appendReviewStamp(root, "stamps.log", {

@@ -5,14 +5,25 @@ proposed delivery.
 
 ## Guarantees
 
-- The default review scope covers all executable code, including `src/**`,
-  `test/**`, `scripts/**`, and `evals/**`, plus `docs/contracts/**`. Tests,
-  fixtures, and check scripts are code: changing them requires the same
-  independent review as changing implementation. A project may add paths or
-  replace the scope explicitly; only prose that establishes no rule is exempt.
-  A structured verdict from the bundled pipeline review stage or an independently
-  dispatched reviewer satisfies this requirement; an author or the authoring
-  model family is not independent.
+- The default review scope of the bundled pipeline covers all executable code,
+  including `src/**`, `test/**`, `scripts/**`, and `evals/**`, plus
+  `docs/contracts/**`, extended by the role prompts (`prompts/**`), the harness
+  entry points (`bin/**`, `examples/**`), the CI workflow
+  (`.github/workflows/**`), and the named configuration files (`package.json`,
+  `tsconfig.json`, `biome.json`, `bunfig.toml`, `bun.lock`,
+  `docs/readability.json`, `ad-coder.stamps.json`, `AGENTS.md`, `CLAUDE.md`,
+  `.gitignore`). Tests, fixtures, and check scripts are code: changing them
+  requires the same independent review as changing implementation. A project may
+  add paths or replace the whole scope explicitly with its own path or glob
+  patterns; only prose that establishes no rule is exempt. The extension is
+  additive, not accidental: each added path shapes what compiles, runs, or ships
+  -- the role prompts are the rules a model executes, the entry points are
+  executable code, the workflow is CI itself, and the named configuration gates
+  the build, the run, and the stamp policy -- so it is covered under the same
+  "only prose that establishes no rule is exempt" test. A structured verdict
+  from the bundled pipeline review stage or an independently dispatched reviewer
+  satisfies this requirement; an author or the authoring model family is not
+  independent.
 - The bundled pipeline requires a review stamp by default. The project may disable
   that requirement explicitly or apply its own review policy when the bundled
   workflow is disabled. A manual role launch is evidence only when it settles the
@@ -30,9 +41,8 @@ proposed delivery.
 - A review stamp is written only from a settled structured verdict. It records
   reviewed path patterns, exact covered-path digest manifest, base, verdict, role
   route, time, and run identifiers, and excludes stamp storage from coverage.
-  The default bundled-pipeline scope is `src/**`, `test/**`, `scripts/**`,
-  `evals/**`, and `docs/contracts/**`; projects extend or replace it with explicit
-  path or glob patterns.
+  Those patterns are the default review scope declared above, or the explicit
+  path or glob patterns a project declares in its place.
 - When the resolved policy requires a stamp, a missing, malformed,
   changes-requested, or coverage-stale newest stamp blocks delivery. A covered-path
   change requires a fresh review. Changes outside coverage do not invalidate it.

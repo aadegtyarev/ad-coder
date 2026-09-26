@@ -21,6 +21,7 @@
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { DEFAULT_REVIEW_COVERAGE, isCoveredPath } from "./review-coverage";
 
 /** Version prefix every stamp line starts with. Parse rejects anything else. */
 export const REVIEW_STAMP_VERSION = "review-stamp-v1";
@@ -39,6 +40,13 @@ export interface ReviewStamp {
   runIds: string[];
   /** Where the findings live; "-" when the verdict approved with none. */
   findingsRef: string;
+  /**
+   * The covered-path patterns the review was stamped under (the contract:
+   * a stamp records "reviewed path patterns"). Absent only on stamps written
+   * before the scope existed -- the gate preserves their original "every
+   * tracked file" meaning, and a changed scope is verified below.
+   */
+  coverage?: readonly string[];
 }
 
 const ISO_8601 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?([+-]\d{2}:\d{2}|Z)$/;
@@ -56,6 +64,9 @@ export function renderReviewStamp(stamp: ReviewStamp): string {
     ["reviewedAt", stamp.reviewedAt],
     ["findings", stamp.findingsRef],
     ...stamp.runIds.map((runId, index) => [`runId${index + 1}`, runId] as [string, string]),
+    ...(stamp.coverage === undefined
+      ? []
+      : ([["coverage", stamp.coverage.join(",")]] as [string, string][])),
   ];
   return `${REVIEW_STAMP_VERSION} ${fields
     .map(([key, value]) => `${key}:${singleLine(key, value)}`)
@@ -97,6 +108,12 @@ export function parseReviewStamp(line: string): ReviewStamp | string {
   const digest = stamps.digest as string;
   if (!/^[0-9a-f]{64}$/.test(digest))
     return `stamp digest must be a 64-hex sha256, not ${JSON.stringify(digest)}`;
+  let coverage: string[] | undefined;
+  if (stamps.coverage !== undefined) {
+    coverage = stamps.coverage.split(",");
+    if (coverage.some((pattern) => pattern === "" || /\s/.test(pattern)))
+      return `stamp coverage patterns must be non-empty and whitespace-free: ${JSON.stringify(stamps.coverage)}`;
+  }
   const reviewedAt = stamps.reviewedAt as string;
   if (!ISO_8601.test(reviewedAt))
     return `stamp reviewedAt must be ISO-8601, not ${JSON.stringify(reviewedAt)}`;
@@ -114,6 +131,7 @@ export function parseReviewStamp(line: string): ReviewStamp | string {
     reviewer: stamps.reviewer as string,
     reviewedAt,
     findingsRef: stamps.findings as string,
+    ...(coverage !== undefined ? { coverage } : {}),
     runIds,
   };
 }
@@ -132,11 +150,18 @@ export function parseReviewStamp(line: string): ReviewStamp | string {
  *
  * The stamp log ITSELF is excluded when named: appending one stamp line
  * cannot count as "the tree moved", or the last stamp could never certify the
- * very tree that carries it. Everything else counts. (The record/check layer
- * passes the marker-configured stamps path here.)
+ * very tree that carries it. Everything else COUNTS ONLY WHEN COVERED: the
+ * covered-path scope (review-coverage.ts, issue #566) decides what the stamp
+ * answers for. A stamp NEVER answers about prose the contract exempts --
+ * editing `docs/deep-dive.md` cannot stale a stamp of source code. (The
+ * record/check layer passes the marker-configured stamps path here.)
  */
-export function computeTreeDigest(repoRoot: string, excludePaths: readonly string[] = []): string {
-  return computeTreeManifest(repoRoot, excludePaths).digest;
+export function computeTreeDigest(
+  repoRoot: string,
+  excludePaths: readonly string[] = [],
+  ...coverageRest: readonly [coverage?: readonly string[]]
+): string {
+  return computeTreeManifest(repoRoot, excludePaths, ...coverageRest).digest;
 }
 
 /**
@@ -155,7 +180,15 @@ export interface TreeManifest {
 export function computeTreeManifest(
   repoRoot: string,
   excludePaths: readonly string[] = [],
+  ...coverageRest: readonly [coverage?: readonly string[]]
 ): TreeManifest {
+  // A DEFAULT PARAMETER would collapse "omitted" and "explicitly undefined"
+  // into one value, but they mean DIFFERENT things (issue #566): omitted
+  // folds under the default scope, while an explicit `undefined` is the
+  // PRE-scope meaning kept for stamps and captures written before the scope
+  // existed -- every tracked file counts. The rest tuple's length is the one
+  // signal that tells the two apart at the call site.
+  const scope = coverageRest.length >= 1 ? coverageRest[0] : DEFAULT_REVIEW_COVERAGE;
   const listing = Bun.spawnSync(["git", "ls-files", "-z"], {
     cwd: repoRoot,
     stdout: "pipe",
@@ -167,36 +200,42 @@ export function computeTreeManifest(
   const paths = listing.stdout
     .toString("utf8")
     .split("\0")
-    .filter((entry) => entry !== "" && !excluded.has(entry))
+    .filter(
+      (entry) =>
+        entry !== "" &&
+        !excluded.has(entry) &&
+        (scope === undefined || isCoveredPath(entry, scope)),
+    )
     .sort();
-  const hasher = createHash("sha256");
+  const entries: TreeManifestEntry[] = [];
   const coveredPaths: Record<string, string> = {};
   for (const entry of paths) {
     const content = fs.readFileSync(path.join(repoRoot, entry));
     const perFile = createHash("sha256").update(content).digest("hex");
     coveredPaths[entry] = perFile;
-    hasher.update(`${entry}\0`);
-    hasher.update(perFile);
-    hasher.update("\0");
+    entries.push({ path: entry, sha: perFile });
   }
-  return { digest: hasher.digest("hex"), coveredPaths };
+  return { digest: foldTreeDigest(entries), coveredPaths };
 }
 
 /**
  * The paths that moved between a captured manifest and the current one: any
  * tracked path whose content hash differs -- a deleted file reads as `undefined`
  * against its captured hash -- plus tracked paths that exist only now. Same
- * coverage as the digest: untracked paths never appear and never count.
+ * coverage as the digest: untracked paths never appear and never count. When a
+ * coverage scope is named, the move list is CLIPPED to it, so a comparison
+ * across scope eras answers only about paths covered NOW.
  */
 export function movedTreePaths(
   before: Record<string, string>,
   after: Record<string, string>,
+  coverage?: readonly string[],
 ): string[] {
   const moved: string[] = [];
   for (const [entry, perFile] of Object.entries(before))
     if (after[entry] !== perFile) moved.push(entry);
   for (const entry of Object.keys(after)) if (before[entry] === undefined) moved.push(entry);
-  return moved.sort();
+  return moved.filter((entry) => coverage === undefined || isCoveredPath(entry, coverage)).sort();
 }
 
 export interface ReviewStampVerification {
@@ -230,14 +269,16 @@ export const FRESH_STAMP_ACTION =
  * A stamp whose digest no longer matches the CURRENT tree is stale and must
  * not pass -- this re-read, not the review verdict, is the freshness gate.
  *
- * The stale reason states WHY a stamp can be stale: the reviewed tree moved,
- * and ANY commit after the review makes it stale -- dependency bumps and
- * changelog headings included; those are commits like any other, and the
- * gate does not grade them smaller.
+ * The stale reason states WHY a stamp can be stale: a COVERED path changed
+ * after the review. Coverage-relative means a prose document the scope did
+ * not name cannot stale a stamp of code; every path the scope DOES name
+ * (executable code, prompts, CI, the declared configuration) must stay as the
+ * review left it.
  */
 export function verifyReviewStamp(
   stamp: ReviewStamp,
   currentTreeDigest: string,
+  currentCoverage?: readonly string[],
 ): ReviewStampFailure[] {
   const failures: ReviewStampFailure[] = [];
   if (stamp.verdict === "changes_requested")
@@ -245,12 +286,45 @@ export function verifyReviewStamp(
       reason: "the newest review verdict is changes_requested; merge is blocked",
       action: FRESH_STAMP_ACTION,
     });
+  if (
+    stamp.coverage !== undefined &&
+    currentCoverage !== undefined &&
+    stamp.coverage.join(",") !== currentCoverage.join(",")
+  )
+    failures.push({
+      reason: `the review scope changed after the stamp: it was reviewed under patterns ${stamp.coverage.join(", ")}, the project now declares ${currentCoverage.join(", ")} -- a stamp must be verified under the scope it was written against`,
+      action: FRESH_STAMP_ACTION,
+    });
   if (stamp.treeDigest !== currentTreeDigest)
     failures.push({
-      reason: `stamp is stale: it names digest ${stamp.treeDigest.slice(0, 12)}…, the tree now hashes ${currentTreeDigest.slice(0, 12)}…; the tree moved after the review -- any later commit makes the stamp stale, package.json and the CHANGELOG heading included`,
+      reason: `stamp is stale: it names digest ${stamp.treeDigest.slice(0, 12)}…, the covered tree now hashes ${currentTreeDigest.slice(0, 12)}…; the tree moved after the review -- a covered path changed (package.json and the rest of the declared coverage included), so the stamp no longer certifies the current tree`,
       action: FRESH_STAMP_ACTION,
     });
   return failures;
+}
+
+/** The per-path entries one manifest fold carries, spelled for the shared fold. */
+export interface TreeManifestEntry {
+  path: string;
+  sha: string;
+}
+
+/**
+ * The ONE digest fold over a covered set: entries in path order, folded as
+ * `path\0` + per-file sha256 hex + `\0`. computeTreeManifest and the CI
+ * fallback's parent-tree digest (scripts/check-stamp-fixup.ts) both build
+ * their entry set their own way -- one over the WORKING tree, one over a git
+ * revision -- and then fold through THIS function, so the two can never
+ * quietly drift apart.
+ */
+export function foldTreeDigest(entries: readonly TreeManifestEntry[]): string {
+  const hasher = createHash("sha256");
+  for (const entry of entries) {
+    hasher.update(`${entry.path}\0`);
+    hasher.update(entry.sha);
+    hasher.update("\0");
+  }
+  return hasher.digest("hex");
 }
 
 /** Append one stamp line to the log file, creating the directory if needed. */
