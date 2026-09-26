@@ -2418,10 +2418,11 @@ test("approved result carries no escalation (issue #451)", async () => {
   expect("escalation" in result).toBe(false);
 });
 
-test("cap-exhausted not-approved result carries no escalation (issue #451)", async () => {
-  // Pins pre-change: round-cap exhaustion with fewer than two blocking verdicts
-  // is a round limit, not the review stop rule, so it must not gain an
-  // escalation signal.
+test("cap-exhausted run names its reason as cap_exhausted (issue #461)", async () => {
+  // The cap stop is no longer a bare dead end: a run that exhausts maxRounds
+  // settles exactly as before (approved:false, decomposition_required) but its
+  // result now names the reason as `cap_exhausted` with `required: false`, so
+  // the decomposition lane does not fire and the operator can raise the cap.
   const fx = fixture();
   const coder = fx.role("coder", "You code.");
   const reviewer = reviewerRole(fx);
@@ -2450,7 +2451,11 @@ test("cap-exhausted not-approved result carries no escalation (issue #451)", asy
   });
   expect(result.approved).toBe(false);
   expect(result.outcome).toBe("decomposition_required");
-  expect("escalation" in result).toBe(false);
+  expect(result.escalation).toEqual({
+    required: false,
+    reason: "cap_exhausted",
+    blockingVerdicts: 1,
+  });
 });
 
 test("a shared ledger sink carries distinct role/step records per round", async () => {

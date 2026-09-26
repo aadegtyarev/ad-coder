@@ -345,11 +345,47 @@ export function assertRaisedLimits(raised: RaisedStageLimits): RaisedStageLimits
   return raised;
 }
 
+/**
+ * Safety ceiling for an operator-supplied round-cap raise, documented in
+ * docs/contracts/autonomy.md. It is far above the shipped default (2 rounds)
+ * and above the orchestrator's silent 50% raise, so the operator's route stays
+ * useful, but it stops `Number.MAX_SAFE_INTEGER` from propagating into
+ * `maxRounds` and turning a resume into an effectively unbounded loop
+ * (issue #461 review round).
+ */
+export const MAX_RAISED_ROUND_CAP = 100;
+
+/**
+ * Check a round-cap raise against the same house rules as the stage raise.
+ *
+ * Same module scope for the same reason as `assertRaisedLimits`: every entry
+ * point -- the `resume_pipeline` tool, the exported `resumePipeline`, a library
+ * caller -- must clear the same gate before the value reaches the coordinator's
+ * `resumeRoundCap` (`unchanged rounds cap`) guard, or a malformed value would
+ * be reported as an unchanged cap rather than as invalid input.
+ */
+export function assertRaisedRoundCap(raised: number): number {
+  if (!Number.isInteger(raised) || raised <= 0)
+    throw new OrchestratorError(
+      "invalid_raise",
+      `raiseRoundCap ${raised} must be a finite integer greater than 0`,
+      "a round-cap raise enlarges the code/review cap by whole rounds",
+    );
+  if (raised > MAX_RAISED_ROUND_CAP)
+    throw new OrchestratorError(
+      "invalid_raise",
+      `raiseRoundCap ${raised} exceeds the safety ceiling of ${MAX_RAISED_ROUND_CAP} rounds`,
+      "a round-cap raise is bounded so a correction cannot become an unbounded loop",
+    );
+  return raised;
+}
+
 export interface OrchestratorDeps {
   buildConfig: (
     task: string,
     complexity?: Complexity,
     raisedLimits?: RaisedStageLimits,
+    raisedRoundCap?: number,
   ) => PipelineConfig;
   ledgerSink: MemoryLedgerSink;
   sessionLimitController?: SessionLimitController;
@@ -420,6 +456,7 @@ export interface Orchestrator {
     task: string,
     runId: string,
     raisedLimits?: RaisedStageLimits,
+    raisedRoundCap?: number,
   ): Promise<RunPipelineResult>;
   decomposeTask(task: string, complexity?: Complexity): Promise<DecompositionResult>;
   beginStepping(task: string, complexity?: Complexity): void;
@@ -478,8 +515,9 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     task: string,
     complexity?: Complexity,
     raisedLimits?: RaisedStageLimits,
+    raisedRoundCap?: number,
   ): PipelineConfig => ({
-    ...deps.buildConfig(task, complexity, raisedLimits),
+    ...deps.buildConfig(task, complexity, raisedLimits, raisedRoundCap),
     ledgerSink: sink,
     ...(deps.sessionLimitController !== undefined && {
       sessionLimitController: deps.sessionLimitController,
@@ -506,6 +544,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     createWithRunId = false,
     complexity?: Complexity,
     raisedLimits?: RaisedStageLimits,
+    raisedRoundCap?: number,
   ): Promise<RunPipelineResult> => {
     // Validated HERE, not at the tool: `resumePipeline` is exported, so a
     // library caller reaches this path without passing the tool's parameter
@@ -513,7 +552,9 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     // would then fail on the coordinator's "unchanged ceiling" guard -- a
     // message about the wrong thing entirely.
     const raised = raisedLimits === undefined ? undefined : assertRaisedLimits(raisedLimits);
-    const config = buildConfig(task, complexity, raised);
+    const raisedCap =
+      raisedRoundCap === undefined ? undefined : assertRaisedRoundCap(raisedRoundCap);
+    const config = buildConfig(task, complexity, raised, raisedCap);
     const wf = createWorkflowSession(config);
     const runCoordinator = new RunCoordinator(wf, wf.projectStore, {
       ...config.coordinator,
@@ -529,6 +570,14 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     // unchanged ceiling still refuses there.
     if (resumeRunId !== undefined && clearsOnExplicitAct(runCoordinator.checkpoint.pause?.code))
       runCoordinator.resumeStage({ source: "host_config", action: "retry" });
+    // A round-cap raise re-opens a cap-stopped run (issue #495): the raised
+    // ceiling reached the session through `buildConfig`, and this act re-opens
+    // the settled workflow at the next code round and records the raise.
+    if (raisedCap !== undefined)
+      runCoordinator.resumeRoundCap(
+        { source: "host_config", action: "retry" },
+        { limit: raisedCap, reason: "cap_exhausted" },
+      );
     const perStep: StepCost[] = [];
     let costCursor = sink.records().length;
     const completed = await runCoordinator.run(autoDriver, ({ result }) => {
@@ -594,8 +643,9 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     task: string,
     runId: string,
     raisedLimits?: RaisedStageLimits,
+    raisedRoundCap?: number,
   ): Promise<RunPipelineResult> =>
-    executePipeline(task, runId, undefined, false, undefined, raisedLimits);
+    executePipeline(task, runId, undefined, false, undefined, raisedLimits, raisedRoundCap);
   const executeBackgroundPipeline = async (
     task: string,
     runId: string,
@@ -1557,6 +1607,9 @@ export function buildBuiltInPipelineTools(core: Orchestrator): Tool[] {
     });
   };
 
+  const raisedRoundCapFrom = (value: number | undefined): number | undefined =>
+    value === undefined ? undefined : assertRaisedRoundCap(value);
+
   const runPipelineTool = defineTool({
     name: RUN_PIPELINE_TOOL_NAME,
     description:
@@ -1772,7 +1825,7 @@ export function buildBuiltInPipelineTools(core: Orchestrator): Tool[] {
   const resumePipelineTool = defineTool({
     name: RESUME_PIPELINE_TOOL_NAME,
     description:
-      "Resume an interrupted built-in pipeline from its durable run ID using the original task. Completed stages are reused. A run paused on a stage ceiling CANNOT resume at the same ceiling -- pass raiseRole (the role whose stage paused), raiseReason and raiseLimit (the pause reports the reason and the exhausted value) to resume with a larger one, which is the correction the operator-flow contract requires for an underestimate on progressing work.",
+      "Resume an interrupted built-in pipeline from its durable run ID using the original task. Completed stages are reused. A run paused on a stage ceiling CANNOT resume at the same ceiling -- pass raiseRole (the role whose stage paused), raiseReason and raiseLimit (the pause reports the reason and the exhausted value) to resume with a larger one, which is the correction the operator-flow contract requires for an underestimate on progressing work. A run that exhausted its round cap resumes with raiseRoundCap larger than the settled cap to take another code round.",
     label: "resume pipeline",
     parameters: Type.Object({
       task: Type.String(),
@@ -1780,11 +1833,13 @@ export function buildBuiltInPipelineTools(core: Orchestrator): Tool[] {
       raiseRole: Type.Optional(Type.String()),
       raiseReason: Type.Optional(Type.String()),
       raiseLimit: Type.Optional(Type.Number()),
+      raiseRoundCap: Type.Optional(Type.Number()),
     }),
     async execute(_toolCallId, params) {
       try {
         const raised = raisedLimitsFrom(params.raiseRole, params.raiseReason, params.raiseLimit);
-        const run = await core.resumePipeline(params.task, params.runId, raised);
+        const raisedCap = raisedRoundCapFrom(params.raiseRoundCap);
+        const run = await core.resumePipeline(params.task, params.runId, raised, raisedCap);
         const summary =
           `pipeline complete: runId=${run.runId} approved=${run.result.approved} ` +
           `rounds=${run.result.rounds} review=${lastReviewStatus(run.result)} ` +
@@ -2030,6 +2085,7 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
     task: string,
     complexity?: Complexity,
     raisedLimits?: RaisedStageLimits,
+    raisedRoundCap?: number,
   ): PipelineConfig =>
     // An explicitly classified tier (issues #263/#264) replaces the built-in
     // default at routing; validated at the routing sink like every other one.
@@ -2051,6 +2107,11 @@ export async function startOrchestrator(config: OrchestratorConfig): Promise<Con
           },
         },
       }),
+      // A raised round cap rides the SAME `maxRounds` option the resolved
+      // config already carries, so both the top-level field and the stepped
+      // `defaults.maxRounds` move together; the coordinator's `resumeRoundCap`
+      // then re-opens the cap-stopped run at the next code round.
+      ...(raisedRoundCap !== undefined && { maxRounds: raisedRoundCap }),
     });
   // Which workflow modules this orchestrated session really resolved. Hoisted
   // above the role kit so a skill's `requires.workflows` is judged against the

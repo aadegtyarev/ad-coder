@@ -431,17 +431,22 @@ export interface RoundRecord {
 }
 
 /**
- * The escalation signal a settled run carries when the review stop rule (not
- * the round cap, not a red gate, not an approval) ended the run. `required` is
- * the literal `true` so an unset optional can never read as a signal. `reason`
- * names the settle cause: `role_requested` (a `decomposition_required`
- * verdict) or `blocking_verdicts` (a second blocking verdict);
- * `blockingVerdicts` is the derived count at settle time. Exactly these three
- * keys -- no summary, no issue text, no file content, no provider/model text.
+ * The escalation signal a settled run carries when a stop names its reason:
+ * the review stop rule (`role_requested` or `blocking_verdicts`) or round-cap
+ * exhaustion (`cap_exhausted`). A red gate and an approval carry no signal.
+ * `required` names whether the signal mandates the machine decomposition
+ * action: `true` for `role_requested` and `blocking_verdicts`, `false` for
+ * `cap_exhausted`, which names the limit without classifying the work, so the
+ * decomposition lane does not fire on it unasked. `reason` names the settle
+ * cause: `role_requested` (a `decomposition_required` verdict),
+ * `blocking_verdicts` (a second blocking verdict), or `cap_exhausted` (the
+ * code<->review loop reached `maxRounds`); `blockingVerdicts` is the derived
+ * count at settle time. Exactly these three keys -- no summary, no issue
+ * text, no file content, no provider/model text.
  */
 export interface EscalationSignal {
-  required: true;
-  reason: "role_requested" | "blocking_verdicts";
+  required: boolean;
+  reason: "role_requested" | "blocking_verdicts" | "cap_exhausted";
   blockingVerdicts: number;
 }
 
@@ -497,10 +502,10 @@ export interface PipelineResult {
    */
   reviewRan?: boolean;
   /**
-   * Present ONLY when the review stop rule settled the run not approved:
-   * `role_requested` (a `decomposition_required` verdict) or
-   * `blocking_verdicts` (a second blocking verdict). Absent on approval,
-   * round-cap exhaustion, and a red-gate-only settle.
+   * Present when a stop names its reason: the review stop rule
+   * (`role_requested` or `blocking_verdicts`, both `required: true`) or
+   * round-cap exhaustion (`cap_exhausted`, `required: false`). Absent on
+   * approval and a red-gate-only settle.
    */
   escalation?: EscalationSignal;
 }
@@ -949,7 +954,7 @@ export interface WorkflowState {
   done: boolean;
   /** The settled approval outcome, set by `applyTransition` on a `stop` edge. */
   approved: boolean;
-  /** Settled escalation signal, set by the review stop rule and carried into `PipelineResult`. */
+  /** Settled escalation signal, set by the review stop rule or cap exhaustion and carried into `PipelineResult`. */
   escalation?: EscalationSignal;
 }
 

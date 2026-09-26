@@ -22,7 +22,11 @@ mechanics of routing, pausing, or background delivery.
 - Exhausted work is classified as progressing underestimate, no-progress loop,
   or work too large for the route. The first receives the bounded response its
   contracts allow; a loop stops with diagnosis; oversized work decomposes rather
-  than silently escalating the whole task.
+  than silently escalating the whole task. A run whose rounds are exhausted
+  names that reason; a round-cap hit alone does not classify the work, so the
+  machine does not decompose on it unasked -- the bounded response is a raised
+  cap with a named and recorded reason, and decomposition stays the operator's
+  decision or the verdict's explicit request.
 - A pause is resumable everywhere it is projected and includes phase, code,
   limit reason and value where applicable, recorded spend, and recovery action.
   A signal stop records its signal and, if present, its prior stop-request

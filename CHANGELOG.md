@@ -11,6 +11,25 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.74] - 2026-09-26
+
+### Fixed
+
+- **A round-cap stop now names its reason, and a run that exhausts its rounds
+  can be resumed at a larger cap (issues #461, #495).** A run that exhausts
+  `maxRounds` still settles and still stops exactly as before, but its
+  `PipelineResult.escalation` now names the reason as
+  `{ required: false, reason: "cap_exhausted" }`: the decomposition lane does
+  not fire on a bare round-cap hit, because naming the limit is not classifying
+  the work. `resume_pipeline` accepts an optional `raiseRoundCap` beside the
+  stage raise parameters: a whole number between 1 and 100 that is larger than
+  the settled cap resumes the same run at the next code round, while an
+  unchanged cap (`unchanged rounds cap`), a value above 100 rounds, or a raise
+  on a run that is not cap-stopped is refused rather than silently ignored.
+  The raise is recorded on the durable run checkpoint as
+  `raisedRoundCap { limit, reason, at }`, so a reader can see the cap was
+  raised, to what, and why.
+
 ## [0.181.73] - 2026-09-26
 
 ### Fixed
