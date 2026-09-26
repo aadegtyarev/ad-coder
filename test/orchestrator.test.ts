@@ -602,10 +602,11 @@ async function classificationFauxCore(fx: Fixture) {
     task: string;
     complexity?: Complexity | undefined;
     raised?: RaisedStageLimits | undefined;
+    raisedRoundCap?: number | undefined;
   }> = [];
   const core = createOrchestrator({
-    buildConfig: (task, complexity, raised) => {
-      seen.push({ task, complexity, raised });
+    buildConfig: (task, complexity, raised, raisedRoundCap) => {
+      seen.push({ task, complexity, raised, raisedRoundCap });
       return fx.buildConfig(task);
     },
     ledgerSink: fx.sink,
@@ -800,6 +801,197 @@ test("a raise is validated at the core boundary, not only at the tool (#208)", a
     detail: expect.stringContaining("greater than 0"),
   });
   expect(seen).toEqual([]);
+});
+
+test("resume_pipeline carries a round-cap raise into the run (#495)", async () => {
+  const fx = fixture();
+  approveScenario(fx, { status: "approved", issues: [], summary: "ok" });
+  const { core, seen } = await classificationFauxCore(fx);
+  const resumeTool = buildOrchestratorTools(core, [], [BUILT_IN_PIPELINE_WORKFLOW]).find(
+    ({ name }) => name === RESUME_PIPELINE_TOOL_NAME,
+  ) as Tool;
+
+  await callTool(resumeTool, {
+    task: "finish the work",
+    runId: "run-1",
+    raiseRoundCap: 5,
+  });
+  expect(seen[0]?.raisedRoundCap).toBe(5);
+
+  // The round-cap mirror of the stage raise's zero guard: a raise of zero (or
+  // a non-integer) is invalid input, refused by name at the boundary.
+  const zero = await callTool(resumeTool, { task: "t", runId: "run-1", raiseRoundCap: 0 });
+  expect(zero).toContain("greater than 0");
+
+  // A raise that clears the documented safety ceiling is refused too, so
+  // Number.MAX_SAFE_INTEGER can never propagate into maxRounds.
+  const ceiling = await callTool(resumeTool, {
+    task: "t",
+    runId: "run-1",
+    raiseRoundCap: Number.MAX_SAFE_INTEGER,
+  });
+  expect(ceiling).toContain("safety ceiling");
+});
+
+test("resume_pipeline with raiseRoundCap reopens a cap-exhausted run for another code round (#495)", async () => {
+  const fx = fixture();
+  const runId = "orchestrator-cap-resume";
+  const buildConfig = (
+    task: string,
+    _complexity: Complexity | undefined,
+    _raised: RaisedStageLimits | undefined,
+    raisedRoundCap: number | undefined,
+  ): PipelineConfig => ({
+    ...fx.buildConfig(task),
+    maxRounds: raisedRoundCap ?? 1,
+    coordinator: { runId },
+  });
+  const core = createOrchestrator({ buildConfig, ledgerSink: fx.sink });
+
+  const changes: Verdict = {
+    status: "changes_requested",
+    issues: [
+      {
+        severity: "major",
+        findingId: "x",
+        what: "still needs work",
+        location: "src/example.ts:1",
+        closureCriterion: "the focused regression test passes",
+      },
+    ],
+    summary: "needs a fix",
+  };
+  fx.faux.setResponses([
+    ...governedPlanTurn(),
+    fauxAssistantMessage("coded r1"),
+    fauxAssistantMessage(fauxToolCall(SUBMIT_VERDICT_TOOL_NAME, changes)),
+    fauxAssistantMessage("review complete"),
+  ]);
+  const first = await core.runPipeline("implement X");
+  expect(first.result.approved).toBe(false);
+  expect(first.result.escalation).toEqual({
+    required: false,
+    reason: "cap_exhausted",
+    blockingVerdicts: 1,
+  });
+
+  // The cap-stopped run resumes at a LARGER cap and takes one more code round;
+  // the plan stage is not re-run because the workflow reopens at the next code
+  // round, so only the code + review turns are scripted.
+  fx.faux.setResponses([
+    fauxAssistantMessage("coded r2"),
+    fauxAssistantMessage(
+      fauxToolCall(SUBMIT_VERDICT_TOOL_NAME, {
+        status: "approved",
+        issues: [
+          {
+            severity: "major",
+            findingId: "x",
+            what: "fixed X",
+            location: "src/example.ts:1",
+            closureCriterion: "the focused regression test passes",
+            resolution: "closed",
+            evidence: "the fix is present",
+          },
+        ],
+        summary: "ok",
+      }),
+    ),
+    fauxAssistantMessage("review complete"),
+  ]);
+  const resumed = await core.resumePipeline("implement X", runId, undefined, 2);
+  expect(resumed.runId).toBe(runId);
+  expect(resumed.result.approved).toBe(true);
+  expect(resumed.result.rounds).toBe(2);
+  expect(
+    (resumed.result.stageMetrics ?? []).filter((m) => m.stage.startsWith("code:")),
+  ).toHaveLength(2);
+
+  // The durable run record shows the cap was raised, to what, and why.
+  const store = new ProjectStore(fx.targetDir);
+  const checkpoint = store.readVersionedJson<RunCheckpoint>(
+    path.join(store.layout.runs, `coordinator-${runId}.json`),
+  ).value;
+  expect(checkpoint.raisedRoundCap).toEqual({
+    limit: 2,
+    reason: "cap_exhausted",
+    at: expect.any(String),
+  });
+});
+
+test("a round-cap raise is refused when it does not raise or the run is not cap-stopped (#495)", async () => {
+  const fx = fixture();
+  const runId = "orchestrator-cap-refuse";
+  const buildConfig = (
+    task: string,
+    _complexity: Complexity | undefined,
+    _raised: RaisedStageLimits | undefined,
+    raisedRoundCap: number | undefined,
+  ): PipelineConfig => ({
+    ...fx.buildConfig(task),
+    maxRounds: raisedRoundCap ?? 1,
+    coordinator: { runId },
+  });
+  const core = createOrchestrator({ buildConfig, ledgerSink: fx.sink });
+
+  const changes: Verdict = {
+    status: "changes_requested",
+    issues: [
+      {
+        severity: "major",
+        findingId: "x",
+        what: "still needs work",
+        location: "src/example.ts:1",
+        closureCriterion: "the focused regression test passes",
+      },
+    ],
+    summary: "needs a fix",
+  };
+  fx.faux.setResponses([
+    ...governedPlanTurn(),
+    fauxAssistantMessage("coded r1"),
+    fauxAssistantMessage(fauxToolCall(SUBMIT_VERDICT_TOOL_NAME, changes)),
+    fauxAssistantMessage("review complete"),
+  ]);
+  await core.runPipeline("implement X");
+
+  // A raise that leaves the settled cap unchanged is refused in the stage
+  // raise's house style (`unchanged rounds cap`), not silently accepted.
+  await expect(core.resumePipeline("implement X", runId, undefined, 1)).rejects.toMatchObject({
+    code: "invalid_config",
+    detail: "unchanged rounds cap",
+  });
+
+  // A raise on a run that settled for any other reason is refused too.
+  const approvedRunId = "orchestrator-cap-not-stopped";
+  const approvedCore = createOrchestrator({
+    buildConfig: (task: string): PipelineConfig => ({
+      ...fx.buildConfig(task),
+      maxRounds: 1,
+      coordinator: { runId: approvedRunId },
+    }),
+    ledgerSink: fx.sink,
+  });
+  fx.faux.setResponses([
+    ...governedPlanTurn(),
+    fauxAssistantMessage("coded r1"),
+    fauxAssistantMessage(
+      fauxToolCall(SUBMIT_VERDICT_TOOL_NAME, {
+        status: "approved",
+        issues: [],
+        summary: "ok",
+      }),
+    ),
+    fauxAssistantMessage("review complete"),
+  ]);
+  const approved = await approvedCore.runPipeline("implement Y");
+  expect(approved.result.approved).toBe(true);
+  await expect(
+    approvedCore.resumePipeline("implement Y", approvedRunId, undefined, 3),
+  ).rejects.toMatchObject({
+    code: "invalid_config",
+    detail: "a round-cap raise requires a cap-stopped run",
+  });
 });
 
 test("run_role description states the session's live delegates, models, and world when facts exist", async () => {
@@ -2494,6 +2686,64 @@ test("settled run with no escalation pauses with a deferred decomposition decisi
   expect(control.events(root.id, 0).some((event) => event.type === "decomposition.required")).toBe(
     true,
   );
+});
+
+test("cap-exhausted run does not decompose under the default auto mode and keeps its reason", async () => {
+  // A bare round-cap hit names the limit without classifying the work, so even
+  // with autoDecomposition true (the default) the control plane must NOT
+  // dispatch children from its blocking verdict. The reason survives in the
+  // safe status, and the deferred decomposition decision keeps both operator
+  // options reachable: raise the cap, or decide to decompose.
+  const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), "ad-coder-derived-cap-"));
+  const scope = { allowedPaths: ["src"], allowedCapabilities: ["edit"], externalEffects: [] };
+  const decomposed: PipelineResult = {
+    outcome: "decomposition_required",
+    approved: false,
+    rounds: 1,
+    verdicts: [
+      {
+        status: "changes_requested",
+        issues: [
+          {
+            severity: "blocker",
+            findingId: "must-fix",
+            what: "must fix",
+            location: "src/example.ts:1",
+            closureCriterion: "the focused regression test passes",
+          },
+        ],
+        summary: "block",
+      },
+    ],
+    runIds: [],
+    stageMetrics: [],
+    escalation: { required: false, reason: "cap_exhausted", blockingVerdicts: 1 },
+  };
+  const control = createOrchestratorControlPlane({
+    store: new ProjectStore(targetDir),
+    id: () => "cap-decompose-run",
+    execute: async () => ({ result: decomposed }),
+    resolveAutoDecision: async () => ({
+      action: "accept" as const,
+      rationale: "auto mandate",
+      evidence: ["docs/contracts/operation-modes.md"],
+    }),
+  });
+  const root = control.start({ requestKey: "cap", task: "root", mode: "auto", scope });
+  const status = await control.resume(root.id);
+  expect(status).toMatchObject({ status: "paused" });
+  expect(status.escalation).toEqual({
+    required: false,
+    reason: "cap_exhausted",
+    blockingVerdicts: 1,
+  });
+  const record = control.record(root.id);
+  expect(record.childRunIds).toEqual([]);
+  expect(record.remainingChildren).toEqual([]);
+  const decision = record.decisions.at(-1);
+  expect(decision?.status).toBe("deferred");
+  expect(decision?.action).toBe("defer");
+  expect(decision?.rationale).toContain("cap_exhausted");
 });
 
 test("settled run whose blocking verdict has only minor issues pauses with a deferred decision", async () => {

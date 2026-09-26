@@ -8,9 +8,11 @@ export const MAX_DERIVED_CHILDREN = 4;
 /**
  * Cut a settled, not-approved run into follow-on children from the reviewer's
  * own findings. Pure: reads only the settled record and result, writes nothing,
- * throws nothing. A run without an escalation signal, or whose last
- * `changes_requested` verdict carries no `blocker`/`major` issue, derives no
- * children -- the caller turns that into a pause, never a throw.
+ * throws nothing. A run without an escalation signal, one whose signal is not
+ * `required: true` (a cap-exhausted run names the limit without classifying
+ * the work), or whose last `changes_requested` verdict carries no
+ * `blocker`/`major` issue, derives no children -- the caller turns that into a
+ * pause, never a throw.
  */
 export function deriveChildSpecs(
   record: DurableRunRecord,

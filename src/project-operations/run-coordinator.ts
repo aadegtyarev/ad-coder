@@ -80,6 +80,21 @@ export interface CoordinatorCloseout {
   decisionIds: string[];
 }
 
+/**
+ * The durable record of a raised round cap (issue #495): `limit` is the new
+ * `maxRounds` the resumed run was built with, `reason` is why the cap was
+ * raised (`cap_exhausted`), and `at` is the ISO timestamp of the resolution.
+ * Written on the checkpoint by `resumeRoundCap` so a reader can see the cap
+ * was raised, to what, and why -- the round-cap mirror of the stage raise's
+ * resolved ceiling, which the stage path proves only by its effect on the
+ * session rather than by a persisted record.
+ */
+export interface RaisedRoundCap {
+  limit: number;
+  reason: string;
+  at: string;
+}
+
 export interface RunCheckpoint {
   schemaVersion: 1;
   runId: string;
@@ -93,6 +108,8 @@ export interface RunCheckpoint {
   contractReviews: ContractReviewRecord[];
   closeout?: CoordinatorCloseout;
   pendingStep?: StepResult;
+  /** Durable record of a round-cap raise applied on a resume; absent otherwise. */
+  raisedRoundCap?: RaisedRoundCap;
   researchEffect?: {
     intent: ResearchDispatchIntent;
     status: "prepared" | "dispatched" | "completed";
@@ -779,6 +796,55 @@ export class RunCoordinator {
       throw new ProjectOperationsError("invalid_config", `unchanged ${reason} stage limit`);
     const next = { ...checkpoint };
     delete next.pause;
+    this.save(next);
+  }
+
+  /**
+   * Re-open a run that settled by exhausting its round cap, after the operator
+   * supplies a larger one (issue #495). Mirrors `resumeStage`'s authority rule:
+   * the resolution must come from `operator` or `host_config`, a run that is
+   * NOT cap-stopped is refused rather than silently re-settled, and a value
+   * that does not enlarge the settled cap is refused in the same house style
+   * (`unchanged rounds cap`). The reopened state resumes at the next code
+   * round, and the raise itself is persisted so a reader sees the cap was
+   * raised, to what, and why.
+   */
+  resumeRoundCap(
+    resolution: ResearchPauseResolution,
+    raised: { limit: number; reason: string },
+  ): void {
+    const checkpoint = this.persisted.value;
+    if (resolution.source !== "operator" && resolution.source !== "host_config")
+      throw new ProjectOperationsError("unauthorized_resolution", checkpoint.runId);
+    const workflow = checkpoint.workflowState;
+    if (workflow.done !== true || workflow.escalation?.reason !== "cap_exhausted")
+      throw new ProjectOperationsError(
+        "invalid_config",
+        "a round-cap raise requires a cap-stopped run",
+      );
+    const settledCap = workflow.round;
+    if (raised.limit <= settledCap)
+      throw new ProjectOperationsError("invalid_config", "unchanged rounds cap");
+    const reopened = { ...workflow };
+    delete reopened.escalation;
+    const next: RunCheckpoint = {
+      ...checkpoint,
+      phase: "workflow",
+      workflowState: {
+        ...reopened,
+        phase: "code",
+        round: settledCap + 1,
+        done: false,
+        approved: false,
+      },
+      raisedRoundCap: {
+        limit: raised.limit,
+        reason: raised.reason,
+        at: new Date().toISOString(),
+      },
+    };
+    delete next.closeout;
+    delete next.pendingStep;
     this.save(next);
   }
 

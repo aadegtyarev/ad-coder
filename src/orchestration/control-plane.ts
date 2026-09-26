@@ -402,7 +402,7 @@ export interface SafeRunStatus {
   decisionCount: number;
   verdictStatuses: Verdict["status"][];
   outcome?: PipelineResult["outcome"];
-  /** Escalation signal, present only when the review stop rule settled the run. */
+  /** Escalation signal, present when the review stop rule or cap exhaustion settled the run. */
   escalation?: PipelineResult["escalation"];
   externalLimit?: ExternalLimit;
   /** The pre-work budget decision's safe shape; absent means undecided. */
@@ -1094,11 +1094,13 @@ export class OrchestratorControlPlane {
               .reverse()
               .find((verdict) => verdict.status === "changes_requested");
             const rationale =
-              execution.result.escalation?.required !== true
-                ? "decomposition.required but the settled result carried no escalation signal"
-                : lastBlocking === undefined
-                  ? "decomposition.required but the escalation's blocking verdict is missing"
-                  : "decomposition.required but the last blocking verdict carries no blocker or major issue";
+              execution.result.escalation?.reason === "cap_exhausted"
+                ? "round cap exhausted; cap_exhausted names the limit without classifying the work, so the run does not decompose unasked -- raise the cap or request decomposition explicitly"
+                : execution.result.escalation?.required !== true
+                  ? "decomposition.required but the settled result carried no escalation signal"
+                  : lastBlocking === undefined
+                    ? "decomposition.required but the escalation's blocking verdict is missing"
+                    : "decomposition.required but the last blocking verdict carries no blocker or major issue";
             const createdAt = this.now();
             record.decisions = [
               ...record.decisions,

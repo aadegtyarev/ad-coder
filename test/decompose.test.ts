@@ -109,6 +109,22 @@ test("a result without escalation derives nothing", () => {
   expect(deriveChildSpecs(rec, makeResult())).toEqual([]);
 });
 
+test("a cap_exhausted escalation (required false) derives nothing", () => {
+  // A bare round-cap hit names the limit without classifying the work, so the
+  // decomposition lane must not turn its blocking verdict into child specs.
+  const rec = makeRecord([
+    {
+      status: "changes_requested",
+      issues: [{ severity: "blocker", what: "must fix" }],
+      summary: "block",
+    },
+  ]);
+  const capExhausted = makeResult({
+    escalation: { required: false, reason: "cap_exhausted", blockingVerdicts: 1 },
+  });
+  expect(deriveChildSpecs(rec, capExhausted)).toEqual([]);
+});
+
 test("caps derived children at MAX_DERIVED_CHILDREN", () => {
   expect(MAX_DERIVED_CHILDREN).toBe(4);
   const rec = makeRecord([

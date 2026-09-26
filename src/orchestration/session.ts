@@ -1830,9 +1830,15 @@ export function createWorkflowSession(config: PipelineConfig): WorkflowSession {
       ];
     } else {
       // The cap is reached: the loop can only settle (approved:false). No advance
-      // edge exists past maxRounds -- exactly the old loop's exit. This settle
-      // carries NO escalation: cap exhaustion is a round limit, not a role
-      // request or a second blocking verdict.
+      // edge exists past maxRounds -- exactly the old loop's exit. The stop now
+      // names its reason (issue #461): a cap-exhausted settle carries the SAME
+      // escalation lane as the review stop rule, with `reason: "cap_exhausted"`
+      // and the derived blocking-verdict count. `required: false` keeps the
+      // decomposition lane from firing: a bare round-cap hit names the limit
+      // without classifying the work, so decomposition stays the operator's
+      // decision or a later verdict's explicit request (issue #461 review).
+      // The run still settles and still stops exactly as before.
+      escalation = { required: false, reason: "cap_exhausted", blockingVerdicts };
       transitions = [{ kind: "stop", isDefault: true, toPhase: "done", toRound: round }];
     }
     if (escalation !== undefined) {
@@ -1935,9 +1941,9 @@ export function toPipelineResult(state: WorkflowState): PipelineResult {
     verdicts: state.verdicts,
     reviewRan: state.verdicts.length > 0,
     runIds: state.runIds,
-    // Only the review stop rule sets `state.escalation`; approval, cap
-    // exhaustion, and red-gate settles leave it absent, so this spread keeps
-    // those results byte-identical to before.
+    // The review stop rule AND cap exhaustion set `state.escalation`; approval
+    // and red-gate settles leave it absent, so this spread keeps those results
+    // byte-identical to before while an exhausted run names its reason.
     ...(state.escalation !== undefined && { escalation: state.escalation }),
     stageMetrics: structuredClone(state.stageMetrics ?? []),
     ...(state.lastGateReport !== undefined && {

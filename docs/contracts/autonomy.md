@@ -27,6 +27,9 @@ cost ceilings: neither is the task budget this contract governs.
   50%), happens once, never enables a zero-disabled ceiling, and excludes the
   task's own budget. It recomputes the whole-cycle reserve; a further exhaustion
   or a raise that starves required later roles is a decomposition signal.
+- An operator-supplied ceiling raise may exceed the silent factor but still
+  clears a documented safety ceiling: a round-cap raise is refused above 100
+  rounds, so a correction cannot become an unbounded loop.
 - Above that factor, changing task budget, raising mode, cutting started scope,
   changing profile settings, deploys, publication, or acting in someone else's
   name require operator permission. The orchestrator never presents unfinished
