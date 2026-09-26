@@ -11,6 +11,30 @@ makes "which rule is newer" unanswerable by reading. `bun run check:release`
 enforces that dated release headings go in non-increasing date order
 (docs/contracts/documentation.md, 2026-09-17).
 
+## [0.181.73] - 2026-09-26
+
+### Fixed
+
+- **A review round can no longer block delivery on state it cannot reach from
+  inside the run (issue #565).** A blocker or major whose defect IS external
+  state -- an unmerged pull request, an absent merge commit, another round's or
+  reviewer's pending action, a CI run that has not finished, an unpublished
+  release -- is now refused like the review-artifact findings
+  (`src/orchestration/verdict.ts`), with the message naming why: the round is
+  scoped to the reviewed tree and can neither cause nor observe such a state
+  from inside it, and it says what to do instead -- state it in
+  `verdict.summary`. Observed live on 2026-09-21: a second round of the same
+  tree returned `changes_requested` whose one blocker was "PR #562 has not
+  delivered the change: it remains OPEN and GitHub reports
+  mergeStateStatus BLOCKED", text now pinned as a regression case. The
+  boundary is the DEFECT's location, not a mention: a real defect in the
+  reviewed tree that merely mentions an external artefact -- a commit hook
+  stripping the trailing newline from the file it commits, with its file:line
+  -- is still accepted, and the added positive case keeps it that way.
+  `prompts/reviewer.md` addressability paragraph and
+  `docs/contracts/review-evidence.md` process-bookkeeping clause state the
+  rule, so it is not readable only from a regex.
+
 ## [0.181.72] - 2026-09-26
 
 ### Changed

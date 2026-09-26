@@ -137,8 +137,101 @@ export const VERDICT_ISSUE_FIELDS = {
   maxAggregateBytes: 100_000,
   summary: 4000,
 } as const;
+/**
+ * A blocked or major finding's `what` must name a defect the ROUND can act on.
+ * Two shapes are refused here, in one rule, because they fail the same contract
+ * (issue #565, `prompts/reviewer.md`, `docs/contracts/review-evidence.md`):
+ *
+ * (1) REVIEW ARTIFACTS -- stamps, round bookkeeping, freshness. These are this
+ * pipeline's own paperwork, satisfied by a different decision of the same
+ * stage, so naming one makes the gate unanswerable and deadlocks the round.
+ *
+ * (2) EXTERNAL STATE -- an unmerged pull request, an absent merge commit,
+ * another round's or reviewer's pending action, a CI run that has not
+ * finished, an unpublished release. The round is scoped to the reviewed tree
+ * and can neither CAUSE nor OBSERVE these from it, so a "closure criterion"
+ * naming one can never be satisfied by work on the reviewed change and the
+ * round deadlocks on a verdict outside its reach (#565: a second review round
+ * of the same delivered tree returned `changes_requested` whose one blocker
+ * was "PR #562 remains OPEN and GitHub reports mergeStateStatus BLOCKED").
+ *
+ * The boundary is the DEFECT's location, not a mention: a real defect in the
+ * reviewed tree that works through an external tool (a hook stripping a
+ * newline, a stale `main` reference) is addressable and stays accepted. Only
+ * a finding whose defect IS the artifact or the external state is refused.
+ * Stated verbatim in the reviewer prompt and review-evidence.md.
+ */
 const ARTIFACT_ONLY =
   /(?:review\s*(?:-\s*)?(?:artifact|stamp)|review|round|stamp|freshness|accounting|process)\s+(?:artifact|metadata|bookkeeping|stamp|freshness)|(?:stale|outdated)\s+(?:review\s*)?stamp/i;
+/**
+ * What marks a finding's defect as EXTERNAL STATE rather than a defect in the
+ * reviewed tree (issue #565): matched against `what`, then gated on
+ * NAMES_TREE_LOCATION below -- see the refusal. Case-insensitive, so phrasing
+ * variants all land; word order and the location gate keep ordinary sentences
+ * about merged pulls ("merged after the fix") out.
+ */
+const EXTERNAL_STATE = new RegExp(
+  [
+    "pull\\s*request",
+    "pull-?request",
+    "merge\\s*commit",
+    "merge\\s*state",
+    "merge\\s*queue",
+    "merge\\s*blocked",
+    "mergeStateStatus",
+    "remains?\\s+(?:an?\\s+)?(?:OPEN|open|DRAFT|draft)",
+    "still\\s+(?:an?\\s+)?(?:OPEN|open|DRAFT|draft)",
+    "(?:has|have)\\s+not\\s+been\\s+(?:merged|released|published)",
+    "not\\s+yet\\s+(?:merged|released|published)",
+    "is\\s+not\\s+(?:merged|published|released)",
+    "(?:another|prior|previous|other)\\s+(?:round|review|reviewer)(?:'s|s')?\\s+(?:pending|outstanding)",
+    "(?:pending|unpublished|unreleased)\\s+release",
+    "(?:CI|workflow|build|pre-merge)\\s+(?:run|gate)\\s+(?:has|have)\\s+not",
+  ].join("|"),
+  "i",
+);
+/**
+ * The machine form of the LONG-STANDING addressability rule: a blocker or
+ * major needs a relative file:line path or a concrete scenario/fixture address
+ * (`prompts/reviewer.md`, `docs/contracts/review-evidence.md`). This is a
+ * DIFFERENT question from NAMES_TREE_LOCATION below, and the first #565 cut
+ * conflated them: a scenario description is a legitimate address for an
+ * ordinary finding, but it is not a place in the reviewed tree, so the
+ * external-state refusal keys on NAMES_TREE_LOCATION instead. Exported so the
+ * tests can pin this rule's meaning; do not narrow it silently for ordinary
+ * findings.
+ */
+export const ADDRESSABLE =
+  /\b(fixture|scenario)\b|[a-z]+(?:\/[.+\w@-]*\/[.+\w* -]*)?\/[.+\w*,-]+\.(?:ts|tsx|js|jsx|json|md|toml|yml|yaml|sh)\b(?::(?:\d+)(?::-\d+)?)?\b/i;
+/**
+ * Whether a location names a path in OUR TREE -- the stricter, path-shaped
+ * question the EXTERNAL_STATE refusal needs (issue #565): a finding counts as
+ * external state only when it mentions an external subject and names NO such
+ * location. A location qualifies when it holds a token that is a
+ * slash-separated path carrying at least one path-shaped character (a dot,
+ * dash, underscore or digit -- any or no extension, so extensionless
+ * executables under a directory land and no extension whitelist can lag the
+ * tree), a top-level dotfile, or a bare filename with an extension-shaped
+ * suffix (letter-first, two to eight characters -- NOT a whitelist, so
+ * `.mjs`, `.lock` and `.toml` all land), each with an optional `:LINE` or
+ * `:LINE-LINE` suffix. The token must not start inside a larger word or URL,
+ * so `https://github.com/...` stays external; the words `fixture` and
+ * `scenario` on their own name no tree path at all, and neither does prose
+ * like "and/or" -- English compounds are not paths.
+ */
+export const NAMES_TREE_LOCATION = new RegExp(
+  `(?<![A-Za-z0-9_./:@+-])(?:${[
+    // A path with a separator: `scripts/hooks/pre-commit:1`,
+    // `bin/ad-coder.mjs:42`, `.github/workflows/ci.yml:12`.
+    "(?=[A-Za-z0-9_+.@/-]*[._\\d-])\\.?[A-Za-z0-9_+@-]+(?:\\.[A-Za-z0-9_+@-]+)*(?:/\\.?[A-Za-z0-9_+@-]+(?:\\.[A-Za-z0-9_+@-]+)*)+",
+    // A top-level dotfile: `.gitignore:1`, `.gitattributes:1`.
+    "\\.[A-Za-z][A-Za-z0-9_+@-]*(?:\\.[A-Za-z0-9_+@-]+)*",
+    // A bare filename with an extension-shaped suffix: `package.json:55`,
+    // `CHANGELOG.md:1`, `bun.lock:1`, `bunfig.toml:1`.
+    "[A-Za-z0-9_+@-]+(?:\\.[A-Za-z0-9_+@-]+)*\\.[A-Za-z][A-Za-z0-9]{1,7}",
+  ].join("|")})(?::\\d+(?:-\\d+)?)?`,
+  "i",
+);
 const hasText = (value: unknown): value is string =>
   typeof value === "string" && value.trim() !== "";
 const redactFinding = (value: string): string =>
@@ -254,6 +347,22 @@ export function parseVerdict(
     if (needsAddress && ARTIFACT_ONLY.test(what))
       return bad(
         `verdict.issues[${index}] review-artifact-only complaints belong in verdict.summary, not ${severity}; resubmit it in summary`,
+      );
+    // issue #565: beyond artifacts, the defect that blocks a round may be
+    // EXTERNAL STATE -- an unmerged pull request, an absent merge commit,
+    // another round's or reviewer's pending action, a CI run that has not
+    // finished, an unpublished release. The round is scoped to the reviewed
+    // tree and can neither cause nor observe those from it, so the blocker
+    // deadlocks delivery. A real defect IN the tree can MENTION such a state
+    // (a hook that strips a newline from a committed file) -- a concrete
+    // tree location (NAMES_TREE_LOCATION above) keeps it accepted, and only
+    // the external state itself must move to summary. A scenario PROSE
+    // address does not: it is a fine location for an ordinary finding, but
+    // it names no place this round can edit.
+    if (needsAddress && EXTERNAL_STATE.test(what) && !NAMES_TREE_LOCATION.test(location))
+      return bad(
+        `verdict.issues[${index}] a ${severity} whose defect IS external state -- an unmerged pull request, an absent merge commit, another round's or reviewer's pending action, a CI run that has not finished, an unpublished release -- cannot be caused or observed from the reviewed tree, so this round cannot act on it; a real defect in the tree that merely MENTIONS such a state` +
+          ` stays addressable with a file:line or fixture location, and this one belongs in verdict.summary; resubmit it in summary`,
       );
     const findingId =
       issue.findingId === undefined

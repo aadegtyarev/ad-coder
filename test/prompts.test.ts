@@ -64,6 +64,23 @@ test("the Reviewer prompt bounds the read to the change (issue #352)", () => {
   expect(prompt).toContain("every enforceable contract governing the changed surface");
 });
 
+test("the Reviewer addressability contract refuses external-state blockers (issue #565)", () => {
+  // A rule that lives only in a regex is a rule nobody can read: the second
+  // round of 2026-09-21 blocked delivery on "it remains OPEN and GitHub
+  // reports mergeStateStatus BLOCKED" because nothing at the surface the
+  // model reads said such a finding does not belong in issues. Pin the rule
+  // -- the refusal AND the boundary that keeps real tree defects accepted.
+  const prompt = flat(resolvePrompt("reviewer"));
+  expect(prompt).toContain("The same refusal covers external state");
+  expect(prompt).toContain(
+    "an unmerged pull request, an absent merge commit, another round's or reviewer's pending action, a CI run that has not finished, or an unpublished release",
+  );
+  expect(prompt).toContain("can neither cause nor observe such a state from inside it");
+  expect(prompt).toContain(
+    "merely mentions an external artefact (a commit hook that strips the trailing newline from the file it commits) stays a finding",
+  );
+});
+
 test("the Planner prompt names the channel the coder actually reads", () => {
   // session.ts sets `planSummary` from the planner's ASSISTANT TEXT, and that
   // is what composeCoderPrompt hands the coder -- submit_plan's schema has no

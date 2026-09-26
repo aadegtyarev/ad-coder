@@ -59,9 +59,11 @@ import {
   PipelinePauseError,
 } from "../src/orchestration/types";
 import {
+  ADDRESSABLE,
   buildSubmitVerdictTool,
   formatReviewerInstruction,
   inventoryRemovedTests,
+  NAMES_TREE_LOCATION,
   parseVerdict,
   REVIEW_SUBMISSION_RESTART,
   REVIEW_SUBMISSION_RETRY,
@@ -549,6 +551,383 @@ test("review artifact blockers are rejected with corrective summary guidance", (
       "run",
     ),
   ).toThrow(/summary/);
+});
+
+// issue #565: a review round blocked on PR #562 for the SAME tree it was
+// re-reviewing -- "PR #562 has not delivered the change: it remains OPEN and
+// GitHub reports mergeStateStatus BLOCKED" -- because a round's gate is the
+// merge, and the merge is state no work on the reviewed tree can cause or
+// observe. The refusal below is that state, not the round's paperwork, so the
+// exact text is pinned and the message names why the round cannot act on it.
+test("#565 external-state blockers without a tree address are refused with summary guidance", () => {
+  const refused = [
+    {
+      // The exact #565 live finding, with the external location the round gave it.
+      what: "PR #562 has not delivered the change: it remains OPEN and GitHub reports mergeStateStatus BLOCKED",
+      location: "@external",
+    },
+    {
+      // A prose-only location cannot carry a defect the round must verify.
+      what: "the release is not published yet on the registry",
+      location: "the release page",
+    },
+  ] as const;
+  // A blocker whose location is OMITTED entirely is caught one branch earlier
+  // as the location requirement (the artifact rule's original order, tested
+  // by the #536 fixture above), so the loop only re-runs the addressed cases.
+  for (const [position, issue] of refused.entries()) {
+    expect(issue.location !== undefined).toBe(true);
+    expect(() =>
+      parseVerdict(
+        {
+          status: "changes_requested",
+          issues: [
+            {
+              severity: "blocker",
+              findingId: `external-${position}`,
+              what: issue.what,
+              ...(issue.location !== undefined && { location: issue.location }),
+              closureCriterion: "the pull request merges",
+            },
+          ],
+          summary: "s",
+        },
+        "run",
+      ),
+    ).toThrow(/external state/);
+  }
+  let caught: unknown;
+  try {
+    parseVerdict(
+      {
+        status: "changes_requested",
+        issues: [
+          {
+            severity: "blocker",
+            findingId: "external-no-location",
+            what: "the pull request is not merged yet and no merge commit exists on origin/main",
+            closureCriterion: "the PR merges",
+          },
+        ],
+        summary: "s",
+      },
+      "run",
+    );
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught).toBeInstanceOf(OrchestrationError);
+  expect((caught as Error).message).toBe("verdict.issues[0].location must be a non-empty string");
+  // Majors are the second severity the gate guards -- same refusal, same shape.
+  expect(() =>
+    parseVerdict(
+      {
+        status: "changes_requested",
+        issues: [
+          {
+            severity: "major",
+            findingId: "external-major",
+            what: "PR #562 has not delivered the change: it remains OPEN and GitHub reports mergeStateStatus BLOCKED",
+            location: "@external",
+            closureCriterion: "the pull request merges",
+          },
+        ],
+        summary: "s",
+      },
+      "run",
+    ),
+  ).toThrow(/external state/);
+});
+
+test("#565 external-state refusal keeps minor findings and addressed pull-request defects", () => {
+  // Minors were never refused for bookkeeping; the external-state rule rides
+  // the same needsAddress gate the artifact rule uses, so neither spills onto
+  // them here.
+  const minor = parseVerdict(
+    {
+      status: "changes_requested",
+      issues: [
+        {
+          severity: "minor",
+          what: "PR #562 has not delivered the change: it remains OPEN and GitHub reports mergeStateStatus BLOCKED",
+          location: "@external",
+        },
+      ],
+      summary: "s",
+    },
+    "run",
+  );
+  expect(minor.issues).toHaveLength(1);
+  expect(minor.issues[0]?.severity).toBe("minor");
+  expect(minor.issues[0]?.location).toBe("@external");
+  // The boundary: a real defect in the reviewed tree can name external state
+  // and still be a defect the round can fix. First the mis-shaped locator
+  // case: the defect is in the THE TREE, but "@external" is not a location,
+  // so the fix is addressable only if it names the file it breaks.
+  const addressable = parseVerdict(
+    {
+      status: "changes_requested",
+      issues: [
+        {
+          severity: "blocker",
+          findingId: "external-addressable",
+          what: "PR #562 remains OPEN and GitHub reports mergeStateStatus BLOCKED",
+          location: "src/wrapper.ts:1",
+          closureCriterion: "the focused regression test passes",
+        },
+      ],
+      summary: "s",
+    },
+    "run",
+  );
+  expect(addressable.issues).toHaveLength(1);
+  expect(addressable.issues[0]?.location).toBe("src/wrapper.ts:1");
+});
+
+test("#565 boundary: tree defects that MENTION external state are accepted verbatim", () => {
+  // The legitimate case pinned by the issue: a defect the round CAN reproduce
+  // in the reviewed tree, which merely travels through an external tool. The
+  // mention must not forfeit a reachable finding -- the fix would still be a
+  // reviewed-tree edit.
+  const accepted = parseVerdict(
+    {
+      status: "changes_requested",
+      issues: [
+        {
+          severity: "blocker",
+          findingId: "hook-newline",
+          what: "the fork's commit hook strips the trailing newline from src/f.ts, so the committed file differs from the reviewed one",
+          location: "src/f.ts:1",
+          closureCriterion: "the committed file ends with a single newline",
+        },
+      ],
+      summary: "s",
+    },
+    "run",
+  );
+  expect(accepted.issues).toHaveLength(1);
+  expect(accepted.issues[0]?.severity).toBe("blocker");
+  expect(accepted.issues[0]?.location).toBe("src/f.ts:1");
+  // A blocker whose LOCATED defect mentions external state stays acceptable
+  // too: unchanged src/f.ts with a review carried through someone else's
+  // fork -- still a tree-side defect with a fixable file:line address.
+  const stillAddressable = parseVerdict(
+    {
+      status: "changes_requested",
+      issues: [
+        {
+          severity: "blocker",
+          findingId: "hook-newline-2",
+          what: "the fork's commit hook strips the trailing newline from src/f.ts:1, so the committed file still differs from the reviewed one",
+          location: "src/f.ts:1",
+          closureCriterion: "the committed file ends with a single newline",
+        },
+      ],
+      summary: "s",
+    },
+    "run",
+  );
+  expect(stillAddressable.issues).toHaveLength(1);
+  expect(stillAddressable.issues[0]?.location).toBe("src/f.ts:1");
+});
+
+// The independent review of the first #565 cut returned three blockers on the
+// tree-address gate behind the external-state refusal. All three came from
+// conflating two questions: ADDRESSABLE decides the long-standing location
+// requirement (a relative file:line OR a concrete scenario/fixture address),
+// while the refusal needs "does this finding name a path in OUR tree". The fix
+// keeps ADDRESSABLE for the former and keys the refusal on the new
+// NAMES_TREE_LOCATION predicate. F1: the first cut required a "/" after the
+// leading segment, so every bare top-level file in the covered review scope
+// was refused as external state whenever its `what` named external machinery --
+// contradicting the clause the change itself added (a tree-side defect named
+// with its file:line stays a product finding).
+test("#565 follow-up (F1): top-level covered files are tree addresses, not external state", () => {
+  // Each `what` matches EXTERNAL_STATE; each location is a covered top-level
+  // file (docs/contracts/review-evidence.md names them as review scope). The
+  // first entry is the review's verbatim reproduction.
+  const coveredTopLevel = [
+    {
+      location: "package.json:55",
+      what: "package.json declares publishConfig.access=restricted so the artifact has not been published to npm",
+    },
+    { location: "tsconfig.json:1", what: "the release built from this tree is not published yet" },
+    { location: "biome.json:1", what: "the npm package has not been published" },
+    { location: "bun.lock:1", what: "the merge commit does not exist on origin/main yet" },
+    { location: "bunfig.toml:1", what: "PR #562 remains OPEN" },
+    { location: "ad-coder.stamps.json:1", what: "the workflow run has not finished" },
+    { location: "AGENTS.md:42", what: "the pending release is not cut" },
+    { location: "CLAUDE.md:1", what: "another round's pending action on the merge queue" },
+    { location: "CHANGELOG.md:1", what: "the version is not released" },
+    { location: ".gitignore:1", what: "the pull request is not merged yet" },
+    { location: ".gitattributes:1", what: "the merge state is BLOCKED on GitHub" },
+  ];
+  const accepted = parseVerdict(
+    {
+      status: "changes_requested",
+      issues: coveredTopLevel.map(({ location, what }, position) => ({
+        severity: "blocker" as const,
+        findingId: `top-level-${position}`,
+        what,
+        location,
+        closureCriterion: "the named file carries the fix",
+      })),
+      summary: "s",
+    },
+    "run",
+  );
+  expect(accepted.issues).toHaveLength(coveredTopLevel.length);
+  expect(accepted.issues.map((issue) => issue.location)).toEqual(
+    coveredTopLevel.map(({ location }) => location),
+  );
+});
+
+// F2: the first cut let the words "fixture"/"scenario" stand in for an address,
+// so an external-state blocker whose only "address" was prose slipped past the
+// refusal with no tree defect at all. A scenario PROSE location names nothing
+// this round can edit, so the same corrective refusal applies; a fixture FILE
+// path (test/fixtures/login.ts:3) still rescues, because that IS a tree path.
+test("#565 follow-up (F2): scenario prose is not a tree address, so external state stays refused", () => {
+  const refused = [
+    {
+      // The pinned #565 text, this time behind a prose-only scenario address.
+      what: "PR #562 has not delivered the change: it remains OPEN and GitHub reports mergeStateStatus BLOCKED",
+      location: "github scenario",
+    },
+    {
+      what: "the release is not published yet on the registry",
+      location: "see the regression scenario for the failure mode",
+    },
+  ];
+  for (const [position, issue] of refused.entries()) {
+    expect(() =>
+      parseVerdict(
+        {
+          status: "changes_requested",
+          issues: [
+            {
+              severity: "blocker",
+              findingId: `scenario-${position}`,
+              what: issue.what,
+              location: issue.location,
+              closureCriterion: "the pull request merges",
+            },
+          ],
+          summary: "s",
+        },
+        "run",
+      ),
+    ).toThrow(/external state/);
+  }
+  // The boundary the first cut blurred: a fixture FILE is a tree path.
+  const fixturePath = parseVerdict(
+    {
+      status: "changes_requested",
+      issues: [
+        {
+          severity: "blocker",
+          findingId: "fixture-path",
+          what: "the release is not published yet because the fixture build drops the entry",
+          location: "the regression scenario at test/fixtures/login.ts:3",
+          closureCriterion: "the fixture builds the published entry",
+        },
+      ],
+      summary: "s",
+    },
+    "run",
+  );
+  expect(fixturePath.issues).toHaveLength(1);
+  expect(fixturePath.issues[0]?.location).toBe(
+    "the regression scenario at test/fixtures/login.ts:3",
+  );
+});
+
+// F3: the first cut's fixed extension whitelist (ts|tsx|js|jsx|json|md|toml|
+// yml|yaml|sh) refused real covered files -- the harness entry point and the
+// extensionless hook script among them. NAMES_TREE_LOCATION is
+// extension-agnostic: any slash-separated path lands, and a bare file needs
+// only an extension-SHAPED suffix, so `.mjs` and `.lock` work without the
+// whitelist ever lagging the tree again.
+test("#565 follow-up (F3): extensionless and newer-extension tree paths stay addressable", () => {
+  const accepted = parseVerdict(
+    {
+      status: "changes_requested",
+      issues: [
+        {
+          severity: "blocker",
+          findingId: "entry-point",
+          what: "the package has not been published because bin/ad-coder.mjs:42 hard-codes the private registry",
+          location: "bin/ad-coder.mjs:42",
+          closureCriterion: "the entry point reads the public registry",
+        },
+        {
+          severity: "blocker",
+          findingId: "hook-script",
+          what: "the merge commit is missing because scripts/hooks/pre-commit:1 skips the signing step",
+          location: "scripts/hooks/pre-commit:1",
+          closureCriterion: "the hook signs the commit",
+        },
+        {
+          severity: "blocker",
+          findingId: "ci-workflow",
+          what: "the CI run has not finished, so the gate at .github/workflows/ci.yml:12 cannot be observed",
+          location: ".github/workflows/ci.yml:12",
+          closureCriterion: "the workflow file defines the gate",
+        },
+      ],
+      summary: "s",
+    },
+    "run",
+  );
+  expect(accepted.issues).toHaveLength(3);
+  expect(accepted.issues.map((issue) => issue.location)).toEqual([
+    "bin/ad-coder.mjs:42",
+    "scripts/hooks/pre-commit:1",
+    ".github/workflows/ci.yml:12",
+  ]);
+});
+
+// The two questions the first #565 cut conflated, pinned side by side at the
+// predicate level: the long-standing addressability rule keeps accepting a
+// scenario description as a location for ordinary findings, while the
+// external-state refusal only a tree path rescues -- and the whitelist gap the
+// review named is gone in the other direction too.
+test("#565 follow-up: tree-address predicate and addressability rule stay two questions", () => {
+  for (const location of [
+    "scripts/hooks/pre-commit:1",
+    "bin/ad-coder.mjs:42",
+    ".github/workflows/ci.yml:12",
+    "package.json:55",
+    "tsconfig.json:1",
+    "biome.json:1",
+    "bun.lock:1",
+    "bunfig.toml:1",
+    "ad-coder.stamps.json:1",
+    "AGENTS.md:42",
+    "CLAUDE.md:1",
+    "CHANGELOG.md:1",
+    ".gitignore:1",
+    ".gitattributes:1",
+    "src/f.ts:1",
+    "src/x.ts:4",
+    "test/fixtures/login.ts:3",
+  ])
+    expect(NAMES_TREE_LOCATION.test(location)).toBe(true);
+  for (const location of [
+    "github scenario",
+    "see the regression scenario for the failure mode",
+    "@external",
+    "the release page",
+    // A version number and URL prose are not tree paths either.
+    "released as v0.181.73",
+    "https://github.com/example/repo/pull/562",
+  ])
+    expect(NAMES_TREE_LOCATION.test(location)).toBe(false);
+  expect(ADDRESSABLE.test("github scenario")).toBe(true);
+  expect(NAMES_TREE_LOCATION.test("github scenario")).toBe(false);
+  expect(ADDRESSABLE.test("bin/ad-coder.mjs:42")).toBe(false);
+  expect(NAMES_TREE_LOCATION.test("bin/ad-coder.mjs:42")).toBe(true);
+  expect(ADDRESSABLE.test("the regression scenario at test/fixtures/login.ts:3")).toBe(true);
 });
 
 test("later rounds mechanically account for carried findings by identity", () => {
